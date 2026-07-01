@@ -358,7 +358,7 @@ impl<'a> BatchBuilder<'a> {
     pub fn conflict_open_claim(
         self,
         id: &EntityId,
-        subject: ClaimSubject,
+        subject: EntityId,
         value: Value,
         confidence: f32,
         envelope: &WriteEnvelope,
@@ -367,7 +367,12 @@ impl<'a> BatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
+            ClaimCandidate::new(
+                PREDICATE_CONFLICT_OPEN,
+                ClaimSubject::Entity(subject),
+                value,
+                confidence,
+            ),
             envelope,
             occurred,
             learned_at,
@@ -382,7 +387,7 @@ impl<'a> BatchBuilder<'a> {
     pub fn conflict_resolved_claim(
         self,
         id: &EntityId,
-        subject: ClaimSubject,
+        subject: EntityId,
         value: Value,
         confidence: f32,
         envelope: &WriteEnvelope,
@@ -391,7 +396,12 @@ impl<'a> BatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
+            ClaimCandidate::new(
+                PREDICATE_CONFLICT_RESOLVED,
+                ClaimSubject::Entity(subject),
+                value,
+                confidence,
+            ),
             envelope,
             occurred,
             learned_at,
@@ -891,7 +901,7 @@ impl<'a> TxnBatchBuilder<'a> {
     pub fn conflict_open_claim(
         self,
         id: &EntityId,
-        subject: ClaimSubject,
+        subject: EntityId,
         value: Value,
         confidence: f32,
         envelope: &WriteEnvelope,
@@ -900,7 +910,12 @@ impl<'a> TxnBatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
+            ClaimCandidate::new(
+                PREDICATE_CONFLICT_OPEN,
+                ClaimSubject::Entity(subject),
+                value,
+                confidence,
+            ),
             envelope,
             occurred,
             learned_at,
@@ -915,7 +930,7 @@ impl<'a> TxnBatchBuilder<'a> {
     pub fn conflict_resolved_claim(
         self,
         id: &EntityId,
-        subject: ClaimSubject,
+        subject: EntityId,
         value: Value,
         confidence: f32,
         envelope: &WriteEnvelope,
@@ -924,7 +939,12 @@ impl<'a> TxnBatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
+            ClaimCandidate::new(
+                PREDICATE_CONFLICT_RESOLVED,
+                ClaimSubject::Entity(subject),
+                value,
+                confidence,
+            ),
             envelope,
             occurred,
             learned_at,
@@ -4122,7 +4142,7 @@ mod tests {
             .batch()
             .conflict_open_claim(
                 &open_conflict,
-                ClaimSubject::Entity(person),
+                person,
                 Value::from("open conflict"),
                 0.7,
                 &envelope,
@@ -4131,7 +4151,7 @@ mod tests {
             )
             .conflict_resolved_claim(
                 &resolved_conflict,
-                ClaimSubject::Entity(person),
+                person,
                 Value::from("resolved conflict"),
                 0.8,
                 &envelope,
@@ -4141,20 +4161,16 @@ mod tests {
             .commit()?;
         vault.supersede_claim(&resolved_conflict, &open_conflict, 30)?;
 
-        assert_eq!(
-            vault
-                .get_claim(&open_conflict)?
-                .expect("open conflict preserved")
-                .lifecycle,
-            ClaimLifecycleStatus::Superseded
-        );
-        assert_eq!(
-            vault
-                .get_claim(&resolved_conflict)?
-                .expect("resolved conflict active")
-                .lifecycle,
-            ClaimLifecycleStatus::Active
-        );
+        let open_stored = vault
+            .get_claim(&open_conflict)?
+            .expect("open conflict preserved");
+        let resolved_stored = vault
+            .get_claim(&resolved_conflict)?
+            .expect("resolved conflict active");
+        assert_eq!(open_stored.subject, ClaimSubject::Entity(person));
+        assert_eq!(resolved_stored.subject, ClaimSubject::Entity(person));
+        assert_eq!(open_stored.lifecycle, ClaimLifecycleStatus::Superseded);
+        assert_eq!(resolved_stored.lifecycle, ClaimLifecycleStatus::Active);
         Ok(())
     }
 
