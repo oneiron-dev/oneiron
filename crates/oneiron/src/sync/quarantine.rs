@@ -175,6 +175,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
+        | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad
@@ -1256,6 +1257,10 @@ mod tests {
         assert_eq!(
             remote_rejection_reason(&Error::CompanionRecordAlreadyExists).as_deref(),
             Some("CompanionRecordAlreadyExists")
+        );
+        assert_eq!(
+            remote_rejection_reason(&Error::InvalidPsychProfileBody("bad profile")).as_deref(),
+            Some("InvalidPsychProfileBody")
         );
     }
 

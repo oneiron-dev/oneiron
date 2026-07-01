@@ -7,10 +7,10 @@ use crate::types::{
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal,
-    TokenAllocation,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat,
+    PackStats, ResumeBundle, Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -20,6 +20,7 @@ const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_EVENT,
     ENTITY_TYPE_PERSON,
     ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_PLACE,
@@ -2044,6 +2045,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "COMPANION_RECORDS",
             title: "Companion Records",
         }),
+        ENTITY_TYPE_PSYCH_PROFILE => Some(GroupLabels {
+            key: "psych_profiles",
+            name: "PSYCH_PROFILES",
+            title: "Psych Profiles",
+        }),
         _ => None,
     }
 }
@@ -2148,6 +2154,15 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
             crate::access_grant::ACCESS_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
+            crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Standard) => {
+            crate::types::psych_profile::PSYCH_PROFILE_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Full) => {
+            crate::types::psych_profile::PSYCH_PROFILE_FIELDS_FULL
         }
         (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal) => &["kind", "scope", "subject"],
         (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard) => {
@@ -4917,6 +4932,15 @@ mod tests {
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal),
             &["kind", "scope", "subject"]
+        );
+
+        let psych_profile = group_labels(ENTITY_TYPE_PSYCH_PROFILE);
+        assert_eq!(psych_profile.key, "psych_profiles");
+        assert_eq!(psych_profile.name, "PSYCH_PROFILES");
+        assert_eq!(psych_profile.title, "Psych Profiles");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal),
+            crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
         );
 
         // Types outside the known set should fall back to OTHER_GROUP_LABELS.
