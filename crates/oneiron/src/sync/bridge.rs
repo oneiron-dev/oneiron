@@ -379,6 +379,7 @@ fn materialize_entities_from_delta(
     // point (unlike the tombstone path), so the swallow site below needs
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    let mut pending_companion_scrubs = Vec::new();
     let result = ensure_companion_register_kind_for_entity_delta(vault, delta).and_then(|()| {
         vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
@@ -478,7 +479,8 @@ fn materialize_entities_from_delta(
                         continue;
                     }
                     if matches!(companion_register_blob_is_local_only(blob), Ok(true)) {
-                        scrub_local_only_companion_from_crdt(doc, key.as_ref(), &id)?;
+                        pending_companion_scrubs
+                            .push(CompanionCrdtScrub::new(key.as_ref(), id));
                         continue;
                     }
                     let materialize_result = materialize_entity_blob_in_txn(
@@ -537,6 +539,16 @@ fn materialize_entities_from_delta(
         Ok(())
         })
     });
+
+    if result.is_ok()
+        && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
+    {
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            "observer-b: local-only companion CRDT scrub failed after entity batch commit"
+        );
+    }
 
     if let Err(e) = result {
         // ONE-1147: the whole batch txn aborted — every applied op's write
@@ -610,6 +622,7 @@ fn materialize_edges_from_delta(
     // tracked (e.g. the partner endpoint failed LOCALLY and aborted the batch
     // BEFORE `applied_edges.push`).
     let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
+    let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
@@ -681,10 +694,10 @@ fn materialize_edges_from_delta(
                         hydrated_endpoints.push((tgt, blob.clone()));
                     }
                     if matches!(&src_ready, Ok(EndpointHydration::LocalOnly)) {
-                        scrub_local_only_companion_from_crdt(doc, &src.to_hex(), &src)?;
+                        pending_companion_scrubs.push(CompanionCrdtScrub::new(src.to_hex(), src));
                     }
                     if matches!(&tgt_ready, Ok(EndpointHydration::LocalOnly)) {
-                        scrub_local_only_companion_from_crdt(doc, &tgt.to_hex(), &tgt)?;
+                        pending_companion_scrubs.push(CompanionCrdtScrub::new(tgt.to_hex(), tgt));
                     }
                     match (src_ready, tgt_ready) {
                         // Both endpoints present — already there (`Ready`) or
@@ -832,6 +845,16 @@ fn materialize_edges_from_delta(
         }
         Ok(())
     });
+
+    if result.is_ok()
+        && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
+    {
+        tracing::error!(
+            error = %e,
+            window = %window_key,
+            "observer-b: local-only companion CRDT scrub failed after edge batch commit"
+        );
+    }
 
     if let Err(e) = result {
         // ONE-1147: whole-txn failure — same marker semantics and
@@ -1600,24 +1623,45 @@ fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
     Ok(!companion_register_sync_admitted(data)?)
 }
 
-fn scrub_local_only_companion_from_crdt(
+struct CompanionCrdtScrub {
+    entity_key: String,
+    id: EntityId,
+}
+
+impl CompanionCrdtScrub {
+    fn new(entity_key: impl Into<String>, id: EntityId) -> Self {
+        Self {
+            entity_key: entity_key.into(),
+            id,
+        }
+    }
+}
+
+fn scrub_local_only_companions_from_crdt(
     doc: &LoroDoc,
-    entity_key: &str,
-    id: &EntityId,
+    scrubs: &[CompanionCrdtScrub],
 ) -> Result<()> {
+    if scrubs.is_empty() {
+        return Ok(());
+    }
+
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut changed = false;
+    let mut ids = HashSet::new();
 
-    if entities_map.get(entity_key).is_some() {
-        map_delete(&entities_map, entity_key)?;
-        changed = true;
+    for scrub in scrubs {
+        ids.insert(scrub.id);
+        if entities_map.get(scrub.entity_key.as_str()).is_some() {
+            map_delete(&entities_map, scrub.entity_key.as_str())?;
+            changed = true;
+        }
     }
 
     let mut edge_keys = Vec::new();
     map_for_each_bytes(&edges_map, |edge_key, _| {
         if let Some((src, _, tgt)) = parse_edge_key(edge_key)
-            && (src == *id || tgt == *id)
+            && (ids.contains(&src) || ids.contains(&tgt))
         {
             edge_keys.push(edge_key.to_owned());
         }
