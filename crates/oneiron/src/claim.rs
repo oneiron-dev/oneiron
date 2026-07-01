@@ -1094,11 +1094,9 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
-pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> f32 {
+pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
-    let affect = crate::affect::decode_affect_trigger_claim(body)
-        .ok()
-        .flatten()
+    let affect = crate::affect::decode_affect_trigger_claim(body)?
         .map(|trigger| {
             let delta = trigger.vad_delta();
             let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
@@ -1107,7 +1105,7 @@ pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> f32 {
             ((valence + arousal + dominance) / 3.0) * trigger.confidence()
         })
         .unwrap_or(0.0);
-    salience.max(affect).clamp(0.0, 1.0)
+    Ok(salience.max(affect).clamp(0.0, 1.0))
 }
 
 #[cfg(feature = "sync")]
@@ -1165,10 +1163,25 @@ mod tests {
         );
         body.salience = Some(0.3);
 
-        let affect_salience = psych_mirror_claim_affect_salience(&body);
+        let affect_salience = psych_mirror_claim_affect_salience(&body)?;
 
         assert!((affect_salience - 0.4).abs() < 1e-6);
         Ok(())
+    }
+
+    #[test]
+    fn psych_mirror_selection_affect_trigger_decode_errors_propagate() {
+        let affected_person = EntityId::from_bytes([0x46; 16]).expect("valid id");
+        let body = ClaimBody::new(
+            crate::affect::AFFECT_TRIGGER_PREDICATE,
+            ClaimSubject::Entity(affected_person),
+            Value::from("malformed affect trigger"),
+            0.8,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+
+        assert!(psych_mirror_claim_affect_salience(&body).is_err());
     }
 
     #[test]
