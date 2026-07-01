@@ -96,6 +96,9 @@ impl AffectTriggerValue {
         if observed_n == 0 {
             return Err(Error::InvalidClaimBody("observedN must be positive"));
         }
+        if k > observed_n {
+            return Err(Error::InvalidClaimBody("k must not exceed observedN"));
+        }
         Ok(Self {
             affected_person,
             trigger_ref,
