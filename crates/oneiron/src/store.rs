@@ -2851,6 +2851,51 @@ mod tests {
     }
 
     #[test]
+    fn store_metadata_allows_secret_prefix_embedded_in_larger_identifier() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let registration = vault.register_structural_kind(
+            65,
+            "zz",
+            TypeByteBand::Companion,
+            "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
+        )?;
+        assert_eq!(
+            registration.pack,
+            "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label"
+        );
+
+        let id = entity_id(0x47);
+        put_text(&vault, id, "retrieval outcome embedded prefix")?;
+        let result = vault
+            .query()
+            .search_text("retrieval outcome embedded prefix", 10)
+            .run_with_telemetry()?;
+        let run_id = result.run_id.expect("telemetry run id");
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "source".to_owned(),
+            "myghp_0123456789abcdefghijklmnopqrstuvwxyz_label".to_owned(),
+        );
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata,
+        })?;
+
+        let outcomes = vault.retrieval_outcomes(run_id)?;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(
+            outcomes[0].metadata.get("source").map(String::as_str),
+            Some("myghp_0123456789abcdefghijklmnopqrstuvwxyz_label")
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn record_retrieval_outcome_rejects_secret_key_and_metadata_before_vault_meta_write()
     -> Result<()> {
         let (_dir, vault) = open_test_vault();
