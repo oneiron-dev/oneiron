@@ -2041,7 +2041,7 @@ async fn get_companion_profile(
         (status = 200, description = "Companion register record created.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
         (status = 400, description = "Malformed companion register request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "Companion register id or key already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Companion register write failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -2077,7 +2077,7 @@ async fn create_companion_register_record(
         (status = 200, description = "Companion register record read.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
         (status = 400, description = "Malformed companion register id.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Companion register read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -2111,7 +2111,7 @@ async fn get_companion_register_record(
         (status = 200, description = "Companion register record updated.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
         (status = 400, description = "Malformed companion register request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Companion register update failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -2149,7 +2149,7 @@ async fn update_companion_register_record(
         (status = 200, description = "Companion register record retired.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
         (status = 400, description = "Malformed companion register id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Companion register retire failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -2242,6 +2242,12 @@ fn companion_register_record_from_payload(
         .map(companion_register_lifecycle_from_wire)
         .transpose()?
         .unwrap_or(oneiron::ClaimLifecycleStatus::Active);
+    if lifecycle != oneiron::ClaimLifecycleStatus::Active {
+        return Err(ApiError::bad_request(
+            "companion register create/update lifecycle must be active",
+            Some("record.lifecycle"),
+        ));
+    }
     let export_classification =
         companion_register_export_from_wire(&payload.export_classification)?;
 
@@ -2416,7 +2422,14 @@ fn companion_register_scope_payload(
             person_ref: None,
             vault_id: Some(*vault_id),
         },
-        _ => unreachable!("unknown companion register scope variant"),
+        _ => {
+            tracing::warn!("unknown companion register scope variant in API response");
+            CompanionRegisterScopePayload {
+                kind: "unknown".to_owned(),
+                person_ref: None,
+                vault_id: None,
+            }
+        }
     }
 }
 
@@ -2440,7 +2453,14 @@ fn companion_register_subject_payload(
                 target_ref: target_ref.to_hex(),
             }),
         },
-        _ => unreachable!("unknown companion register subject variant"),
+        _ => {
+            tracing::warn!("unknown companion register subject variant in API response");
+            CompanionRegisterSubjectPayload {
+                kind: "unknown".to_owned(),
+                persona_ref: None,
+                relationship_ref: None,
+            }
+        }
     }
 }
 
@@ -9416,6 +9436,28 @@ mod tests {
             Value::from("record.provenance.value")
         );
 
+        let mut retired_create_record = personal_record.clone();
+        retired_create_record["lifecycle"] = Value::from("retracted");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000C).to_hex(),
+                    "record": retired_create_record
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.lifecycle")
+        );
+
         let read_path = format!("/v1/companion/register/records/{personal_id}");
         let (status, body) = route_json(
             server.clone(),
@@ -9463,6 +9505,29 @@ mod tests {
         assert_eq!(
             body["record"]["value"]["note"],
             Value::from("updated private per-person companion note")
+        );
+
+        let mut retire_via_update_record = updated_record.clone();
+        retire_via_update_record["lifecycle"] = Value::from("retracted");
+        let retire_via_update = json!({
+            "learned_at": 33_u64,
+            "record": retire_via_update_record
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&retire_via_update),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.lifecycle")
         );
 
         let retire_path = format!("/v1/companion/register/records/{personal_id}/retire");

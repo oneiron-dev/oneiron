@@ -1434,6 +1434,26 @@ mod tests {
             .expect_err("raw batch put must preserve companion register key uniqueness");
         assert!(matches!(raw_duplicate, Error::CompanionRecordAlreadyExists));
 
+        let mut retired_create = neutral.clone();
+        retired_create.lifecycle = ClaimLifecycleStatus::Retracted;
+        let inactive_create = vault
+            .create_companion_record(&entity(0x57), &retired_create, 13)
+            .expect_err("create helper must not accept retired payloads");
+        assert!(matches!(
+            inactive_create,
+            Error::InvalidClaimBody("companion record create must be active")
+        ));
+
+        let mut retired_update = personal.clone();
+        retired_update.lifecycle = ClaimLifecycleStatus::Retracted;
+        let inactive_update = vault
+            .update_companion_record(&personal_id, &retired_update, 14)
+            .expect_err("update helper must not retire records");
+        assert!(matches!(
+            inactive_update,
+            Error::InvalidClaimBody("companion record update must be active")
+        ));
+
         let mut updated_personal = personal;
         updated_personal.value = Value::Map(vec![(
             Value::from("note"),
