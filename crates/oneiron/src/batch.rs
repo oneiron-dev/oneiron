@@ -18,9 +18,9 @@ use crate::store::Store;
 use crate::types::{
     ClaimCandidate, CompanionExportClassification, DecodedEdgeValue, EDGE_KEY_LEN,
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId,
-    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
-    encode_edge_value, validate_edge_weight,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -217,8 +217,8 @@ pub(crate) enum BatchOp {
 /// `ReservedPredicate`). `apply_put` still runs the registry type-byte gate,
 /// the full D17/D18 CLAIM body validation, and registered maintenance body
 /// validation on every typed maintenance kind that defines one. Policy
-/// manifests are owner-policy inputs and are not admitted through this
-/// unverified replicated door.
+/// manifests and AccessGrants are authority-bearing control-plane inputs and
+/// are not admitted through this unverified replicated door.
 #[cfg(feature = "sync")]
 fn replicated_put_op(
     id: &EntityId,
@@ -1259,7 +1259,10 @@ pub(crate) fn apply_ops(
                 // still rejects genuinely unknown type bytes).
                 if allow_maintenance
                     && allow_reserved_predicate
-                    && entity_type == crate::types::ENTITY_TYPE_POLICY_MANIFEST
+                    && matches!(
+                        entity_type,
+                        crate::types::ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_ACCESS_GRANT
+                    )
                 {
                     return Err(Error::MaintenanceKindNotWritable(entity_type));
                 }

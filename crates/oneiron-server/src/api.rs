@@ -1666,9 +1666,10 @@ struct CompanionAccessGrantResponse {
 /// Query parameters for companion profile reads.
 #[derive(Clone, Debug, Deserialize, IntoParams)]
 struct CompanionProfileQuery {
-    /// Principal requesting profile access.
+    /// Principal requesting profile access. Optional for bearer tokens that
+    /// bind `principal_ref`; arbitrary overrides require admin auth.
     #[param(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
-    principal_ref: String,
+    principal_ref: Option<String>,
     /// Person scope for the companion profile.
     #[param(example = "11111111111111111111111111111111")]
     person_ref: String,
@@ -1913,7 +1914,7 @@ async fn create_companion_access_grant(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CompanionCreateAccessGrantRequest>, JsonRejection>,
 ) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Auth)?;
+    require_companion_access_grant_write(&auth)?;
     let req = json_payload(payload)?;
     let grant_id = parse_optional_entity_id(req.id.as_deref(), "id")?;
     let principal_ref = parse_entity_id_param(&req.principal_ref, "principal_ref")?;
@@ -1958,7 +1959,7 @@ async fn revoke_companion_access_grant(
     Path(grant_id): Path<String>,
     payload: Result<Json<CompanionRevokeAccessGrantRequest>, JsonRejection>,
 ) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Auth)?;
+    require_companion_access_grant_write(&auth)?;
     let grant_id = parse_entity_id_param(&grant_id, "grant_id")?;
     let req = json_payload(payload)?;
     let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);
@@ -1996,10 +1997,15 @@ async fn get_companion_profile(
     Path(persona_ref): Path<String>,
     query: Result<Query<CompanionProfileQuery>, QueryRejection>,
 ) -> Result<Json<CompanionProfileResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Read)?;
+    require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
     let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
-    let principal_ref = parse_entity_id_param(&params.principal_ref, "principal_ref")?;
+    let requested_principal_ref = params
+        .principal_ref
+        .as_deref()
+        .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
+        .transpose()?;
+    let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
     let person_ref = parse_entity_id_param(&params.person_ref, "person_ref")?;
 
     let grant_id = server
@@ -2028,6 +2034,49 @@ async fn get_companion_profile(
         },
         profile: json!({}),
     }))
+}
+
+fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
+    if auth.has_scope(CoreScope::CompanionProfileRead) || auth.has_scope(CoreScope::Read) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden_scope(
+            CoreScope::CompanionProfileRead.as_str(),
+        ))
+    }
+}
+
+fn require_companion_access_grant_write(auth: &CoreAuth) -> Result<(), ApiError> {
+    if auth.has_scope(CoreScope::CompanionAccessGrantWrite) || auth.has_scope(CoreScope::Auth) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden_scope(
+            CoreScope::CompanionAccessGrantWrite.as_str(),
+        ))
+    }
+}
+
+fn companion_profile_principal_ref(
+    auth: &CoreAuth,
+    requested: Option<oneiron::EntityId>,
+) -> Result<oneiron::EntityId, ApiError> {
+    let bound = auth
+        .principal_ref()
+        .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
+        .transpose()?;
+
+    match (requested, bound) {
+        (Some(requested), Some(bound)) if requested == bound => Ok(requested),
+        (Some(requested), _) => {
+            auth.require(CoreScope::Auth)?;
+            Ok(requested)
+        }
+        (None, Some(bound)) => Ok(bound),
+        (None, None) => Err(ApiError::bad_request(
+            "principal_ref is required unless bearer auth binds principal_ref",
+            Some("principal_ref"),
+        )),
+    }
 }
 
 /// Create a typed companion register record.
@@ -7571,10 +7620,34 @@ mod tests {
     }
 
     fn core_request(method: &str, uri: &str, scope: &str, body: Option<&Value>) -> Request<Body> {
+        core_request_with_authz(method, uri, format!("Bearer secret;scope={scope}"), body)
+    }
+
+    fn core_request_with_principal_ref(
+        method: &str,
+        uri: &str,
+        scope: &str,
+        principal_ref: &str,
+        body: Option<&Value>,
+    ) -> Request<Body> {
+        core_request_with_authz(
+            method,
+            uri,
+            format!("Bearer secret;scope={scope};principal_ref={principal_ref}"),
+            body,
+        )
+    }
+
+    fn core_request_with_authz(
+        method: &str,
+        uri: &str,
+        authorization: String,
+        body: Option<&Value>,
+    ) -> Request<Body> {
         let mut builder = Request::builder()
             .method(method)
             .uri(uri)
-            .header(AUTHORIZATION, format!("Bearer secret;scope={scope}"));
+            .header(AUTHORIZATION, authorization);
         if body.is_some() {
             builder = builder.header(CONTENT_TYPE, "application/json");
         }
@@ -9137,13 +9210,51 @@ mod tests {
         let person_ref = seeded_test_entity_id(0x1265_0003).to_hex();
         let persona_ref = seeded_test_entity_id(0x1265_0004).to_hex();
         let other_person_ref = seeded_test_entity_id(0x1265_0005).to_hex();
+        let other_principal_ref = seeded_test_entity_id(0x1265_0006).to_hex();
 
-        let profile_path = format!(
+        let profile_path_with_override = format!(
             "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={person_ref}"
         );
         let (status, body) = route_json(
             server.clone(),
-            core_request("GET", &profile_path, "core:read", None),
+            core_request("GET", &profile_path_with_override, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("core:auth")
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &profile_path_with_override,
+                "companion:profile:read",
+                &other_principal_ref,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("core:auth")
+        );
+
+        let profile_path = format!("/v1/companion/profiles/{persona_ref}?person_ref={person_ref}");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &profile_path,
+                "companion:profile:read",
+                &principal_ref,
+                None,
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -9168,7 +9279,7 @@ mod tests {
             core_request(
                 "POST",
                 "/v1/companion/access-grants",
-                "core:auth",
+                "companion:access-grant:write",
                 Some(&create_request),
             ),
         )
@@ -9180,19 +9291,30 @@ mod tests {
 
         let (status, body) = route_json(
             server.clone(),
-            core_request("GET", &profile_path, "core:read", None),
+            core_request_with_principal_ref(
+                "GET",
+                &profile_path,
+                "companion:profile:read",
+                &principal_ref,
+                None,
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["access"]["grant_id"], Value::from(grant_id.clone()));
         assert_eq!(body["persona_ref"], Value::from(persona_ref.clone()));
 
-        let wrong_scope_path = format!(
-            "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={other_person_ref}"
-        );
+        let wrong_scope_path =
+            format!("/v1/companion/profiles/{persona_ref}?person_ref={other_person_ref}");
         let (status, body) = route_json(
             server.clone(),
-            core_request("GET", &wrong_scope_path, "core:read", None),
+            core_request_with_principal_ref(
+                "GET",
+                &wrong_scope_path,
+                "companion:profile:read",
+                &principal_ref,
+                None,
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -9202,7 +9324,12 @@ mod tests {
         let revoke_request = json!({ "revoked_at": 20_u64 });
         let (status, body) = route_json(
             server.clone(),
-            core_request("POST", &revoke_path, "core:auth", Some(&revoke_request)),
+            core_request(
+                "POST",
+                &revoke_path,
+                "companion:access-grant:write",
+                Some(&revoke_request),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -9214,7 +9341,7 @@ mod tests {
             core_request(
                 "POST",
                 "/v1/companion/access-grants",
-                "core:auth",
+                "companion:access-grant:write",
                 Some(&create_request),
             ),
         )
@@ -9237,7 +9364,13 @@ mod tests {
 
         let (status, body) = route_json(
             server.clone(),
-            core_request("GET", &profile_path, "core:read", None),
+            core_request_with_principal_ref(
+                "GET",
+                &profile_path,
+                "companion:profile:read",
+                &principal_ref,
+                None,
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
