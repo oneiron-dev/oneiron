@@ -4,12 +4,13 @@ use serde_json::{Map, Number, Value};
 
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET,
-    ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE,
-    ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile,
-    PackFormat, PackStats, ResumeBundle, Signal, TokenAllocation,
+    ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
+    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackStats, ResumeBundle, Signal,
+    TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -18,6 +19,7 @@ const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_EVENT,
     ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_PLACE,
@@ -1033,9 +1035,9 @@ fn token_budget_droppable_count(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
 
 fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
     match entity_type {
-        0 => allocation.claims,
-        1 => allocation.turns,
-        8 => allocation.summaries,
+        ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER => allocation.claims,
+        ENTITY_TYPE_TURN => allocation.turns,
+        ENTITY_TYPE_SUMMARY => allocation.summaries,
         _ => allocation.other,
     }
 }
@@ -2037,6 +2039,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "ACCESS_GRANTS",
             title: "Access Grants",
         }),
+        ENTITY_TYPE_COMPANION_REGISTER => Some(GroupLabels {
+            key: "companion_records",
+            name: "COMPANION_RECORDS",
+            title: "Companion Records",
+        }),
         _ => None,
     }
 }
@@ -2142,6 +2149,19 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
             crate::access_grant::ACCESS_GRANT_FIELDS_FULL
         }
+        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal) => &["kind", "scope", "subject"],
+        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard) => {
+            &["kind", "scope", "subject", "lifecycle", "export"]
+        }
+        (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full) => &[
+            "schema_version",
+            "kind",
+            "scope",
+            "subject",
+            "lifecycle",
+            "export",
+            "provenance",
+        ],
 
         _ => &[],
     }
@@ -4490,6 +4510,221 @@ mod tests {
     }
 
     #[test]
+    fn companion_register_records_serialize_as_first_class_export_group() {
+        let persona_ref = EntityId::from_bytes_unchecked([0x31; 16]).to_hex();
+        let person_ref = EntityId::from_bytes_unchecked([0x32; 16]).to_hex();
+        let source_ref = EntityId::from_bytes_unchecked([0x33; 16]).to_hex();
+        let target_ref = EntityId::from_bytes_unchecked([0x34; 16]).to_hex();
+        let actor_ref = EntityId::from_bytes_unchecked([0x35; 16]).to_hex();
+
+        let persona_fields = HashMap::from([
+            (
+                "schema_version".to_owned(),
+                serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            ),
+            ("kind".to_owned(), Value::String("persona".to_owned())),
+            ("scope".to_owned(), serde_json::json!({ "kind": "neutral" })),
+            (
+                "subject".to_owned(),
+                serde_json::json!({
+                    "kind": "persona",
+                    "persona_ref": persona_ref,
+                }),
+            ),
+            ("lifecycle".to_owned(), Value::String("active".to_owned())),
+            ("export".to_owned(), Value::String("portable".to_owned())),
+            (
+                "provenance".to_owned(),
+                serde_json::json!({
+                    "actor_ref": actor_ref,
+                    "actor_class": 1,
+                    "source": "user_stated",
+                    "approval": "approved",
+                }),
+            ),
+            (
+                "value".to_owned(),
+                serde_json::json!({ "note": "not part of portable companion projection" }),
+            ),
+        ]);
+        let relationship_fields = HashMap::from([
+            (
+                "schema_version".to_owned(),
+                serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            ),
+            ("kind".to_owned(), Value::String("relationship".to_owned())),
+            (
+                "scope".to_owned(),
+                serde_json::json!({ "kind": "personal", "person_ref": person_ref }),
+            ),
+            (
+                "subject".to_owned(),
+                serde_json::json!({
+                    "kind": "relationship",
+                    "relationship_ref": {
+                        "source_ref": source_ref,
+                        "target_ref": target_ref,
+                    },
+                }),
+            ),
+            ("lifecycle".to_owned(), Value::String("active".to_owned())),
+            ("export".to_owned(), Value::String("portable".to_owned())),
+            (
+                "provenance".to_owned(),
+                serde_json::json!({
+                    "actor_ref": EntityId::from_bytes_unchecked([0x36; 16]).to_hex(),
+                    "actor_class": 1,
+                    "source": "user_stated",
+                    "approval": "approved",
+                }),
+            ),
+        ]);
+        let pack = ContextPack {
+            results: vec![
+                ContextEntity {
+                    id: EntityId::from_bytes_unchecked([0x64; 16]),
+                    short_id: "cr01".to_owned(),
+                    content_hash: 0xa1,
+                    entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                    score: 0.9,
+                    fields: Some(persona_fields),
+                    edges: None,
+                    vector: None,
+                },
+                ContextEntity {
+                    id: EntityId::from_bytes_unchecked([0x65; 16]),
+                    short_id: "cr02".to_owned(),
+                    content_hash: 0xa2,
+                    entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                    score: 0.8,
+                    fields: Some(relationship_fields),
+                    edges: None,
+                    vector: None,
+                },
+            ],
+            neighbors: vec![],
+            stats: empty_stats(),
+            empty: None,
+        };
+        let config = |format, profile| SerializeConfig {
+            format,
+            profile,
+            budget: 4000,
+            allocation: TokenAllocation::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: 500,
+            max_item_tokens: 0,
+        };
+
+        let cfg_json = config(PackFormat::Json, FieldProfile::Standard);
+        let parsed: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg_json)).expect("json parse");
+        assert!(parsed.get("other").is_none());
+        let records = parsed["companion_records"]
+            .as_array()
+            .expect("companion records group");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "persona");
+        assert_eq!(
+            records[0]["scope"],
+            serde_json::json!({ "kind": "neutral" })
+        );
+        assert_eq!(records[1]["kind"], "relationship");
+        assert_eq!(
+            records[1]["scope"]["kind"],
+            Value::String("personal".to_owned())
+        );
+        assert_eq!(
+            records[1]["subject"]["kind"],
+            Value::String("relationship".to_owned())
+        );
+        assert!(records[0].get("provenance").is_none());
+        assert!(records[0].get("schema_version").is_none());
+        assert!(records[0].get("value").is_none());
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard),
+            &["kind", "scope", "subject", "lifecycle", "export"]
+        );
+
+        let cfg_full = config(PackFormat::Json, FieldProfile::Full);
+        let full: Value =
+            serde_json::from_slice(&serialize_pack(&pack, &cfg_full)).expect("json parse");
+        assert_eq!(
+            full["companion_records"][0]["schema_version"],
+            serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)
+        );
+        assert!(full["companion_records"][0].get("provenance").is_some());
+        assert!(full["companion_records"][0].get("value").is_none());
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full),
+            &[
+                "schema_version",
+                "kind",
+                "scope",
+                "subject",
+                "lifecycle",
+                "export",
+                "provenance"
+            ]
+        );
+
+        let cfg_plain = config(PackFormat::Plaintext, FieldProfile::Standard);
+        let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
+        assert!(text.contains("COMPANION_RECORDS"));
+        assert!(text.contains("relationship"));
+    }
+
+    #[test]
+    fn companion_register_records_budget_with_fixed_state_allocation() {
+        assert!(GROUP_ORDER.contains(&ENTITY_TYPE_COMPANION_REGISTER));
+
+        let source_id = [0x64; 16];
+        let groups = group_entities(vec![PreparedEntity {
+            entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+            score: 0.9,
+            source: PreparedEntitySource::Result,
+            source_id,
+            id: "cr01".to_owned(),
+            fields: vec![
+                ("kind".to_owned(), Value::String("persona".to_owned())),
+                ("scope".to_owned(), serde_json::json!({ "kind": "neutral" })),
+                (
+                    "subject".to_owned(),
+                    serde_json::json!({
+                        "kind": "persona",
+                        "persona_ref": EntityId::from_bytes_unchecked([0x31; 16]).to_hex(),
+                    }),
+                ),
+            ],
+        }]);
+        let needed = estimate_groups_chars(&groups);
+        let zero_other_allocation = TokenAllocation {
+            claims: 1.0,
+            turns: 0.0,
+            summaries: 0.0,
+            other: 0.0,
+        };
+
+        assert_eq!(
+            type_fraction(ENTITY_TYPE_COMPANION_REGISTER, &zero_other_allocation),
+            zero_other_allocation.claims
+        );
+
+        let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
+        let records = budgeted
+            .iter()
+            .find_map(|(entity_type, rows)| {
+                (*entity_type == ENTITY_TYPE_COMPANION_REGISTER).then_some(rows)
+            })
+            .expect("companion register group should keep state allocation budget");
+
+        assert_eq!(used, needed);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source_id, source_id);
+    }
+
+    #[test]
     fn federation_grant_member_ref_hex_projection_is_preserved() {
         let member_ref = EntityId::from_bytes_unchecked([0x42; 16]).to_hex();
         let fields = HashMap::from([
@@ -4662,6 +4897,15 @@ mod tests {
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal),
             crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
+        );
+
+        let companion = group_labels(ENTITY_TYPE_COMPANION_REGISTER);
+        assert_eq!(companion.key, "companion_records");
+        assert_eq!(companion.name, "COMPANION_RECORDS");
+        assert_eq!(companion.title, "Companion Records");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal),
+            &["kind", "scope", "subject"]
         );
 
         // Types outside the known set should fall back to OTHER_GROUP_LABELS.
