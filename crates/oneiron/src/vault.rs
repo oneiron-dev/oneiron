@@ -13,6 +13,11 @@ use uuid::Uuid;
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::access_grant::{AccessGrant, decode_access_grant_body, encode_access_grant_body};
+use crate::affect::{
+    CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
+    ClaimVadTurnEvidence, claim_vad_evidence_value, claim_vad_value,
+    collect_claim_turn_evidence_refs, mean_vad,
+};
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
@@ -399,6 +404,12 @@ fn vad_annotation_delete_scope_exists_in_txn(
         }
     }
     Ok(false)
+}
+
+struct StoredClaimVadState {
+    id: EntityId,
+    header: EntityMetadataHeader,
+    body: ClaimBody,
 }
 
 /// Returns the first outbound ChildOf parent for `node`, or `None` if it has
@@ -940,6 +951,385 @@ impl Vault {
         message_id: &EntityId,
     ) -> Result<Option<VadAnnotation>> {
         self.get_entity_vad_annotation(message_id, ENTITY_TYPE_MESSAGE)
+    }
+
+    /// Consolidates turn-level VAD evidence attached to `claim_id` into
+    /// claim-level affect state.
+    ///
+    /// The API is asynchronous so background Dreamer consolidation workers can
+    /// await it naturally. The storage work is one LMDB transaction: semantic
+    /// edges incident to the claim have only their VAD bytes rewritten,
+    /// structural edges are skipped, and a derived `affect.claim_vad` state
+    /// claim supersedes the previous active state when evidence changes.
+    pub async fn consolidate_claim_vad(
+        &self,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
+        self.consolidate_claim_vad_in_txn(claim_id, now)
+    }
+
+    fn consolidate_claim_vad_in_txn(
+        &self,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<ClaimVadConsolidation> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
+        if claim_body.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::ClaimAlreadyClosed {
+                status: claim_body.lifecycle,
+            });
+        }
+        if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
+            return Err(Error::InvalidClaimBody(
+                "claim VAD state claims cannot be consolidated",
+            ));
+        }
+        if claim_body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE {
+            return Err(Error::InvalidClaimBody(
+                "turn VAD annotation claims cannot be consolidated",
+            ));
+        }
+
+        let mut evidence_turns = Vec::new();
+        for candidate in collect_claim_turn_evidence_refs(&claim_body) {
+            if let Some(annotation) = self.turn_vad_annotation_in_txn(&wtxn, &candidate)? {
+                evidence_turns.push(ClaimVadTurnEvidence {
+                    turn_id: candidate,
+                    annotation,
+                });
+            }
+        }
+
+        let (semantic_edges, structural_edges_skipped) =
+            self.claim_vad_incident_edges_in_txn(&wtxn, claim_id)?;
+        let active_states = self.active_claim_vad_states_in_txn(&wtxn, claim_id)?;
+        let mut ops = Vec::new();
+
+        let (vad, reappraisal) = if let Some(vad) = mean_vad(&evidence_turns) {
+            vad.validate()?;
+            for edge in &semantic_edges {
+                ops.push(BatchOp::SetEdgeVad {
+                    src: edge.source,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    vad,
+                });
+            }
+
+            let value = claim_vad_value(vad, evidence_turns.len());
+            let evidence = claim_vad_evidence_value(&evidence_turns);
+
+            let reappraisal = if active_states.len() == 1
+                && active_states[0].body.value == value
+                && active_states[0].body.evidence.as_ref() == Some(&evidence)
+            {
+                ClaimVadReappraisal {
+                    active_claim_id: Some(active_states[0].id),
+                    created_claim_id: None,
+                    superseded_claim_ids: Vec::new(),
+                }
+            } else {
+                let state_claim_id = EntityId::now();
+                let mut body = ClaimBody::new(
+                    CLAIM_VAD_REAPPRAISAL_PREDICATE,
+                    ClaimSubject::Entity(*claim_id),
+                    value,
+                    1.0,
+                    ClaimApprovalStatus::Auto,
+                    ClaimLifecycleStatus::Active,
+                );
+                body.evidence = Some(evidence);
+                body.source = Some(ClaimSource::Inferred);
+                body.valid_from = Some(now);
+                let data = encode_claim_body(&body)?;
+                ops.push(BatchOp::Put {
+                    id: state_claim_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: now,
+                        end: u64::MAX,
+                    },
+                    learned_at: now,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                });
+                ops.push(BatchOp::Edge {
+                    src: state_claim_id,
+                    kind: EdgeKind::ClaimOf,
+                    tgt: *claim_id,
+                    weight: CLAIM_OF_DEFAULT_WEIGHT,
+                    vad: Vad::NEUTRAL,
+                });
+
+                let superseded_claim_ids = Self::close_claim_vad_states(
+                    &mut ops,
+                    active_states,
+                    now,
+                    Some(state_claim_id),
+                )?;
+
+                ClaimVadReappraisal {
+                    active_claim_id: Some(state_claim_id),
+                    created_claim_id: Some(state_claim_id),
+                    superseded_claim_ids,
+                }
+            };
+
+            (Some(vad), reappraisal)
+        } else {
+            for edge in &semantic_edges {
+                ops.push(BatchOp::SetEdgeVad {
+                    src: edge.source,
+                    kind: edge.kind,
+                    tgt: edge.target,
+                    vad: Vad::NEUTRAL,
+                });
+            }
+
+            let superseded_claim_ids =
+                Self::close_claim_vad_states(&mut ops, active_states, now, None)?;
+            (
+                None,
+                ClaimVadReappraisal {
+                    active_claim_id: None,
+                    created_claim_id: None,
+                    superseded_claim_ids,
+                },
+            )
+        };
+
+        if !ops.is_empty() {
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                &mut wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
+        wtxn.commit()?;
+
+        Ok(ClaimVadConsolidation {
+            claim_id: *claim_id,
+            vad,
+            evidence_turns,
+            semantic_edges_updated: semantic_edges.len(),
+            structural_edges_skipped,
+            reappraisal,
+        })
+    }
+
+    fn close_claim_vad_states(
+        ops: &mut Vec<BatchOp>,
+        active_states: Vec<StoredClaimVadState>,
+        now: u64,
+        successor: Option<EntityId>,
+    ) -> Result<Vec<EntityId>> {
+        let mut superseded_claim_ids = Vec::with_capacity(active_states.len());
+        for state in active_states {
+            let mut closed = state.body;
+            closed.lifecycle = ClaimLifecycleStatus::Superseded;
+            closed.valid_to = Some(now);
+            let closed_data = encode_claim_body(&closed)?;
+            ops.push(BatchOp::Put {
+                id: state.id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: state.header.occurred_start,
+                    end: now,
+                },
+                learned_at: state.header.learned_at,
+                data: closed_data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            });
+            if let Some(successor) = successor {
+                ops.push(BatchOp::EdgeWithCreatedAt {
+                    src: successor,
+                    kind: EdgeKind::Supersedes,
+                    tgt: state.id,
+                    weight: SUPERSEDES_DEFAULT_WEIGHT,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                });
+            }
+            superseded_claim_ids.push(state.id);
+        }
+        Ok(superseded_claim_ids)
+    }
+
+    fn claim_body_for_claim_vad_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<ClaimBody> {
+        let raw = self
+            .store
+            .entities
+            .get(txn, claim_id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+    }
+
+    fn turn_vad_annotation_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        turn_id: &EntityId,
+    ) -> Result<Option<VadAnnotation>> {
+        let Some(raw) = self.store.entities.get(txn, turn_id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_TURN {
+            return Ok(None);
+        }
+
+        let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, turn_id)?;
+        if let Some(raw) = self.store.entities.get(txn, claim_id.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("VAD annotation claim"));
+            }
+            let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+                return Ok(None);
+            };
+            if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
+                || body.subject != ClaimSubject::Entity(*turn_id)
+            {
+                return Err(Error::CorruptedIndex("VAD annotation claim"));
+            }
+            if body.lifecycle != ClaimLifecycleStatus::Active {
+                return Ok(None);
+            }
+            return vad_annotation_from_value(&body.value).map(Some);
+        }
+
+        let key = vad_annotation_meta_key(ENTITY_TYPE_TURN, turn_id);
+        let Some(raw) = self.store.vault_meta.get(txn, &key)? else {
+            return Ok(None);
+        };
+        let annotation: VadAnnotation =
+            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+        annotation.vad.validate()?;
+        Ok(Some(annotation))
+    }
+
+    fn claim_vad_incident_edges_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<(Vec<EdgeRef>, usize)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut semantic_edges = Vec::new();
+        let mut structural_edges_skipped = 0;
+
+        for (scanned, entry) in self
+            .store
+            .edges_out
+            .prefix_iter(txn, claim_id.as_bytes())?
+            .enumerate()
+        {
+            if scanned >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_vad_incident_edges"));
+            }
+            let (key, value) = entry?;
+            let info = parse_edge_record(key, value)?;
+            Self::record_claim_vad_edge(
+                EdgeRef::new(*claim_id, info.kind, info.target),
+                &mut seen,
+                &mut semantic_edges,
+                &mut structural_edges_skipped,
+            );
+        }
+
+        for (scanned, entry) in self
+            .store
+            .edges_in
+            .prefix_iter(txn, claim_id.as_bytes())?
+            .enumerate()
+        {
+            if scanned >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_vad_incident_edges"));
+            }
+            let (key, value) = entry?;
+            let info = parse_edge_record(key, value)?;
+            Self::record_claim_vad_edge(
+                EdgeRef::new(info.target, info.kind, *claim_id),
+                &mut seen,
+                &mut semantic_edges,
+                &mut structural_edges_skipped,
+            );
+        }
+
+        Ok((semantic_edges, structural_edges_skipped))
+    }
+
+    fn record_claim_vad_edge(
+        edge: EdgeRef,
+        seen: &mut std::collections::HashSet<[u8; crate::claim::EDGE_REF_LEN]>,
+        semantic_edges: &mut Vec<EdgeRef>,
+        structural_edges_skipped: &mut usize,
+    ) {
+        if !seen.insert(edge.encode()) {
+            return;
+        }
+        if edge_value_layout_for_kind(edge.kind, false) == EdgeValueLayout::Structural {
+            *structural_edges_skipped += 1;
+        } else {
+            semantic_edges.push(edge);
+        }
+    }
+
+    fn active_claim_vad_states_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        claim_id: &EntityId,
+    ) -> Result<Vec<StoredClaimVadState>> {
+        let prefix = edge_kind_prefix(claim_id, EdgeKind::ClaimOf);
+        let mut states = Vec::new();
+        for (scanned, entry) in self.store.edges_in.prefix_iter(txn, &prefix)?.enumerate() {
+            if scanned >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_vad_states"));
+            }
+            let (key, value) = entry?;
+            let state_id = parse_edge_record(key, value)?.target;
+            let Some(raw) = self.store.entities.get(txn, state_id.as_bytes())? else {
+                continue;
+            };
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+                && body.subject == ClaimSubject::Entity(*claim_id)
+                && body.lifecycle == ClaimLifecycleStatus::Active
+            {
+                states.push(StoredClaimVadState {
+                    id: state_id,
+                    header,
+                    body,
+                });
+            }
+        }
+        states.sort_by_key(|state| state.id);
+        Ok(states)
     }
 
     fn annotate_entity_vad(
