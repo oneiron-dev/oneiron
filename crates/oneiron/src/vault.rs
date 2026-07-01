@@ -56,11 +56,12 @@ use crate::types::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN,
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityId, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
-    VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_companion_record_body,
-    decode_edge_value_for_kind, edge_value_layout_for_kind, encode_companion_record_body,
+    EdgeValueLayout, EntityClassification, EntityId, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
+    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
+    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
+    bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -798,8 +799,7 @@ impl Vault {
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if
-    /// this vault has one. Static CORE/semantic/maintenance entries are not
-    /// mirrored here.
+    /// this vault has one. Static registry entries are not mirrored here.
     #[must_use]
     pub fn structural_kind_registration(
         &self,
@@ -1070,34 +1070,50 @@ impl Vault {
     }
 
     pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
-        if self.companion_register_kind_registered() {
-            return Ok(());
-        }
-        match self.store.register_structural_kind(
-            ENTITY_TYPE_COMPANION_REGISTER,
-            COMPANION_REGISTER_SHORT_ID_PREFIX,
-            TypeByteBand::Companion,
-            COMPANION_REGISTER_PACK_ID,
-        ) {
-            Ok(_) => Ok(()),
-            Err(Error::StructuralKindTypeByteCollision(byte))
-                if byte == ENTITY_TYPE_COMPANION_REGISTER
-                    && self.companion_register_kind_registered() =>
-            {
-                Ok(())
-            }
-            Err(error) => Err(error),
+        if self.companion_register_kind_registered()? {
+            Ok(())
+        } else {
+            Err(Error::InvalidEntityType(ENTITY_TYPE_COMPANION_REGISTER))
         }
     }
 
-    fn companion_register_kind_registered(&self) -> bool {
-        self.store
+    fn companion_register_kind_registered(&self) -> Result<bool> {
+        let static_registered = entity_type_registry_entry(ENTITY_TYPE_COMPANION_REGISTER)
+            .is_some_and(|entry| {
+                entry.short_id_prefix == Some(COMPANION_REGISTER_SHORT_ID_PREFIX)
+                    && entry.classification == EntityClassification::Pack
+                    && entry.band == TypeByteBand::Companion
+            });
+        if !static_registered {
+            return Ok(false);
+        }
+
+        if let Some(registration) = self
+            .store
             .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
-            .is_some_and(|registration| {
-                registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
-                    && registration.band == TypeByteBand::Companion
-                    && registration.pack == COMPANION_REGISTER_PACK_ID
-            })
+        {
+            let compatible_legacy_row = registration.short_id_prefix
+                == COMPANION_REGISTER_SHORT_ID_PREFIX
+                && registration.band == TypeByteBand::Companion
+                && registration.pack == COMPANION_REGISTER_PACK_ID;
+            if !compatible_legacy_row {
+                tracing::warn!(
+                    type_byte = ENTITY_TYPE_COMPANION_REGISTER,
+                    short_id_prefix = %registration.short_id_prefix,
+                    pack = %registration.pack,
+                    "companion register static kind collides with incompatible dynamic metadata"
+                );
+                return Err(Error::StructuralKindTypeByteCollision(
+                    ENTITY_TYPE_COMPANION_REGISTER,
+                ));
+            }
+            tracing::warn!(
+                type_byte = ENTITY_TYPE_COMPANION_REGISTER,
+                "companion register static kind found a redundant legacy dynamic metadata row"
+            );
+        }
+
+        Ok(true)
     }
 
     fn read_companion_record_in_txn(

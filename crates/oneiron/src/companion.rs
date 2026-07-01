@@ -1364,6 +1364,12 @@ mod tests {
     fn companion_register_api_persists_updates_exports_and_retires_privately() -> Result<()> {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        assert!(
+            vault
+                .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
+                .is_none(),
+            "companion register is static and must not need a dynamic registry row"
+        );
         let neutral_id = entity(0x51);
         let personal_id = entity(0x52);
         let shared_id = entity(0x53);
@@ -1405,6 +1411,12 @@ mod tests {
         );
 
         vault.create_companion_record(&neutral_id, &neutral, 10)?;
+        assert!(
+            vault
+                .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
+                .is_none(),
+            "fresh companion create must not write a dynamic registry row"
+        );
         vault.create_companion_record(&personal_id, &personal, 11)?;
         vault.create_companion_record(&shared_id, &shared, 12)?;
         assert_eq!(

@@ -319,6 +319,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         band: TypeByteBand::Core,
     },
     EntityTypeRegistryEntry {
+        kind: "COMPANION_REGISTER",
+        type_byte: ENTITY_TYPE_COMPANION_REGISTER,
+        short_id_prefix: Some(COMPANION_REGISTER_SHORT_ID_PREFIX),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Companion,
+    },
+    EntityTypeRegistryEntry {
         kind: "TASK_LIST",
         type_byte: ENTITY_TYPE_TASK_LIST,
         short_id_prefix: Some("tl"),
