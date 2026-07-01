@@ -5937,8 +5937,9 @@ fn all_entity_type_prefixes() {
     // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
     // row (kind id, type byte, short-id prefix, classification, band).
     // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
-    // = core (band 1–63); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = pack
-    // (productivity band 80–99); REDACTION_AUDIT = maintenance (band 120+).
+    // = core (band 1–63); COMPANION_REGISTER = companion pack (band
+    // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = productivity pack
+    // (band 80–99); REDACTION_AUDIT = maintenance (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6065,6 +6066,13 @@ fn all_entity_type_prefixes() {
             Some("nt"),
             EntityClassification::Core,
             TypeByteBand::Core,
+        ),
+        (
+            "COMPANION_REGISTER",
+            64,
+            Some("cr"),
+            EntityClassification::Pack,
+            TypeByteBand::Companion,
         ),
         (
             "TASK_LIST",
@@ -6235,7 +6243,7 @@ fn type_byte_band_allocation_matches_contract() {
 
     // is_structural_kind: false for the semantic byte 0 and the registered
     // maintenance kinds 120/121/123/124/128; true for every REGISTERED core
-    // (1..=16) and pack (80/81/82/83) kind. Byte 122 is reserved for
+    // (1..=16) and pack (64/80/81/82/83) kind. Byte 122 is reserved for
     // AUTHORITY_LOG, and 125..=127 are reserved for future maintenance
     // substrates, but none are registered yet.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
@@ -6278,7 +6286,7 @@ fn type_byte_band_allocation_matches_contract() {
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [80_u8, 81, 82, 83] {
+    for byte in [64_u8, 80, 81, 82, 83] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
@@ -6287,7 +6295,7 @@ fn type_byte_band_allocation_matches_contract() {
     // with the same typed error. (122 is reserved for AUTHORITY_LOG, while
     // 125..=127 are reserved for future maintenance substrates, but all
     // remain unregistered.)
-    for byte in [17_u8, 63, 64, 79, 84, 99, 100, 119, 122, 125, 126, 127, 255] {
+    for byte in [17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6318,9 +6326,19 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         "rejected band claims must not persist registry rows"
     );
 
+    let err = vault
+        .register_structural_kind(64, "np", TypeByteBand::Companion, "notes-pack")
+        .expect_err("companion register byte 64 is statically reserved");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
+    assert!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?.is_empty(),
+        "static-byte rejection must not persist registry rows"
+    );
+
     let companion =
-        vault.register_structural_kind(64, "np", TypeByteBand::Companion, "oneiron-companion")?;
-    assert_eq!(companion.type_byte, 64);
+        vault.register_structural_kind(65, "np", TypeByteBand::Companion, "notes-pack")?;
+    assert_eq!(companion.type_byte, 65);
     assert_eq!(companion.short_id_prefix, "np");
     assert!(entity_type_registry_entry(companion.type_byte).is_none());
 
@@ -6338,10 +6356,10 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
     let err = vault
-        .register_structural_kind(64, "nx", TypeByteBand::Companion, "duplicate-byte")
+        .register_structural_kind(65, "nx", TypeByteBand::Companion, "duplicate-byte")
         .expect_err("duplicate type byte must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
-    assert_matches!(err, Error::StructuralKindTypeByteCollision(64));
+    assert_matches!(err, Error::StructuralKindTypeByteCollision(65));
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
         before,
@@ -6349,7 +6367,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(65, "np", TypeByteBand::Companion, "duplicate-prefix")
+        .register_structural_kind(66, "np", TypeByteBand::Companion, "duplicate-prefix")
         .expect_err("duplicate dynamic prefix must be rejected");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "np");
@@ -6360,10 +6378,21 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
     );
 
     let err = vault
-        .register_structural_kind(65, "tn", TypeByteBand::Companion, "static-prefix")
+        .register_structural_kind(66, "tn", TypeByteBand::Companion, "static-prefix")
         .expect_err("static short-id prefixes must not be reused");
     assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
     assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "tn");
+    assert_eq!(
+        vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
+        before,
+        "static-prefix rejection must not mutate vault_meta"
+    );
+
+    let err = vault
+        .register_structural_kind(66, "cr", TypeByteBand::Companion, "static-prefix")
+        .expect_err("companion register short-id prefix must not be reused");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    assert_matches!(err, Error::StructuralKindPrefixCollision(ref prefix) if prefix == "cr");
     assert_eq!(
         vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?,
         before,
@@ -6381,6 +6410,36 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         "static-byte rejection must not mutate vault_meta"
     );
 
+    Ok(())
+}
+
+#[test]
+fn structural_kind_registry_rejects_legacy_dynamic_companion_byte() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), test_config())?;
+        let key = structural_kind_registry_key(64);
+        let pack = b"legacy-pack";
+        let mut raw = vec![1, 64, 2, 2];
+        raw.extend_from_slice(
+            &u16::try_from(pack.len())
+                .expect("test pack length fits u16")
+                .to_le_bytes(),
+        );
+        raw.extend_from_slice(b"np");
+        raw.extend_from_slice(pack);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(&mut wtxn, &key, &raw)?;
+        wtxn.commit()?;
+    }
+
+    let err = match Vault::open(dir.path(), test_config()) {
+        Ok(_) => panic!("legacy dynamic byte 64 row must fail closed"),
+        Err(err) => err,
+    };
+    assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
+    assert_matches!(err, Error::CorruptedIndex("structural kind registry"));
     Ok(())
 }
 
