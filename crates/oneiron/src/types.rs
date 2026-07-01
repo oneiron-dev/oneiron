@@ -2492,12 +2492,19 @@ impl EiriSessionRagState {
     }
 }
 
+impl Default for EiriSessionRagState {
+    fn default() -> Self {
+        Self::new("default")
+    }
+}
+
 /// Read-only ambient context returned by the companion resume endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionContext {
     pub api_version: String,
     pub counts: BTreeMap<String, u64>,
     pub last_activity: Option<u64>,
+    #[serde(default)]
     pub rag_state: EiriSessionRagState,
 }
 

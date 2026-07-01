@@ -113,6 +113,8 @@ const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
 const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
 const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
+const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
+    &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
 static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
 
 #[derive(Default)]
@@ -2871,7 +2873,7 @@ async fn resume_session_context(
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_eiri_session_rag_state(&server.vault, caller).await,
+        rag_state: current_eiri_session_rag_state(&server.vault, caller, caller).await,
     })
 }
 
@@ -4560,6 +4562,7 @@ struct EiriCompanionControls {
 
 struct EiriContextV4Request {
     memory_board_budget: Option<oneiron::EiriMemoryBoardBudget>,
+    session_scope_id: String,
     session_id: String,
     companion: Option<oneiron::EiriCompanionAssembly>,
 }
@@ -6192,9 +6195,18 @@ fn resolve_eiri_context_v4_request(
         ));
     }
 
+    let session_scope_id = fallback_session_id.trim();
+    validate_eiri_session_id(session_scope_id, "session_rag.scope")?;
+    if is_shared_eiri_session_scope_id(session_scope_id) {
+        return Err(ApiError::bad_request(
+            "session_rag.session_id requires an isolated caller identity",
+            Some("session_rag.session_id"),
+        ));
+    }
+
     let session_id = session_rag
         .and_then(|state| state.session_id.as_deref())
-        .unwrap_or(fallback_session_id)
+        .unwrap_or(session_scope_id)
         .trim();
     validate_eiri_session_id(session_id, "session_rag.session_id")?;
 
@@ -6204,13 +6216,14 @@ fn resolve_eiri_context_v4_request(
         .then(|| eiri_memory_board_budget(memory_board, limit, default_selected_edges));
 
     let companion = Some(oneiron::EiriCompanionAssembly {
-        caller: Some(fallback_session_id.to_owned()),
+        caller: Some(session_id.to_owned()),
         person_ref: companion.and_then(|controls| controls.person_ref.clone()),
         persona_ref: companion.and_then(|controls| controls.persona_ref.clone()),
     });
 
     Ok(Some(EiriContextV4Request {
         memory_board_budget,
+        session_scope_id: session_scope_id.to_owned(),
         session_id: session_id.to_owned(),
         companion,
     }))
@@ -6232,6 +6245,10 @@ fn validate_eiri_session_id(session_id: &str, field: &'static str) -> Result<(),
     Ok(())
 }
 
+fn is_shared_eiri_session_scope_id(session_scope_id: &str) -> bool {
+    SHARED_EIRI_SESSION_SCOPE_IDS.contains(&session_scope_id)
+}
+
 fn eiri_memory_board_budget(
     controls: Option<&EiriMemoryBoardControls>,
     limit: usize,
@@ -6247,20 +6264,24 @@ fn eiri_memory_board_budget(
         retrieval_defaults.turns,
         retrieval_defaults.summaries,
         retrieval_defaults.facets,
-        retrieval_defaults.other,
+        0,
         retrieval_defaults.other,
     );
     let Some(slots) = controls.and_then(|controls| controls.slots.as_ref()) else {
         return defaults;
     };
 
+    let companions = slots.companions.unwrap_or(defaults.companions);
+    let other = slots
+        .other
+        .unwrap_or_else(|| retrieval_defaults.other.saturating_sub(companions));
     oneiron::EiriMemoryBoardBudget::new(
         slots.claims.unwrap_or(defaults.claims),
         slots.turns.unwrap_or(defaults.turns),
         slots.summaries.unwrap_or(defaults.summaries),
         slots.facets.unwrap_or(defaults.facets),
-        slots.companions.unwrap_or(defaults.companions),
-        slots.other.unwrap_or(defaults.other),
+        companions,
+        other,
     )
 }
 
@@ -6268,15 +6289,16 @@ fn eiri_session_rag_store() -> &'static Mutex<EiriSessionRagStore> {
     EIRI_SESSION_RAG_STATE.get_or_init(|| Mutex::new(EiriSessionRagStore::default()))
 }
 
-fn eiri_session_rag_key(vault: &oneiron::Vault, session_id: &str) -> String {
-    format!("{vault:p}:{session_id}")
+fn eiri_session_rag_key(vault: &oneiron::Vault, scope_id: &str, session_id: &str) -> String {
+    format!("{vault:p}:{scope_id}:{session_id}")
 }
 
 async fn current_eiri_session_rag_state(
     vault: &oneiron::Vault,
+    scope_id: &str,
     session_id: &str,
 ) -> oneiron::EiriSessionRagState {
-    let key = eiri_session_rag_key(vault, session_id);
+    let key = eiri_session_rag_key(vault, scope_id, session_id);
     eiri_session_rag_store()
         .lock()
         .await
@@ -6285,11 +6307,12 @@ async fn current_eiri_session_rag_state(
 
 async fn advance_eiri_session_rag_state(
     vault: &oneiron::Vault,
+    scope_id: &str,
     session_id: &str,
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
 ) -> oneiron::EiriSessionRagState {
-    let key = eiri_session_rag_key(vault, session_id);
+    let key = eiri_session_rag_key(vault, scope_id, session_id);
     eiri_session_rag_store()
         .lock()
         .await
@@ -6326,7 +6349,16 @@ async fn run_context_pack_builder(
             )
         });
     let session_rag = if let Some(context) = eiri_context.as_ref() {
-        Some(advance_eiri_session_rag_state(vault, &context.session_id, &pack, &evidence).await)
+        Some(
+            advance_eiri_session_rag_state(
+                vault,
+                &context.session_scope_id,
+                &context.session_id,
+                &pack,
+                &evidence,
+            )
+            .await,
+        )
     } else {
         None
     };
@@ -12854,6 +12886,39 @@ mod tests {
     }
 
     #[test]
+    fn eiri_memory_board_default_other_budget_matches_retrieval_budget() {
+        let limit = 24;
+        let selected_edges = 8;
+        let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
+            limit,
+            oneiron::TokenAllocation::default(),
+            selected_edges,
+        );
+
+        let defaults = eiri_memory_board_budget(None, limit, selected_edges);
+        assert_eq!(defaults.companions, 0);
+        assert_eq!(defaults.other, retrieval_defaults.other);
+        assert_eq!(
+            defaults.companions + defaults.other,
+            retrieval_defaults.other
+        );
+
+        let split = eiri_memory_board_budget(
+            Some(&EiriMemoryBoardControls {
+                enabled: None,
+                slots: Some(EiriMemoryBoardSlotControls {
+                    companions: Some(2),
+                    ..Default::default()
+                }),
+            }),
+            limit,
+            selected_edges,
+        );
+        assert_eq!(split.companions, 2);
+        assert_eq!(split.other, retrieval_defaults.other.saturating_sub(2));
+    }
+
+    #[test]
     fn eiri_session_rag_store_evicts_oldest_entries_at_capacity() {
         let mut store = EiriSessionRagStore::default();
         for index in 0..=EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
@@ -12888,6 +12953,7 @@ mod tests {
                 .method("POST")
                 .uri("/api/context-pack")
                 .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-caller", "oversized-session-test")
                 .body(Body::from(request.to_string()))
                 .expect("request"),
         )
@@ -12898,6 +12964,76 @@ mod tests {
             body["details"]["field"],
             Value::from("session_rag.session_id")
         );
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_rejects_shared_default_session_scope() {
+        let (_dir, server) = test_server();
+        let request = json!({
+            "query": "eiri v4 needle",
+            "context_version": "v4",
+            "session_rag": { "session_id": "explicit-session" }
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(request.to_string()))
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["details"]["field"],
+            Value::from("session_rag.session_id")
+        );
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_session_state_is_partitioned_by_caller() {
+        let (_dir, server) = test_server();
+        let request = json!({
+            "query": "eiri v4 partition needle",
+            "context_version": "v4",
+            "session_rag": { "session_id": "shared-session-name" }
+        });
+
+        let eiri_request = |caller: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-caller", caller)
+                .body(Body::from(request.to_string()))
+                .expect("request")
+        };
+
+        let (status, caller_a_first) = route_json(server.clone(), eiri_request("caller-a")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            caller_a_first["memory_board"]["companion"]["caller"],
+            Value::from("shared-session-name")
+        );
+        assert_eq!(
+            caller_a_first["session_rag"]["session_id"],
+            Value::from("shared-session-name")
+        );
+        assert_eq!(caller_a_first["session_rag"]["query_count"], Value::from(1));
+
+        let (status, caller_a_second) = route_json(server.clone(), eiri_request("caller-a")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            caller_a_second["session_rag"]["query_count"],
+            Value::from(2)
+        );
+
+        let (status, caller_b_first) = route_json(server, eiri_request("caller-b")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(caller_b_first["session_rag"]["query_count"], Value::from(1));
     }
 
     #[tokio::test]
