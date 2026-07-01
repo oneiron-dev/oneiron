@@ -7327,6 +7327,47 @@ fn entity_header(vault: &Vault, id: &EntityId) -> Result<EntityMetadataHeader> {
     EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))
 }
 
+fn coping_outcome_fixture_body(
+    affected_person: EntityId,
+    strategy_ref: EntityId,
+    strategy: CopingStrategy,
+    vad_delta: VadDelta,
+    confidence: f32,
+    lifecycle: ClaimLifecycleStatus,
+    valid_from: u64,
+) -> Result<ClaimBody> {
+    let value = CopingOutcomeValue::new(
+        affected_person,
+        strategy_ref,
+        strategy,
+        vad_delta,
+        confidence,
+        1,
+    )?;
+    let mut body = ClaimBody::new(
+        COPING_OUTCOME_PREDICATE,
+        ClaimSubject::Entity(affected_person),
+        coping_outcome_value(&value),
+        confidence,
+        ClaimApprovalStatus::Auto,
+        lifecycle,
+    );
+    body.source = Some(ClaimSource::Inferred);
+    body.valid_from = Some(valid_from);
+    if lifecycle != ClaimLifecycleStatus::Active {
+        body.valid_to = Some(valid_from + 1);
+    }
+    Ok(body)
+}
+
+fn assert_f32_close(actual: f32, expected: f32) {
+    const EPSILON: f32 = 0.000_001;
+    assert!(
+        (actual - expected).abs() < EPSILON,
+        "expected {expected}, got {actual}"
+    );
+}
+
 #[test]
 fn claim_vad_consolidation_populates_semantic_edges_from_fixture_turns() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -7811,6 +7852,278 @@ fn claim_vad_reappraisal_clears_state_when_turn_evidence_disappears() -> Result<
         active_claim_vad_states.is_empty(),
         "removed evidence must not leave an active claim-VAD state"
     );
+    Ok(())
+}
+
+#[test]
+fn coping_outcome_claim_validation_requires_bitemporal_confidence() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let strategy_ref = EntityId::now();
+    let outcome = EntityId::now();
+
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
+
+    let value = CopingOutcomeValue::new(
+        person,
+        strategy_ref,
+        CopingStrategy::SitSel,
+        VadDelta::new(0.2, -0.1, 0.1)?,
+        0.7,
+        1,
+    )?;
+    let missing_valid_time = ClaimBody::new(
+        COPING_OUTCOME_PREDICATE,
+        ClaimSubject::Entity(person),
+        coping_outcome_value(&value),
+        value.confidence(),
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let err = vault
+        .put_claim(
+            &outcome,
+            &missing_valid_time,
+            test_time_range(10, u64::MAX),
+            10,
+        )
+        .expect_err("coping outcomes must carry valid_from");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("coping.outcome valid_from is required")
+    );
+
+    let mut mismatched_confidence = ClaimBody::new(
+        COPING_OUTCOME_PREDICATE,
+        ClaimSubject::Entity(person),
+        coping_outcome_value(&value),
+        0.6,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    mismatched_confidence.valid_from = Some(10);
+    let err = vault
+        .put_claim(
+            &outcome,
+            &mismatched_confidence,
+            test_time_range(10, u64::MAX),
+            10,
+        )
+        .expect_err("wrapper confidence must mirror the value");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("coping.outcome wrapper confidence must mirror value confidence")
+    );
+    Ok(())
+}
+
+#[test]
+fn coping_outcome_update_from_later_turn_vad_delta_supersedes_previous_claim() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let baseline_turn = EntityId::now();
+    let later_turn = EntityId::now();
+    let outcome = EntityId::now();
+
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &baseline_turn,
+        10,
+        Vad {
+            valence: -0.5,
+            arousal: 0.9,
+            dominance: 0.2,
+        },
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &later_turn,
+        20,
+        Vad {
+            valence: 0.3,
+            arousal: 0.4,
+            dominance: 0.7,
+        },
+    )?;
+
+    let body = coping_outcome_fixture_body(
+        person,
+        baseline_turn,
+        CopingStrategy::CogChg,
+        VadDelta::new(-0.2, 0.2, -0.1)?,
+        0.4,
+        ClaimLifecycleStatus::Active,
+        50,
+    )?;
+    vault.put_claim(&outcome, &body, test_time_range(50, u64::MAX), 50)?;
+
+    let update = vault.update_coping_outcome_from_turn_vad(
+        &outcome,
+        &baseline_turn,
+        &later_turn,
+        0.8,
+        200,
+    )?;
+
+    assert_eq!(update.prior_claim_id, outcome);
+    assert_eq!(update.superseded_claim_ids, vec![outcome]);
+    assert_ne!(update.active_claim_id, outcome);
+    assert_eq!(update.value.strategy(), CopingStrategy::CogChg);
+    assert!(update.value.successful());
+    assert_eq!(update.value.observed_n(), 2);
+    assert_f32_close(update.value.vad_delta().valence(), 0.3);
+    assert_f32_close(update.value.vad_delta().arousal(), -0.15);
+    assert_f32_close(update.value.vad_delta().dominance(), 0.2);
+    assert_f32_close(update.value.confidence(), 0.6);
+
+    let old = vault
+        .get_claim(&outcome)?
+        .expect("superseded outcome remains readable");
+    assert_eq!(old.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old.valid_to, Some(200));
+    assert_eq!(entity_header(&vault, &outcome)?.occurred_end, 200);
+
+    let active = vault
+        .get_claim(&update.active_claim_id)?
+        .expect("updated outcome claim");
+    assert_eq!(active.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(active.valid_from, Some(200));
+    assert_eq!(
+        active.confidence.to_bits(),
+        update.value.confidence().to_bits()
+    );
+    assert!(active.evidence.is_some());
+    assert_eq!(
+        decode_coping_outcome_claim(&active)?.expect("typed outcome"),
+        update.value
+    );
+    assert!(vault.edge_exists(&update.active_claim_id, EdgeKind::ClaimOf, &person)?);
+    assert!(vault.edge_exists(&update.active_claim_id, EdgeKind::Supersedes, &outcome)?);
+    Ok(())
+}
+
+#[test]
+fn coping_outcome_retrieval_queries_prior_successful_strategies() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let other_person = EntityId::now();
+    let ref_a = EntityId::now();
+    let ref_b = EntityId::now();
+    let ref_c = EntityId::now();
+    let success_old = EntityId::now();
+    let failed = EntityId::now();
+    let success_new = EntityId::now();
+    let superseded = EntityId::now();
+    let other_success = EntityId::now();
+
+    for id in [person, other_person] {
+        vault.put_entity(&id, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"person")?;
+    }
+
+    vault.put_claim(
+        &success_old,
+        &coping_outcome_fixture_body(
+            person,
+            ref_a,
+            CopingStrategy::SitSel,
+            VadDelta::new(0.2, 0.0, 0.0)?,
+            0.7,
+            ClaimLifecycleStatus::Active,
+            10,
+        )?,
+        test_time_range(10, u64::MAX),
+        10,
+    )?;
+    vault.put_claim(
+        &failed,
+        &coping_outcome_fixture_body(
+            person,
+            ref_b,
+            CopingStrategy::AttDep,
+            VadDelta::new(-0.1, 0.1, -0.1)?,
+            0.8,
+            ClaimLifecycleStatus::Active,
+            20,
+        )?,
+        test_time_range(20, u64::MAX),
+        20,
+    )?;
+    vault.put_claim(
+        &success_new,
+        &coping_outcome_fixture_body(
+            person,
+            ref_c,
+            CopingStrategy::ResMod,
+            VadDelta::new(0.0, -0.2, 0.0)?,
+            0.9,
+            ClaimLifecycleStatus::Active,
+            30,
+        )?,
+        test_time_range(30, u64::MAX),
+        30,
+    )?;
+    vault.put_claim(
+        &superseded,
+        &coping_outcome_fixture_body(
+            person,
+            EntityId::now(),
+            CopingStrategy::ERFlex,
+            VadDelta::new(0.3, 0.0, 0.0)?,
+            0.9,
+            ClaimLifecycleStatus::Superseded,
+            40,
+        )?,
+        test_time_range(40, 41),
+        40,
+    )?;
+    vault.put_claim(
+        &other_success,
+        &coping_outcome_fixture_body(
+            other_person,
+            EntityId::now(),
+            CopingStrategy::SitMod,
+            VadDelta::new(0.4, 0.0, 0.0)?,
+            0.9,
+            ClaimLifecycleStatus::Active,
+            50,
+        )?,
+        test_time_range(50, u64::MAX),
+        50,
+    )?;
+
+    let records = vault
+        .query()
+        .prior_successful_coping_strategies(&person, 10)?;
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].claim_id, success_new);
+    assert_eq!(records[0].value.strategy(), CopingStrategy::ResMod);
+    assert_eq!(records[1].claim_id, success_old);
+    assert_eq!(records[1].value.strategy(), CopingStrategy::SitSel);
+    assert!(
+        records
+            .iter()
+            .all(|record| record.value.affected_person() == person && record.value.successful())
+    );
+
+    let limited = vault
+        .query()
+        .prior_successful_coping_strategies(&person, 1)?;
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].claim_id, success_new);
     Ok(())
 }
 

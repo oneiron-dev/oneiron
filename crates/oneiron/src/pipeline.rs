@@ -5,6 +5,10 @@ use heed::types::Bytes;
 use heed::{Database, RoTxn};
 
 use crate::Vault;
+use crate::affect::coping::{
+    COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
+    validate_coping_outcome_claim_structure,
+};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
@@ -644,6 +648,49 @@ impl<'a> PipelineBuilder<'a> {
     pub fn world(mut self, scope: WorldScope) -> Self {
         self.world_scope = scope;
         self
+    }
+
+    pub fn prior_successful_coping_strategies(
+        self,
+        affected_person: &EntityId,
+        limit: usize,
+    ) -> Result<Vec<CopingOutcomeRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut records = Vec::new();
+        for claim_id in self.vault.claims_for_subject(affected_person)? {
+            let Some(body) = self.vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {
+                continue;
+            }
+            validate_coping_outcome_claim_structure(&body)?;
+            let Some(value) = decode_coping_outcome_claim(&body)? else {
+                continue;
+            };
+            if !value.successful() {
+                continue;
+            }
+            records.push(CopingOutcomeRecord {
+                claim_id,
+                learned_at: self.vault.get_learned_at(&claim_id)?,
+                valid_from: body.valid_from.ok_or(Error::InvalidClaimBody(
+                    "coping.outcome valid_from is required",
+                ))?,
+                valid_to: body.valid_to,
+                value,
+            });
+        }
+        records.sort_by(|a, b| {
+            b.learned_at
+                .cmp(&a.learned_at)
+                .then_with(|| b.claim_id.as_bytes().cmp(a.claim_id.as_bytes()))
+        });
+        records.truncate(limit);
+        Ok(records)
     }
 
     pub fn run(self) -> Result<Vec<ScoredEntity>> {
