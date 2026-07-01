@@ -17,10 +17,12 @@ use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::types::{
     CompanionScope, CompanionSubject, ContextEntity, ContextPack, ContextPackRetrievalBudget,
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
-    companion::CompanionLifecycleEvent, decode_companion_record_body,
+    EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeConfirmationStatus, EdgeInfo,
+    EdgeKind, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
+    EiriMemoryBoardSlot, EiriMemoryBoardSource, EmptyContext, EmptyReason, EntityId, FieldProfile,
+    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
+    TimeRange, TokenAllocation, companion::CompanionLifecycleEvent, decode_companion_record_body,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -711,6 +713,89 @@ impl<'a> ContextPackBuilder<'a> {
             run_id: telemetry_run_id,
         })
     }
+}
+
+/// Builds the Eiri Context v4 memory board from an already assembled pack.
+///
+/// Rows are sorted by slot, source, descending score, and entity id before slot
+/// budgets are applied. That order is independent of `HashMap` iteration and
+/// remains stable when retrieval returns equal-score rows.
+#[must_use]
+pub fn assemble_eiri_memory_board(
+    pack: &ContextPack,
+    budget: EiriMemoryBoardBudget,
+    companion: Option<EiriCompanionAssembly>,
+) -> EiriMemoryBoard {
+    let mut rows = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
+    rows.extend(
+        pack.results
+            .iter()
+            .map(|entity| eiri_memory_board_row(entity, EiriMemoryBoardSource::Result)),
+    );
+    rows.extend(
+        pack.neighbors
+            .iter()
+            .map(|entity| eiri_memory_board_row(entity, EiriMemoryBoardSource::Neighbor)),
+    );
+
+    rows.sort_by(eiri_memory_board_row_order);
+
+    let mut used = EiriMemoryBoardBudget::default();
+    let mut filtered = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        if used.get(row.slot) >= budget.get(row.slot) {
+            continue;
+        }
+        used.increment(row.slot);
+        row.row_index = filtered.len();
+        filtered.push(row);
+    }
+
+    EiriMemoryBoard {
+        version: EIRI_CONTEXT_VERSION_V4.to_owned(),
+        budget,
+        rows: filtered,
+        companion,
+    }
+}
+
+fn eiri_memory_board_row(
+    entity: &ContextEntity,
+    source: EiriMemoryBoardSource,
+) -> EiriMemoryBoardRow {
+    EiriMemoryBoardRow {
+        row_index: 0,
+        slot: eiri_memory_board_slot(entity.entity_type),
+        source,
+        id: entity.id.to_hex(),
+        short_id: entity.short_id.clone(),
+        content_hash: format!("{:02x}", entity.content_hash),
+        entity_type: entity.entity_type,
+        score: entity.score,
+    }
+}
+
+fn eiri_memory_board_slot(entity_type: u8) -> EiriMemoryBoardSlot {
+    match entity_type {
+        ENTITY_TYPE_CLAIM => EiriMemoryBoardSlot::Claims,
+        ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE => EiriMemoryBoardSlot::Turns,
+        ENTITY_TYPE_SUMMARY => EiriMemoryBoardSlot::Summaries,
+        ENTITY_TYPE_FACET => EiriMemoryBoardSlot::Facets,
+        ENTITY_TYPE_COMPANION_REGISTER => EiriMemoryBoardSlot::Companions,
+        _ => EiriMemoryBoardSlot::Other,
+    }
+}
+
+fn eiri_memory_board_row_order(
+    left: &EiriMemoryBoardRow,
+    right: &EiriMemoryBoardRow,
+) -> std::cmp::Ordering {
+    left.slot
+        .sort_rank()
+        .cmp(&right.slot.sort_rank())
+        .then_with(|| left.source.sort_rank().cmp(&right.source.sort_rank()))
+        .then_with(|| right.score.total_cmp(&left.score))
+        .then_with(|| left.id.cmp(&right.id))
 }
 
 fn context_pack_validation_error(id: EntityId, reason: &'static str) -> Error {
@@ -1776,6 +1861,122 @@ mod tests {
             .put(id, entity_type, TimeRange { start: 1, end: 1 }, 1, &payload)
             .text(id, &[("body", text)])
             .commit()
+    }
+
+    fn empty_pack_stats() -> PackStats {
+        PackStats {
+            candidates_considered: 0,
+            signals_used: Vec::new(),
+            query_time_us: 0,
+            entities_hydrated: 0,
+            neighbors_hydrated: 0,
+            cosine_ghosts_dampened: 0,
+            claims_suppressed: 0,
+            items_truncated: crate::types::PackItemAccounting::item_budget(),
+            items_dropped: crate::types::PackItemAccounting::token_budget(),
+        }
+    }
+
+    fn board_entity(seed: u8, entity_type: u8, score: f32, short_id: &str) -> ContextEntity {
+        ContextEntity {
+            id: EntityId::from_bytes_unchecked([seed; 16]),
+            short_id: short_id.to_owned(),
+            content_hash: seed,
+            entity_type,
+            score,
+            fields: None,
+            edges: None,
+            vector: None,
+        }
+    }
+
+    #[test]
+    fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
+        let pack = ContextPack {
+            results: vec![
+                board_entity(0x41, ENTITY_TYPE_TURN, 0.25, "tn41"),
+                board_entity(0x21, ENTITY_TYPE_CLAIM, 0.50, "cl21"),
+                board_entity(0x22, ENTITY_TYPE_CLAIM, 1.0, "cl22"),
+                board_entity(0x51, 42, 0.75, "zz51"),
+                board_entity(0x61, ENTITY_TYPE_COMPANION_REGISTER, 0.125, "cp61"),
+            ],
+            neighbors: vec![board_entity(0x42, ENTITY_TYPE_TURN, 0.875, "tn42")],
+            stats: empty_pack_stats(),
+            empty: None,
+        };
+
+        let board = assemble_eiri_memory_board(
+            &pack,
+            EiriMemoryBoardBudget::new(2, 1, 0, 0, 1, 0),
+            Some(EiriCompanionAssembly {
+                caller: Some("default".to_owned()),
+                person_ref: None,
+                persona_ref: Some("persona-alpha".to_owned()),
+            }),
+        );
+
+        let value = serde_json::to_value(&board).expect("memory board serializes");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "version": "v4",
+                "budget": {
+                    "claims": 2,
+                    "turns": 1,
+                    "summaries": 0,
+                    "facets": 0,
+                    "companions": 1,
+                    "other": 0
+                },
+                "rows": [
+                    {
+                        "row_index": 0,
+                        "slot": "claims",
+                        "source": "result",
+                        "id": "22222222222222222222222222222222",
+                        "short_id": "cl22",
+                        "content_hash": "22",
+                        "entity_type": ENTITY_TYPE_CLAIM,
+                        "score": 1.0
+                    },
+                    {
+                        "row_index": 1,
+                        "slot": "claims",
+                        "source": "result",
+                        "id": "21212121212121212121212121212121",
+                        "short_id": "cl21",
+                        "content_hash": "21",
+                        "entity_type": ENTITY_TYPE_CLAIM,
+                        "score": 0.50
+                    },
+                    {
+                        "row_index": 2,
+                        "slot": "turns",
+                        "source": "result",
+                        "id": "41414141414141414141414141414141",
+                        "short_id": "tn41",
+                        "content_hash": "41",
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "score": 0.25
+                    },
+                    {
+                        "row_index": 3,
+                        "slot": "companions",
+                        "source": "result",
+                        "id": "61616161616161616161616161616161",
+                        "short_id": "cp61",
+                        "content_hash": "61",
+                        "entity_type": ENTITY_TYPE_COMPANION_REGISTER,
+                        "score": 0.125
+                    }
+                ],
+                "companion": {
+                    "caller": "default",
+                    "person_ref": null,
+                    "persona_ref": "persona-alpha"
+                }
+            })
+        );
     }
 
     #[test]

@@ -1822,6 +1822,22 @@
               }
             ]
           },
+          "companion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriCompanionControls"
+              }
+            ]
+          },
+          "context_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "depth": {
             "oneOf": [
               {
@@ -1854,6 +1870,16 @@
             "default": 50,
             "type": "integer"
           },
+          "memory_board": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriMemoryBoardControls"
+              }
+            ]
+          },
           "policy": {
             "oneOf": [
               {
@@ -1878,6 +1904,16 @@
             "type": [
               "array",
               "null"
+            ]
+          },
+          "session_rag": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriSessionRagControls"
+              }
             ]
           },
           "time": {
@@ -1905,6 +1941,12 @@
       },
       "CoreContextPackResponse": {
         "properties": {
+          "context_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "empty": {
             "type": [
               "object",
@@ -1913,6 +1955,16 @@
           },
           "evidence": {
             "$ref": "#/components/schemas/CoreContextPackEvidence"
+          },
+          "memory_board": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreEiriMemoryBoard"
+              }
+            ]
           },
           "neighbors": {
             "items": {
@@ -1925,6 +1977,16 @@
               "$ref": "#/components/schemas/CoreContextEntity"
             },
             "type": "array"
+          },
+          "session_rag": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreEiriSessionRagState"
+              }
+            ]
           },
           "state": {
             "$ref": "#/components/schemas/CoreContextPackState"
@@ -2179,6 +2241,185 @@
         },
         "required": [
           "body"
+        ],
+        "type": "object"
+      },
+      "CoreEiriCompanionAssembly": {
+        "properties": {
+          "caller": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreEiriMemoryBoard": {
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/CoreEiriMemoryBoardBudget"
+          },
+          "companion": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreEiriCompanionAssembly"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CoreEiriMemoryBoardRow"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "budget",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "CoreEiriMemoryBoardBudget": {
+        "properties": {
+          "claims": {
+            "type": "integer"
+          },
+          "companions": {
+            "type": "integer"
+          },
+          "facets": {
+            "type": "integer"
+          },
+          "other": {
+            "type": "integer"
+          },
+          "summaries": {
+            "type": "integer"
+          },
+          "turns": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claims",
+          "turns",
+          "summaries",
+          "facets",
+          "companions",
+          "other"
+        ],
+        "type": "object"
+      },
+      "CoreEiriMemoryBoardRow": {
+        "properties": {
+          "content_hash": {
+            "type": "string"
+          },
+          "entity_type": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "row_index": {
+            "type": "integer"
+          },
+          "score": {
+            "format": "float",
+            "type": "number"
+          },
+          "short_id": {
+            "type": "string"
+          },
+          "slot": {
+            "$ref": "#/components/schemas/CoreEiriMemoryBoardSlot"
+          },
+          "source": {
+            "$ref": "#/components/schemas/CoreEiriMemoryBoardSource"
+          }
+        },
+        "required": [
+          "row_index",
+          "slot",
+          "source",
+          "id",
+          "short_id",
+          "content_hash",
+          "entity_type",
+          "score"
+        ],
+        "type": "object"
+      },
+      "CoreEiriMemoryBoardSlot": {
+        "enum": [
+          "claims",
+          "turns",
+          "summaries",
+          "facets",
+          "companions",
+          "other"
+        ],
+        "type": "string"
+      },
+      "CoreEiriMemoryBoardSource": {
+        "enum": [
+          "result",
+          "neighbor"
+        ],
+        "type": "string"
+      },
+      "CoreEiriSessionRagState": {
+        "properties": {
+          "last_result_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_retrieval_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "query_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "revision",
+          "query_count",
+          "last_result_ids"
         ],
         "type": "object"
       },
@@ -2736,6 +2977,96 @@
           "exact"
         ],
         "type": "string"
+      },
+      "EiriCompanionControls": {
+        "properties": {
+          "person_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriMemoryBoardControls": {
+        "properties": {
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "slots": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EiriMemoryBoardSlotControls"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriMemoryBoardSlotControls": {
+        "properties": {
+          "claims": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "companions": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "facets": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "other": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summaries": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "turns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "EiriSessionRagControls": {
+        "properties": {
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "ErrorCode": {
         "enum": [
