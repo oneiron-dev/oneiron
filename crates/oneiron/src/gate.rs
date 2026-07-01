@@ -3763,6 +3763,56 @@ mod tests {
 
     #[cfg(feature = "sync")]
     #[test]
+    fn replicated_access_grant_is_rejected_and_cannot_mint_local_grant() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let principal = test_id(0x90);
+        let person = test_id(0x91);
+        let persona = test_id(0x92);
+        let data = crate::encode_access_grant_body(&crate::AccessGrant::companion_profile_read(
+            principal, person, persona, 1,
+        ))?;
+        let occurred = test_time(1);
+
+        let batch_id = test_id(0x93);
+        let err = vault
+            .batch()
+            .put_replicated(&batch_id, ENTITY_TYPE_ACCESS_GRANT, occurred, 1, &data)
+            .commit()
+            .expect_err("replicated access grants must be rejected");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_ACCESS_GRANT),
+            "expected access grant maintenance rejection, got {err:?}"
+        );
+        assert!(vault.get_raw(&batch_id)?.is_none());
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None
+        );
+
+        let txn_id = test_id(0x94);
+        let err = vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .batch_in()
+                    .put_replicated(&txn_id, ENTITY_TYPE_ACCESS_GRANT, occurred, 1, &data)
+                    .apply(wtxn)
+            })
+            .expect_err("txn replicated access grants must be rejected");
+        assert!(
+            matches!(err, Error::MaintenanceKindNotWritable(kind) if kind == ENTITY_TYPE_ACCESS_GRANT),
+            "expected access grant maintenance rejection, got {err:?}"
+        );
+        assert!(vault.get_raw(&txn_id)?.is_none());
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
     fn forward_rematerialize_quarantines_replicated_policy_manifest() -> Result<()> {
         use crate::sync::bridge::Materializer;
         use crate::sync::loro_support::map_insert_bytes;
@@ -3794,5 +3844,49 @@ mod tests {
         );
 
         assert_auto_source_rejected(&vault, 0x86, ClaimSource::ToolOutput)
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn forward_rematerialize_quarantines_replicated_access_grant() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::map_insert_bytes;
+        use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::forward_rematerialize;
+
+        let (_tmp, vault) = temp_vault();
+        let principal = test_id(0x95);
+        let person = test_id(0x96);
+        let persona = test_id(0x97);
+        let data = crate::encode_access_grant_body(&crate::AccessGrant::companion_profile_read(
+            principal, person, persona, 1,
+        ))?;
+        let id = test_id(0x98);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("local", &window_key);
+        let blob = access_grant_blob(&data);
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)
+            .expect("insert access grant into CRDT");
+        doc.commit();
+
+        let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+        assert_eq!(materialized, 0);
+        assert!(vault.get_raw(&id)?.is_none());
+        assert_eq!(
+            vault.companion_profile_access_grant(&principal, &person, &persona)?,
+            None
+        );
+        let records = quarantined_records(&vault)?;
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.container == QuarantineContainer::Entities
+                    && record.reason_code == "MaintenanceKindNotWritable"
+            }),
+            "rejected access grant replay should be quarantined, got {records:?}"
+        );
+
+        Ok(())
     }
 }
