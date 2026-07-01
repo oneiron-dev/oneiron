@@ -181,6 +181,34 @@ pub(crate) fn companion_record_id_for_key_in_txn(
     Ok(None)
 }
 
+pub(crate) fn companion_record_any_id_for_key_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &CompanionRecordKey,
+) -> Result<Option<EntityId>> {
+    key.validate()?;
+    for index_entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+    {
+        let (type_key, _) = index_entry?;
+        let id = entity_id_from_type_index_key(type_key)?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if record.key() == *key {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn vad_annotation_meta_key(
     entity_type: u8,
     id: &EntityId,
@@ -928,11 +956,12 @@ impl Vault {
                 "companion record create must be active",
             ));
         }
-        let data = encode_companion_record_body(record)?;
+        let record = record.created_at(learned_at)?;
+        let data = encode_companion_record_body(&record)?;
         let key = record.key();
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
-            || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
+            || companion_record_any_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
         {
             return Err(Error::CompanionRecordAlreadyExists);
         }
@@ -958,7 +987,6 @@ impl Vault {
                 "companion record update must be active",
             ));
         }
-        let data = encode_companion_record_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_companion_record_in_txn(&wtxn, id)?;
         if existing.lifecycle != ClaimLifecycleStatus::Active {
@@ -976,9 +1004,17 @@ impl Vault {
                 "companion record export cannot be downgraded to local_only",
             ));
         }
+        let mut updated = record.clone();
+        updated.lifecycle_events = existing.lifecycle_events;
+        if updated.lifecycle_events.is_empty() {
+            updated.lifecycle_events.push(
+                crate::types::companion::CompanionLifecycleEvent::created(learned_at),
+            );
+        }
+        let data = encode_companion_record_body(&updated)?;
         self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
         wtxn.commit()?;
-        Ok(record.clone())
+        Ok(updated)
     }
 
     /// Reads and decodes one companion register record by entity id.
@@ -996,7 +1032,9 @@ impl Vault {
     }
 
     /// Retires a companion register record by rewriting it as retracted and
-    /// stamping an auditable lifecycle event.
+    /// stamping an auditable lifecycle event. Repeating retire on an already
+    /// retracted record is an idempotent no-op that returns the stored record
+    /// without adding another lifecycle event.
     pub fn retire_companion_record(
         &self,
         id: &EntityId,
@@ -1024,13 +1062,31 @@ impl Vault {
         &self,
         retired_id: &EntityId,
         revived_id: &EntityId,
+        record: &CompanionRecord,
         revived_at: u64,
     ) -> Result<CompanionRecord> {
         self.ensure_companion_register_kind()?;
+        if record.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody(
+                "companion record revive payload must be active",
+            ));
+        }
         let mut wtxn = self.store.env.write_txn()?;
-        let revived = self
-            .read_companion_record_in_txn(&wtxn, retired_id)?
-            .revived_at(revived_at)?;
+        let retired = self.read_companion_record_in_txn(&wtxn, retired_id)?;
+        if retired.lifecycle != ClaimLifecycleStatus::Retracted {
+            return Err(Error::InvalidClaimBody(
+                "companion record revive requires retired record",
+            ));
+        }
+        if retired.key() != record.key() {
+            return Err(Error::InvalidClaimBody(
+                "companion record revive key cannot change",
+            ));
+        }
+        let mut revived_seed = record.clone();
+        revived_seed.lifecycle = ClaimLifecycleStatus::Retracted;
+        revived_seed.lifecycle_events = retired.lifecycle_events;
+        let revived = revived_seed.revived_at(revived_at)?;
         let key = revived.key();
         if self
             .store

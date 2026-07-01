@@ -558,7 +558,8 @@ mod tests {
             ),
             CompanionExportClassification::Portable,
         );
-        let body = encode_companion_record_body(&record).unwrap();
+        let body =
+            encode_companion_record_body(&record.created_at(1_777_000_000).unwrap()).unwrap();
 
         for view in [View::Standard, View::Full] {
             let value = project_entity_parts(
