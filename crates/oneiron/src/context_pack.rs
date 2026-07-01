@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
+use crate::types::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::types::{
     CompanionScope, CompanionSubject, ContextEntity, ContextPack, ContextPackRetrievalBudget,
     EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET,
@@ -43,6 +44,8 @@ const PACK_VALIDATION_DELETED_PAYLOAD: &str = "deleted payload reference";
 const PACK_VALIDATION_QUARANTINED_PAYLOAD: &str = "quarantined payload reference";
 const PACK_QUARANTINE_ROW: &str = "sync quarantine row";
 const PACK_REMAT_MARKER_PREFIX: &str = "rm:w:";
+const PSYCH_MIRROR_CONTEXT_TEXT_FIELD_ALIASES: [&str; 4] = ["val", "txt", "text", "body"];
+const PSYCH_MIRROR_STRUCTURED_TEXT_SEPARATOR: &str = "\n";
 /// Default share of the claim budget that non-base (fictional / dream) worlds
 /// may occupy in an `All`-scope pack — fiction takes at most half, so it can
 /// never crowd base reality out (ARCH-0004 / ARCH-0022).
@@ -1343,6 +1346,102 @@ fn entity_world(
         return Ok(None);
     }
     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(|body| body.world)
+}
+
+/// Builds a Psych Mirror source candidate from an already decoded Claim body.
+///
+/// The caller supplies the source revision ref explicitly because hydrated
+/// context rows intentionally do not carry revision provenance.
+pub fn psych_mirror_source_candidate_from_claim(
+    source_id: EntityId,
+    source_revision_ref: EntityId,
+    connectivity: f32,
+    learned_at: u64,
+    body: &ClaimBody,
+) -> Result<PsychMirrorSourceCandidate> {
+    PsychMirrorSourceCandidate::new(
+        source_id,
+        source_revision_ref,
+        connectivity,
+        crate::claim::psych_mirror_claim_affect_salience(body)?,
+        learned_at,
+        psych_mirror_claim_value_entropy(body),
+    )
+}
+
+/// Builds a Psych Mirror source candidate from a hydrated context entity.
+///
+/// This is a convenience adapter for fixture and API-read paths. It uses the
+/// entity score as connectivity and reads projected `sal` plus text-ish fields
+/// when present.
+pub fn psych_mirror_source_candidate_from_context_entity(
+    entity: &ContextEntity,
+    source_revision_ref: EntityId,
+    learned_at: u64,
+) -> Result<PsychMirrorSourceCandidate> {
+    let fields = entity.fields.as_ref();
+    PsychMirrorSourceCandidate::new(
+        entity.id,
+        source_revision_ref,
+        entity.score,
+        fields.map_or(0.0, psych_mirror_context_fields_affect_salience),
+        learned_at,
+        fields.map_or(0.0, psych_mirror_context_fields_entropy),
+    )
+}
+
+fn psych_mirror_claim_value_entropy(body: &ClaimBody) -> f32 {
+    let mut leaves = Vec::new();
+    collect_psych_mirror_text_leaves(&body.value, &mut leaves);
+    if leaves.is_empty() {
+        0.0
+    } else {
+        psych_mirror_text_entropy(&leaves.join(PSYCH_MIRROR_STRUCTURED_TEXT_SEPARATOR))
+    }
+}
+
+fn collect_psych_mirror_text_leaves<'a>(value: &'a rmpv::Value, leaves: &mut Vec<&'a str>) {
+    match value {
+        rmpv::Value::String(value) => {
+            if let Some(text) = value.as_str().filter(|text| !text.is_empty()) {
+                leaves.push(text);
+            }
+        }
+        rmpv::Value::Array(values) => {
+            for value in values {
+                collect_psych_mirror_text_leaves(value, leaves);
+            }
+        }
+        rmpv::Value::Map(entries) => {
+            for (_, value) in entries {
+                collect_psych_mirror_text_leaves(value, leaves);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn psych_mirror_context_fields_affect_salience(fields: &HashMap<String, serde_json::Value>) -> f32 {
+    fields
+        .get(crate::claim::KEY_SAL)
+        .and_then(psych_mirror_json_unit_interval)
+        .unwrap_or(0.0)
+}
+
+fn psych_mirror_context_fields_entropy(fields: &HashMap<String, serde_json::Value>) -> f32 {
+    PSYCH_MIRROR_CONTEXT_TEXT_FIELD_ALIASES
+        .into_iter()
+        .find_map(|key| fields.get(key).and_then(serde_json::Value::as_str))
+        .map_or(0.0, psych_mirror_text_entropy)
+}
+
+fn psych_mirror_json_unit_interval(value: &serde_json::Value) -> Option<f32> {
+    let value = value.as_f64()?;
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Some(value as f32)
+    } else {
+        None
+    }
 }
 
 /// Hydrates one entity for the context pack.
