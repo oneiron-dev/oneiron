@@ -2434,7 +2434,7 @@ async fn revoke_companion_access_grant(
         (status = 400, description = "Malformed profile request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "No active AccessGrant authorizes this profile.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "AccessGrant lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 500, description = "Companion profile state lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 async fn get_companion_profile(
@@ -2481,7 +2481,7 @@ async fn get_companion_profile(
         (status = 400, description = "Malformed profile refresh request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "No active AccessGrant authorizes this profile.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 500, description = "PsychProfile lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 500, description = "Companion profile refresh lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 async fn refresh_companion_profile(
@@ -2495,7 +2495,10 @@ async fn refresh_companion_profile(
     let params = query_params(query)?;
     let req = json_payload(payload)?;
     let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
-    let selected_source_revision_ids = parse_source_revision_ids_body(req.source_revision_ids)?;
+    let query_source_revision_ids =
+        parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
+    let selected_source_revision_ids =
+        parse_source_revision_ids_body(req.source_revision_ids)?.or(query_source_revision_ids);
     let requested_principal_ref = params
         .principal_ref
         .as_deref()
@@ -2696,6 +2699,7 @@ fn parse_source_revision_ids_query(
 ) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
     raw.map(|value| parse_source_revision_ids(value.split(',')))
         .transpose()
+        .map(|ids| ids.and_then(non_empty_source_revision_ids))
 }
 
 fn parse_source_revision_ids_body(
@@ -2703,6 +2707,7 @@ fn parse_source_revision_ids_body(
 ) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
     raw.map(|values| parse_source_revision_ids(values.iter().map(String::as_str)))
         .transpose()
+        .map(|ids| ids.and_then(non_empty_source_revision_ids))
 }
 
 fn parse_source_revision_ids<T>(
@@ -2722,6 +2727,10 @@ where
 
 fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {
     ids.iter().map(oneiron::EntityId::to_hex).collect()
+}
+
+fn non_empty_source_revision_ids(ids: Vec<oneiron::EntityId>) -> Option<Vec<oneiron::EntityId>> {
+    (!ids.is_empty()).then_some(ids)
 }
 
 fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
@@ -11214,6 +11223,49 @@ mod tests {
                 .source_revision_ids,
             stored_source_revision_ids
         );
+
+        let refresh_query_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
+            persona_ref.to_hex(),
+            person_ref.to_hex(),
+            keep_source.to_hex(),
+            tune_source.to_hex()
+        );
+        let (query_status, query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(query_status, StatusCode::OK);
+        assert_eq!(
+            query_body["stale_reason"],
+            json!({
+                "kind": "source_revision_mismatch",
+                "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
+                "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            })
+        );
+
+        let (empty_status, empty_body) = route_json(
+            server,
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({ "sourceRevisionIds": [] })),
+            ),
+        )
+        .await;
+        assert_eq!(empty_status, StatusCode::OK);
+        assert_eq!(empty_body["state"], Value::from("fresh"));
+        assert!(empty_body["next_action"].is_null());
     }
 
     #[tokio::test]
