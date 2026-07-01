@@ -851,9 +851,7 @@ pub(crate) fn companion_profile_access_grant(
         ) {
             Ok(grant) => grant,
             Err(_) => {
-                return Err(Error::InvalidAccessGrantBody(
-                    "stored body failed validation",
-                ));
+                return Err(Error::CorruptedIndex("access grant body"));
             }
         };
         if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref) {
@@ -1951,8 +1949,8 @@ mod tests {
             .companion_profile_access_grant(&principal, &person, &persona)
             .expect_err("malformed AccessGrant row must fail closed before any later allow");
         assert!(
-            matches!(err, Error::InvalidAccessGrantBody(_)),
-            "expected InvalidAccessGrantBody for malformed AccessGrant row, got {err:?}"
+            matches!(err, Error::CorruptedIndex("access grant body")),
+            "expected CorruptedIndex for malformed AccessGrant row, got {err:?}"
         );
         Ok(())
     }
