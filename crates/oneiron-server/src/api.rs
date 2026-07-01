@@ -551,6 +551,30 @@ fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreContextPackRequest",
+        "context_version",
+        "Optional context format version. Use v4 to request Eiri Context v4 fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "memory_board",
+        "Optional Eiri Context v4 memory-board controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "session_rag",
+        "Optional Eiri Context v4 session RAG controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackRequest",
+        "companion",
+        "Optional companion scope for Eiri Context v4 assembly.",
+    );
+    set_schema_property_description(
+        spec,
         "ContextPackDepthControls",
         "edge_hop",
         "Edge expansion depth for neighbor hydration.",
@@ -785,6 +809,30 @@ fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "ContextPackRequest",
+        "context_version",
+        "Optional context format version. Use v4 to request Eiri Context v4 fields.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "memory_board",
+        "Optional Eiri Context v4 memory-board controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "session_rag",
+        "Optional Eiri Context v4 session RAG controls.",
+    );
+    set_schema_property_description(
+        spec,
+        "ContextPackRequest",
+        "companion",
+        "Optional companion scope for Eiri Context v4 assembly.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreListQuery",
         "view",
         "Optional projection view for returned entities. Defaults to summary.",
@@ -872,6 +920,24 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "CoreContextPackResponse",
         "evidence",
         "Retrieval telemetry evidence and score breakdown.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "context_version",
+        "Optional context format version for v4 response extensions.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "memory_board",
+        "Eiri Context v4 memory-board rows when requested.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "session_rag",
+        "Eiri Context v4 session RAG state when requested.",
     );
     set_schema_property_description(
         spec,
