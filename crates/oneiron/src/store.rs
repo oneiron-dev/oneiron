@@ -108,6 +108,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::batch::secret_scan;
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_CLAIM,
@@ -1067,6 +1068,7 @@ impl Store {
         };
         vet_structural_kind_registration_shape(&registration)?;
         vet_structural_kind_registration_band(&registration)?;
+        secret_scan::scan_metadata_field(&registration.pack)?;
         if entity_type_registry_entry(type_byte).is_some() {
             return Err(Error::StructuralKindTypeByteCollision(type_byte));
         }
@@ -1315,6 +1317,11 @@ impl Store {
         }
 
         vet_retrieval_outcome(&outcome)?;
+        secret_scan::scan_metadata_field(&outcome.key)?;
+        for (key, value) in &outcome.metadata {
+            secret_scan::scan_metadata_field(key)?;
+            secret_scan::scan_metadata_field(value)?;
+        }
         let record = RetrievalOutcomeRecord {
             version: RETRIEVAL_TELEMETRY_VERSION,
             run_id: outcome.run_id,
@@ -2807,6 +2814,84 @@ mod tests {
             accepted: Some(true),
             metadata: BTreeMap::new(),
         })
+    }
+
+    fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
+        match error {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "deny");
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &["gate.secret_scan.detected", expected_reason]
+                );
+            }
+            other => panic!("expected GateWriteRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn register_structural_kind_rejects_secret_pack_before_vault_meta_write() {
+        let (_dir, vault) = open_test_vault();
+
+        let error = vault
+            .register_structural_kind(
+                65,
+                "zz",
+                TypeByteBand::Companion,
+                "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+            )
+            .expect_err("secret-shaped structural pack must reject");
+
+        assert_secret_scan_rejected(error, "gate.secret_scan.github_token");
+        assert!(vault.structural_kind_registration(65).is_none());
+        assert!(vault.store.structural_kind_registrations().is_empty());
+    }
+
+    #[test]
+    fn record_retrieval_outcome_rejects_secret_key_and_metadata_before_vault_meta_write()
+    -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x46);
+        put_text(&vault, id, "retrieval outcome secret scan")?;
+        let result = vault
+            .query()
+            .search_text("retrieval outcome secret scan", 10)
+            .run_with_telemetry()?;
+        let run_id = result.run_id.expect("telemetry run id");
+
+        let secret_key_error = vault
+            .record_retrieval_outcome(RetrievalOutcome {
+                run_id,
+                key: "ghp_0123456789abcdefghijklmnopqrstuvwxyz_suffix".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata: BTreeMap::new(),
+            })
+            .expect_err("secret-shaped retrieval outcome key must reject");
+        assert_secret_scan_rejected(secret_key_error, "gate.secret_scan.github_token");
+        assert!(vault.retrieval_outcomes(run_id)?.is_empty());
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "source".to_owned(),
+            "ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned(),
+        );
+        let metadata_error = vault
+            .record_retrieval_outcome(RetrievalOutcome {
+                run_id,
+                key: "click".to_owned(),
+                reward: Some(1.0),
+                accepted: Some(true),
+                metadata,
+            })
+            .expect_err("secret-shaped retrieval outcome metadata must reject");
+        assert_secret_scan_rejected(metadata_error, "gate.secret_scan.github_token");
+        assert!(vault.retrieval_outcomes(run_id)?.is_empty());
+
+        Ok(())
     }
 
     #[test]
