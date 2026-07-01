@@ -2555,17 +2555,23 @@ fn companion_profile_response_state(
     access: CompanionProfileAccess,
     selected_source_revision_ids: Option<&[oneiron::EntityId]>,
 ) -> Result<CompanionProfileResponse, EnvelopedApiError> {
-    let state = server
+    let state = match server
         .vault
         .psych_profile_state(persona_ref, selected_source_revision_ids)
-        .map_err(|error| {
+    {
+        Ok(state) => state,
+        Err(error) if error.kind() == ErrorKind::InvalidEntityType => {
+            oneiron::PsychProfileState::Missing
+        }
+        Err(error) => {
             tracing::error!(
                 error = %error,
                 persona_ref = %persona_ref.to_hex(),
                 "psych profile lookup failed"
             );
-            companion_engine_error("psych profile lookup failed", error)
-        })?;
+            return Err(companion_engine_error("psych profile lookup failed", error));
+        }
+    };
 
     let selected_hex = selected_source_revision_ids.map(entity_ids_hex);
     let response = match state {
@@ -2614,11 +2620,10 @@ fn companion_profile_response_state(
                 .clone()
                 .or_else(|| selected_hex.clone())
                 .or_else(|| Some(entity_ids_hex(&profile.source_revision_ids)));
-            let drift_anchors = selected_source_revision_ids
-                .map(|selected| {
-                    companion_profile_drift_anchors(&profile.source_revision_ids, selected)
-                })
-                .unwrap_or_default();
+            let drift_anchors = companion_profile_drift_anchors(
+                &profile.source_revision_ids,
+                selected_source_revision_ids.unwrap_or(&profile.source_revision_ids),
+            );
             let next_action = Some(CompanionProfileNextAction {
                 kind: "refresh".to_owned(),
                 reason: stale_reason.kind.clone(),
@@ -11040,6 +11045,7 @@ mod tests {
         let stale_persona_ref = seeded_test_entity_id(0x1218_0104);
         let source_a = seeded_test_entity_id(0x1218_0105);
         let source_b = seeded_test_entity_id(0x1218_0106);
+        let existing_persona_ref = seeded_test_entity_id(0x1218_0109);
         seed_companion_profile_access(
             &server,
             seeded_test_entity_id(0x1218_0107),
@@ -11054,6 +11060,23 @@ mod tests {
             person_ref,
             stale_persona_ref,
         );
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x1218_010A),
+            principal_ref,
+            person_ref,
+            existing_persona_ref,
+        );
+        server
+            .vault
+            .put_entity(
+                &existing_persona_ref,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"persona entity without psych profile",
+            )
+            .expect("seed existing persona entity");
         let stale_profile = oneiron::PsychProfile::new(
             stale_persona_ref,
             "stale compact",
@@ -11094,6 +11117,30 @@ mod tests {
             Value::from("missing")
         );
 
+        let existing_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            existing_persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (existing_status, existing_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "GET",
+                &existing_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(existing_status, StatusCode::OK);
+        assert_eq!(existing_body["state"], Value::from("missing"));
+        assert!(existing_body["profile"].is_null());
+        assert_eq!(
+            existing_body["next_action"]["reason"],
+            Value::from("missing")
+        );
+
         let stale_path = format!(
             "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={}",
             stale_persona_ref.to_hex(),
@@ -11101,7 +11148,7 @@ mod tests {
             source_b.to_hex()
         );
         let (stale_status, stale_body) = route_json(
-            server,
+            server.clone(),
             core_request_with_principal_ref(
                 "GET",
                 &stale_path,
@@ -11137,6 +11184,42 @@ mod tests {
                     "sourceRevisionRef": source_b.to_hex(),
                 },
             ])
+        );
+
+        let stale_fallback_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}",
+            stale_persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (fallback_status, fallback_body) = route_json(
+            server,
+            core_request_with_principal_ref(
+                "GET",
+                &stale_fallback_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(fallback_status, StatusCode::OK);
+        assert_eq!(fallback_body["state"], Value::from("stale"));
+        assert_eq!(
+            fallback_body["next_action"]["sourceRevisionIds"],
+            json!([source_a.to_hex()])
+        );
+        assert_eq!(
+            fallback_body["drift_anchors"],
+            json!([
+                {
+                    "state": "keep",
+                    "sourceRevisionRef": source_a.to_hex(),
+                },
+            ])
+        );
+        assert_eq!(
+            fallback_body["next_action"]["drift_anchors"],
+            fallback_body["drift_anchors"]
         );
     }
 
