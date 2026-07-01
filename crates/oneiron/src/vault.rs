@@ -981,6 +981,11 @@ impl Vault {
                 status: claim_body.lifecycle,
             });
         }
+        if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
+            return Err(Error::InvalidClaimBody(
+                "claim VAD state claims cannot be consolidated",
+            ));
+        }
 
         let mut evidence_turns = Vec::new();
         for candidate in collect_claim_turn_evidence_refs(&claim_body) {
@@ -1039,7 +1044,7 @@ impl Vault {
                     entity_type: ENTITY_TYPE_CLAIM,
                     occurred: TimeRange {
                         start: now,
-                        end: now,
+                        end: u64::MAX,
                     },
                     learned_at: now,
                     data,
