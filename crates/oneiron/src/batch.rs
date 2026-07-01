@@ -7,10 +7,14 @@ pub mod export;
 pub(crate) mod secret_scan;
 
 use heed::RwTxn;
+use rmpv::Value;
 use xxhash_rust::{xxh3::xxh3_128, xxh32::xxh32};
 
 use crate::Vault;
-use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
+use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
+use crate::claim::{
+    ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
+};
 use crate::error::{Error, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
@@ -326,6 +330,72 @@ impl<'a> BatchBuilder<'a> {
             hints,
         );
         self
+    }
+
+    /// Adds an `affect.trigger` claim candidate.
+    pub fn affect_trigger_claim(
+        self,
+        id: &EntityId,
+        value: AffectTriggerValue,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            affect_trigger_claim_candidate(value),
+            envelope,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Adds a `conflict.open` claim candidate.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "conflict helper mirrors claim_candidate writer context"
+    )]
+    pub fn conflict_open_claim(
+        self,
+        id: &EntityId,
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            ClaimCandidate::new(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
+            envelope,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Adds a `conflict.resolved` claim candidate.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "conflict helper mirrors claim_candidate writer context"
+    )]
+    pub fn conflict_resolved_claim(
+        self,
+        id: &EntityId,
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
+            envelope,
+            occurred,
+            learned_at,
+        )
     }
 
     /// Sync-replay door (replicated flavor of the old internal put path):
@@ -793,6 +863,72 @@ impl<'a> TxnBatchBuilder<'a> {
             hints,
         );
         self
+    }
+
+    /// Adds an `affect.trigger` claim candidate.
+    pub fn affect_trigger_claim(
+        self,
+        id: &EntityId,
+        value: AffectTriggerValue,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            affect_trigger_claim_candidate(value),
+            envelope,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Adds a `conflict.open` claim candidate.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "conflict helper mirrors claim_candidate writer context"
+    )]
+    pub fn conflict_open_claim(
+        self,
+        id: &EntityId,
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            ClaimCandidate::new(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
+            envelope,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Adds a `conflict.resolved` claim candidate.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "conflict helper mirrors claim_candidate writer context"
+    )]
+    pub fn conflict_resolved_claim(
+        self,
+        id: &EntityId,
+        subject: ClaimSubject,
+        value: Value,
+        confidence: f32,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Self {
+        self.claim_candidate(
+            id,
+            ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
+            envelope,
+            occurred,
+            learned_at,
+        )
     }
 
     /// Sync-replay door (replicated flavor of the old internal put path):
@@ -3935,6 +4071,90 @@ mod tests {
             &provenance
         );
         assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
+        Ok(())
+    }
+
+    #[test]
+    fn affect_trigger_batch_helper_writes_and_conflict_uses_claim_lifecycle() -> Result<()> {
+        let (_tmp, vault) = open_test_vault();
+        let occurred = test_time_range(1, 1);
+        let actor = EntityId::now();
+        let person = EntityId::now();
+        let trigger = EntityId::now();
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
+        vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, 1, b"person")?;
+        vault.put_entity(&trigger, ENTITY_TYPE_TASK, occurred, 1, b"trigger")?;
+        let envelope = test_write_envelope(actor)?;
+
+        let affect_claim = EntityId::now();
+        let trigger_value = crate::affect::AffectTriggerValue::new(
+            person,
+            trigger,
+            crate::affect::VadDelta::new(-0.2, 0.4, -0.3)?,
+            0.75,
+            2,
+            9,
+        )?;
+        vault
+            .batch()
+            .affect_trigger_claim(
+                &affect_claim,
+                trigger_value.clone(),
+                &envelope,
+                test_time_range(10, 10),
+                11,
+            )
+            .commit()?;
+
+        let stored = vault
+            .get_claim(&affect_claim)?
+            .expect("affect trigger claim stored");
+        assert_eq!(
+            crate::affect::decode_affect_trigger_claim(&stored)?,
+            Some(trigger_value)
+        );
+        assert_eq!(stored.subject, ClaimSubject::Entity(person));
+        assert_eq!(vault.claims_for_subject(&person)?, vec![affect_claim]);
+
+        let open_conflict = EntityId::now();
+        let resolved_conflict = EntityId::now();
+        vault
+            .batch()
+            .conflict_open_claim(
+                &open_conflict,
+                ClaimSubject::Entity(person),
+                Value::from("open conflict"),
+                0.7,
+                &envelope,
+                test_time_range(20, 20),
+                21,
+            )
+            .conflict_resolved_claim(
+                &resolved_conflict,
+                ClaimSubject::Entity(person),
+                Value::from("resolved conflict"),
+                0.8,
+                &envelope,
+                test_time_range(22, 22),
+                23,
+            )
+            .commit()?;
+        vault.supersede_claim(&resolved_conflict, &open_conflict, 30)?;
+
+        assert_eq!(
+            vault
+                .get_claim(&open_conflict)?
+                .expect("open conflict preserved")
+                .lifecycle,
+            ClaimLifecycleStatus::Superseded
+        );
+        assert_eq!(
+            vault
+                .get_claim(&resolved_conflict)?
+                .expect("resolved conflict active")
+                .lifecycle,
+            ClaimLifecycleStatus::Active
+        );
         Ok(())
     }
 
