@@ -120,6 +120,10 @@ use crate::types::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v6 (ONE-1204): PSYCH_PROFILE was registered as persistent maintenance
+/// entity type byte 129. v5 vaults fail closed at the ABI gate — there is no
+/// silent migration; rebuild the vault.
+///
 /// v5 (ONE-1293): maintenance-band bytes were realigned so byte 122 is
 /// reserved for AUTHORITY_LOG, POLICY_MANIFEST is 123, and FEDERATION_GRANT is
 /// 124. v4 vaults fail closed at the ABI gate — there is no silent migration;
@@ -128,7 +132,7 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 5;
+pub const STORAGE_ABI_VERSION: u16 = 6;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";

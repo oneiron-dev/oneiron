@@ -1797,6 +1797,37 @@ mod tests {
     }
 
     #[test]
+    fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x11; 16]).expect("valid id"));
+        let mut legacy = ClaimBody::new(
+            "profile.preference",
+            subject,
+            Value::from("prefers concise explanations"),
+            0.72,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        legacy.source = Some(ClaimSource::Observed);
+        legacy.stale = false;
+
+        let encoded = encode_claim_body(&legacy).expect("legacy profile claim encodes");
+        let decoded = decode_claim_body(&encoded, false).expect("legacy profile claim decodes");
+
+        assert_eq!(decoded.predicate, "profile.preference");
+        assert_eq!(decoded.value, Value::from("prefers concise explanations"));
+        assert_eq!(decoded.source, Some(ClaimSource::Observed));
+        assert!(!decoded.stale);
+        assert_eq!(
+            CLAIM_BODY_KEYS,
+            [
+                "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj",
+                "scope", "appr", "life", "stale",
+            ],
+            "PsychProfile snapshots must not extend the pinned Claim body ABI"
+        );
+    }
+
+    #[test]
     fn claim_field_profile_slices_are_prefixes_of_the_pinned_keys() {
         assert_eq!(CLAIM_FIELDS_MINIMAL, &CLAIM_BODY_KEYS[..2]);
         assert_eq!(CLAIM_FIELDS_STANDARD, &CLAIM_BODY_KEYS[..5]);
