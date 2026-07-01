@@ -110,9 +110,11 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
-    ENTITY_TYPE_CLAIM, EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand,
-    VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
-    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EntityId, Signal, StructuralKindRegistration,
+    TypeByteBand, VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry,
+    short_id_prefix, static_short_id_prefix_collision,
+    validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
 
@@ -1666,6 +1668,9 @@ fn load_structural_kind_registry(
         vet_structural_kind_registration_band(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         if entity_type_registry_entry(registration.type_byte).is_some() {
+            if is_compatible_legacy_companion_register_row(&registration) {
+                continue;
+            }
             return Err(Error::CorruptedIndex("structural kind registry"));
         }
         if static_short_id_prefix_collision(&registration.short_id_prefix)
@@ -1678,6 +1683,13 @@ fn load_structural_kind_registry(
         }
     }
     Ok(registry)
+}
+
+fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {
+    registration.type_byte == ENTITY_TYPE_COMPANION_REGISTER
+        && registration.short_id_prefix == COMPANION_REGISTER_SHORT_ID_PREFIX
+        && registration.band == TypeByteBand::Companion
+        && registration.pack == COMPANION_REGISTER_PACK_ID
 }
 
 fn vault_meta_has_structural_kind_prefix(

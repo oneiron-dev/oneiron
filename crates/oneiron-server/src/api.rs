@@ -66,6 +66,8 @@ const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "companion:resume",
     "companion:profile:read",
     "companion:access-grant:write",
+    "companion:register:read",
+    "companion:register:write",
     "usage:read",
     "usage:write",
     "consumer:usage:read",
@@ -93,6 +95,7 @@ const CAPABILITIES: &[&str] = &[
     "companion.resume",
     "companion.profile",
     "companion.access_grants",
+    "companion.register",
     "lease.revoke",
     "usage.event",
     "usage.rollup",
@@ -136,6 +139,10 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         create_companion_access_grant,
         revoke_companion_access_grant,
         get_companion_profile,
+        create_companion_register_record,
+        get_companion_register_record,
+        update_companion_register_record,
+        retire_companion_register_record,
         context_pack,
         record_usage_event,
         get_usage_rollup,
@@ -231,6 +238,15 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         CompanionRevokeAccessGrantRequest,
         CompanionProfileAccess,
         CompanionProfileResponse,
+        CompanionRegisterScopePayload,
+        CompanionRegisterRelationshipRefPayload,
+        CompanionRegisterSubjectPayload,
+        CompanionRegisterProvenancePayload,
+        CompanionRegisterRecordPayload,
+        CompanionRegisterCreateRecordRequest,
+        CompanionRegisterUpdateRecordRequest,
+        CompanionRegisterRetireRecordRequest,
+        CompanionRegisterRecordResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
         ContextPackRequest,
@@ -294,6 +310,15 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(core_mutation_routes);
     let companion_mutation_routes = Router::new()
         .route("/access-grants", post(create_companion_access_grant))
+        .route("/register/records", post(create_companion_register_record))
+        .route(
+            "/register/records/{record_id}",
+            post(update_companion_register_record),
+        )
+        .route(
+            "/register/records/{record_id}/retire",
+            post(retire_companion_register_record),
+        )
         .route(
             "/access-grants/{grant_id}/revoke",
             post(revoke_companion_access_grant),
@@ -304,6 +329,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         ));
     let companion_routes = Router::new()
         .route("/profiles/{persona_ref}", get(get_companion_profile))
+        .route(
+            "/register/records/{record_id}",
+            get(get_companion_register_record),
+        )
         .merge(companion_mutation_routes);
 
     Router::new()
@@ -928,6 +957,48 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "score",
         "Raw signal score.",
     );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterSubjectPayload",
+        "relationship_ref",
+        "Source and target entity pair for relationship records.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterRecordPayload",
+        "scope",
+        "Visibility and privacy scope for this register record.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterRecordPayload",
+        "subject",
+        "Persona or relationship subject for this register record.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterRecordPayload",
+        "provenance",
+        "Provenance stamp for this register record.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterCreateRecordRequest",
+        "record",
+        "Typed companion register record envelope to create.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterUpdateRecordRequest",
+        "record",
+        "Replacement record envelope; scope and subject must match the existing record.",
+    );
+    set_schema_property_description(
+        spec,
+        "CompanionRegisterRecordResponse",
+        "record",
+        "Typed companion register record envelope.",
+    );
 }
 
 fn set_schema_property_description(
@@ -1031,6 +1102,10 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
+        ("/v1/companion/register/records", "post"),
+        ("/v1/companion/register/records/{record_id}", "get"),
+        ("/v1/companion/register/records/{record_id}", "post"),
+        ("/v1/companion/register/records/{record_id}/retire", "post"),
     ] {
         if let Some(operation) = spec
             .get_mut("paths")
@@ -1628,6 +1703,197 @@ struct CompanionProfileResponse {
     profile: Value,
 }
 
+/// Scope boundary for a companion register record.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "kind": "personal",
+    "person_ref": "11111111111111111111111111111111"
+}))]
+struct CompanionRegisterScopePayload {
+    /// Scope discriminator: `neutral`, `personal`, or `shared_vault`.
+    #[schema(example = "personal")]
+    kind: String,
+    /// Person scope for `personal` records.
+    #[schema(example = "11111111111111111111111111111111")]
+    person_ref: Option<String>,
+    /// Shared-vault id for `shared_vault` records.
+    #[schema(example = 7)]
+    vault_id: Option<u64>,
+}
+
+/// Relationship subject reference for companion register records.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "source_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "target_ref": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}))]
+struct CompanionRegisterRelationshipRefPayload {
+    /// Source entity in the companion relationship.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    source_ref: String,
+    /// Target entity in the companion relationship.
+    #[schema(example = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")]
+    target_ref: String,
+}
+
+/// Persona or relationship subject for a companion register record.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "kind": "persona",
+    "persona_ref": "22222222222222222222222222222222"
+}))]
+struct CompanionRegisterSubjectPayload {
+    /// Subject discriminator: `persona` or `relationship`.
+    #[schema(example = "persona")]
+    kind: String,
+    /// Persona entity for `persona` records.
+    #[schema(example = "22222222222222222222222222222222")]
+    persona_ref: Option<String>,
+    /// Source/target pair for `relationship` records.
+    relationship_ref: Option<CompanionRegisterRelationshipRefPayload>,
+}
+
+/// Provenance stamp for a companion register record.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_class": 1,
+    "source": "user_stated",
+    "approval": "approved",
+    "value": { "source": "settings" }
+}))]
+struct CompanionRegisterProvenancePayload {
+    /// Actor entity responsible for the write.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    actor_ref: String,
+    /// Actor class: 0 human, 1 agent, 2 system.
+    #[schema(example = 1)]
+    actor_class: u8,
+    /// Provenance source.
+    #[schema(example = "user_stated")]
+    source: String,
+    /// Approval status for this write.
+    #[schema(example = "approved")]
+    approval: String,
+    /// Opaque provenance payload.
+    value: Value,
+}
+
+/// Typed companion register record envelope.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[schema(example = json!({
+    "kind": "persona",
+    "scope": { "kind": "personal", "person_ref": "11111111111111111111111111111111" },
+    "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+    "value": { "note": "private relationship tuning" },
+    "provenance": {
+        "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "actor_class": 1,
+        "source": "user_stated",
+        "approval": "approved",
+        "value": { "source": "settings" }
+    },
+    "lifecycle": "active",
+    "export": "local_only"
+}))]
+struct CompanionRegisterRecordPayload {
+    /// Record discriminator: `persona` or `relationship`.
+    #[schema(example = "persona")]
+    kind: String,
+    /// Visibility/privacy scope.
+    scope: CompanionRegisterScopePayload,
+    /// Persona or relationship subject.
+    subject: CompanionRegisterSubjectPayload,
+    /// Opaque companion tuning/private note payload.
+    value: Value,
+    /// Provenance stamp for this record.
+    provenance: CompanionRegisterProvenancePayload,
+    /// Lifecycle status. Defaults to `active` on create/update when omitted.
+    #[schema(example = "active")]
+    lifecycle: Option<String>,
+    /// Export classification: `local_only`, `portable`, or `shared_vault`.
+    #[serde(rename = "export")]
+    #[schema(example = "local_only")]
+    export_classification: String,
+}
+
+/// Create companion register record request.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "id": "33333333333333333333333333333333",
+    "learned_at": 1700000000,
+    "record": {
+        "kind": "persona",
+        "scope": { "kind": "neutral" },
+        "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+        "value": { "style": "warm" },
+        "provenance": {
+            "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "actor_class": 1,
+            "source": "user_stated",
+            "approval": "approved",
+            "value": { "source": "settings" }
+        },
+        "export": "portable"
+    }
+}))]
+struct CompanionRegisterCreateRecordRequest {
+    /// Optional companion record entity id. Defaults to a new UUIDv7 entity id.
+    #[schema(example = "33333333333333333333333333333333")]
+    id: Option<String>,
+    /// Write timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000000)]
+    learned_at: Option<u64>,
+    /// Typed companion record envelope.
+    record: CompanionRegisterRecordPayload,
+}
+
+/// Update companion register record request.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "learned_at": 1700000300,
+    "record": {
+        "kind": "persona",
+        "scope": { "kind": "personal", "person_ref": "11111111111111111111111111111111" },
+        "subject": { "kind": "persona", "persona_ref": "22222222222222222222222222222222" },
+        "value": { "note": "updated private tuning" },
+        "provenance": {
+            "actor_ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "actor_class": 1,
+            "source": "user_stated",
+            "approval": "approved",
+            "value": { "source": "settings" }
+        },
+        "export": "local_only"
+    }
+}))]
+struct CompanionRegisterUpdateRecordRequest {
+    /// Write timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000300)]
+    learned_at: Option<u64>,
+    /// Replacement record envelope. Scope and subject must match the existing record.
+    record: CompanionRegisterRecordPayload,
+}
+
+/// Retire companion register record request.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({ "retired_at": 1700000600 }))]
+struct CompanionRegisterRetireRecordRequest {
+    /// Retirement timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000600)]
+    retired_at: Option<u64>,
+}
+
+/// Companion register response envelope.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionRegisterRecordResponse {
+    /// Companion register entity id.
+    #[schema(example = "33333333333333333333333333333333")]
+    id: String,
+    /// Typed companion register record.
+    record: CompanionRegisterRecordPayload,
+}
+
 /// Create a scoped companion AccessGrant.
 #[utoipa::path(
     post,
@@ -1764,6 +2030,150 @@ async fn get_companion_profile(
     }))
 }
 
+/// Create a typed companion register record.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/register/records",
+    request_body(content = CompanionRegisterCreateRecordRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Companion register record created.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed companion register request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "Companion register id or key already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion register write failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn create_companion_register_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CompanionRegisterCreateRecordRequest>, JsonRejection>,
+) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::CompanionRegisterWrite)?;
+    let req = json_payload(payload)?;
+    let id = parse_optional_entity_id(req.id.as_deref(), "id")?;
+    let learned_at = req.learned_at.unwrap_or_else(unix_seconds_now);
+    let record = companion_register_record_from_payload(&req.record)?;
+
+    server
+        .vault
+        .create_companion_record(&id, &record, learned_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "companion register create failed");
+            companion_register_engine_error("companion register create failed", error)
+        })?;
+
+    Ok(Json(companion_register_record_response(&id, &record)))
+}
+
+/// Read a typed companion register record.
+#[utoipa::path(
+    get,
+    path = "/v1/companion/register/records/{record_id}",
+    params(("record_id" = String, Path, description = "Companion register entity id.")),
+    responses(
+        (status = 200, description = "Companion register record read.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed companion register id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion register read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn get_companion_register_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(record_id): Path<String>,
+) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::CompanionRegisterRead)?;
+    let id = parse_entity_id_param(&record_id, "record_id")?;
+    let record = server
+        .vault
+        .get_companion_record(&id)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "companion register read failed");
+            companion_register_engine_error("companion register read failed", error)
+        })?
+        .ok_or_else(|| ApiError::not_found("companion_record", None))?;
+
+    Ok(Json(companion_register_record_response(&id, &record)))
+}
+
+/// Update a typed companion register record.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/register/records/{record_id}",
+    params(("record_id" = String, Path, description = "Companion register entity id.")),
+    request_body(content = CompanionRegisterUpdateRecordRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Companion register record updated.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed companion register request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion register update failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn update_companion_register_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(record_id): Path<String>,
+    payload: Result<Json<CompanionRegisterUpdateRecordRequest>, JsonRejection>,
+) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::CompanionRegisterWrite)?;
+    let id = parse_entity_id_param(&record_id, "record_id")?;
+    let req = json_payload(payload)?;
+    let learned_at = req.learned_at.unwrap_or_else(unix_seconds_now);
+    let record = companion_register_record_from_payload(&req.record)?;
+
+    let updated = server
+        .vault
+        .update_companion_record(&id, &record, learned_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "companion register update failed");
+            companion_register_engine_error("companion register update failed", error)
+        })?;
+
+    Ok(Json(companion_register_record_response(&id, &updated)))
+}
+
+/// Retire a typed companion register record.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/register/records/{record_id}/retire",
+    params(("record_id" = String, Path, description = "Companion register entity id.")),
+    request_body(content = CompanionRegisterRetireRecordRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Companion register record retired.", body = CompanionRegisterRecordResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed companion register id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Companion register record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion register retire failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn retire_companion_register_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(record_id): Path<String>,
+    payload: Result<Json<CompanionRegisterRetireRecordRequest>, JsonRejection>,
+) -> Result<Json<CompanionRegisterRecordResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::CompanionRegisterWrite)?;
+    let id = parse_entity_id_param(&record_id, "record_id")?;
+    let req = json_payload(payload)?;
+    let retired_at = req.retired_at.unwrap_or_else(unix_seconds_now);
+
+    let retired = server
+        .vault
+        .retire_companion_record(&id, retired_at)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "companion register retire failed");
+            companion_register_engine_error("companion register retire failed", error)
+        })?;
+
+    Ok(Json(companion_register_record_response(&id, &retired)))
+}
+
 fn companion_scope_entity_refs(
     scope: &CompanionAccessGrantScopePayload,
 ) -> Result<(oneiron::EntityId, oneiron::EntityId), ApiError> {
@@ -1808,6 +2218,340 @@ fn companion_scope_response(
     }
 }
 
+fn companion_register_record_from_payload(
+    payload: &CompanionRegisterRecordPayload,
+) -> Result<oneiron::CompanionRecord, ApiError> {
+    let scope = companion_register_scope_from_payload(&payload.scope)?;
+    let subject = companion_register_subject_from_payload(&payload.subject)?;
+    let kind = companion_register_kind_from_wire(&payload.kind, "record.kind")?;
+    if kind != subject.kind() {
+        return Err(ApiError::bad_request(
+            "record.kind must match subject.kind",
+            Some("record.kind"),
+        ));
+    }
+    let value = oneiron::companion_value_from_json(&payload.value)
+        .map_err(|error| ApiError::bad_request(error.to_string(), Some("record.value")))?;
+    let provenance = companion_register_provenance_from_payload(&payload.provenance)?;
+    let lifecycle = payload
+        .lifecycle
+        .as_deref()
+        .map(companion_register_lifecycle_from_wire)
+        .transpose()?
+        .unwrap_or(oneiron::ClaimLifecycleStatus::Active);
+    if lifecycle != oneiron::ClaimLifecycleStatus::Active {
+        return Err(ApiError::bad_request(
+            "companion register create/update lifecycle must be active",
+            Some("record.lifecycle"),
+        ));
+    }
+    let export_classification =
+        companion_register_export_from_wire(&payload.export_classification)?;
+    validate_companion_register_scope_export(&scope, export_classification)?;
+
+    Ok(oneiron::CompanionRecord::new(
+        scope,
+        subject,
+        value,
+        provenance,
+        lifecycle,
+        export_classification,
+    ))
+}
+
+fn validate_companion_register_scope_export(
+    scope: &oneiron::CompanionScope,
+    export: oneiron::CompanionExportClassification,
+) -> Result<(), ApiError> {
+    match (scope, export) {
+        (
+            oneiron::CompanionScope::SharedVault { .. },
+            oneiron::CompanionExportClassification::SharedVault,
+        ) => Ok(()),
+        (oneiron::CompanionScope::SharedVault { .. }, _) => Err(ApiError::bad_request(
+            "shared_vault scope requires shared_vault export",
+            Some("record.export"),
+        )),
+        (_, oneiron::CompanionExportClassification::SharedVault) => Err(ApiError::bad_request(
+            "shared_vault export requires shared_vault scope",
+            Some("record.export"),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn companion_register_scope_from_payload(
+    payload: &CompanionRegisterScopePayload,
+) -> Result<oneiron::CompanionScope, ApiError> {
+    match payload.kind.as_str() {
+        "neutral" if payload.person_ref.is_none() && payload.vault_id.is_none() => {
+            Ok(oneiron::CompanionScope::neutral())
+        }
+        "personal" if payload.vault_id.is_none() => {
+            let Some(person_ref) = payload.person_ref.as_deref() else {
+                return Err(ApiError::bad_request(
+                    "personal scope requires person_ref",
+                    Some("record.scope.person_ref"),
+                ));
+            };
+            Ok(oneiron::CompanionScope::personal(parse_entity_id_param(
+                person_ref,
+                "record.scope.person_ref",
+            )?))
+        }
+        "shared_vault" if payload.person_ref.is_none() => {
+            let Some(vault_id) = payload.vault_id else {
+                return Err(ApiError::bad_request(
+                    "shared_vault scope requires vault_id",
+                    Some("record.scope.vault_id"),
+                ));
+            };
+            if vault_id == 0 {
+                return Err(ApiError::bad_request(
+                    "shared_vault scope requires nonzero vault_id",
+                    Some("record.scope.vault_id"),
+                ));
+            }
+            Ok(oneiron::CompanionScope::shared_vault(vault_id))
+        }
+        _ => Err(ApiError::bad_request(
+            "scope shape must match scope.kind",
+            Some("record.scope.kind"),
+        )),
+    }
+}
+
+fn companion_register_subject_from_payload(
+    payload: &CompanionRegisterSubjectPayload,
+) -> Result<oneiron::CompanionSubject, ApiError> {
+    match payload.kind.as_str() {
+        "persona" if payload.relationship_ref.is_none() => {
+            let Some(persona_ref) = payload.persona_ref.as_deref() else {
+                return Err(ApiError::bad_request(
+                    "persona subject requires persona_ref",
+                    Some("record.subject.persona_ref"),
+                ));
+            };
+            Ok(oneiron::CompanionSubject::persona(parse_entity_id_param(
+                persona_ref,
+                "record.subject.persona_ref",
+            )?))
+        }
+        "relationship" if payload.persona_ref.is_none() => {
+            let Some(relationship_ref) = payload.relationship_ref.as_ref() else {
+                return Err(ApiError::bad_request(
+                    "relationship subject requires relationship_ref",
+                    Some("record.subject.relationship_ref"),
+                ));
+            };
+            Ok(oneiron::CompanionSubject::relationship(
+                parse_entity_id_param(
+                    &relationship_ref.source_ref,
+                    "record.subject.relationship_ref.source_ref",
+                )?,
+                parse_entity_id_param(
+                    &relationship_ref.target_ref,
+                    "record.subject.relationship_ref.target_ref",
+                )?,
+            ))
+        }
+        _ => Err(ApiError::bad_request(
+            "subject shape must match subject.kind",
+            Some("record.subject.kind"),
+        )),
+    }
+}
+
+fn companion_register_provenance_from_payload(
+    payload: &CompanionRegisterProvenancePayload,
+) -> Result<oneiron::CompanionProvenance, ApiError> {
+    let value = oneiron::companion_value_from_json(&payload.value).map_err(|error| {
+        ApiError::bad_request(error.to_string(), Some("record.provenance.value"))
+    })?;
+    Ok(oneiron::CompanionProvenance::new(
+        parse_entity_id_param(&payload.actor_ref, "record.provenance.actor_ref")?,
+        companion_register_actor_class(payload.actor_class)?,
+        companion_register_source_from_wire(&payload.source)?,
+        companion_register_approval_from_wire(&payload.approval)?,
+        value,
+    ))
+}
+
+fn companion_register_record_response(
+    id: &oneiron::EntityId,
+    record: &oneiron::CompanionRecord,
+) -> CompanionRegisterRecordResponse {
+    CompanionRegisterRecordResponse {
+        id: id.to_hex(),
+        record: companion_register_record_payload(record),
+    }
+}
+
+fn companion_register_record_payload(
+    record: &oneiron::CompanionRecord,
+) -> CompanionRegisterRecordPayload {
+    CompanionRegisterRecordPayload {
+        kind: record.kind().as_str().to_owned(),
+        scope: companion_register_scope_payload(&record.scope),
+        subject: companion_register_subject_payload(&record.subject),
+        value: oneiron::companion_value_to_json(&record.value),
+        provenance: CompanionRegisterProvenancePayload {
+            actor_ref: record.provenance.actor_ref.to_hex(),
+            actor_class: record.provenance.actor_class as u8,
+            source: record.provenance.source.as_str().to_owned(),
+            approval: record.provenance.approval.as_str().to_owned(),
+            value: oneiron::companion_value_to_json(&record.provenance.value),
+        },
+        lifecycle: Some(record.lifecycle.as_str().to_owned()),
+        export_classification: record.export_classification.as_str().to_owned(),
+    }
+}
+
+fn companion_register_scope_payload(
+    scope: &oneiron::CompanionScope,
+) -> CompanionRegisterScopePayload {
+    match scope {
+        oneiron::CompanionScope::Neutral => CompanionRegisterScopePayload {
+            kind: "neutral".to_owned(),
+            person_ref: None,
+            vault_id: None,
+        },
+        oneiron::CompanionScope::Personal { person_ref } => CompanionRegisterScopePayload {
+            kind: "personal".to_owned(),
+            person_ref: Some(person_ref.to_hex()),
+            vault_id: None,
+        },
+        oneiron::CompanionScope::SharedVault { vault_id } => CompanionRegisterScopePayload {
+            kind: "shared_vault".to_owned(),
+            person_ref: None,
+            vault_id: Some(*vault_id),
+        },
+        _ => {
+            tracing::warn!("unknown companion register scope variant in API response");
+            CompanionRegisterScopePayload {
+                kind: "unknown".to_owned(),
+                person_ref: None,
+                vault_id: None,
+            }
+        }
+    }
+}
+
+fn companion_register_subject_payload(
+    subject: &oneiron::CompanionSubject,
+) -> CompanionRegisterSubjectPayload {
+    match subject {
+        oneiron::CompanionSubject::Persona { persona_ref } => CompanionRegisterSubjectPayload {
+            kind: "persona".to_owned(),
+            persona_ref: Some(persona_ref.to_hex()),
+            relationship_ref: None,
+        },
+        oneiron::CompanionSubject::Relationship {
+            source_ref,
+            target_ref,
+        } => CompanionRegisterSubjectPayload {
+            kind: "relationship".to_owned(),
+            persona_ref: None,
+            relationship_ref: Some(CompanionRegisterRelationshipRefPayload {
+                source_ref: source_ref.to_hex(),
+                target_ref: target_ref.to_hex(),
+            }),
+        },
+        _ => {
+            tracing::warn!("unknown companion register subject variant in API response");
+            CompanionRegisterSubjectPayload {
+                kind: "unknown".to_owned(),
+                persona_ref: None,
+                relationship_ref: None,
+            }
+        }
+    }
+}
+
+fn companion_register_kind_from_wire(
+    value: &str,
+    field: &'static str,
+) -> Result<oneiron::CompanionRecordKind, ApiError> {
+    match value {
+        "persona" => Ok(oneiron::CompanionRecordKind::Persona),
+        "relationship" => Ok(oneiron::CompanionRecordKind::Relationship),
+        _ => Err(ApiError::bad_request(
+            "kind must be persona or relationship",
+            Some(field),
+        )),
+    }
+}
+
+fn companion_register_lifecycle_from_wire(
+    value: &str,
+) -> Result<oneiron::ClaimLifecycleStatus, ApiError> {
+    match value {
+        "active" => Ok(oneiron::ClaimLifecycleStatus::Active),
+        "superseded" => Ok(oneiron::ClaimLifecycleStatus::Superseded),
+        "retracted" => Ok(oneiron::ClaimLifecycleStatus::Retracted),
+        _ => Err(ApiError::bad_request(
+            "lifecycle must be active, superseded, or retracted",
+            Some("record.lifecycle"),
+        )),
+    }
+}
+
+fn companion_register_export_from_wire(
+    value: &str,
+) -> Result<oneiron::CompanionExportClassification, ApiError> {
+    match value {
+        "local_only" => Ok(oneiron::CompanionExportClassification::LocalOnly),
+        "portable" => Ok(oneiron::CompanionExportClassification::Portable),
+        "shared_vault" => Ok(oneiron::CompanionExportClassification::SharedVault),
+        _ => Err(ApiError::bad_request(
+            "export must be local_only, portable, or shared_vault",
+            Some("record.export"),
+        )),
+    }
+}
+
+fn companion_register_actor_class(value: u8) -> Result<oneiron::EdgeActorClass, ApiError> {
+    match value {
+        0 => Ok(oneiron::EdgeActorClass::Human),
+        1 => Ok(oneiron::EdgeActorClass::Agent),
+        2 => Ok(oneiron::EdgeActorClass::System),
+        _ => Err(ApiError::bad_request(
+            "actor_class must be 0, 1, or 2",
+            Some("record.provenance.actor_class"),
+        )),
+    }
+}
+
+fn companion_register_source_from_wire(value: &str) -> Result<oneiron::ClaimSource, ApiError> {
+    match value {
+        "user_stated" => Ok(oneiron::ClaimSource::UserStated),
+        "observed" => Ok(oneiron::ClaimSource::Observed),
+        "inferred" => Ok(oneiron::ClaimSource::Inferred),
+        "imported" => Ok(oneiron::ClaimSource::Imported),
+        "tool_output" => Ok(oneiron::ClaimSource::ToolOutput),
+        "generated" => Ok(oneiron::ClaimSource::Generated),
+        _ => Err(ApiError::bad_request(
+            "source is not recognized",
+            Some("record.provenance.source"),
+        )),
+    }
+}
+
+fn companion_register_approval_from_wire(
+    value: &str,
+) -> Result<oneiron::ClaimApprovalStatus, ApiError> {
+    match value {
+        "auto" => Ok(oneiron::ClaimApprovalStatus::Auto),
+        "proposed" => Ok(oneiron::ClaimApprovalStatus::Proposed),
+        "approved" => Ok(oneiron::ClaimApprovalStatus::Approved),
+        "rejected" => Ok(oneiron::ClaimApprovalStatus::Rejected),
+        _ => Err(ApiError::bad_request(
+            "approval is not recognized",
+            Some("record.provenance.approval"),
+        )),
+    }
+}
+
 fn companion_access_denied() -> EnvelopedApiError {
     ApiError::new(
         "companion profile access is not granted",
@@ -1825,6 +2569,27 @@ fn companion_create_error(error: oneiron::Error) -> EnvelopedApiError {
             ApiError::invalid_state(Some("access_grant_exists")).into()
         }
         _ => companion_engine_error("companion access grant create failed", error),
+    }
+}
+
+fn companion_register_engine_error(
+    message: &'static str,
+    error: oneiron::Error,
+) -> EnvelopedApiError {
+    match error.kind() {
+        ErrorKind::CompanionRecordAlreadyExists => {
+            ApiError::invalid_state(Some("companion_record_exists")).into()
+        }
+        ErrorKind::EntityNotFound => ApiError::not_found("companion_record", None).into(),
+        ErrorKind::InvalidClaimBody
+        | ErrorKind::InvalidEntityType
+        | ErrorKind::InvalidTimeRange
+        | ErrorKind::StructuralKindBandViolation
+        | ErrorKind::StructuralKindCollision
+        | ErrorKind::InvalidStructuralKindRegistration => {
+            ApiError::bad_request(error.to_string(), None).into()
+        }
+        _ => ApiError::internal_server_error(message).into(),
     }
 }
 
@@ -7875,6 +8640,9 @@ mod tests {
             "/v1/companion/access-grants",
             "/v1/companion/access-grants/{grant_id}/revoke",
             "/v1/companion/profiles/{persona_ref}",
+            "/v1/companion/register/records",
+            "/v1/companion/register/records/{record_id}",
+            "/v1/companion/register/records/{record_id}/retire",
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
@@ -8015,6 +8783,10 @@ mod tests {
             ("/v1/companion/access-grants", "post"),
             ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
             ("/v1/companion/profiles/{persona_ref}", "get"),
+            ("/v1/companion/register/records", "post"),
+            ("/v1/companion/register/records/{record_id}", "get"),
+            ("/v1/companion/register/records/{record_id}", "post"),
+            ("/v1/companion/register/records/{record_id}/retire", "post"),
         ] {
             assert_eq!(
                 spec["paths"][path][method]["security"],
@@ -8150,6 +8922,15 @@ mod tests {
             "CompanionRevokeAccessGrantRequest",
             "CompanionProfileAccess",
             "CompanionProfileResponse",
+            "CompanionRegisterScopePayload",
+            "CompanionRegisterRelationshipRefPayload",
+            "CompanionRegisterSubjectPayload",
+            "CompanionRegisterProvenancePayload",
+            "CompanionRegisterRecordPayload",
+            "CompanionRegisterCreateRecordRequest",
+            "CompanionRegisterUpdateRecordRequest",
+            "CompanionRegisterRetireRecordRequest",
+            "CompanionRegisterRecordResponse",
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
             "ContextPackRequest",
@@ -8518,6 +9299,347 @@ mod tests {
                 )
                 .expect("grant lookup"),
             Some(grant_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let neutral_id = seeded_test_entity_id(0x1219_0001).to_hex();
+        let personal_id = seeded_test_entity_id(0x1219_0002).to_hex();
+        let shared_id = seeded_test_entity_id(0x1219_0003).to_hex();
+        let actor_ref = seeded_test_entity_id(0x1219_0004).to_hex();
+        let persona_ref = seeded_test_entity_id(0x1219_0005).to_hex();
+        let person_ref = seeded_test_entity_id(0x1219_0006).to_hex();
+        let source_ref = seeded_test_entity_id(0x1219_0007).to_hex();
+        let target_ref = seeded_test_entity_id(0x1219_0008).to_hex();
+
+        let provenance = json!({
+            "actor_ref": actor_ref,
+            "actor_class": 1,
+            "source": "user_stated",
+            "approval": "approved",
+            "value": { "source": "settings" }
+        });
+        let neutral_record = json!({
+            "kind": "persona",
+            "scope": { "kind": "neutral" },
+            "subject": { "kind": "persona", "persona_ref": persona_ref },
+            "value": { "style": "neutral @Oneiron" },
+            "provenance": provenance.clone(),
+            "export": "portable"
+        });
+        let personal_record = json!({
+            "kind": "persona",
+            "scope": { "kind": "personal", "person_ref": person_ref },
+            "subject": { "kind": "persona", "persona_ref": persona_ref },
+            "value": { "note": "private per-person companion note" },
+            "provenance": provenance.clone(),
+            "export": "local_only"
+        });
+        let shared_record = json!({
+            "kind": "relationship",
+            "scope": { "kind": "shared_vault", "vault_id": 7_u64 },
+            "subject": {
+                "kind": "relationship",
+                "relationship_ref": {
+                    "source_ref": source_ref,
+                    "target_ref": target_ref
+                }
+            },
+            "value": { "note": "shared-vault boundary note" },
+            "provenance": provenance,
+            "export": "shared_vault"
+        });
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "core:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_0010).to_hex(),
+                    "record": neutral_record.clone()
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:register:write")
+        );
+
+        for (id, record, learned_at) in [
+            (&neutral_id, neutral_record.clone(), 30_u64),
+            (&personal_id, personal_record.clone(), 31_u64),
+            (&shared_id, shared_record.clone(), 32_u64),
+        ] {
+            let request = json!({ "id": id, "learned_at": learned_at, "record": record });
+            let (status, body) = route_json(
+                server.clone(),
+                core_request(
+                    "POST",
+                    "/v1/companion/register/records",
+                    "companion:register:write",
+                    Some(&request),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["id"], Value::from(id.clone()));
+            assert_eq!(body["record"]["lifecycle"], Value::from("active"));
+        }
+
+        let mut shared_scope_portable_export = shared_record.clone();
+        shared_scope_portable_export["export"] = Value::from("portable");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_0009).to_hex(),
+                    "record": shared_scope_portable_export
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.export")
+        );
+
+        let mut neutral_scope_shared_export = neutral_record.clone();
+        neutral_scope_shared_export["export"] = Value::from("shared_vault");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000A).to_hex(),
+                    "record": neutral_scope_shared_export
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.export")
+        );
+
+        let mut retired_create_record = personal_record.clone();
+        retired_create_record["lifecycle"] = Value::from("retracted");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000C).to_hex(),
+                    "record": retired_create_record
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.lifecycle")
+        );
+
+        let read_path = format!("/v1/companion/register/records/{personal_id}");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &read_path, "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:register:read")
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", &read_path, "companion:register:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["record"]["value"]["note"],
+            Value::from("private per-person companion note")
+        );
+
+        let mut scalar_update_record = body["record"].clone();
+        scalar_update_record["value"] = Value::from("scalar private per-person note");
+        scalar_update_record["provenance"]["value"] = Value::from(true);
+        let scalar_update_request = json!({ "learned_at": 32_u64, "record": scalar_update_record });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&scalar_update_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["record"]["value"],
+            Value::from("scalar private per-person note")
+        );
+        assert_eq!(body["record"]["provenance"]["value"], Value::from(true));
+
+        let scalar_roundtrip_request =
+            json!({ "learned_at": 33_u64, "record": body["record"].clone() });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&scalar_roundtrip_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["record"]["value"],
+            Value::from("scalar private per-person note")
+        );
+
+        let updated_record = json!({
+            "kind": "persona",
+            "scope": { "kind": "personal", "person_ref": person_ref },
+            "subject": { "kind": "persona", "persona_ref": persona_ref },
+            "value": { "note": "updated private per-person companion note" },
+            "provenance": body["record"]["provenance"].clone(),
+            "export": "local_only"
+        });
+        let update_request = json!({ "learned_at": 34_u64, "record": updated_record });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&update_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["record"]["value"]["note"],
+            Value::from("updated private per-person companion note")
+        );
+
+        let mut retire_via_update_record = updated_record.clone();
+        retire_via_update_record["lifecycle"] = Value::from("retracted");
+        let retire_via_update = json!({
+            "learned_at": 35_u64,
+            "record": retire_via_update_record
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&retire_via_update),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.lifecycle")
+        );
+
+        let retire_path = format!("/v1/companion/register/records/{personal_id}/retire");
+        let retire_request = json!({ "retired_at": 36_u64 });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &retire_path,
+                "companion:register:write",
+                Some(&retire_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["record"]["lifecycle"], Value::from("retracted"));
+
+        let reactivate_request = json!({
+            "learned_at": 37_u64,
+            "record": {
+                "kind": "persona",
+                "scope": { "kind": "personal", "person_ref": person_ref },
+                "subject": { "kind": "persona", "persona_ref": persona_ref },
+                "value": { "note": "reactivated private note" },
+                "provenance": body["record"]["provenance"].clone(),
+                "export": "local_only"
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &read_path,
+                "companion:register:write",
+                Some(&reactivate_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_0009).to_hex(),
+                    "record": neutral_record
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_error_envelope(&body, "INVALID_STATE");
+        assert_eq!(
+            error_envelope(&body)["details"]["state"],
+            Value::from("companion_record_exists")
+        );
+
+        assert!(
+            server
+                .vault
+                .get_companion_record(
+                    &oneiron::EntityId::from_hex(&shared_id).expect("shared record id")
+                )
+                .expect("read shared record")
+                .is_some()
         );
     }
 

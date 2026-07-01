@@ -44,6 +44,9 @@ const API_PARITY_ROUTES_PENDING_SKILLS_PACK_DOCS: &[&str] = &[
     "/v1/companion/access-grants",
     "/v1/companion/access-grants/{grant_id}/revoke",
     "/v1/companion/profiles/{persona_ref}",
+    "/v1/companion/register/records",
+    "/v1/companion/register/records/{record_id}",
+    "/v1/companion/register/records/{record_id}/retire",
 ];
 
 const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
@@ -69,6 +72,15 @@ const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
     (
         "/profiles/{persona_ref}",
         "/v1/companion/profiles/{persona_ref}",
+    ),
+    ("/register/records", "/v1/companion/register/records"),
+    (
+        "/register/records/{record_id}",
+        "/v1/companion/register/records/{record_id}",
+    ),
+    (
+        "/register/records/{record_id}/retire",
+        "/v1/companion/register/records/{record_id}/retire",
     ),
 ];
 

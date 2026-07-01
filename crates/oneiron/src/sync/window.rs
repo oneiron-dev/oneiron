@@ -26,8 +26,11 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHe
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{EntityId, decode_edge_value_for_kind};
-use loro::{CommitOptions, LoroDoc, Subscription};
+use crate::types::{
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, EntityId,
+    decode_companion_record_body, decode_edge_value_for_kind,
+};
+use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -627,6 +630,29 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
+        if skip_companion_register_sync_mirror(&raw)? {
+            let mut wrote_doc = false;
+            if map_contains_binary(&entities_map, &hex_id) {
+                map_delete(&entities_map, &hex_id)?;
+                wrote_doc = true;
+            }
+            if delete_edges_touching_entities(
+                &edges_map,
+                &HashSet::from([*id]),
+                "pm replay local companion edge remove",
+            )? {
+                wrote_doc = true;
+            }
+            if wrote_doc {
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
+
         // Check if tombstoned in CRDT — value-agnostic, entity-canonical
         // presence: a non-binary tombstone still decodes HARD downstream
         // and a case-shifted hex alias still names this id, so both must
@@ -803,6 +829,8 @@ pub fn forward_rematerialize(
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
         let mut entity_error = None;
+        let mut local_only_companion_entity_keys = Vec::<String>::new();
+        let mut local_only_companion_entity_ids = HashSet::<EntityId>::new();
         map_for_each_value_bytes(&entities_map, |key, blob| {
             if entity_error.is_some() {
                 return;
@@ -968,6 +996,24 @@ pub fn forward_rematerialize(
             } else {
                 &[]
             };
+            if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+                match decode_companion_record_body(data) {
+                    Ok(record)
+                        if record.export_classification
+                            == CompanionExportClassification::LocalOnly =>
+                    {
+                        local_only_companion_entity_keys.push(key.to_owned());
+                        local_only_companion_entity_ids.insert(id);
+                        return;
+                    }
+                    Ok(_) | Err(_) => {
+                        if let Err(err) = vault.ensure_companion_register_kind() {
+                            entity_error = Some(err);
+                            return;
+                        }
+                    }
+                }
+            }
             // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door
             // #2. Receipts are immutable audit records (contracts.ts
             // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
@@ -1123,6 +1169,25 @@ pub fn forward_rematerialize(
         });
         if let Some(err) = entity_error {
             return Err(err);
+        }
+        if !local_only_companion_entity_keys.is_empty() {
+            let mut wrote_doc = false;
+            for key in &local_only_companion_entity_keys {
+                map_delete(&entities_map, key).map_err(|err| {
+                    Error::SyncProtocolError(format!("forward remat local companion remove: {err}"))
+                })?;
+                wrote_doc = true;
+            }
+            if delete_edges_touching_entities(
+                &edges_map,
+                &local_only_companion_entity_ids,
+                "forward remat local companion edge remove",
+            )? {
+                wrote_doc = true;
+            }
+            if wrote_doc {
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
         }
     }
 
@@ -1530,18 +1595,37 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        if !map_contains_binary(&entities_map, &hex_id) {
-            let Some(raw) = vault.get_raw(id)? else {
-                continue;
-            };
+        let Some(raw) = vault.get_raw(id)? else {
+            continue;
+        };
 
-            if !reverse_remat_skip_redaction_receipt_mirror(&raw) {
-                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
-                    Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+        if skip_companion_register_sync_mirror(&raw)? {
+            let mut removed = false;
+            if map_contains_binary(&entities_map, &hex_id) {
+                map_delete(&entities_map, &hex_id).map_err(|e| {
+                    Error::SyncProtocolError(format!("reverse remat local companion remove: {e}"))
                 })?;
-                wrote_any = true;
-                count += 1;
+                removed = true;
             }
+            if delete_edges_touching_entities(
+                &edges_map,
+                &HashSet::from([*id]),
+                "reverse remat local companion edge remove",
+            )? {
+                removed = true;
+            }
+            wrote_any |= removed;
+            continue;
+        }
+
+        if !map_contains_binary(&entities_map, &hex_id)
+            && !reverse_remat_skip_redaction_receipt_mirror(&raw)
+        {
+            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
+                Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+            })?;
+            wrote_any = true;
+            count += 1;
         }
 
         let edges_out = vault.edges_out(id)?;
@@ -1553,6 +1637,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+                continue;
+            }
+            if local_entity_is_unsyncable_companion(vault, &edge.target)? {
                 continue;
             }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -1578,6 +1665,48 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     }
 
     Ok(count)
+}
+
+fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(false);
+    };
+    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        return Ok(false);
+    }
+    decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+}
+
+fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let Some(raw) = vault.get_raw(id)? else {
+        return Ok(false);
+    };
+    skip_companion_register_sync_mirror(&raw)
+}
+
+fn delete_edges_touching_entities(
+    edges_map: &LoroMap,
+    ids: &HashSet<EntityId>,
+    context: &str,
+) -> Result<bool> {
+    if ids.is_empty() {
+        return Ok(false);
+    }
+
+    let mut edge_keys = Vec::new();
+    map_for_each_value_bytes(edges_map, |key, _| {
+        if let Some((src, _, tgt)) = bridge::parse_edge_key(key)
+            && (ids.contains(&src) || ids.contains(&tgt))
+        {
+            edge_keys.push(key.to_owned());
+        }
+    });
+    for key in &edge_keys {
+        map_delete(edges_map, key)
+            .map_err(|err| Error::SyncProtocolError(format!("{context}: {err}")))?;
+    }
+    Ok(!edge_keys.is_empty())
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
@@ -1656,7 +1785,13 @@ pub mod test_hooks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::VaultConfig;
+    use rmpv::Value;
+
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::types::{
+        CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
+        EdgeActorClass, EdgeKind, Vad, VaultConfig, encode_companion_record_body,
+    };
 
     fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
         let dir = tempfile::tempdir().unwrap();
@@ -1687,6 +1822,25 @@ mod tests {
         .unwrap();
         window.doc.commit();
         id
+    }
+
+    fn companion_record(
+        persona_ref: EntityId,
+        export_classification: CompanionExportClassification,
+    ) -> CompanionRecord {
+        CompanionRecord::persona(
+            CompanionScope::neutral(),
+            persona_ref,
+            Value::from("private companion tuning"),
+            CompanionProvenance::new(
+                EntityId::from_bytes([0xB9; 16]).unwrap(),
+                EdgeActorClass::Agent,
+                ClaimSource::UserStated,
+                ClaimApprovalStatus::Approved,
+                Value::from("private provenance"),
+            ),
+            export_classification,
+        )
     }
 
     /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
@@ -1858,6 +2012,199 @@ mod tests {
             "pruned ops must reload from the d:w: snapshot"
         );
         assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
+    }
+
+    #[test]
+    fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new("2026-03");
+        let learned_at = window_key.start_timestamp().unwrap() + 60;
+        let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
+        let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
+        let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
+        let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+        let external_local =
+            companion_record(external_local_id, CompanionExportClassification::LocalOnly);
+
+        vault.create_companion_record(&local_id, &local, learned_at)?;
+        vault.create_companion_record(&portable_id, &portable, learned_at)?;
+        vault.create_companion_record(
+            &external_local_id,
+            &external_local,
+            window_key.end_timestamp().unwrap() + 60,
+        )?;
+        vault.put_edge(&portable_id, EdgeKind::Mentions, &external_local_id, 0.8)?;
+
+        let doc = create_window_doc("source", &window_key);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        let mut stale_local_blob = Vec::new();
+        stale_local_blob.push(ENTITY_TYPE_COMPANION_REGISTER);
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&encode_companion_record_body(&local)?);
+        map_insert_bytes(&entities, &local_id.to_hex(), &stale_local_blob)?;
+        let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
+        map_insert_bytes(
+            &edges,
+            &local_edge_key,
+            &encode_edge_value_for_crdt(
+                EdgeKind::Mentions,
+                0.7,
+                learned_at,
+                Some(Vad::NEUTRAL),
+                None,
+            )?,
+        )?;
+        doc.commit();
+
+        reverse_rematerialize(&vault, &doc, &window_key)?;
+        let external_local_edge_key =
+            format_edge_key(&portable_id, EdgeKind::Mentions, &external_local_id);
+
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "reverse remat must remove stale local-only companion register rows"
+        );
+        assert!(
+            map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
+            "reverse remat should mirror syncable companion register rows"
+        );
+        assert!(
+            map_get_bytes(&edges, &local_edge_key).is_none(),
+            "reverse remat must remove edges touching local-only companion register rows"
+        );
+        assert!(
+            map_get_bytes(&edges, &external_local_edge_key).is_none(),
+            "reverse remat must not backfill edges to out-of-window local-only companion targets"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new("2026-03");
+        let learned_at = window_key.start_timestamp().unwrap() + 90;
+        let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
+        let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
+        let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+
+        let doc = create_window_doc("remote", &window_key);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        map_insert_bytes(
+            &entities,
+            &local_id.to_hex(),
+            &make_entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                learned_at,
+                &encode_companion_record_body(&local)?,
+            ),
+        )?;
+        map_insert_bytes(
+            &entities,
+            &portable_id.to_hex(),
+            &make_entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                learned_at,
+                &encode_companion_record_body(&portable)?,
+            ),
+        )?;
+        let local_edge_key = format_edge_key(&portable_id, EdgeKind::Mentions, &local_id);
+        map_insert_bytes(
+            &edges,
+            &local_edge_key,
+            &encode_edge_value_for_crdt(
+                EdgeKind::Mentions,
+                0.8,
+                learned_at,
+                Some(Vad::NEUTRAL),
+                None,
+            )?,
+        )?;
+        doc.commit();
+
+        let materializer = Materializer::new();
+        let rematerialized = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+        assert_eq!(rematerialized, 1);
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "forward remat must remove local-only companion register rows"
+        );
+        assert!(
+            vault.get_companion_record(&local_id)?.is_none(),
+            "forward remat must not materialize local-only companion records"
+        );
+        assert!(
+            vault.get_companion_record(&portable_id)?.is_some(),
+            "forward remat should materialize syncable companion register rows"
+        );
+        assert!(
+            map_get_bytes(&edges, &local_edge_key).is_none(),
+            "forward remat must remove edges touching local-only companion register rows"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_api_pending_mirror_replay_excludes_local_only_edges() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new("2026-03");
+        let learned_at = window_key.start_timestamp().unwrap() + 120;
+        let local_id = EntityId::from_bytes([0x35; 16]).unwrap();
+        let portable_id = EntityId::from_bytes([0x36; 16]).unwrap();
+        let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+
+        vault.create_companion_record(&local_id, &local, learned_at)?;
+        vault.create_companion_record(&portable_id, &portable, learned_at)?;
+        let marker_key = format!("pm:{window_key}:{}", local_id.to_hex());
+        vault.sync_state_put(&marker_key, &[1])?;
+
+        let doc = create_window_doc("source", &window_key);
+        let entities = doc.get_map("entities");
+        let edges = doc.get_map("edges");
+        map_insert_bytes(
+            &entities,
+            &local_id.to_hex(),
+            &make_entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                learned_at,
+                &encode_companion_record_body(&local)?,
+            ),
+        )?;
+        let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
+        map_insert_bytes(
+            &edges,
+            &local_edge_key,
+            &encode_edge_value_for_crdt(
+                EdgeKind::Mentions,
+                0.9,
+                learned_at,
+                Some(Vad::NEUTRAL),
+                None,
+            )?,
+        )?;
+        doc.commit();
+
+        assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "pending mirror replay must remove stale local-only companion register rows"
+        );
+        assert!(
+            map_get_bytes(&edges, &local_edge_key).is_none(),
+            "pending mirror replay must remove edges touching local-only companion register rows"
+        );
+        assert!(
+            vault.sync_state_get(&marker_key)?.is_none(),
+            "local-only pending mirror markers should clear after the CRDT carriers are scrubbed"
+        );
+        Ok(())
     }
 
     /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge

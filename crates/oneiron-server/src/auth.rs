@@ -13,6 +13,7 @@ use crate::error::ApiError;
 use crate::server::SyncServer;
 
 const LEGACY_SECRET_HEADER: &str = "x-oneiron-secret";
+const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
 
 /// Canonical scopes for the `/v1/core/*` route shell.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -20,6 +21,8 @@ pub(crate) enum CoreScope {
     Read,
     Write,
     Auth,
+    CompanionRegisterRead,
+    CompanionRegisterWrite,
 }
 
 impl CoreScope {
@@ -28,6 +31,8 @@ impl CoreScope {
             Self::Read => "core:read",
             Self::Write => "core:write",
             Self::Auth => "core:auth",
+            Self::CompanionRegisterRead => "companion:register:read",
+            Self::CompanionRegisterWrite => "companion:register:write",
         }
     }
 
@@ -36,12 +41,22 @@ impl CoreScope {
             "core:read" => Some(Self::Read),
             "core:write" => Some(Self::Write),
             "core:auth" => Some(Self::Auth),
+            "companion:register:read" => Some(Self::CompanionRegisterRead),
+            "companion:register:write" => Some(Self::CompanionRegisterWrite),
             _ => None,
         }
     }
 
     fn all() -> BTreeSet<Self> {
-        [Self::Read, Self::Write, Self::Auth].into_iter().collect()
+        [
+            Self::Read,
+            Self::Write,
+            Self::Auth,
+            Self::CompanionRegisterRead,
+            Self::CompanionRegisterWrite,
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -50,6 +65,7 @@ impl CoreScope {
 pub(crate) struct CoreAuth {
     principal: String,
     scopes: BTreeSet<CoreScope>,
+    implicit_all_scopes: bool,
 }
 
 impl CoreAuth {
@@ -61,6 +77,7 @@ impl CoreAuth {
             return Ok(Self {
                 principal: "legacy-shared-secret".to_owned(),
                 scopes: CoreScope::all(),
+                implicit_all_scopes: true,
             });
         }
 
@@ -72,6 +89,7 @@ impl CoreAuth {
         Ok(Self {
             principal: "legacy-shared-secret".to_owned(),
             scopes: CoreScope::all(),
+            implicit_all_scopes: true,
         })
     }
 
@@ -88,12 +106,15 @@ impl CoreAuth {
     }
 
     pub(crate) fn idempotency_principal(&self) -> String {
-        let scopes = self
-            .scopes
-            .iter()
-            .map(|scope| scope.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
+        let scopes = if self.implicit_all_scopes {
+            IMPLICIT_ALL_IDEMPOTENCY_SCOPES.to_owned()
+        } else {
+            self.scopes
+                .iter()
+                .map(|scope| scope.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
         format!("core:{}:scopes={scopes}", self.principal)
     }
 }
@@ -162,9 +183,12 @@ fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
 fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiError> {
     let Some(expected) = config.auth_secret.as_ref() else {
         if config.allow_unauthenticated {
+            let scopes = parse_bearer_scopes(token)?;
+            let implicit_all_scopes = scopes.is_none();
             return Ok(CoreAuth {
                 principal: "dev-bearer".to_owned(),
-                scopes: parse_bearer_scopes(token)?.unwrap_or_else(CoreScope::all),
+                scopes: scopes.unwrap_or_else(CoreScope::all),
+                implicit_all_scopes,
             });
         }
         return Err(ApiError::unauthorized());
@@ -178,9 +202,12 @@ fn bearer_auth(token: &str, config: &SyncServerConfig) -> Result<CoreAuth, ApiEr
         return Err(ApiError::unauthorized());
     }
 
+    let scopes = parse_bearer_scopes(claims)?;
+    let implicit_all_scopes = scopes.is_none();
     Ok(CoreAuth {
         principal: "bearer".to_owned(),
-        scopes: parse_bearer_scopes(claims)?.unwrap_or_else(CoreScope::all),
+        scopes: scopes.unwrap_or_else(CoreScope::all),
+        implicit_all_scopes,
     })
 }
 
@@ -234,6 +261,8 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Write).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
     }
 
     #[test]
@@ -280,14 +309,18 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            "Bearer secret;scope=core:read,core:auth".parse().unwrap(),
+            "Bearer secret;scope=core:read,core:auth,companion:register:write"
+                .parse()
+                .unwrap(),
         );
         let auth = CoreAuth::from_headers(&headers, &config()).unwrap();
 
         assert_eq!(auth.principal(), "bearer");
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
         assert!(auth.require(CoreScope::Write).is_err());
+        assert!(auth.require(CoreScope::CompanionRegisterRead).is_err());
     }
 
     #[test]
@@ -318,6 +351,10 @@ mod tests {
             read_auth.idempotency_principal(),
             write_auth.idempotency_principal()
         );
+        assert_eq!(
+            legacy_auth.idempotency_principal(),
+            "core:legacy-shared-secret:scopes=__implicit_all_scopes__"
+        );
         assert!(read_auth.idempotency_principal().contains("core:read"));
         assert!(write_auth.idempotency_principal().contains("core:write"));
     }
@@ -331,5 +368,36 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Write).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
+        assert_eq!(
+            auth.idempotency_principal(),
+            "core:bearer:scopes=__implicit_all_scopes__"
+        );
+    }
+
+    #[test]
+    fn implicit_all_idempotency_principal_does_not_collide_with_explicit_core_scopes() {
+        let mut bare_headers = HeaderMap::new();
+        bare_headers.insert(AUTHORIZATION, "Bearer secret".parse().unwrap());
+        let bare_auth = CoreAuth::from_headers(&bare_headers, &config()).unwrap();
+
+        let mut explicit_headers = HeaderMap::new();
+        explicit_headers.insert(
+            AUTHORIZATION,
+            "Bearer secret;scope=core:read,core:write,core:auth"
+                .parse()
+                .unwrap(),
+        );
+        let explicit_auth = CoreAuth::from_headers(&explicit_headers, &config()).unwrap();
+
+        assert_ne!(
+            bare_auth.idempotency_principal(),
+            explicit_auth.idempotency_principal()
+        );
+        assert_eq!(
+            explicit_auth.idempotency_principal(),
+            "core:bearer:scopes=core:read,core:write,core:auth"
+        );
     }
 }
