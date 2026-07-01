@@ -650,6 +650,48 @@ impl CompanionRecordKey {
     }
 }
 
+/// Source evidence used to resolve an effective companion scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum CompanionScopeResolutionSource {
+    /// No active companion record matched; neutral @Oneiron remains in effect.
+    NeutralDefault,
+    /// An active persona record selected the scope.
+    PersonaRecord,
+    /// An active relationship record selected the scope.
+    RelationshipRecord,
+    /// Active persona and relationship records both selected the same scope.
+    PersonaAndRelationshipRecords,
+}
+
+impl CompanionScopeResolutionSource {
+    /// Returns the stable wire/debug string for this resolution source.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NeutralDefault => "neutral_default",
+            Self::PersonaRecord => "persona_record",
+            Self::RelationshipRecord => "relationship_record",
+            Self::PersonaAndRelationshipRecords => "persona_and_relationship_records",
+        }
+    }
+}
+
+/// Effective companion scope and expression boundary resolved from records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanionScopeResolution {
+    /// Effective scope boundary for this companion assembly.
+    pub scope: CompanionScope,
+    /// Active persona record key that selected or contributes to this scope.
+    pub persona_key: Option<CompanionRecordKey>,
+    /// Active relationship record key that selected or contributes to this scope.
+    pub relationship_key: Option<CompanionRecordKey>,
+    /// Effective expression register value for the resolved boundary.
+    pub expression: CompanionExpression,
+    /// Evidence class used for the scope decision.
+    pub source: CompanionScopeResolutionSource,
+}
+
 /// In-memory companion record register keyed by `(scope, subject)`.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct CompanionRegister {
@@ -675,6 +717,13 @@ impl CompanionRegister {
     #[must_use]
     pub fn lookup(&self, key: &CompanionRecordKey) -> Option<&CompanionRecord> {
         self.records.get(key)
+    }
+
+    /// Looks up an active record by key.
+    #[must_use]
+    pub fn lookup_active(&self, key: &CompanionRecordKey) -> Option<&CompanionRecord> {
+        self.lookup(key)
+            .filter(|record| record.lifecycle == ClaimLifecycleStatus::Active)
     }
 
     /// Looks up a persona record in a specific scope.
@@ -716,6 +765,81 @@ impl CompanionRegister {
     /// Iterates over all records in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&CompanionRecordKey, &CompanionRecord)> {
         self.records.iter()
+    }
+
+    /// Resolves the effective neutral/personal companion scope from active
+    /// persona and relationship records.
+    ///
+    /// Personal scope takes precedence only when an active record exists for
+    /// the requested person. Expression values are read only from the active
+    /// record keys that contributed to the resolved scope, so orphan or
+    /// cross-scope expression entries cannot widen the boundary.
+    #[must_use]
+    pub fn resolve_companion_scope(
+        &self,
+        expressions: &CompanionExpressionRegister,
+        person_ref: Option<EntityId>,
+        persona_ref: Option<EntityId>,
+        relationship_ref: Option<(EntityId, EntityId)>,
+    ) -> CompanionScopeResolution {
+        let neutral = CompanionScope::neutral();
+        if let Some(person_ref) = person_ref {
+            let personal = CompanionScope::personal(person_ref);
+            if let Some(resolution) = self.resolve_companion_scope_in(
+                &personal,
+                expressions,
+                persona_ref,
+                relationship_ref,
+            ) {
+                return resolution;
+            }
+        }
+
+        self.resolve_companion_scope_in(&neutral, expressions, persona_ref, relationship_ref)
+            .unwrap_or(CompanionScopeResolution {
+                scope: neutral,
+                persona_key: None,
+                relationship_key: None,
+                expression: CompanionExpression::Professional,
+                source: CompanionScopeResolutionSource::NeutralDefault,
+            })
+    }
+
+    fn resolve_companion_scope_in(
+        &self,
+        scope: &CompanionScope,
+        expressions: &CompanionExpressionRegister,
+        persona_ref: Option<EntityId>,
+        relationship_ref: Option<(EntityId, EntityId)>,
+    ) -> Option<CompanionScopeResolution> {
+        let persona_key = persona_ref
+            .map(|persona_ref| CompanionRecordKey::persona(scope.clone(), persona_ref))
+            .filter(|key| self.lookup_active(key).is_some());
+        let relationship_key = relationship_ref
+            .map(|(source_ref, target_ref)| {
+                CompanionRecordKey::relationship(scope.clone(), source_ref, target_ref)
+            })
+            .filter(|key| self.lookup_active(key).is_some());
+
+        let source = match (persona_key.is_some(), relationship_key.is_some()) {
+            (true, true) => CompanionScopeResolutionSource::PersonaAndRelationshipRecords,
+            (true, false) => CompanionScopeResolutionSource::PersonaRecord,
+            (false, true) => CompanionScopeResolutionSource::RelationshipRecord,
+            (false, false) => return None,
+        };
+        let expression = relationship_key
+            .as_ref()
+            .and_then(|key| expressions.lookup(key))
+            .or_else(|| persona_key.as_ref().and_then(|key| expressions.lookup(key)))
+            .unwrap_or(CompanionExpression::Professional);
+
+        Some(CompanionScopeResolution {
+            scope: scope.clone(),
+            persona_key,
+            relationship_key,
+            expression,
+            source,
+        })
     }
 
     /// Returns the number of records in the register.
@@ -1576,6 +1700,117 @@ mod tests {
         assert_eq!(register.records_in_scope(&neutral).count(), 1);
         assert_eq!(register.records_in_scope(&personal).count(), 1);
         assert_eq!(register.records_in_scope(&shared).count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> Result<()> {
+        let persona_ref = entity(0x23);
+        let person_ref = entity(0x24);
+        let neutral = CompanionScope::neutral();
+        let personal = CompanionScope::personal(person_ref);
+        let mut register = CompanionRegister::new();
+        let neutral_persona = CompanionRecord::persona(
+            neutral,
+            persona_ref,
+            Value::from("neutral fallback persona"),
+            provenance(0xC8),
+            CompanionExportClassification::Portable,
+        );
+        let private_relationship_note = "private warm relationship note";
+        let personal_relationship = CompanionRecord::relationship(
+            personal.clone(),
+            person_ref,
+            persona_ref,
+            Value::Map(vec![(
+                Value::from("note"),
+                Value::from(private_relationship_note),
+            )]),
+            provenance(0xC9),
+            CompanionExportClassification::LocalOnly,
+        );
+        register.register(neutral_persona.clone())?;
+        register.register(personal_relationship.clone())?;
+
+        let mut expressions = CompanionExpressionRegister::new();
+        expressions.update(neutral_persona.key(), CompanionExpression::Unrestricted)?;
+        expressions.update(personal_relationship.key(), CompanionExpression::Warm)?;
+
+        let resolution = register.resolve_companion_scope(
+            &expressions,
+            Some(person_ref),
+            Some(persona_ref),
+            Some((person_ref, persona_ref)),
+        );
+
+        assert_eq!(resolution.scope, personal);
+        assert_eq!(
+            resolution.source,
+            CompanionScopeResolutionSource::RelationshipRecord
+        );
+        assert_eq!(resolution.persona_key, None);
+        assert_eq!(
+            resolution.relationship_key,
+            Some(personal_relationship.key())
+        );
+        assert_eq!(resolution.expression, CompanionExpression::Warm);
+        assert!(
+            !format!("{resolution:?}").contains(private_relationship_note),
+            "resolved scope must not carry opaque private companion values"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_scope_resolution_falls_back_to_neutral_persona_and_blocks_orphan_expression()
+    -> Result<()> {
+        let persona_ref = entity(0x25);
+        let person_ref = entity(0x26);
+        let neutral = CompanionScope::neutral();
+        let mut register = CompanionRegister::new();
+        let neutral_persona = CompanionRecord::persona(
+            neutral.clone(),
+            persona_ref,
+            Value::from("neutral @Oneiron"),
+            provenance(0xCA),
+            CompanionExportClassification::Portable,
+        );
+        register.register(neutral_persona.clone())?;
+
+        let mut expressions = CompanionExpressionRegister::new();
+        expressions.update(
+            CompanionRecordKey::persona(CompanionScope::personal(person_ref), persona_ref),
+            CompanionExpression::Warm,
+        )?;
+        expressions.update(neutral_persona.key(), CompanionExpression::Professional)?;
+
+        let resolution = register.resolve_companion_scope(
+            &expressions,
+            Some(person_ref),
+            Some(persona_ref),
+            Some((person_ref, persona_ref)),
+        );
+        assert_eq!(resolution.scope, neutral);
+        assert_eq!(
+            resolution.source,
+            CompanionScopeResolutionSource::PersonaRecord
+        );
+        assert_eq!(resolution.persona_key, Some(neutral_persona.key()));
+        assert_eq!(resolution.relationship_key, None);
+        assert_eq!(resolution.expression, CompanionExpression::Professional);
+
+        let orphan_only = CompanionRegister::new().resolve_companion_scope(
+            &expressions,
+            Some(person_ref),
+            Some(persona_ref),
+            Some((person_ref, persona_ref)),
+        );
+        assert_eq!(orphan_only.scope, CompanionScope::neutral());
+        assert_eq!(
+            orphan_only.source,
+            CompanionScopeResolutionSource::NeutralDefault
+        );
+        assert_eq!(orphan_only.expression, CompanionExpression::Professional);
         Ok(())
     }
 

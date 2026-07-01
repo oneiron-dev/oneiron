@@ -2252,6 +2252,12 @@
               "null"
             ]
           },
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "person_ref": {
             "type": [
               "string",
@@ -2259,6 +2265,18 @@
             ]
           },
           "persona_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_source": {
             "type": [
               "string",
               "null"
@@ -2980,6 +2998,12 @@
       },
       "EiriCompanionControls": {
         "properties": {
+          "expression": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "person_ref": {
             "type": [
               "string",
