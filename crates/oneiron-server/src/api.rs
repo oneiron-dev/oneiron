@@ -113,6 +113,7 @@ const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
 const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
 const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
+const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
 const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
     &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
 static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
@@ -120,6 +121,7 @@ static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::
 #[derive(Default)]
 struct EiriSessionRagStore {
     entries: BTreeMap<String, oneiron::EiriSessionRagState>,
+    active_sessions: BTreeMap<String, String>,
     insertion_order: VecDeque<String>,
 }
 
@@ -136,8 +138,25 @@ impl EiriSessionRagStore {
         state
     }
 
+    fn current_for_scope(
+        &mut self,
+        scope_key: String,
+        default_key: String,
+        default_session_id: &str,
+    ) -> oneiron::EiriSessionRagState {
+        if let Some(active_key) = self.active_sessions.get(&scope_key).cloned() {
+            if let Some(state) = self.entries.get(&active_key) {
+                return state.clone();
+            }
+            self.active_sessions.remove(&scope_key);
+        }
+
+        self.current(default_key, default_session_id)
+    }
+
     fn advance(
         &mut self,
+        scope_key: String,
         key: String,
         session_id: &str,
         pack: &oneiron::ContextPack,
@@ -160,18 +179,24 @@ impl EiriSessionRagStore {
         state.last_result_ids = pack
             .results
             .iter()
+            .take(EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX)
             .map(|entity| entity.id.to_hex())
             .collect();
-        state.clone()
+        let state = state.clone();
+        self.active_sessions.insert(scope_key, key);
+        state
     }
 
     fn evict_if_full(&mut self) {
         while self.entries.len() >= EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
             let Some(key) = self.insertion_order.pop_front() else {
                 self.entries.clear();
+                self.active_sessions.clear();
                 break;
             };
             if self.entries.remove(&key).is_some() {
+                self.active_sessions
+                    .retain(|_, active_key| active_key != &key);
                 break;
             }
         }
@@ -284,6 +309,13 @@ impl EiriSessionRagStore {
         EiriCompanionControls,
         CoreContextPackRequest,
         CoreContextPackResponse,
+        CoreEiriCompanionAssembly,
+        CoreEiriMemoryBoard,
+        CoreEiriMemoryBoardBudget,
+        CoreEiriMemoryBoardRow,
+        CoreEiriMemoryBoardSlot,
+        CoreEiriMemoryBoardSource,
+        CoreEiriSessionRagState,
         CoreContextEntity,
         CoreContextEdge,
         CoreContextPackStats,
@@ -1006,6 +1038,152 @@ fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreEiriMemoryBoardBudget",
+        "claims",
+        "Claim row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "turns",
+        "Turn/message row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "summaries",
+        "Summary row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "facets",
+        "Facet row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "companions",
+        "Companion-register row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "other",
+        "Row cap for all other entity types.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "caller",
+        "Effective caller/session identity used for the v4 board.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "person_ref",
+        "Optional person entity id for companion-aware assembly metadata.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "persona_ref",
+        "Optional persona entity id for companion-aware assembly metadata.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "row_index",
+        "Zero-based index after stable sorting and slot-budget filtering.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "slot",
+        "Budget slot that owns this row.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "source",
+        "Whether the row came from primary results or neighbors.",
+    );
+    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "id", "Hex entity id.");
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "short_id",
+        "Short id used for compact display.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "content_hash",
+        "One-byte content hash as two lowercase hex digits.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "entity_type",
+        "Numeric entity type byte.",
+    );
+    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "score", "Retrieval score.");
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "version",
+        "Context version for this memory-board envelope.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "budget",
+        "Applied per-slot row budget.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "rows",
+        "Stable memory-board rows.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "companion",
+        "Companion assembly metadata when v4 companion controls are present.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "session_id",
+        "Effective v4 session id.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "revision",
+        "Monotonic cursor revision for this session.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "query_count",
+        "Number of context-pack queries observed for this session.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "last_retrieval_run_id",
+        "Last persisted retrieval telemetry run id, when available.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "last_result_ids",
+        "Bounded list of most recent context-pack result ids for this session.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreContextPackState",
         "kind",
         "Stable state discriminator.",
@@ -1093,6 +1271,152 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "CoreContextPackScoreComponent",
         "score",
         "Raw signal score.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "caller",
+        "Effective caller or session identity used for the v4 board.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "person_ref",
+        "Optional person entity id for companion-aware assembly metadata.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriCompanionAssembly",
+        "persona_ref",
+        "Optional persona entity id for companion-aware assembly metadata.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "version",
+        "Context version for this memory-board envelope.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "budget",
+        "Applied per-slot row budget.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "rows",
+        "Stable memory-board rows.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoard",
+        "companion",
+        "Companion assembly metadata when v4 companion controls are present.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "claims",
+        "Claim row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "turns",
+        "Turn and message row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "summaries",
+        "Summary row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "facets",
+        "Facet row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "companions",
+        "Companion-register row cap.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardBudget",
+        "other",
+        "Row cap for all other entity types.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "row_index",
+        "Zero-based index after stable sorting and slot-budget filtering.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "slot",
+        "Budget slot that owns this row.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "source",
+        "Whether the row came from primary results or neighbors.",
+    );
+    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "id", "Hex entity id.");
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "short_id",
+        "Short id used for compact display.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "content_hash",
+        "One-byte content hash as two lowercase hex digits.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "entity_type",
+        "Numeric entity type byte.",
+    );
+    set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "score", "Retrieval score.");
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "session_id",
+        "Effective v4 session id.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "revision",
+        "Monotonic cursor revision for this session.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "query_count",
+        "Number of context-pack queries observed for this session.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "last_retrieval_run_id",
+        "Last persisted retrieval telemetry run id, when available.",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreEiriSessionRagState",
+        "last_result_ids",
+        "Bounded list of most recent context-pack result ids for this session.",
     );
     set_schema_property_description(
         spec,
@@ -2873,7 +3197,7 @@ async fn resume_session_context(
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_eiri_session_rag_state(&server.vault, caller, caller).await,
+        rag_state: current_eiri_session_rag_state(&server.vault, caller).await,
     })
 }
 
@@ -4813,6 +5137,135 @@ struct CoreContextPackEvidence {
     scores: Vec<CoreContextPackScoreEvidence>,
 }
 
+/// Stable Eiri Context v4 memory-board slot name.
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreEiriMemoryBoardSlot {
+    Claims,
+    Turns,
+    Summaries,
+    Facets,
+    Companions,
+    Other,
+}
+
+/// Source section for one Eiri Context v4 memory-board row.
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreEiriMemoryBoardSource {
+    Result,
+    Neighbor,
+}
+
+/// Per-slot row caps for an Eiri Context v4 memory board.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEiriMemoryBoardBudget {
+    /// Claim row cap.
+    #[schema(example = 2)]
+    claims: usize,
+    /// Turn/message row cap.
+    #[schema(example = 4)]
+    turns: usize,
+    /// Summary row cap.
+    #[schema(example = 1)]
+    summaries: usize,
+    /// Facet row cap.
+    #[schema(example = 1)]
+    facets: usize,
+    /// Companion-register row cap.
+    #[schema(example = 0)]
+    companions: usize,
+    /// Row cap for all other entity types.
+    #[schema(example = 2)]
+    other: usize,
+}
+
+/// Companion assembly metadata echoed with an Eiri Context v4 memory board.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEiriCompanionAssembly {
+    /// Effective caller/session identity used for the v4 board.
+    #[schema(example = "session-123")]
+    caller: Option<String>,
+    /// Optional person entity id for companion-aware assembly metadata.
+    #[serde(rename = "person_ref")]
+    #[schema(example = "11111111111111111111111111111111")]
+    person_ref: Option<String>,
+    /// Optional persona entity id for companion-aware assembly metadata.
+    #[serde(rename = "persona_ref")]
+    #[schema(example = "22222222222222222222222222222222")]
+    persona_ref: Option<String>,
+}
+
+/// Stable row in an Eiri Context v4 memory board.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEiriMemoryBoardRow {
+    /// Zero-based index after stable sorting and slot-budget filtering.
+    #[serde(rename = "row_index")]
+    #[schema(example = 0)]
+    row_index: usize,
+    /// Budget slot that owns this row.
+    slot: CoreEiriMemoryBoardSlot,
+    /// Whether the row came from primary results or neighbors.
+    source: CoreEiriMemoryBoardSource,
+    /// Hex entity id.
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    id: String,
+    /// Short id used for compact display.
+    #[serde(rename = "short_id")]
+    #[schema(example = "tr_a1b2c3d4")]
+    short_id: String,
+    /// One-byte content hash as two lowercase hex digits.
+    #[serde(rename = "content_hash")]
+    #[schema(example = "a7")]
+    content_hash: String,
+    /// Numeric entity type byte.
+    #[serde(rename = "entity_type")]
+    #[schema(example = 1)]
+    entity_type: u8,
+    /// Retrieval score.
+    #[schema(example = 0.87)]
+    score: f32,
+}
+
+/// Eiri Context v4 memory-board response envelope.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEiriMemoryBoard {
+    /// Context version for this memory-board envelope.
+    #[schema(example = "v4")]
+    version: String,
+    /// Applied per-slot row budget.
+    budget: CoreEiriMemoryBoardBudget,
+    /// Stable memory-board rows.
+    rows: Vec<CoreEiriMemoryBoardRow>,
+    /// Companion assembly metadata when v4 companion controls are present.
+    companion: Option<CoreEiriCompanionAssembly>,
+}
+
+/// Eiri Context v4 session RAG cursor response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreEiriSessionRagState {
+    /// Effective v4 session id.
+    #[serde(rename = "session_id")]
+    #[schema(example = "session-123")]
+    session_id: String,
+    /// Monotonic cursor revision for this session.
+    #[schema(example = 2_u64)]
+    revision: u64,
+    /// Number of context-pack queries observed for this session.
+    #[serde(rename = "query_count")]
+    #[schema(example = 2_u64)]
+    query_count: u64,
+    /// Last persisted retrieval telemetry run id, when available.
+    #[serde(rename = "last_retrieval_run_id")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    last_retrieval_run_id: Option<String>,
+    /// Bounded list of most recent context-pack result ids for this session.
+    #[serde(rename = "last_result_ids")]
+    last_result_ids: Vec<String>,
+}
+
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreContextPackResponse {
@@ -4832,11 +5285,11 @@ struct CoreContextPackResponse {
     evidence: CoreContextPackEvidence,
     /// Eiri Context v4 memory-board rows when requested.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<CoreEiriMemoryBoard>)]
     memory_board: Option<oneiron::EiriMemoryBoard>,
     /// Eiri Context v4 session RAG state when requested.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<CoreEiriSessionRagState>)]
     session_rag: Option<oneiron::EiriSessionRagState>,
     /// Empty-result context when no entities surface.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6293,16 +6746,20 @@ fn eiri_session_rag_key(vault: &oneiron::Vault, scope_id: &str, session_id: &str
     format!("{vault:p}:{scope_id}:{session_id}")
 }
 
+fn eiri_session_rag_scope_key(vault: &oneiron::Vault, scope_id: &str) -> String {
+    format!("{vault:p}:{scope_id}")
+}
+
 async fn current_eiri_session_rag_state(
     vault: &oneiron::Vault,
     scope_id: &str,
-    session_id: &str,
 ) -> oneiron::EiriSessionRagState {
-    let key = eiri_session_rag_key(vault, scope_id, session_id);
+    let scope_key = eiri_session_rag_scope_key(vault, scope_id);
+    let default_key = eiri_session_rag_key(vault, scope_id, scope_id);
     eiri_session_rag_store()
         .lock()
         .await
-        .current(key, session_id)
+        .current_for_scope(scope_key, default_key, scope_id)
 }
 
 async fn advance_eiri_session_rag_state(
@@ -6312,11 +6769,12 @@ async fn advance_eiri_session_rag_state(
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
 ) -> oneiron::EiriSessionRagState {
+    let scope_key = eiri_session_rag_scope_key(vault, scope_id);
     let key = eiri_session_rag_key(vault, scope_id, session_id);
     eiri_session_rag_store()
         .lock()
         .await
-        .advance(key, session_id, pack, evidence)
+        .advance(scope_key, key, session_id, pack, evidence)
 }
 
 async fn run_context_pack_builder(
@@ -7826,6 +8284,13 @@ mod tests {
         "CoreContextPackStateKind",
         "CoreContextPackStateReason",
         "CoreContextPackStats",
+        "CoreEiriCompanionAssembly",
+        "CoreEiriMemoryBoard",
+        "CoreEiriMemoryBoardBudget",
+        "CoreEiriMemoryBoardRow",
+        "CoreEiriMemoryBoardSlot",
+        "CoreEiriMemoryBoardSource",
+        "CoreEiriSessionRagState",
         "CoreCreateEntityRequest",
         "CoreCreateTurnRequest",
         "CoreEntityWriteResponse",
@@ -7951,6 +8416,39 @@ mod tests {
         let mut bytes = counter.to_be_bytes();
         bytes[0] = 0x7e;
         oneiron::EntityId::from_bytes(bytes).expect("seeded test id should be valid")
+    }
+
+    fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
+        oneiron::ContextPack {
+            results: (0..result_count)
+                .map(|index| {
+                    let id = seeded_test_entity_id(0x0012_6400 + index as u128);
+                    oneiron::ContextEntity {
+                        id,
+                        short_id: id.to_hex(),
+                        content_hash: index as u8,
+                        entity_type: ENTITY_TYPE_TURN,
+                        score: 1.0,
+                        fields: None,
+                        edges: None,
+                        vector: None,
+                    }
+                })
+                .collect(),
+            neighbors: Vec::new(),
+            stats: oneiron::PackStats {
+                candidates_considered: result_count,
+                signals_used: Vec::new(),
+                query_time_us: 0,
+                entities_hydrated: result_count,
+                neighbors_hydrated: 0,
+                cosine_ghosts_dampened: 0,
+                claims_suppressed: 0,
+                items_truncated: oneiron::types::PackItemAccounting::item_budget(),
+                items_dropped: oneiron::types::PackItemAccounting::token_budget(),
+            },
+            empty: None,
+        }
     }
 
     fn seed_active_claim(
@@ -9529,6 +10027,11 @@ mod tests {
             "CoreContextPackScoreComponent",
             "CoreContextPackScoreEvidence",
             "CoreContextPackEvidence",
+            "CoreEiriCompanionAssembly",
+            "CoreEiriMemoryBoard",
+            "CoreEiriMemoryBoardBudget",
+            "CoreEiriMemoryBoardRow",
+            "CoreEiriSessionRagState",
             "CoreListQuery",
             "CoreCreateEntityRequest",
             "CoreCreateTurnRequest",
@@ -12936,6 +13439,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn eiri_session_rag_store_caps_persisted_result_ids() {
+        let mut store = EiriSessionRagStore::default();
+        let pack = synthetic_context_pack(EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX + 5);
+        let evidence = CoreContextPackEvidence {
+            telemetry_persisted: false,
+            retrieval_run_id: Some("test-run".to_owned()),
+            result_ids: Vec::new(),
+            scores: Vec::new(),
+        };
+
+        let state = store.advance(
+            "vault:caller".to_owned(),
+            "vault:caller:session".to_owned(),
+            "session",
+            &pack,
+            &evidence,
+        );
+
+        assert_eq!(
+            state.last_result_ids.len(),
+            EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX
+        );
+        assert_eq!(state.last_result_ids[0], pack.results[0].id.to_hex());
+        assert_eq!(
+            state.last_result_ids[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1],
+            pack.results[EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX - 1]
+                .id
+                .to_hex()
+        );
+    }
+
     #[tokio::test]
     async fn context_pack_v4_rejects_oversized_session_id() {
         let (_dir, server) = test_server();
@@ -13031,9 +13566,42 @@ mod tests {
             Value::from(2)
         );
 
-        let (status, caller_b_first) = route_json(server, eiri_request("caller-b")).await;
+        let (status, caller_b_first) = route_json(server.clone(), eiri_request("caller-b")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(caller_b_first["session_rag"]["query_count"], Value::from(1));
+
+        let resume_request = |caller: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/companion/resume")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-caller", caller)
+                .body(Body::from("{}"))
+                .expect("resume request")
+        };
+
+        let (status, caller_a_resume) =
+            route_json(server.clone(), resume_request("caller-a")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            caller_a_resume["session"]["rag_state"]["session_id"],
+            Value::from("shared-session-name")
+        );
+        assert_eq!(
+            caller_a_resume["session"]["rag_state"]["query_count"],
+            Value::from(2)
+        );
+
+        let (status, caller_b_resume) = route_json(server, resume_request("caller-b")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            caller_b_resume["session"]["rag_state"]["session_id"],
+            Value::from("shared-session-name")
+        );
+        assert_eq!(
+            caller_b_resume["session"]["rag_state"]["query_count"],
+            Value::from(1)
+        );
     }
 
     #[tokio::test]
