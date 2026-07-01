@@ -1904,7 +1904,7 @@ struct CompanionRegisterRecordResponse {
         (status = 200, description = "AccessGrant created.", body = CompanionAccessGrantResponse, content_type = "application/json"),
         (status = 400, description = "Malformed grant request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:access-grant:write or core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "AccessGrant id already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant write failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -1948,7 +1948,7 @@ async fn create_companion_access_grant(
         (status = 200, description = "AccessGrant revoked.", body = CompanionAccessGrantResponse, content_type = "application/json"),
         (status = 400, description = "Malformed grant id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:access-grant:write or core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "AccessGrant was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant revoke failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
