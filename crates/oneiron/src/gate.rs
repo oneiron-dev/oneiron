@@ -833,26 +833,28 @@ pub(crate) fn companion_profile_access_grant(
         .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
     {
         let (key, _) = index_entry?;
-        // AccessGrant checks are fail-closed: any anomalous grant index row or
-        // body means the profile cannot be authorized by scanning past it.
         let Some(id) = type_index_entity_id(key, ENTITY_TYPE_ACCESS_GRANT) else {
-            return Ok(None);
+            return Err(Error::CorruptedIndex("access grant type index key"));
         };
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            return Ok(None);
+            return Err(Error::CorruptedIndex("access grant entity row"));
         };
         let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
-            return Ok(None);
+            return Err(Error::CorruptedIndex("access grant entity header"));
         };
         if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
-            return Ok(None);
+            return Err(Error::CorruptedIndex("access grant entity type"));
         }
 
         let grant = match crate::access_grant::decode_access_grant_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         ) {
             Ok(grant) => grant,
-            Err(_) => return Ok(None),
+            Err(_) => {
+                return Err(Error::InvalidAccessGrantBody(
+                    "stored body failed validation",
+                ));
+            }
         };
         if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref) {
             return Ok(Some(id));
@@ -1945,10 +1947,12 @@ mod tests {
         let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
         vault.create_access_grant(&valid_id, &grant)?;
 
-        assert_eq!(
-            vault.companion_profile_access_grant(&principal, &person, &persona)?,
-            None,
-            "malformed AccessGrant row must fail closed before any later allow"
+        let err = vault
+            .companion_profile_access_grant(&principal, &person, &persona)
+            .expect_err("malformed AccessGrant row must fail closed before any later allow");
+        assert!(
+            matches!(err, Error::InvalidAccessGrantBody(_)),
+            "expected InvalidAccessGrantBody for malformed AccessGrant row, got {err:?}"
         );
         Ok(())
     }
