@@ -6414,28 +6414,53 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
 }
 
 #[test]
-fn structural_kind_registry_rejects_legacy_dynamic_companion_byte() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    {
-        let vault = Vault::open(dir.path(), test_config())?;
-        let key = structural_kind_registry_key(64);
-        let pack = b"legacy-pack";
+fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()> {
+    use crate::types::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
+
+    fn legacy_row(prefix: &str, pack: &str) -> Vec<u8> {
         let mut raw = vec![1, 64, 2, 2];
         raw.extend_from_slice(
             &u16::try_from(pack.len())
                 .expect("test pack length fits u16")
                 .to_le_bytes(),
         );
-        raw.extend_from_slice(b"np");
-        raw.extend_from_slice(pack);
+        raw.extend_from_slice(prefix.as_bytes());
+        raw.extend_from_slice(pack.as_bytes());
+        raw
+    }
+
+    let compatible_dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(compatible_dir.path(), test_config())?;
+        let key = structural_kind_registry_key(64);
+        let raw = legacy_row(
+            COMPANION_REGISTER_SHORT_ID_PREFIX,
+            COMPANION_REGISTER_PACK_ID,
+        );
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(&mut wtxn, &key, &raw)?;
+        wtxn.commit()?;
+    }
+    let compatible = Vault::open(compatible_dir.path(), test_config())?;
+    assert!(
+        compatible.structural_kind_registration(64).is_none(),
+        "compatible legacy row must be ignored so the static registry owns byte 64"
+    );
+
+    let incompatible_dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(incompatible_dir.path(), test_config())?;
+        let key = structural_kind_registry_key(64);
+        let raw = legacy_row("np", "legacy-pack");
 
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vault_meta.put(&mut wtxn, &key, &raw)?;
         wtxn.commit()?;
     }
 
-    let err = match Vault::open(dir.path(), test_config()) {
-        Ok(_) => panic!("legacy dynamic byte 64 row must fail closed"),
+    let err = match Vault::open(incompatible_dir.path(), test_config()) {
+        Ok(_) => panic!("incompatible legacy dynamic byte 64 row must fail closed"),
         Err(err) => err,
     };
     assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
