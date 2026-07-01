@@ -210,13 +210,21 @@ pub(crate) fn companion_record_any_id_for_key_in_txn(
     Ok(None)
 }
 
-pub(crate) fn companion_retired_record_id_for_key_and_lifecycle_events_in_txn(
+#[derive(Debug, Default)]
+pub(crate) struct CompanionRecordKeyLookup {
+    pub(crate) active_id: Option<EntityId>,
+    pub(crate) any_id: Option<EntityId>,
+    pub(crate) retired_history_id: Option<EntityId>,
+}
+
+pub(crate) fn companion_record_key_lookup_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &CompanionRecordKey,
-    lifecycle_events: &[CompanionLifecycleEvent],
-) -> Result<Option<EntityId>> {
+    retired_lifecycle_events: Option<&[CompanionLifecycleEvent]>,
+) -> Result<CompanionRecordKeyLookup> {
     key.validate()?;
+    let mut lookup = CompanionRecordKeyLookup::default();
     for index_entry in store
         .type_index
         .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
@@ -232,14 +240,27 @@ pub(crate) fn companion_retired_record_id_for_key_and_lifecycle_events_in_txn(
             return Err(Error::CorruptedIndex("companion register type index"));
         }
         let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if record.lifecycle == ClaimLifecycleStatus::Retracted
-            && record.key() == *key
+        if record.key() != *key {
+            continue;
+        }
+        lookup.any_id.get_or_insert(id);
+        if record.lifecycle == ClaimLifecycleStatus::Active {
+            lookup.active_id.get_or_insert(id);
+        }
+        if let Some(lifecycle_events) = retired_lifecycle_events
+            && record.lifecycle == ClaimLifecycleStatus::Retracted
             && record.lifecycle_events.as_slice() == lifecycle_events
         {
-            return Ok(Some(id));
+            lookup.retired_history_id.get_or_insert(id);
+        }
+        if lookup.active_id.is_some()
+            && lookup.any_id.is_some()
+            && (retired_lifecycle_events.is_none() || lookup.retired_history_id.is_some())
+        {
+            break;
         }
     }
-    Ok(None)
+    Ok(lookup)
 }
 
 pub(crate) fn vad_annotation_meta_key(
