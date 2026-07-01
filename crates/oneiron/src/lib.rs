@@ -39,8 +39,10 @@ pub use crate::access_grant::{
     AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
 };
 pub use crate::affect::{
-    CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
-    ClaimVadTurnEvidence,
+    AFFECT_TRIGGER_PREDICATE, AffectTriggerValue, CLAIM_VAD_REAPPRAISAL_PREDICATE,
+    ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, VadDelta,
+    affect_trigger_claim_candidate, affect_trigger_value, decode_affect_trigger_claim,
+    decode_affect_trigger_value,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
@@ -50,7 +52,8 @@ pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::bm25::Bm25Formula;
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, MAX_PREDICATE_BYTES, RESERVED_PREDICATE_NAMESPACE,
+    ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
+    RESERVED_PREDICATE_NAMESPACE,
 };
 pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,

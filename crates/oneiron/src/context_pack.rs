@@ -868,6 +868,7 @@ fn validate_claim_pack_consistency(
     }
 
     validate_claim_subject_references(store, rtxn, body, quarantine_index)?;
+    validate_claim_value_references(store, rtxn, body, quarantine_index)?;
 
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
         let record = crate::provenance::decode_edge_provenance_body(&body.value)
@@ -894,6 +895,18 @@ fn validate_claim_subject_references(
         }
     }
     Ok(())
+}
+
+fn validate_claim_value_references(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    body: &ClaimBody,
+    quarantine_index: &PackQuarantineIndex,
+) -> Result<()> {
+    let Some(value) = crate::affect::decode_affect_trigger_claim(body)? else {
+        return Ok(());
+    };
+    validate_pack_payload_reference(store, rtxn, &value.trigger_ref(), quarantine_index)
 }
 
 fn load_pack_quarantine_index(store: &Store, rtxn: &RoTxn<'_>) -> Result<PackQuarantineIndex> {
@@ -1844,6 +1857,121 @@ mod tests {
                 .any(|entity| entity.id == turn_id),
             "companion register tuning must not block affect-bearing turn retrieval"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
+        let (_tmp, vault) = open_test_vault();
+        let occurred = TimeRange { start: 1, end: 1 };
+        let actor = EntityId::from_bytes_unchecked([0x81; 16]);
+        let person = EntityId::from_bytes_unchecked([0x82; 16]);
+        let trigger = EntityId::from_bytes_unchecked([0x83; 16]);
+        let claim = EntityId::from_bytes_unchecked([0x84; 16]);
+        vault.put_entity(
+            &actor,
+            crate::types::ENTITY_TYPE_PERSON,
+            occurred,
+            1,
+            b"actor",
+        )?;
+        vault.put_entity(
+            &person,
+            crate::types::ENTITY_TYPE_PERSON,
+            occurred,
+            1,
+            b"person",
+        )?;
+        put_text_entity(
+            &vault,
+            &trigger,
+            crate::types::ENTITY_TYPE_TURN,
+            "affect trigger source turn",
+            serde_json::json!({
+                "txt": "affect trigger source turn",
+                "spkr": "user",
+                "at": 2_u64
+            }),
+        )?;
+
+        let envelope = crate::WriteEnvelope::new(
+            crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
+            crate::ClaimSource::Observed,
+            crate::WriteProvenance::new(rmpv::Value::from("dreamer"))?,
+            crate::ClaimApprovalStatus::Approved,
+        );
+        let trigger_value = crate::AffectTriggerValue::new(
+            person,
+            trigger,
+            crate::VadDelta::new(-0.1, 0.25, -0.2)?,
+            0.67,
+            4,
+            16,
+        )?;
+        vault
+            .batch()
+            .affect_trigger_claim(
+                &claim,
+                trigger_value,
+                &envelope,
+                TimeRange { start: 3, end: 3 },
+                4,
+            )
+            .text(&claim, &[("body", "affect trigger retrieval needle")])
+            .commit()?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("affect trigger retrieval needle", 10)
+            .run()?;
+        let fields = pack
+            .results
+            .iter()
+            .find(|entity| entity.id == claim)
+            .and_then(|entity| entity.fields.as_ref())
+            .expect("affect trigger claim fields");
+        assert_eq!(
+            fields.get("pred"),
+            Some(&serde_json::Value::String(
+                crate::AFFECT_TRIGGER_PREDICATE.to_owned()
+            ))
+        );
+        let val = fields
+            .get("val")
+            .and_then(serde_json::Value::as_object)
+            .expect("affect trigger value map");
+        let person_hex = person.to_hex();
+        let trigger_hex = trigger.to_hex();
+        assert_eq!(
+            val.get("affectedPerson")
+                .and_then(serde_json::Value::as_str),
+            Some(person_hex.as_str())
+        );
+        assert_eq!(
+            val.get("triggerRef").and_then(serde_json::Value::as_str),
+            Some(trigger_hex.as_str())
+        );
+        assert_eq!(
+            val.get("observedN").and_then(serde_json::Value::as_u64),
+            Some(16)
+        );
+        assert_eq!(val.get("k").and_then(serde_json::Value::as_u64), Some(4));
+        let confidence = val
+            .get("confidence")
+            .and_then(serde_json::Value::as_f64)
+            .expect("affect trigger confidence");
+        assert!((confidence - 0.67).abs() < 1e-6);
+        let vad_delta = val
+            .get("vadDelta")
+            .and_then(serde_json::Value::as_object)
+            .expect("affect trigger vadDelta");
+        for (key, expected) in [("valence", -0.1), ("arousal", 0.25), ("dominance", -0.2)] {
+            let actual = vad_delta
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .expect("vadDelta component");
+            assert!((actual - expected).abs() < 1e-6, "{key}");
+        }
         Ok(())
     }
 
@@ -3474,6 +3602,53 @@ mod tests {
             .expect_err("quarantined claim edge subject endpoint must fail pack validation");
 
         assert_context_pack_validation(err, target, PACK_VALIDATION_QUARANTINED_PAYLOAD);
+        Ok(())
+    }
+
+    #[test]
+    fn pack_validation_rejects_missing_affect_trigger_ref() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::from_bytes([0x9B; 16])?;
+        let person = EntityId::from_bytes([0x5E; 16])?;
+        let missing_trigger = EntityId::from_bytes([0x5F; 16])?;
+        ensure_claim_subject_payload(&vault, &person)?;
+
+        let trigger_value = crate::AffectTriggerValue::new(
+            person,
+            missing_trigger,
+            crate::VadDelta::new(-0.1, 0.2, -0.3)?,
+            0.66,
+            2,
+            5,
+        )?;
+        let body = crate::claim::ClaimBody::new(
+            crate::AFFECT_TRIGGER_PREDICATE,
+            crate::claim::ClaimSubject::Entity(person),
+            crate::affect::affect_trigger_value(&trigger_value),
+            trigger_value.confidence(),
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        let payload = crate::claim::encode_claim_body(&body)?;
+        vault
+            .batch()
+            .put(
+                &claim,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &payload,
+            )
+            .text(&claim, &[("body", "missingaffecttriggerrefneedle")])
+            .commit()?;
+
+        let err = vault
+            .context_pack()
+            .search_text("missingaffecttriggerrefneedle", 10)
+            .run()
+            .expect_err("missing affect.trigger triggerRef must fail pack validation");
+
+        assert_context_pack_validation(err, missing_trigger, PACK_VALIDATION_MISSING_PAYLOAD);
         Ok(())
     }
 
