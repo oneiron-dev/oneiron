@@ -441,10 +441,36 @@ fn validate_skill_record(record: &SkillRecord) -> Result<()> {
             "generated flag must match generated source",
         ));
     }
-    if matches!(record.provenance, Value::Nil) {
-        return Err(Error::InvalidSkillBody("provenance must not be nil"));
-    }
+    validate_provenance(&record.provenance)?;
     validate_dependencies(&record.skill_id, &record.dependencies)?;
+    Ok(())
+}
+
+fn validate_provenance(provenance: &Value) -> Result<()> {
+    let Value::Map(entries) = provenance else {
+        return Err(Error::InvalidSkillBody(
+            "provenance must be a non-empty MessagePack map",
+        ));
+    };
+    if entries.is_empty() {
+        return Err(Error::InvalidSkillBody(
+            "provenance must be a non-empty MessagePack map",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for (key, _) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidSkillBody("provenance keys must be strings"));
+        };
+        if key.trim().is_empty() {
+            return Err(Error::InvalidSkillBody(
+                "provenance keys must be non-empty strings",
+            ));
+        }
+        if !seen.insert(key) {
+            return Err(Error::InvalidSkillBody("duplicate provenance key"));
+        }
+    }
     Ok(())
 }
 
@@ -741,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_record_rejects_mismatched_flags_nil_provenance_and_bad_dependencies() {
+    fn skill_record_rejects_mismatched_flags_bad_provenance_and_bad_dependencies() {
         let mut mismatched = generated_skill("1.0.0");
         mismatched.source = ClaimSource::UserStated;
         assert_eq!(
@@ -756,6 +782,24 @@ mod tests {
         assert_eq!(
             encode_skill_record(&nil_provenance)
                 .expect_err("nil provenance must fail")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+
+        let mut empty_provenance = human_skill("1.0.0");
+        empty_provenance.provenance = Value::Map(Vec::new());
+        assert_eq!(
+            encode_skill_record(&empty_provenance)
+                .expect_err("empty provenance metadata must fail")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+
+        let mut scalar_provenance = human_skill("1.0.0");
+        scalar_provenance.provenance = Value::from("fixture");
+        assert_eq!(
+            encode_skill_record(&scalar_provenance)
+                .expect_err("scalar provenance metadata must fail")
                 .kind(),
             ErrorKind::InvalidSkillBody
         );
