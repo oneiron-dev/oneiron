@@ -2858,7 +2858,7 @@ mod tests {
         let id = EntityId::from_bytes_unchecked([0x41; 16]);
         let learned_at = 1_772_400_000u64;
         let record = companion_record(id, CompanionExportClassification::Portable);
-        let body = encode_companion_record_body(&record).unwrap();
+        let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
         map_insert_bytes(
             &doc.get_map("entities"),
             &id.to_hex(),
@@ -2891,7 +2891,7 @@ mod tests {
         let id = EntityId::from_bytes_unchecked([0x42; 16]);
         let learned_at = 1_772_400_000u64;
         let record = companion_record(id, CompanionExportClassification::LocalOnly);
-        let body = encode_companion_record_body(&record).unwrap();
+        let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
         map_insert_bytes(
             &doc.get_map("entities"),
             &id.to_hex(),
@@ -2927,8 +2927,10 @@ mod tests {
         let local_record = companion_record(local_id, CompanionExportClassification::LocalOnly);
         let portable_record =
             companion_record(portable_id, CompanionExportClassification::Portable);
-        let local_body = encode_companion_record_body(&local_record).unwrap();
-        let portable_body = encode_companion_record_body(&portable_record).unwrap();
+        let local_body =
+            encode_companion_record_body(&local_record.created_at(learned_at).unwrap()).unwrap();
+        let portable_body =
+            encode_companion_record_body(&portable_record.created_at(learned_at).unwrap()).unwrap();
         let entities = doc.get_map("entities");
         let edges = doc.get_map("edges");
         let edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);

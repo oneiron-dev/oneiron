@@ -2160,6 +2160,7 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
             "subject",
             "lifecycle",
             "export",
+            "lifecycle_events",
             "provenance",
         ],
 
@@ -4534,6 +4535,10 @@ mod tests {
             ("lifecycle".to_owned(), Value::String("active".to_owned())),
             ("export".to_owned(), Value::String("portable".to_owned())),
             (
+                "lifecycle_events".to_owned(),
+                serde_json::json!([{ "kind": "created", "at": 123_u64 }]),
+            ),
+            (
                 "provenance".to_owned(),
                 serde_json::json!({
                     "actor_ref": actor_ref,
@@ -4640,6 +4645,7 @@ mod tests {
             Value::String("relationship".to_owned())
         );
         assert!(records[0].get("provenance").is_none());
+        assert!(records[0].get("lifecycle_events").is_none());
         assert!(records[0].get("schema_version").is_none());
         assert!(records[0].get("value").is_none());
         assert_eq!(
@@ -4655,6 +4661,10 @@ mod tests {
             serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)
         );
         assert!(full["companion_records"][0].get("provenance").is_some());
+        assert_eq!(
+            full["companion_records"][0]["lifecycle_events"],
+            serde_json::json!([{ "kind": "created", "at": 123_u64 }])
+        );
         assert!(full["companion_records"][0].get("value").is_none());
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full),
@@ -4665,6 +4675,7 @@ mod tests {
                 "subject",
                 "lifecycle",
                 "export",
+                "lifecycle_events",
                 "provenance"
             ]
         );

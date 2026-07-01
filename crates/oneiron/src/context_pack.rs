@@ -20,7 +20,7 @@ use crate::types::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
     TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
-    decode_companion_record_body,
+    companion::CompanionLifecycleEvent, decode_companion_record_body,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -1465,7 +1465,25 @@ fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_
             "approval": record.provenance.approval.as_str(),
         }),
     );
+    out.insert(
+        "lifecycle_events".to_owned(),
+        companion_lifecycle_events_to_json(&record.lifecycle_events),
+    );
     Some(out)
+}
+
+fn companion_lifecycle_events_to_json(events: &[CompanionLifecycleEvent]) -> serde_json::Value {
+    serde_json::Value::Array(
+        events
+            .iter()
+            .map(|event| {
+                serde_json::json!({
+                    "kind": event.kind.as_str(),
+                    "at": event.at,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn companion_scope_to_json(scope: &CompanionScope) -> serde_json::Value {
@@ -1825,6 +1843,10 @@ mod tests {
         assert!(
             !fields.contains_key("value"),
             "context-pack must not expose opaque private companion value"
+        );
+        assert_eq!(
+            fields.get("lifecycle_events"),
+            Some(&serde_json::json!([{ "kind": "created", "at": 20_u64 }]))
         );
         assert!(
             fields

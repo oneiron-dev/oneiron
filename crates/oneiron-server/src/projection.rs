@@ -4,7 +4,7 @@ use oneiron::types::{
     CompanionScope, CompanionSubject, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    decode_companion_record_body, entity_type_registry_entry,
+    companion::CompanionLifecycleEvent, decode_companion_record_body, entity_type_registry_entry,
 };
 use oneiron::{EdgeInfo, EntityId, FieldProfile, Vault};
 use serde::de::{self, Visitor};
@@ -283,7 +283,25 @@ fn decode_companion_register_fields(body: &[u8]) -> Option<Map<String, Value>> {
             "approval": record.provenance.approval.as_str(),
         }),
     );
+    fields.insert(
+        "lifecycle_events".to_owned(),
+        companion_lifecycle_events_to_json(&record.lifecycle_events),
+    );
     Some(fields)
+}
+
+fn companion_lifecycle_events_to_json(events: &[CompanionLifecycleEvent]) -> Value {
+    Value::Array(
+        events
+            .iter()
+            .map(|event| {
+                json!({
+                    "kind": event.kind.as_str(),
+                    "at": event.at,
+                })
+            })
+            .collect(),
+    )
 }
 
 fn companion_scope_to_json(scope: &CompanionScope) -> Value {
@@ -558,7 +576,8 @@ mod tests {
             ),
             CompanionExportClassification::Portable,
         );
-        let body = encode_companion_record_body(&record).unwrap();
+        let body =
+            encode_companion_record_body(&record.created_at(1_777_000_000).unwrap()).unwrap();
 
         for view in [View::Standard, View::Full] {
             let value = project_entity_parts(
@@ -579,6 +598,10 @@ mod tests {
                     .and_then(Value::as_object)
                     .is_some_and(|provenance| !provenance.contains_key("value")),
                 "projection provenance must omit opaque provenance.value"
+            );
+            assert_eq!(
+                value.get("lifecycle_events"),
+                Some(&json!([{ "kind": "created", "at": 1_777_000_000_u64 }]))
             );
         }
     }

@@ -19,6 +19,7 @@ use crate::error::{Error, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
+use crate::types::companion::CompanionLifecycleEventKind;
 use crate::types::{
     ClaimCandidate, CompanionExportClassification, DecodedEdgeValue, EDGE_KEY_LEN,
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
@@ -2479,6 +2480,7 @@ fn validate_companion_register_put(
     data: &[u8],
 ) -> Result<()> {
     let record = decode_companion_record_body(data)?;
+    record.validate_current_schema_lifecycle_events()?;
     let key = record.key();
 
     if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
@@ -2497,6 +2499,26 @@ fn validate_companion_register_put(
             {
                 return Err(Error::InvalidClaimBody("companion record is retired"));
             }
+            if existing.lifecycle == ClaimLifecycleStatus::Active {
+                if record.lifecycle == ClaimLifecycleStatus::Active {
+                    if !existing.lifecycle_events.is_empty()
+                        && record.lifecycle_events != existing.lifecycle_events
+                    {
+                        return Err(Error::InvalidClaimBody(
+                            "companion lifecycle events cannot change through update",
+                        ));
+                    }
+                } else if !existing.lifecycle_events.is_empty()
+                    && !record
+                        .lifecycle_events
+                        .as_slice()
+                        .starts_with(existing.lifecycle_events.as_slice())
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "companion lifecycle events must preserve history",
+                    ));
+                }
+            }
             if existing.export_classification != CompanionExportClassification::LocalOnly
                 && record.export_classification == CompanionExportClassification::LocalOnly
             {
@@ -2507,12 +2529,20 @@ fn validate_companion_register_put(
         }
     }
 
-    if record.lifecycle == ClaimLifecycleStatus::Active
-        && let Some(existing_id) =
+    if record.lifecycle == ClaimLifecycleStatus::Active {
+        if let Some(existing_id) =
             crate::vault::companion_record_id_for_key_in_txn(store, &*wtxn, &key)?
-        && existing_id != *id
-    {
-        return Err(Error::CompanionRecordAlreadyExists);
+            && existing_id != *id
+        {
+            return Err(Error::CompanionRecordAlreadyExists);
+        }
+        if record.terminal_lifecycle_event_kind() != Some(CompanionLifecycleEventKind::Revived)
+            && let Some(existing_id) =
+                crate::vault::companion_record_any_id_for_key_in_txn(store, &*wtxn, &key)?
+            && existing_id != *id
+        {
+            return Err(Error::CompanionRecordAlreadyExists);
+        }
     }
 
     Ok(())

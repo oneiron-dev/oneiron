@@ -28,10 +28,11 @@ pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
 /// Pack id recorded in the vault-scoped structural-kind registry.
 pub const COMPANION_REGISTER_PACK_ID: &str = "oneiron-companion-register";
 /// Current companion record body schema version.
-pub const COMPANION_RECORD_SCHEMA_VERSION: u64 = 1;
+pub const COMPANION_RECORD_SCHEMA_VERSION: u64 = 2;
+const COMPANION_RECORD_SCHEMA_VERSION_V1: u64 = 1;
 
 /// Pinned on-disk MessagePack key set for companion record bodies.
-pub const COMPANION_RECORD_BODY_KEYS: [&str; 8] = [
+pub const COMPANION_RECORD_BODY_KEYS: [&str; 9] = [
     "schema_version",
     "kind",
     "scope",
@@ -40,6 +41,7 @@ pub const COMPANION_RECORD_BODY_KEYS: [&str; 8] = [
     "provenance",
     "lifecycle",
     "export",
+    "lifecycle_events",
 ];
 
 const KEY_SCHEMA_VERSION: &str = COMPANION_RECORD_BODY_KEYS[0];
@@ -50,11 +52,13 @@ const KEY_VALUE: &str = COMPANION_RECORD_BODY_KEYS[4];
 const KEY_PROVENANCE: &str = COMPANION_RECORD_BODY_KEYS[5];
 const KEY_LIFECYCLE: &str = COMPANION_RECORD_BODY_KEYS[6];
 const KEY_EXPORT: &str = COMPANION_RECORD_BODY_KEYS[7];
+const KEY_LIFECYCLE_EVENTS: &str = COMPANION_RECORD_BODY_KEYS[8];
 
 const SCOPE_KEYS: [&str; 3] = ["kind", "person_ref", "vault_id"];
 const SUBJECT_KEYS: [&str; 3] = ["kind", "persona_ref", "relationship_ref"];
 const RELATIONSHIP_REF_KEYS: [&str; 2] = ["source_ref", "target_ref"];
 const PROVENANCE_KEYS: [&str; 5] = ["actor_ref", "actor_class", "source", "approval", "value"];
+const LIFECYCLE_EVENT_KEYS: [&str; 2] = ["kind", "at"];
 
 /// Companion record kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -172,6 +176,108 @@ impl CompanionSubject {
             Self::Persona { .. } => CompanionRecordKind::Persona,
             Self::Relationship { .. } => CompanionRecordKind::Relationship,
         }
+    }
+}
+
+/// Typed lifecycle event carried by companion persona/relationship records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum CompanionLifecycleEventKind {
+    /// Record was created as active.
+    Created,
+    /// Record was superseded by a later active record.
+    Superseded,
+    /// Record was explicitly retired/retracted.
+    Retired,
+    /// Record was explicitly revived as active.
+    Revived,
+}
+
+impl CompanionLifecycleEventKind {
+    /// Returns the pinned on-disk string for this lifecycle event kind.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Superseded => "superseded",
+            Self::Retired => "retired",
+            Self::Revived => "revived",
+        }
+    }
+
+    /// Parses a pinned on-disk lifecycle event kind string.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "created" => Some(Self::Created),
+            "superseded" => Some(Self::Superseded),
+            "retired" => Some(Self::Retired),
+            "revived" => Some(Self::Revived),
+            _ => None,
+        }
+    }
+
+    /// Returns the record lifecycle status produced by this event.
+    #[must_use]
+    pub const fn lifecycle_status(self) -> ClaimLifecycleStatus {
+        match self {
+            Self::Created | Self::Revived => ClaimLifecycleStatus::Active,
+            Self::Superseded => ClaimLifecycleStatus::Superseded,
+            Self::Retired => ClaimLifecycleStatus::Retracted,
+        }
+    }
+}
+
+/// One auditable companion lifecycle transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CompanionLifecycleEvent {
+    /// Event discriminator.
+    pub kind: CompanionLifecycleEventKind,
+    /// Event timestamp in Unix seconds.
+    pub at: u64,
+}
+
+impl CompanionLifecycleEvent {
+    /// Constructs a created lifecycle event.
+    #[must_use]
+    pub const fn created(at: u64) -> Self {
+        Self {
+            kind: CompanionLifecycleEventKind::Created,
+            at,
+        }
+    }
+
+    /// Constructs a superseded lifecycle event.
+    #[must_use]
+    pub const fn superseded(at: u64) -> Self {
+        Self {
+            kind: CompanionLifecycleEventKind::Superseded,
+            at,
+        }
+    }
+
+    /// Constructs a retired lifecycle event.
+    #[must_use]
+    pub const fn retired(at: u64) -> Self {
+        Self {
+            kind: CompanionLifecycleEventKind::Retired,
+            at,
+        }
+    }
+
+    /// Constructs a revived lifecycle event.
+    #[must_use]
+    pub const fn revived(at: u64) -> Self {
+        Self {
+            kind: CompanionLifecycleEventKind::Revived,
+            at,
+        }
+    }
+
+    /// Returns the record lifecycle status produced by this event.
+    #[must_use]
+    pub const fn lifecycle_status(self) -> ClaimLifecycleStatus {
+        self.kind.lifecycle_status()
     }
 }
 
@@ -324,6 +430,8 @@ pub struct CompanionRecord {
     pub provenance: CompanionProvenance,
     /// Lifecycle state.
     pub lifecycle: ClaimLifecycleStatus,
+    /// Auditable lifecycle transitions applied to this record.
+    pub lifecycle_events: Vec<CompanionLifecycleEvent>,
     /// Export classification.
     pub export_classification: CompanionExportClassification,
 }
@@ -384,6 +492,7 @@ impl CompanionRecord {
             value,
             provenance,
             lifecycle,
+            lifecycle_events: Vec::new(),
             export_classification,
         }
     }
@@ -410,13 +519,99 @@ impl CompanionRecord {
         if matches!(self.value, Value::Nil) {
             return Err(invalid_companion("companion record value must not be nil"));
         }
+        if let Some(event) = self.lifecycle_events.last()
+            && event.lifecycle_status() != self.lifecycle
+        {
+            return Err(invalid_companion(
+                "companion lifecycle event does not match record lifecycle",
+            ));
+        }
         Ok(())
     }
 
-    /// Returns a copy of this record with the lifecycle retired/retracted.
+    /// Validates lifecycle evidence required for current-schema persisted bodies.
+    pub fn validate_current_schema_lifecycle_events(&self) -> Result<()> {
+        self.validate()?;
+        if self.lifecycle_events.is_empty() {
+            return Err(invalid_companion(
+                "companion lifecycle events required for current schema",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns the terminal lifecycle event kind, if present.
+    #[must_use]
+    pub fn terminal_lifecycle_event_kind(&self) -> Option<CompanionLifecycleEventKind> {
+        self.lifecycle_events.last().map(|event| event.kind)
+    }
+
+    /// Returns a copy of this active record with a created event if needed.
+    pub fn created_at(&self, created_at: u64) -> Result<Self> {
+        if self.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(invalid_companion(
+                "companion record create requires active record",
+            ));
+        }
+        let mut record = self.clone();
+        if record.lifecycle_events.is_empty() {
+            record
+                .lifecycle_events
+                .push(CompanionLifecycleEvent::created(created_at));
+        }
+        record.validate_current_schema_lifecycle_events()?;
+        Ok(record)
+    }
+
+    /// Returns a copy of this record with the lifecycle retired/retracted
+    /// without stamping a lifecycle event.
+    ///
+    /// Use [`Self::retired_at`] for auditable retire transitions.
     pub fn retired(&self) -> Result<Self> {
+        if self.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(invalid_companion(
+                "companion record retire requires active record",
+            ));
+        }
+        if !self.lifecycle_events.is_empty() {
+            return Err(invalid_companion(
+                "companion record retire requires explicit timestamp",
+            ));
+        }
         let mut record = self.clone();
         record.lifecycle = ClaimLifecycleStatus::Retracted;
+        record.validate()?;
+        Ok(record)
+    }
+
+    /// Returns a copy of this record with a stamped retired lifecycle event.
+    pub fn retired_at(&self, retired_at: u64) -> Result<Self> {
+        if self.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(invalid_companion(
+                "companion record retire requires active record",
+            ));
+        }
+        let mut record = self.clone();
+        record.lifecycle = ClaimLifecycleStatus::Retracted;
+        record
+            .lifecycle_events
+            .push(CompanionLifecycleEvent::retired(retired_at));
+        record.validate()?;
+        Ok(record)
+    }
+
+    /// Returns a copy of this record revived to active lifecycle.
+    pub fn revived_at(&self, revived_at: u64) -> Result<Self> {
+        if self.lifecycle != ClaimLifecycleStatus::Retracted {
+            return Err(invalid_companion(
+                "companion record revive requires retired record",
+            ));
+        }
+        let mut record = self.clone();
+        record.lifecycle = ClaimLifecycleStatus::Active;
+        record
+            .lifecycle_events
+            .push(CompanionLifecycleEvent::revived(revived_at));
         record.validate()?;
         Ok(record)
     }
@@ -618,7 +813,7 @@ impl CompanionExpressionRegister {
 
 /// Encodes a companion record body in canonical MessagePack field order.
 pub fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>> {
-    record.validate()?;
+    record.validate_current_schema_lifecycle_events()?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -639,6 +834,10 @@ pub fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>>
         (
             Value::from(KEY_EXPORT),
             Value::from(record.export_classification.as_str()),
+        ),
+        (
+            Value::from(KEY_LIFECYCLE_EVENTS),
+            encode_lifecycle_events(&record.lifecycle_events),
         ),
     ]);
 
@@ -729,6 +928,7 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
     let mut provenance: Option<CompanionProvenance> = None;
     let mut lifecycle: Option<ClaimLifecycleStatus> = None;
     let mut export_classification: Option<CompanionExportClassification> = None;
+    let mut lifecycle_events: Option<Vec<CompanionLifecycleEvent>> = None;
     let mut seen = [false; COMPANION_RECORD_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -782,11 +982,19 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
                     ))?;
                 export_classification = Some(parsed);
             }
+            KEY_LIFECYCLE_EVENTS => {
+                lifecycle_events = Some(decode_lifecycle_events(value)?);
+            }
             _ => unreachable!("index resolved from COMPANION_RECORD_BODY_KEYS"),
         }
     }
 
-    if schema_version != Some(COMPANION_RECORD_SCHEMA_VERSION) {
+    let schema_version =
+        schema_version.ok_or(invalid_companion("missing required field schema_version"))?;
+    if !matches!(
+        Some(schema_version),
+        Some(COMPANION_RECORD_SCHEMA_VERSION_V1 | COMPANION_RECORD_SCHEMA_VERSION)
+    ) {
         return Err(invalid_companion(
             "unsupported companion record schema_version",
         ));
@@ -800,12 +1008,93 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
         lifecycle.ok_or(invalid_companion("missing required field lifecycle"))?,
         export_classification.ok_or(invalid_companion("missing required field export"))?,
     );
+    let mut record = record;
+    record.lifecycle_events = match (schema_version, lifecycle_events) {
+        (COMPANION_RECORD_SCHEMA_VERSION, Some(events)) => events,
+        (COMPANION_RECORD_SCHEMA_VERSION, None) => {
+            return Err(invalid_companion("missing required field lifecycle_events"));
+        }
+        (_, events) => events.unwrap_or_default(),
+    };
     let expected_kind = kind.ok_or(invalid_companion("missing required field kind"))?;
     if record.kind() != expected_kind {
         return Err(invalid_companion("kind does not match subject shape"));
     }
     record.validate()?;
+    if schema_version == COMPANION_RECORD_SCHEMA_VERSION {
+        record.validate_current_schema_lifecycle_events()?;
+    }
     Ok(record)
+}
+
+fn encode_lifecycle_events(events: &[CompanionLifecycleEvent]) -> Value {
+    Value::Array(events.iter().map(encode_lifecycle_event).collect())
+}
+
+fn encode_lifecycle_event(event: &CompanionLifecycleEvent) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(LIFECYCLE_EVENT_KEYS[0]),
+            Value::from(event.kind.as_str()),
+        ),
+        (Value::from(LIFECYCLE_EVENT_KEYS[1]), Value::from(event.at)),
+    ])
+}
+
+fn decode_lifecycle_events(value: &Value) -> Result<Vec<CompanionLifecycleEvent>> {
+    let Value::Array(events) = value else {
+        return Err(invalid_companion("lifecycle_events must be an array"));
+    };
+    events.iter().map(decode_lifecycle_event).collect()
+}
+
+fn decode_lifecycle_event(value: &Value) -> Result<CompanionLifecycleEvent> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_companion("lifecycle event must be a map"));
+    };
+
+    let mut kind: Option<CompanionLifecycleEventKind> = None;
+    let mut at: Option<u64> = None;
+    let mut seen = [false; LIFECYCLE_EVENT_KEYS.len()];
+
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(invalid_companion("lifecycle event keys must be strings"));
+        };
+        let Some(index) = LIFECYCLE_EVENT_KEYS.iter().position(|known| *known == key) else {
+            return Err(invalid_companion("lifecycle event key is not kind|at"));
+        };
+        if seen[index] {
+            return Err(invalid_companion("duplicate lifecycle event key"));
+        }
+        seen[index] = true;
+
+        match LIFECYCLE_EVENT_KEYS[index] {
+            "kind" => {
+                kind = Some(
+                    value
+                        .as_str()
+                        .and_then(CompanionLifecycleEventKind::parse)
+                        .ok_or(invalid_companion(
+                            "lifecycle event kind must be created|superseded|retired|revived",
+                        ))?,
+                );
+            }
+            "at" => {
+                at = Some(
+                    value
+                        .as_u64()
+                        .ok_or(invalid_companion("lifecycle event at must be an integer"))?,
+                );
+            }
+            _ => unreachable!("index resolved from LIFECYCLE_EVENT_KEYS"),
+        }
+    }
+
+    Ok(CompanionLifecycleEvent {
+        kind: kind.ok_or(invalid_companion("lifecycle event missing kind"))?,
+        at: at.ok_or(invalid_companion("lifecycle event missing at"))?,
+    })
 }
 
 fn encode_scope(scope: &CompanionScope) -> Value {
@@ -1166,6 +1455,40 @@ mod tests {
         CompanionProvenance::from_envelope(&envelope)
     }
 
+    fn raw_companion_record_body(
+        record: &CompanionRecord,
+        lifecycle: ClaimLifecycleStatus,
+        lifecycle_events: Vec<CompanionLifecycleEvent>,
+    ) -> Result<Vec<u8>> {
+        let value = Value::Map(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(COMPANION_RECORD_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
+            (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
+            (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
+            (Value::from(KEY_VALUE), record.value.clone()),
+            (
+                Value::from(KEY_PROVENANCE),
+                encode_provenance(&record.provenance),
+            ),
+            (Value::from(KEY_LIFECYCLE), Value::from(lifecycle.as_str())),
+            (
+                Value::from(KEY_EXPORT),
+                Value::from(record.export_classification.as_str()),
+            ),
+            (
+                Value::from(KEY_LIFECYCLE_EVENTS),
+                encode_lifecycle_events(&lifecycle_events),
+            ),
+        ]);
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &value)
+            .map_err(|_| Error::InvariantViolation("raw companion encode failed"))?;
+        Ok(out)
+    }
+
     #[test]
     fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<()> {
         let neutral = CompanionScope::neutral();
@@ -1276,7 +1599,14 @@ mod tests {
             ),
             CompanionExportClassification::SharedVault,
         );
+        let unstamped_retired = record.retired()?;
+        assert_eq!(unstamped_retired.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(unstamped_retired.lifecycle_events.is_empty());
+        assert!(encode_companion_record_body(&unstamped_retired).is_err());
         record.lifecycle = ClaimLifecycleStatus::Superseded;
+        record
+            .lifecycle_events
+            .push(CompanionLifecycleEvent::superseded(77));
 
         let encoded = encode_companion_record_body(&record)?;
         let decoded = decode_companion_record_body(&encoded)?;
@@ -1284,10 +1614,142 @@ mod tests {
         assert_eq!(decoded, record);
         assert_eq!(decoded.lifecycle, ClaimLifecycleStatus::Superseded);
         assert_eq!(
+            decoded.lifecycle_events,
+            vec![CompanionLifecycleEvent::superseded(77)]
+        );
+        assert_eq!(
             decoded.export_classification,
             CompanionExportClassification::SharedVault
         );
         assert_eq!(decoded.provenance.actor_class, EdgeActorClass::Human);
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<()> {
+        let record = CompanionRecord::persona(
+            CompanionScope::neutral(),
+            entity(0x36),
+            Value::from("eventless v2 persona"),
+            provenance(0xD6),
+            CompanionExportClassification::Portable,
+        );
+        let err = encode_companion_record_body(&record)
+            .expect_err("current schema writes require lifecycle events");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion lifecycle events required for current schema")
+        ));
+
+        let mut missing_encoded = Vec::new();
+        rmpv::encode::write_value(
+            &mut missing_encoded,
+            &Value::Map(vec![
+                (
+                    Value::from(KEY_SCHEMA_VERSION),
+                    Value::from(COMPANION_RECORD_SCHEMA_VERSION),
+                ),
+                (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
+                (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
+                (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
+                (Value::from(KEY_VALUE), record.value.clone()),
+                (
+                    Value::from(KEY_PROVENANCE),
+                    encode_provenance(&record.provenance),
+                ),
+                (
+                    Value::from(KEY_LIFECYCLE),
+                    Value::from(ClaimLifecycleStatus::Retracted.as_str()),
+                ),
+                (
+                    Value::from(KEY_EXPORT),
+                    Value::from(record.export_classification.as_str()),
+                ),
+            ]),
+        )
+        .map_err(|_| Error::InvariantViolation("current companion encode failed"))?;
+        let err = decode_companion_record_body(&missing_encoded)
+            .expect_err("current schema decode requires lifecycle_events field");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("missing required field lifecycle_events")
+        ));
+
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(
+            &mut encoded,
+            &Value::Map(vec![
+                (
+                    Value::from(KEY_SCHEMA_VERSION),
+                    Value::from(COMPANION_RECORD_SCHEMA_VERSION),
+                ),
+                (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
+                (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
+                (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
+                (Value::from(KEY_VALUE), record.value.clone()),
+                (
+                    Value::from(KEY_PROVENANCE),
+                    encode_provenance(&record.provenance),
+                ),
+                (
+                    Value::from(KEY_LIFECYCLE),
+                    Value::from(ClaimLifecycleStatus::Retracted.as_str()),
+                ),
+                (
+                    Value::from(KEY_EXPORT),
+                    Value::from(record.export_classification.as_str()),
+                ),
+                (Value::from(KEY_LIFECYCLE_EVENTS), Value::Array(Vec::new())),
+            ]),
+        )
+        .map_err(|_| Error::InvariantViolation("current companion encode failed"))?;
+        let err = decode_companion_record_body(&encoded)
+            .expect_err("current schema decode requires terminal evidence");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion lifecycle events required for current schema")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_body_decodes_legacy_v1_without_lifecycle_events() -> Result<()> {
+        let record = CompanionRecord::persona(
+            CompanionScope::neutral(),
+            entity(0x37),
+            Value::from("legacy v1 persona"),
+            provenance(0xD7),
+            CompanionExportClassification::Portable,
+        );
+        let legacy = Value::Map(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(COMPANION_RECORD_SCHEMA_VERSION_V1),
+            ),
+            (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
+            (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
+            (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
+            (Value::from(KEY_VALUE), record.value.clone()),
+            (
+                Value::from(KEY_PROVENANCE),
+                encode_provenance(&record.provenance),
+            ),
+            (
+                Value::from(KEY_LIFECYCLE),
+                Value::from(record.lifecycle.as_str()),
+            ),
+            (
+                Value::from(KEY_EXPORT),
+                Value::from(record.export_classification.as_str()),
+            ),
+        ]);
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &legacy)
+            .map_err(|_| Error::InvariantViolation("legacy companion encode failed"))?;
+
+        let decoded = decode_companion_record_body(&encoded)?;
+        assert_eq!(decoded, record);
+        assert!(decoded.lifecycle_events.is_empty());
         Ok(())
     }
 
@@ -1419,9 +1881,16 @@ mod tests {
         );
         vault.create_companion_record(&personal_id, &personal, 11)?;
         vault.create_companion_record(&shared_id, &shared, 12)?;
+        let neutral_created = neutral.created_at(10)?;
+        let personal_created = personal.created_at(11)?;
+        let shared_created = shared.created_at(12)?;
         assert_eq!(
             vault.get_companion_record(&neutral_id)?,
-            Some(neutral.clone())
+            Some(neutral_created.clone())
+        );
+        assert_eq!(
+            vault.get_companion_record(&shared_id)?,
+            Some(shared_created)
         );
         assert_eq!(
             vault.companion_record_id_for_key(&personal.key())?,
@@ -1440,7 +1909,7 @@ mod tests {
                 ENTITY_TYPE_COMPANION_REGISTER,
                 TimeRange { start: 13, end: 13 },
                 13,
-                &encode_companion_record_body(&personal)?,
+                &encode_companion_record_body(&personal_created)?,
             )
             .commit()
             .expect_err("raw batch put must preserve companion register key uniqueness");
@@ -1465,19 +1934,76 @@ mod tests {
             inactive_update,
             Error::InvalidClaimBody("companion record update must be active")
         ));
+        let raw_inactive_without_event = vault
+            .batch()
+            .put(
+                &personal_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 14, end: 14 },
+                14,
+                &raw_companion_record_body(
+                    &personal_created,
+                    ClaimLifecycleStatus::Retracted,
+                    Vec::new(),
+                )?,
+            )
+            .commit()
+            .expect_err("raw batch put must not retire without lifecycle evidence");
+        assert!(matches!(
+            raw_inactive_without_event,
+            Error::InvalidClaimBody("companion lifecycle events required for current schema")
+        ));
+        let raw_inactive_without_history = vault
+            .batch()
+            .put(
+                &personal_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 14, end: 14 },
+                14,
+                &raw_companion_record_body(
+                    &personal_created,
+                    ClaimLifecycleStatus::Retracted,
+                    vec![CompanionLifecycleEvent::retired(14)],
+                )?,
+            )
+            .commit()
+            .expect_err("raw batch put must preserve lifecycle history when retiring");
+        assert!(matches!(
+            raw_inactive_without_history,
+            Error::InvalidClaimBody("companion lifecycle events must preserve history")
+        ));
+        let mut tampered_personal_history = personal_created;
+        tampered_personal_history.lifecycle_events = vec![CompanionLifecycleEvent::created(99)];
+        let raw_history_erase = vault
+            .batch()
+            .put(
+                &personal_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 14, end: 14 },
+                14,
+                &encode_companion_record_body(&tampered_personal_history)?,
+            )
+            .commit()
+            .expect_err("raw batch put must not rewrite lifecycle history");
+        assert!(matches!(
+            raw_history_erase,
+            Error::InvalidClaimBody("companion lifecycle events cannot change through update")
+        ));
 
         let mut updated_personal = personal;
         updated_personal.value = Value::Map(vec![(
             Value::from("note"),
             Value::from("updated-private-note"),
         )]);
-        vault.update_companion_record(&personal_id, &updated_personal, 14)?;
+        let updated_personal =
+            vault.update_companion_record(&personal_id, &updated_personal, 14)?;
+        let stored_personal = vault
+            .get_companion_record(&personal_id)?
+            .expect("updated personal record");
+        assert_eq!(stored_personal.value, updated_personal.value);
         assert_eq!(
-            vault
-                .get_companion_record(&personal_id)?
-                .expect("updated personal record")
-                .value,
-            updated_personal.value
+            stored_personal.lifecycle_events,
+            vec![CompanionLifecycleEvent::created(11)]
         );
 
         let register = vault.companion_register()?;
@@ -1491,13 +2017,13 @@ mod tests {
         expressions.update(shared.key(), CompanionExpression::Professional)?;
         let export = companion_export_layer(&register, &expressions);
         assert_eq!(export.len(), 1);
-        assert_eq!(export.personas()[0].record(), &neutral);
+        assert_eq!(export.personas()[0].record(), &neutral_created);
         assert_eq!(
             export.personas()[0].expression(),
             Some(CompanionExpression::Warm)
         );
 
-        let mut local_only_downgrade = neutral.clone();
+        let mut local_only_downgrade = neutral_created;
         local_only_downgrade.export_classification = CompanionExportClassification::LocalOnly;
         let downgrade_err = vault
             .update_companion_record(&neutral_id, &local_only_downgrade, 15)
@@ -1524,11 +2050,32 @@ mod tests {
 
         let retired = vault.retire_companion_record(&neutral_id, 15)?;
         assert_eq!(retired.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert_eq!(
+            retired.lifecycle_events,
+            vec![
+                CompanionLifecycleEvent::created(10),
+                CompanionLifecycleEvent::retired(15)
+            ]
+        );
+        let repeated_retire = vault.retire_companion_record(&neutral_id, 16)?;
+        assert_eq!(repeated_retire, retired);
         let register = vault.companion_register()?;
         assert!(
             companion_export_layer(&register, &expressions).is_empty(),
             "retired neutral record and private/shared records must not export"
         );
+        assert_eq!(
+            register.lookup_persona(&neutral_scope, neutral_persona),
+            None,
+            "active register queries must exclude retired persona records"
+        );
+        let duplicate_after_retire = vault
+            .create_companion_record(&entity(0x59), &neutral, 16)
+            .expect_err("retired keys must require explicit revive");
+        assert!(matches!(
+            duplicate_after_retire,
+            Error::CompanionRecordAlreadyExists
+        ));
 
         let err = vault
             .update_companion_record(&neutral_id, &neutral, 16)
@@ -1544,7 +2091,7 @@ mod tests {
                 ENTITY_TYPE_COMPANION_REGISTER,
                 TimeRange { start: 16, end: 16 },
                 16,
-                &encode_companion_record_body(&neutral)?,
+                &encode_companion_record_body(&neutral.created_at(16)?)?,
             )
             .commit()
             .expect_err("raw batch put must not reactivate retired companion records");
@@ -1554,26 +2101,61 @@ mod tests {
         ));
         assert_eq!(vault.companion_record_id_for_key(&neutral.key())?, None);
 
+        let active_revival = vault
+            .revive_companion_record(&personal_id, &entity(0x58), &updated_personal, 16)
+            .expect_err("active records must not revive without retirement");
+        assert!(matches!(
+            active_revival,
+            Error::InvalidClaimBody("companion record revive requires retired record")
+        ));
+
         let replacement_id = entity(0x55);
-        let mut replacement = neutral;
-        replacement.value = Value::from("replacement neutral @Oneiron");
-        vault.create_companion_record(&replacement_id, &replacement, 17)?;
+        let mut revive_payload = neutral;
+        revive_payload.value = Value::from("fresh neutral @Oneiron");
+        revive_payload.provenance = provenance(0xD4);
+        let revived =
+            vault.revive_companion_record(&neutral_id, &replacement_id, &revive_payload, 17)?;
+        assert_eq!(revived.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(revived.value, Value::from("fresh neutral @Oneiron"));
+        assert_eq!(revived.provenance, provenance(0xD4));
         assert_eq!(
-            vault.companion_record_id_for_key(&replacement.key())?,
+            revived.lifecycle_events,
+            vec![
+                CompanionLifecycleEvent::created(10),
+                CompanionLifecycleEvent::retired(15),
+                CompanionLifecycleEvent::revived(17)
+            ]
+        );
+        assert_eq!(
+            vault.companion_record_id_for_key(&revived.key())?,
             Some(replacement_id)
         );
         assert_eq!(
-            vault
-                .get_companion_record(&neutral_id)?
-                .expect("retired record remains readable")
-                .lifecycle,
+            {
+                let stored = vault
+                    .get_companion_record(&neutral_id)?
+                    .expect("retired record remains readable");
+                assert_eq!(
+                    stored.lifecycle_events,
+                    vec![
+                        CompanionLifecycleEvent::created(10),
+                        CompanionLifecycleEvent::retired(15)
+                    ]
+                );
+                stored
+            }
+            .lifecycle,
             ClaimLifecycleStatus::Retracted
+        );
+        assert_eq!(
+            vault.get_companion_record(&replacement_id)?,
+            Some(revived.clone())
         );
         let register = vault.companion_register()?;
         assert_eq!(register.records_in_scope(&neutral_scope).count(), 1);
         assert_eq!(
             register.lookup_persona(&neutral_scope, neutral_persona),
-            Some(&replacement)
+            Some(&revived)
         );
         Ok(())
     }
