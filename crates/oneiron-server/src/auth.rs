@@ -20,6 +20,8 @@ pub(crate) enum CoreScope {
     Read,
     Write,
     Auth,
+    CompanionRegisterRead,
+    CompanionRegisterWrite,
 }
 
 impl CoreScope {
@@ -28,6 +30,8 @@ impl CoreScope {
             Self::Read => "core:read",
             Self::Write => "core:write",
             Self::Auth => "core:auth",
+            Self::CompanionRegisterRead => "companion:register:read",
+            Self::CompanionRegisterWrite => "companion:register:write",
         }
     }
 
@@ -36,12 +40,22 @@ impl CoreScope {
             "core:read" => Some(Self::Read),
             "core:write" => Some(Self::Write),
             "core:auth" => Some(Self::Auth),
+            "companion:register:read" => Some(Self::CompanionRegisterRead),
+            "companion:register:write" => Some(Self::CompanionRegisterWrite),
             _ => None,
         }
     }
 
     fn all() -> BTreeSet<Self> {
-        [Self::Read, Self::Write, Self::Auth].into_iter().collect()
+        [
+            Self::Read,
+            Self::Write,
+            Self::Auth,
+            Self::CompanionRegisterRead,
+            Self::CompanionRegisterWrite,
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -234,6 +248,8 @@ mod tests {
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Write).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterRead).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
     }
 
     #[test]
@@ -280,14 +296,18 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
-            "Bearer secret;scope=core:read,core:auth".parse().unwrap(),
+            "Bearer secret;scope=core:read,core:auth,companion:register:write"
+                .parse()
+                .unwrap(),
         );
         let auth = CoreAuth::from_headers(&headers, &config()).unwrap();
 
         assert_eq!(auth.principal(), "bearer");
         assert!(auth.require(CoreScope::Read).is_ok());
         assert!(auth.require(CoreScope::Auth).is_ok());
+        assert!(auth.require(CoreScope::CompanionRegisterWrite).is_ok());
         assert!(auth.require(CoreScope::Write).is_err());
+        assert!(auth.require(CoreScope::CompanionRegisterRead).is_err());
     }
 
     #[test]

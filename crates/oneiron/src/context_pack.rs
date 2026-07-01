@@ -19,7 +19,7 @@ use crate::types::{
     CompanionScope, CompanionSubject, ContextEntity, ContextPack, ContextPackRetrievalBudget,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
-    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation, companion_value_to_json,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
     decode_companion_record_body,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
@@ -1450,7 +1450,6 @@ fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_
             "actor_class": record.provenance.actor_class as u8,
             "source": record.provenance.source.as_str(),
             "approval": record.provenance.approval.as_str(),
-            "value": companion_value_to_json(&record.provenance.value),
         }),
     );
     Some(out)
@@ -1753,6 +1752,7 @@ mod tests {
     {
         let (_tmp, vault) = open_test_vault();
         let private_note = "private-companion-note-one1219";
+        let private_provenance = "private-provenance-one1219";
         let companion_id = EntityId::from_bytes_unchecked([0x71; 16]);
         let turn_id = EntityId::from_bytes_unchecked([0x72; 16]);
 
@@ -1761,7 +1761,9 @@ mod tests {
             crate::EdgeActorClass::Agent,
             crate::ClaimSource::UserStated,
             crate::ClaimApprovalStatus::Approved,
-            crate::companion_value_from_json(&serde_json::json!({ "source": "fixture" }))?,
+            crate::companion_value_from_json(
+                &serde_json::json!({ "source": "fixture", "note": private_provenance }),
+            )?,
         );
         let record = crate::CompanionRecord::persona(
             crate::CompanionScope::personal(EntityId::from_bytes_unchecked([0x74; 16])),
@@ -1812,10 +1814,23 @@ mod tests {
             "context-pack must not expose opaque private companion value"
         );
         assert!(
+            fields
+                .get("provenance")
+                .and_then(|value| value.get("value"))
+                .is_none(),
+            "context-pack must not expose opaque provenance payloads"
+        );
+        assert!(
             !serde_json::to_string(fields)
                 .expect("fields serialize")
                 .contains(private_note),
             "context-pack metadata must not leak private note text"
+        );
+        assert!(
+            !serde_json::to_string(fields)
+                .expect("fields serialize")
+                .contains(private_provenance),
+            "context-pack metadata must not leak private provenance text"
         );
 
         let affect_pack = vault
