@@ -52,10 +52,18 @@ pub struct SkillDependency {
 
 impl SkillDependency {
     #[must_use]
-    pub fn new(skill_id: impl Into<String>, min_version: Option<impl Into<String>>) -> Self {
+    pub fn new(skill_id: impl Into<String>) -> Self {
         Self {
             skill_id: skill_id.into(),
-            min_version: min_version.map(Into::into),
+            min_version: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_min_version(skill_id: impl Into<String>, min_version: impl Into<String>) -> Self {
+        Self {
+            skill_id: skill_id.into(),
+            min_version: Some(min_version.into()),
         }
     }
 }
@@ -168,6 +176,14 @@ pub fn decode_skill_record(bytes: &[u8]) -> Result<SkillRecord> {
 
 pub(crate) fn validate_skill_record_bytes(bytes: &[u8]) -> Result<()> {
     decode_skill_record(bytes).map(|_| ())
+}
+
+pub(crate) fn is_legacy_opaque_skill_body(bytes: &[u8]) -> bool {
+    let mut cursor = bytes;
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return true;
+    };
+    !matches!(value, Value::Map(_))
 }
 
 pub(crate) fn validate_skill_update(prior: &SkillRecord, updated: &SkillRecord) -> Result<()> {
@@ -643,7 +659,10 @@ mod tests {
             0.75,
             true,
             false,
-            vec![SkillDependency::new("oneiron.skill.base", Some(">=1.0.0"))],
+            vec![SkillDependency::with_min_version(
+                "oneiron.skill.base",
+                ">=1.0.0",
+            )],
             provenance(0xA1),
         )
     }
@@ -797,6 +816,51 @@ mod tests {
     }
 
     #[test]
+    fn raw_skill_put_rejects_malformed_structured_prior_skill_body() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = EntityId::now();
+        let occurred = TimeRange { start: 10, end: 10 };
+        let malformed_structured_body = skill_map(vec![
+            (KEY_SKILL_ID, Value::from("oneiron.skill.human")),
+            (KEY_DESC, Value::from("Human-authored skill fixture")),
+            (KEY_VERSION, Value::from("1.0.0")),
+            (KEY_APPROVAL_STATUS, Value::from("approved")),
+            (KEY_LIFECYCLE_STATUS, Value::from("active")),
+            (KEY_SOURCE, Value::from("user_stated")),
+            (KEY_CONFIDENCE, Value::F32(1.0)),
+            (KEY_GENERATED, Value::Boolean(false)),
+            (KEY_HUMAN_AUTHORED, Value::Boolean(true)),
+            (KEY_DEPENDENCIES, Value::Array(Vec::new())),
+            (KEY_PROVENANCE, Value::Map(Vec::new())),
+        ]);
+        let mut raw =
+            Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + malformed_structured_body.len());
+        raw.push(ENTITY_TYPE_SKILL);
+        raw.extend_from_slice(&occurred.start.to_be_bytes());
+        raw.extend_from_slice(&occurred.end.to_be_bytes());
+        raw.extend_from_slice(&11_u64.to_be_bytes());
+        raw.extend_from_slice(&malformed_structured_body);
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.entities.put(&mut wtxn, id.as_bytes(), &raw)?;
+        wtxn.commit()?;
+
+        let upgraded = human_skill("1.1.0");
+        let upgraded_bytes = encode_skill_record(&upgraded)?;
+        let err = vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 12, end: 12 },
+                13,
+                &upgraded_bytes,
+            )
+            .expect_err("malformed structured prior SKILL body must fail closed");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidSkillBody);
+        Ok(())
+    }
+
+    #[test]
     fn skill_record_rejects_mismatched_flags_bad_provenance_and_bad_dependencies() {
         let mut mismatched = generated_skill("1.0.0");
         mismatched.source = ClaimSource::UserStated;
@@ -835,10 +899,9 @@ mod tests {
         );
 
         let mut duplicate = generated_skill("1.0.0");
-        duplicate.dependencies.push(SkillDependency::new(
-            "oneiron.skill.base",
-            Option::<String>::None,
-        ));
+        duplicate
+            .dependencies
+            .push(SkillDependency::new("oneiron.skill.base"));
         assert_eq!(
             encode_skill_record(&duplicate)
                 .expect_err("duplicate dependencies must fail")

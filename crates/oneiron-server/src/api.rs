@@ -14174,6 +14174,12 @@ mod tests {
             error.message().contains("invalid SKILL body"),
             "message should expose the SKILL validation failure"
         );
+        assert!(
+            error
+                .message()
+                .contains("provenance must be a non-empty MessagePack map"),
+            "message should expose the specific SKILL validation detail"
+        );
     }
 
     #[tokio::test]

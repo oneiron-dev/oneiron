@@ -2397,9 +2397,12 @@ fn apply_put(
             let updated = new_skill_record
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
-            match crate::skill::decode_skill_record(&old_record[ENTITY_METADATA_HEADER_LEN..]) {
+            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+            match crate::skill::decode_skill_record(prior_body) {
                 Ok(prior) => crate::skill::validate_skill_update(&prior, updated)?,
-                Err(error) if error.kind() == ErrorKind::InvalidSkillBody => {}
+                Err(error)
+                    if error.kind() == ErrorKind::InvalidSkillBody
+                        && crate::skill::is_legacy_opaque_skill_body(prior_body) => {}
                 Err(error) => return Err(error),
             }
         }
