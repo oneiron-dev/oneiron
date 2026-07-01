@@ -539,11 +539,10 @@ pub fn psych_mirror_drift_anchors(
     selected_source_revision_refs: &[EntityId],
 ) -> Vec<PsychMirrorDriftAnchor> {
     let previous = canonical_revision_refs_allow_empty(previous_source_revision_refs);
-    let selected = canonical_revision_refs_allow_empty(selected_source_revision_refs);
-    let selected_set: BTreeSet<EntityId> = selected.iter().copied().collect();
+    let selected_set: BTreeSet<EntityId> = selected_source_revision_refs.iter().copied().collect();
     let previous_set: BTreeSet<EntityId> = previous.iter().copied().collect();
 
-    let mut anchors = Vec::with_capacity(previous.len() + selected.len());
+    let mut anchors = Vec::with_capacity(previous.len() + selected_source_revision_refs.len());
     for source_revision_ref in previous {
         let state = if selected_set.contains(&source_revision_ref) {
             PsychMirrorDriftAnchorState::Keep
@@ -555,7 +554,7 @@ pub fn psych_mirror_drift_anchors(
             source_revision_ref,
         });
     }
-    for source_revision_ref in selected {
+    for source_revision_ref in selected_source_revision_refs.iter().copied() {
         if !previous_set.contains(&source_revision_ref) {
             anchors.push(PsychMirrorDriftAnchor {
                 state: PsychMirrorDriftAnchorState::Tune,
@@ -1052,6 +1051,62 @@ mod tests {
         assert_eq!(candidate.connectivity, 1.0);
         assert!((candidate.affect_salience - 0.7).abs() < 1e-6);
         assert!(candidate.entropy > 0.0);
+
+        let mut invalid_salience_fields = HashMap::new();
+        invalid_salience_fields.insert("sal".to_owned(), serde_json::json!(1.7));
+        invalid_salience_fields
+            .insert("txt".to_owned(), serde_json::json!("distinct context text"));
+        let invalid_salience_entity = ContextEntity {
+            id: entity(0x22),
+            short_id: "ctx2".to_owned(),
+            content_hash: 8,
+            entity_type: ENTITY_TYPE_PERSON,
+            score: 0.5,
+            fields: Some(invalid_salience_fields),
+            edges: None,
+            vector: None,
+        };
+        let invalid_salience_candidate = psych_mirror_source_candidate_from_context_entity(
+            &invalid_salience_entity,
+            entity(0xC2),
+            42,
+        )?;
+
+        assert_eq!(invalid_salience_candidate.affect_salience, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn psych_mirror_selection_structured_claim_value_contributes_entropy() -> Result<()> {
+        let body = ClaimBody::new(
+            "profile.preference",
+            ClaimSubject::Entity(entity(0xA1)),
+            Value::Map(vec![
+                (
+                    Value::from("summary"),
+                    Value::from("prefers direct repair notes"),
+                ),
+                (
+                    Value::from("details"),
+                    Value::Array(vec![
+                        Value::from("tracks source changes carefully"),
+                        Value::from(3),
+                        Value::Map(vec![(
+                            Value::from("nested"),
+                            Value::from("asks for concise review replies"),
+                        )]),
+                    ]),
+                ),
+            ]),
+            0.8,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+
+        let candidate =
+            psych_mirror_source_candidate_from_claim(entity(0x23), entity(0xC3), 0.5, 42, &body)?;
+
+        assert!(candidate.entropy > 0.0);
         Ok(())
     }
 
@@ -1076,6 +1131,10 @@ mod tests {
                 PsychMirrorDriftAnchorEvent {
                     state: PsychMirrorDriftAnchorState::Keep,
                     source_revision_ref: entity(0xC3),
+                },
+                PsychMirrorDriftAnchorEvent {
+                    state: PsychMirrorDriftAnchorState::Tune,
+                    source_revision_ref: entity(0xC4),
                 },
                 PsychMirrorDriftAnchorEvent {
                     state: PsychMirrorDriftAnchorState::Tune,
