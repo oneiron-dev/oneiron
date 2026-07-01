@@ -818,6 +818,7 @@ pub fn forward_rematerialize(
         let rtxn = vault.store.env.read_txn()?;
         let mut materialized_blobs = HashMap::<EntityId, Vec<u8>>::new();
         let mut entity_error = None;
+        let mut local_only_companion_entity_keys = Vec::<String>::new();
         map_for_each_value_bytes(&entities_map, |key, blob| {
             if entity_error.is_some() {
                 return;
@@ -983,6 +984,23 @@ pub fn forward_rematerialize(
             } else {
                 &[]
             };
+            if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+                match decode_companion_record_body(data) {
+                    Ok(record)
+                        if record.export_classification
+                            == CompanionExportClassification::LocalOnly =>
+                    {
+                        local_only_companion_entity_keys.push(key.to_owned());
+                        return;
+                    }
+                    Ok(_) | Err(_) => {
+                        if let Err(err) = vault.ensure_companion_register_kind() {
+                            entity_error = Some(err);
+                            return;
+                        }
+                    }
+                }
+            }
             // ONE-1134 + ONE-1140: REDACTION_AUDIT (type 120) replay door
             // #2. Receipts are immutable audit records (contracts.ts
             // `redactionAuditReceipt`; ARCH-0023b audit/guardrail class:
@@ -1138,6 +1156,14 @@ pub fn forward_rematerialize(
         });
         if let Some(err) = entity_error {
             return Err(err);
+        }
+        if !local_only_companion_entity_keys.is_empty() {
+            for key in &local_only_companion_entity_keys {
+                map_delete(&entities_map, key).map_err(|err| {
+                    Error::SyncProtocolError(format!("forward remat local companion remove: {err}"))
+                })?;
+            }
+            doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
         }
     }
 
@@ -1955,6 +1981,56 @@ mod tests {
         assert!(
             map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
             "reverse remat should mirror syncable companion register rows"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_api_forward_remat_excludes_local_only_records() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new("2026-03");
+        let learned_at = window_key.start_timestamp().unwrap() + 90;
+        let local_id = EntityId::from_bytes([0x33; 16]).unwrap();
+        let portable_id = EntityId::from_bytes([0x34; 16]).unwrap();
+        let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+
+        let doc = create_window_doc("remote", &window_key);
+        let entities = doc.get_map("entities");
+        map_insert_bytes(
+            &entities,
+            &local_id.to_hex(),
+            &make_entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                learned_at,
+                &encode_companion_record_body(&local)?,
+            ),
+        )?;
+        map_insert_bytes(
+            &entities,
+            &portable_id.to_hex(),
+            &make_entity_blob(
+                ENTITY_TYPE_COMPANION_REGISTER,
+                learned_at,
+                &encode_companion_record_body(&portable)?,
+            ),
+        )?;
+        doc.commit();
+
+        let materializer = Materializer::new();
+        let rematerialized = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+        assert_eq!(rematerialized, 1);
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "forward remat must remove local-only companion register rows"
+        );
+        assert!(
+            vault.get_companion_record(&local_id)?.is_none(),
+            "forward remat must not materialize local-only companion records"
+        );
+        assert!(
+            vault.get_companion_record(&portable_id)?.is_some(),
+            "forward remat should materialize syncable companion register rows"
         );
         Ok(())
     }

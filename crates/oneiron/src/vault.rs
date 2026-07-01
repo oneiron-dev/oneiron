@@ -912,6 +912,11 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.ensure_companion_register_kind()?;
+        if record.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody(
+                "companion record create must be active",
+            ));
+        }
         let data = encode_companion_record_body(record)?;
         let key = record.key();
         let mut wtxn = self.store.env.write_txn()?;
@@ -937,6 +942,11 @@ impl Vault {
         learned_at: u64,
     ) -> Result<CompanionRecord> {
         self.ensure_companion_register_kind()?;
+        if record.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody(
+                "companion record update must be active",
+            ));
+        }
         let data = encode_companion_record_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_companion_record_in_txn(&wtxn, id)?;
@@ -1059,7 +1069,7 @@ impl Vault {
         )
     }
 
-    fn ensure_companion_register_kind(&self) -> Result<()> {
+    pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
         if self.companion_register_kind_registered() {
             return Ok(());
         }
