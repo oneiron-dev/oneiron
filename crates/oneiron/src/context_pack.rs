@@ -1910,8 +1910,11 @@ mod tests {
             EiriMemoryBoardBudget::new(2, 1, 0, 0, 1, 0),
             Some(EiriCompanionAssembly {
                 caller: Some("default".to_owned()),
+                scope: Some("neutral".to_owned()),
+                scope_source: Some("neutral_default".to_owned()),
                 person_ref: None,
                 persona_ref: Some("persona-alpha".to_owned()),
+                expression: Some("professional".to_owned()),
             }),
         );
 
@@ -1972,8 +1975,11 @@ mod tests {
                 ],
                 "companion": {
                     "caller": "default",
+                    "scope": "neutral",
+                    "scope_source": "neutral_default",
                     "person_ref": null,
-                    "persona_ref": "persona-alpha"
+                    "persona_ref": "persona-alpha",
+                    "expression": "professional"
                 }
             })
         );
