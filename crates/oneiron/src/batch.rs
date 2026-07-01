@@ -15,7 +15,7 @@ use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::claim::{
     ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
@@ -2394,12 +2394,14 @@ fn apply_put(
             });
         }
         if old_type == ENTITY_TYPE_SKILL && body_changed {
-            let prior =
-                crate::skill::decode_skill_record(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
             let updated = new_skill_record
                 .as_ref()
                 .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
-            crate::skill::validate_skill_update(&prior, updated)?;
+            match crate::skill::decode_skill_record(&old_record[ENTITY_METADATA_HEADER_LEN..]) {
+                Ok(prior) => crate::skill::validate_skill_update(&prior, updated)?,
+                Err(error) if error.kind() == ErrorKind::InvalidSkillBody => {}
+                Err(error) => return Err(error),
+            }
         }
         if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed

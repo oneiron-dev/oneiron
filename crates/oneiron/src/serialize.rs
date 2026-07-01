@@ -2096,15 +2096,7 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
 
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
-        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &[
-            "skillId",
-            "desc",
-            "version",
-            "approvalStatus",
-            "lifecycleStatus",
-            "source",
-            "confidence",
-        ],
+        (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::skill::SKILL_RECORD_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
@@ -4522,6 +4514,15 @@ mod tests {
             );
 
             (case.extra)(&pack);
+        }
+    }
+
+    #[test]
+    fn skill_full_profile_exposes_reliability_metadata() {
+        let full = fields_for_profile(ENTITY_TYPE_SKILL, FieldProfile::Full);
+        assert_eq!(full, crate::skill::SKILL_RECORD_BODY_KEYS);
+        for key in ["generated", "humanAuthored", "dependencies", "provenance"] {
+            assert!(full.contains(&key), "full SKILL profile must include {key}");
         }
     }
 
