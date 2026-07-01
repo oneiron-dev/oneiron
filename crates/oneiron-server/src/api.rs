@@ -4736,6 +4736,9 @@ struct EiriCompanionControls {
     #[serde(default, rename = "persona_ref", alias = "personaRef")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     persona_ref: Option<String>,
+    #[serde(default)]
+    #[schema(example = "warm")]
+    expression: Option<String>,
 }
 
 struct EiriContextV4Request {
@@ -4743,6 +4746,11 @@ struct EiriContextV4Request {
     session_scope_id: String,
     session_id: String,
     companion: Option<oneiron::EiriCompanionAssembly>,
+}
+
+struct EiriContextV4Identity<'a> {
+    fallback_session_id: &'a str,
+    companion_auth: Option<&'a CoreAuth>,
 }
 
 /// Context-pack request on the canonical core route.
@@ -5042,6 +5050,13 @@ struct CoreEiriCompanionAssembly {
     /// Effective caller/session identity used for the v4 board.
     #[schema(example = "session-123")]
     caller: Option<String>,
+    /// Effective companion scope selected from active companion records.
+    #[schema(example = "personal")]
+    scope: Option<String>,
+    /// Active record class that selected the companion scope.
+    #[serde(rename = "scope_source")]
+    #[schema(example = "persona_and_relationship_records")]
+    scope_source: Option<String>,
     /// Optional person entity id for companion-aware assembly metadata.
     #[serde(rename = "person_ref")]
     #[schema(example = "11111111111111111111111111111111")]
@@ -5050,6 +5065,9 @@ struct CoreEiriCompanionAssembly {
     #[serde(rename = "persona_ref")]
     #[schema(example = "22222222222222222222222222222222")]
     persona_ref: Option<String>,
+    /// Effective expression register boundary.
+    #[schema(example = "warm")]
+    expression: Option<String>,
 }
 
 /// Stable row in an Eiri Context v4 memory board.
@@ -5943,13 +5961,16 @@ async fn core_context_pack(
     let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
     let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
     let eiri_context = resolve_eiri_context_v4_request(
+        &server.vault,
         req.context_version.as_deref(),
         req.memory_board.as_ref(),
         req.session_rag.as_ref(),
         req.companion.as_ref(),
-        req.limit,
-        max_neighbors,
-        fallback_session_id,
+        (req.limit, max_neighbors),
+        EiriContextV4Identity {
+            fallback_session_id,
+            companion_auth: Some(&auth),
+        },
     )?;
 
     let mut builder = server
@@ -6478,13 +6499,13 @@ fn apply_context_pack_budget<'a>(
 }
 
 fn resolve_eiri_context_v4_request(
+    vault: &oneiron::Vault,
     context_version: Option<&str>,
     memory_board: Option<&EiriMemoryBoardControls>,
     session_rag: Option<&EiriSessionRagControls>,
     companion: Option<&EiriCompanionControls>,
-    limit: usize,
-    default_selected_edges: usize,
-    fallback_session_id: &str,
+    budget_shape: (usize, usize),
+    identity: EiriContextV4Identity<'_>,
 ) -> Result<Option<EiriContextV4Request>, ApiError> {
     let requested = context_version.is_some()
         || memory_board.is_some()
@@ -6502,7 +6523,7 @@ fn resolve_eiri_context_v4_request(
         ));
     }
 
-    let session_scope_id = fallback_session_id.trim();
+    let session_scope_id = identity.fallback_session_id.trim();
     validate_eiri_session_id(session_scope_id, "session_rag.scope")?;
     if is_shared_eiri_session_scope_id(session_scope_id) {
         return Err(ApiError::bad_request(
@@ -6520,20 +6541,157 @@ fn resolve_eiri_context_v4_request(
     let memory_board_budget = memory_board
         .and_then(|controls| controls.enabled)
         .unwrap_or(true)
-        .then(|| eiri_memory_board_budget(memory_board, limit, default_selected_edges));
+        .then(|| eiri_memory_board_budget(memory_board, budget_shape.0, budget_shape.1));
 
-    let companion = Some(oneiron::EiriCompanionAssembly {
-        caller: Some(session_id.to_owned()),
-        person_ref: companion.and_then(|controls| controls.person_ref.clone()),
-        persona_ref: companion.and_then(|controls| controls.persona_ref.clone()),
-    });
+    let companion =
+        resolve_eiri_companion_assembly(vault, companion, session_id, identity.companion_auth)?;
 
     Ok(Some(EiriContextV4Request {
         memory_board_budget,
         session_scope_id: session_scope_id.to_owned(),
         session_id: session_id.to_owned(),
-        companion,
+        companion: Some(companion),
     }))
+}
+
+fn resolve_eiri_companion_assembly(
+    vault: &oneiron::Vault,
+    companion: Option<&EiriCompanionControls>,
+    session_id: &str,
+    companion_auth: Option<&CoreAuth>,
+) -> Result<oneiron::EiriCompanionAssembly, ApiError> {
+    let (person_ref_wire, person_ref) = parse_companion_ref(
+        companion.and_then(|controls| controls.person_ref.as_deref()),
+        "companion.person_ref",
+    )?;
+    let (persona_ref_wire, persona_ref) = parse_companion_ref(
+        companion.and_then(|controls| controls.persona_ref.as_deref()),
+        "companion.persona_ref",
+    )?;
+    let requested_expression = companion
+        .and_then(|controls| controls.expression.as_deref())
+        .map(|value| {
+            oneiron::CompanionExpression::parse(value).ok_or_else(|| {
+                ApiError::bad_request(
+                    "companion.expression must be professional, warm, or unrestricted",
+                    Some("companion.expression"),
+                )
+            })
+        })
+        .transpose()?;
+    let fallback_expression =
+        requested_expression.unwrap_or(oneiron::CompanionExpression::Professional);
+    if !companion_scope_resolution_authorized(vault, companion_auth, person_ref, persona_ref)? {
+        return Ok(oneiron::EiriCompanionAssembly {
+            caller: Some(session_id.to_owned()),
+            scope: Some(companion_scope_wire(&oneiron::CompanionScope::neutral()).to_owned()),
+            scope_source: Some(
+                oneiron::CompanionScopeResolutionSource::NeutralDefault
+                    .as_str()
+                    .to_owned(),
+            ),
+            person_ref: person_ref_wire,
+            persona_ref: persona_ref_wire,
+            expression: Some(fallback_expression.as_str().to_owned()),
+        });
+    }
+    let register = vault.companion_register().map_err(|error| {
+        tracing::error!(error = %error, "companion scope resolution failed");
+        core_engine_error("companion scope resolution failed", error)
+    })?;
+    let relationship_ref = person_ref.zip(persona_ref);
+    let mut expressions = oneiron::CompanionExpressionRegister::new();
+    let resolution = if let Some(expression) = requested_expression {
+        let seed_resolution = register.resolve_companion_scope(
+            &expressions,
+            person_ref,
+            persona_ref,
+            relationship_ref,
+        );
+        if let Some(key) = seed_resolution
+            .relationship_key
+            .as_ref()
+            .or(seed_resolution.persona_key.as_ref())
+        {
+            expressions
+                .update(key.clone(), expression)
+                .map_err(|error| {
+                    tracing::error!(error = %error, "companion expression registration failed");
+                    core_engine_error("companion expression registration failed", error)
+                })?;
+            register.resolve_companion_scope(
+                &expressions,
+                person_ref,
+                persona_ref,
+                relationship_ref,
+            )
+        } else {
+            seed_resolution
+        }
+    } else {
+        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref)
+    };
+    let expression = requested_expression.unwrap_or(resolution.expression);
+
+    Ok(oneiron::EiriCompanionAssembly {
+        caller: Some(session_id.to_owned()),
+        scope: Some(companion_scope_wire(&resolution.scope).to_owned()),
+        scope_source: Some(resolution.source.as_str().to_owned()),
+        person_ref: person_ref_wire,
+        persona_ref: persona_ref_wire,
+        expression: Some(expression.as_str().to_owned()),
+    })
+}
+
+fn companion_scope_resolution_authorized(
+    vault: &oneiron::Vault,
+    companion_auth: Option<&CoreAuth>,
+    person_ref: Option<oneiron::EntityId>,
+    persona_ref: Option<oneiron::EntityId>,
+) -> Result<bool, ApiError> {
+    let Some(auth) = companion_auth else {
+        return Ok(true);
+    };
+    if auth.has_scope(CoreScope::CompanionRegisterRead) || auth.has_scope(CoreScope::Auth) {
+        return Ok(true);
+    }
+    let (Some(person_ref), Some(persona_ref)) = (person_ref, persona_ref) else {
+        return Ok(false);
+    };
+    let Some(principal_ref) = auth_bound_principal_ref(auth)? else {
+        return Ok(false);
+    };
+    vault
+        .companion_profile_access_grant(&principal_ref, &person_ref, &persona_ref)
+        .map(|grant| grant.is_some())
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                principal_ref = %principal_ref.to_hex(),
+                person_ref = %person_ref.to_hex(),
+                persona_ref = %persona_ref.to_hex(),
+                "companion profile grant lookup failed"
+            );
+            core_engine_error("companion profile grant lookup failed", error)
+        })
+}
+
+fn parse_companion_ref(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<(Option<String>, Option<oneiron::EntityId>), ApiError> {
+    let Some(raw) = value else {
+        return Ok((None, None));
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok((None, None));
+    }
+    if trimmed.len() == 32 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let id = parse_entity_id_param(trimmed, field)?;
+        return Ok((Some(id.to_hex()), Some(id)));
+    }
+    Ok((Some(trimmed.to_owned()), None))
 }
 
 fn validate_eiri_session_id(session_id: &str, field: &'static str) -> Result<(), ApiError> {
@@ -6554,6 +6712,15 @@ fn validate_eiri_session_id(session_id: &str, field: &'static str) -> Result<(),
 
 fn is_shared_eiri_session_scope_id(session_scope_id: &str) -> bool {
     SHARED_EIRI_SESSION_SCOPE_IDS.contains(&session_scope_id)
+}
+
+fn companion_scope_wire(scope: &oneiron::CompanionScope) -> &'static str {
+    match scope {
+        oneiron::CompanionScope::Neutral => "neutral",
+        oneiron::CompanionScope::Personal { .. } => "personal",
+        oneiron::CompanionScope::SharedVault { .. } => "shared_vault",
+        _ => "unknown",
+    }
 }
 
 fn eiri_memory_board_budget(
@@ -8020,13 +8187,16 @@ async fn context_pack(
     let projection =
         context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
     let eiri_context = resolve_eiri_context_v4_request(
+        &server.vault,
         req.context_version.as_deref(),
         req.memory_board.as_ref(),
         req.session_rag.as_ref(),
         req.companion.as_ref(),
-        req.limit,
-        max_neighbors,
-        &caller,
+        (req.limit, max_neighbors),
+        EiriContextV4Identity {
+            fallback_session_id: &caller,
+            companion_auth: None,
+        },
     )?;
 
     let mut builder = server
@@ -13144,6 +13314,7 @@ mod tests {
             .commit()
             .expect("seed context v4 rows");
 
+        let persona_ref = seeded_test_entity_id(0x1324_0001).to_hex();
         let request = json!({
             "query": "eiri v4 needle",
             "limit": 10,
@@ -13159,7 +13330,7 @@ mod tests {
                 }
             },
             "session_rag": { "session_id": "eiri-session-api" },
-            "companion": { "persona_ref": "persona-route-test" }
+            "companion": { "persona_ref": persona_ref.clone() }
         });
 
         let eiri_request = || {
@@ -13198,7 +13369,19 @@ mod tests {
         );
         assert_eq!(
             first_body["memory_board"]["companion"]["persona_ref"],
-            Value::from("persona-route-test")
+            Value::from(persona_ref)
+        );
+        assert_eq!(
+            first_body["memory_board"]["companion"]["scope"],
+            Value::from("neutral")
+        );
+        assert_eq!(
+            first_body["memory_board"]["companion"]["scope_source"],
+            Value::from("neutral_default")
+        );
+        assert_eq!(
+            first_body["memory_board"]["companion"]["expression"],
+            Value::from("professional")
         );
         assert_eq!(
             first_body["session_rag"]["session_id"],
@@ -13240,6 +13423,216 @@ mod tests {
             resume_body["session"]["rag_state"]["query_count"],
             Value::from(2)
         );
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_companion_resolves_warm_personal_relationship_without_private_note() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let private_note = "private warm companion note one1266";
+        let person_ref = seeded_test_entity_id(0x1266_0001);
+        let persona_ref = seeded_test_entity_id(0x1266_0002);
+        let companion_id = seeded_test_entity_id(0x1266_0003);
+        let turn_id = seeded_test_entity_id(0x1266_0004);
+        let actor_ref = seeded_test_entity_id(0x1266_0005);
+        let principal_ref = seeded_test_entity_id(0x1266_0006);
+        let grant_id = seeded_test_entity_id(0x1266_0007);
+
+        let record = oneiron::CompanionRecord::relationship(
+            oneiron::CompanionScope::personal(person_ref),
+            person_ref,
+            persona_ref,
+            oneiron::companion_value_from_json(&json!({ "note": private_note }))
+                .expect("companion value"),
+            oneiron::CompanionProvenance::new(
+                actor_ref,
+                oneiron::EdgeActorClass::Agent,
+                oneiron::ClaimSource::UserStated,
+                oneiron::ClaimApprovalStatus::Approved,
+                oneiron::companion_value_from_json(&json!({ "source": "test" }))
+                    .expect("provenance value"),
+            ),
+            oneiron::CompanionExportClassification::LocalOnly,
+        );
+        server
+            .vault
+            .create_companion_record(&companion_id, &record, 10)
+            .expect("create companion record");
+        let turn_body = json!({ "txt": "warm companion route needle" });
+        let turn_data = rmp_serde::to_vec_named(&turn_body).expect("encode turn body");
+        server
+            .vault
+            .batch()
+            .put(
+                &turn_id,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 11, end: 11 },
+                11,
+                &turn_data,
+            )
+            .text(&turn_id, &[("body", "warm companion route needle")])
+            .commit()
+            .expect("seed turn");
+
+        let request = json!({
+            "query": "warm companion route needle",
+            "context_version": "v4",
+            "memory_board": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
+            "companion": {
+                "person_ref": person_ref.to_hex(),
+                "persona_ref": persona_ref.to_hex(),
+                "expression": "warm"
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-secret", "secret")
+                .header("x-oneiron-caller", "warm-companion-api")
+                .body(Body::from(request.to_string()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let companion = &body["memory_board"]["companion"];
+        assert_eq!(companion["scope"], Value::from("personal"));
+        assert_eq!(
+            companion["scope_source"],
+            Value::from("relationship_record")
+        );
+        assert_eq!(companion["expression"], Value::from("warm"));
+        assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
+        assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));
+        assert!(
+            !serde_json::to_string(&body)
+                .expect("response serializes")
+                .contains(private_note),
+            "companion assembly must not leak private register notes"
+        );
+
+        let core_request_body = json!({
+            "query": "warm companion route needle",
+            "context_version": "v4",
+            "memory_board": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
+            "companion": {
+                "person_ref": person_ref.to_hex(),
+                "persona_ref": persona_ref.to_hex(),
+                "expression": "warm"
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal_ref.to_hex(),
+                Some(&core_request_body),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let companion = &body["memory_board"]["companion"];
+        assert_eq!(companion["scope"], Value::from("neutral"));
+        assert_eq!(companion["scope_source"], Value::from("neutral_default"));
+        assert_eq!(companion["expression"], Value::from("warm"));
+        assert!(
+            !serde_json::to_string(&body)
+                .expect("response serializes")
+                .contains(private_note),
+            "unauthorized core context-pack must not leak companion relationship metadata"
+        );
+
+        let grant = oneiron::AccessGrant::companion_profile_read(
+            principal_ref,
+            person_ref,
+            persona_ref,
+            12,
+        );
+        server
+            .vault
+            .create_access_grant(&grant_id, &grant)
+            .expect("create profile grant");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal_ref.to_hex(),
+                Some(&core_request_body),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let companion = &body["memory_board"]["companion"];
+        assert_eq!(companion["scope"], Value::from("personal"));
+        assert_eq!(
+            companion["scope_source"],
+            Value::from("relationship_record")
+        );
+        assert_eq!(companion["expression"], Value::from("warm"));
+
+        let invalid_request = json!({
+            "query": "warm companion route needle",
+            "context_version": "v4",
+            "companion": {
+                "person_ref": person_ref.to_hex(),
+                "persona_ref": persona_ref.to_hex(),
+                "expression": "future_closed"
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-secret", "secret")
+                .header("x-oneiron-caller", "warm-companion-api")
+                .body(Body::from(invalid_request.to_string()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["details"]["field"],
+            Value::from("companion.expression")
+        );
+
+        let opaque_request = json!({
+            "query": "warm companion route needle",
+            "context_version": "v4",
+            "companion": {
+                "person_ref": "opaque-person-ref",
+                "persona_ref": "persona-route-test",
+                "expression": "warm"
+            }
+        });
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-secret", "secret")
+                .header("x-oneiron-caller", "warm-companion-api")
+                .body(Body::from(opaque_request.to_string()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let companion = &body["memory_board"]["companion"];
+        assert_eq!(companion["scope"], Value::from("neutral"));
+        assert_eq!(companion["scope_source"], Value::from("neutral_default"));
+        assert_eq!(companion["expression"], Value::from("warm"));
+        assert_eq!(companion["person_ref"], Value::from("opaque-person-ref"));
+        assert_eq!(companion["persona_ref"], Value::from("persona-route-test"));
     }
 
     #[test]
