@@ -1715,12 +1715,13 @@ impl Vault {
             later.vad.arousal - baseline.vad.arousal,
             later.vad.dominance - baseline.vad.dominance,
         )?;
-        self.update_coping_outcome_from_turn_vad_delta(
+        self.update_coping_outcome_from_turn_vad_delta_checked(
             prior_claim_id,
             *later_turn_id,
             delta,
             confidence,
             now,
+            Some(*baseline_turn_id),
         )
     }
 
@@ -1733,6 +1734,25 @@ impl Vault {
         vad_delta: VadDelta,
         confidence: f32,
         now: u64,
+    ) -> Result<CopingOutcomeUpdate> {
+        self.update_coping_outcome_from_turn_vad_delta_checked(
+            prior_claim_id,
+            turn_id,
+            vad_delta,
+            confidence,
+            now,
+            None,
+        )
+    }
+
+    fn update_coping_outcome_from_turn_vad_delta_checked(
+        &self,
+        prior_claim_id: &EntityId,
+        turn_id: EntityId,
+        vad_delta: VadDelta,
+        confidence: f32,
+        now: u64,
+        expected_strategy_ref: Option<EntityId>,
     ) -> Result<CopingOutcomeUpdate> {
         let mut wtxn = self.store.env.write_txn()?;
         let raw = self
@@ -1754,9 +1774,23 @@ impl Vault {
                 status: prior_body.lifecycle,
             });
         }
-        let Some(prior_value) = decode_coping_outcome_claim(&prior_body)? else {
-            return Err(Error::InvalidClaimBody("claim is not a coping.outcome"));
-        };
+        let prior_value = decode_coping_outcome_claim(&prior_body)?
+            .ok_or(Error::InvalidClaimBody("claim is not a coping.outcome"))?;
+        if let Some(expected_strategy_ref) = expected_strategy_ref
+            && prior_value.strategy_ref() != expected_strategy_ref
+        {
+            return Err(Error::InvalidClaimBody(
+                "baseline turn must match coping.outcome strategyRef",
+            ));
+        }
+        let prior_valid_from = prior_body.valid_from.ok_or(Error::InvalidClaimBody(
+            "coping.outcome valid_from is required",
+        ))?;
+        if now < prior_valid_from || now < header.occurred_start {
+            return Err(Error::InvalidClaimBody(
+                "coping.outcome update timestamp must not precede active valid_from",
+            ));
+        }
         let updated_value = prior_value.with_observation(vad_delta, confidence)?;
         let ClaimSubject::Entity(subject) = prior_body.subject else {
             return Err(Error::InvalidClaimBody(
