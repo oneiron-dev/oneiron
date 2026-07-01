@@ -1914,10 +1914,10 @@ async fn create_companion_access_grant(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CompanionCreateAccessGrantRequest>, JsonRejection>,
 ) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
-    require_companion_access_grant_write(&auth)?;
     let req = json_payload(payload)?;
     let grant_id = parse_optional_entity_id(req.id.as_deref(), "id")?;
     let principal_ref = parse_entity_id_param(&req.principal_ref, "principal_ref")?;
+    require_companion_access_grant_write_for_principal(&auth, &principal_ref)?;
     let (person_ref, persona_ref) = companion_scope_entity_refs(&req.scope)?;
     let created_at = req.created_at.unwrap_or_else(unix_seconds_now);
     let grant = oneiron::AccessGrant::companion_profile_read(
@@ -1959,10 +1959,19 @@ async fn revoke_companion_access_grant(
     Path(grant_id): Path<String>,
     payload: Result<Json<CompanionRevokeAccessGrantRequest>, JsonRejection>,
 ) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
-    require_companion_access_grant_write(&auth)?;
     let grant_id = parse_entity_id_param(&grant_id, "grant_id")?;
     let req = json_payload(payload)?;
     let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);
+
+    let existing = server
+        .vault
+        .get_access_grant(&grant_id)
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant read failed");
+            companion_engine_error("companion access grant read failed", error)
+        })?
+        .ok_or_else(|| ApiError::not_found("access_grant", None))?;
+    require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)?;
 
     let grant = server
         .vault
@@ -2056,14 +2065,31 @@ fn require_companion_access_grant_write(auth: &CoreAuth) -> Result<(), ApiError>
     }
 }
 
+fn require_companion_access_grant_write_for_principal(
+    auth: &CoreAuth,
+    principal_ref: &oneiron::EntityId,
+) -> Result<(), ApiError> {
+    require_companion_access_grant_write(auth)?;
+    if auth.has_scope(CoreScope::Auth) {
+        return Ok(());
+    }
+    match auth_bound_principal_ref(auth)? {
+        Some(bound) if bound == *principal_ref => Ok(()),
+        _ => Err(ApiError::forbidden_scope(CoreScope::Auth.as_str())),
+    }
+}
+
+fn auth_bound_principal_ref(auth: &CoreAuth) -> Result<Option<oneiron::EntityId>, ApiError> {
+    auth.principal_ref()
+        .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
+        .transpose()
+}
+
 fn companion_profile_principal_ref(
     auth: &CoreAuth,
     requested: Option<oneiron::EntityId>,
 ) -> Result<oneiron::EntityId, ApiError> {
-    let bound = auth
-        .principal_ref()
-        .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
-        .transpose()?;
+    let bound = auth_bound_principal_ref(auth)?;
 
     match (requested, bound) {
         (Some(requested), Some(bound)) if requested == bound => Ok(requested),
@@ -9211,6 +9237,7 @@ mod tests {
         let persona_ref = seeded_test_entity_id(0x1265_0004).to_hex();
         let other_person_ref = seeded_test_entity_id(0x1265_0005).to_hex();
         let other_principal_ref = seeded_test_entity_id(0x1265_0006).to_hex();
+        let cross_principal_grant_id = seeded_test_entity_id(0x1265_0007).to_hex();
 
         let profile_path_with_override = format!(
             "/v1/companion/profiles/{persona_ref}?principal_ref={principal_ref}&person_ref={person_ref}"
@@ -9274,12 +9301,52 @@ mod tests {
             },
             "created_at": 10_u64,
         });
+        let cross_principal_create_request = json!({
+            "id": cross_principal_grant_id,
+            "principal_ref": principal_ref,
+            "scope": {
+                "kind": "companion_profile",
+                "person_ref": person_ref,
+                "persona_ref": persona_ref,
+            },
+            "created_at": 10_u64,
+        });
         let (status, body) = route_json(
             server.clone(),
-            core_request(
+            core_request_with_principal_ref(
                 "POST",
                 "/v1/companion/access-grants",
                 "companion:access-grant:write",
+                &other_principal_ref,
+                Some(&cross_principal_create_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("core:auth")
+        );
+        assert!(
+            server
+                .vault
+                .get_access_grant(
+                    &oneiron::EntityId::from_hex(&cross_principal_grant_id)
+                        .expect("cross-principal grant id")
+                )
+                .expect("read cross-principal grant")
+                .is_none(),
+            "cross-principal create must not write an AccessGrant"
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/companion/access-grants",
+                "companion:access-grant:write",
+                &principal_ref,
                 Some(&create_request),
             ),
         )
@@ -9324,10 +9391,39 @@ mod tests {
         let revoke_request = json!({ "revoked_at": 20_u64 });
         let (status, body) = route_json(
             server.clone(),
-            core_request(
+            core_request_with_principal_ref(
                 "POST",
                 &revoke_path,
                 "companion:access-grant:write",
+                &other_principal_ref,
+                Some(&revoke_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&body, "FORBIDDEN");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("core:auth")
+        );
+        assert_eq!(
+            server
+                .vault
+                .get_access_grant(&oneiron::EntityId::from_hex(&grant_id).expect("test grant id"))
+                .expect("read grant")
+                .expect("grant exists")
+                .status,
+            oneiron::AccessGrantStatus::Active,
+            "cross-principal revoke must not mutate the grant"
+        );
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &revoke_path,
+                "companion:access-grant:write",
+                &principal_ref,
                 Some(&revoke_request),
             ),
         )
@@ -9338,10 +9434,11 @@ mod tests {
 
         let (status, body) = route_json(
             server.clone(),
-            core_request(
+            core_request_with_principal_ref(
                 "POST",
                 "/v1/companion/access-grants",
                 "companion:access-grant:write",
+                &principal_ref,
                 Some(&create_request),
             ),
         )
