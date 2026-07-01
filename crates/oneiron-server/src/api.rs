@@ -2232,6 +2232,7 @@ fn companion_register_record_from_payload(
             Some("record.kind"),
         ));
     }
+    companion_register_require_object_value(&payload.value, "record.value")?;
     let value = oneiron::companion_value_from_json(&payload.value)
         .map_err(|error| ApiError::bad_request(error.to_string(), Some("record.value")))?;
     let provenance = companion_register_provenance_from_payload(&payload.provenance)?;
@@ -2339,6 +2340,7 @@ fn companion_register_subject_from_payload(
 fn companion_register_provenance_from_payload(
     payload: &CompanionRegisterProvenancePayload,
 ) -> Result<oneiron::CompanionProvenance, ApiError> {
+    companion_register_require_object_value(&payload.value, "record.provenance.value")?;
     let value = oneiron::companion_value_from_json(&payload.value).map_err(|error| {
         ApiError::bad_request(error.to_string(), Some("record.provenance.value"))
     })?;
@@ -2349,6 +2351,20 @@ fn companion_register_provenance_from_payload(
         companion_register_approval_from_wire(&payload.approval)?,
         value,
     ))
+}
+
+fn companion_register_require_object_value(
+    value: &Value,
+    field: &'static str,
+) -> Result<(), ApiError> {
+    if value.is_object() {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "companion register value must be a JSON object",
+            Some(field),
+        ))
+    }
 }
 
 fn companion_register_record_response(
@@ -9335,6 +9351,50 @@ mod tests {
             assert_eq!(body["id"], Value::from(id.clone()));
             assert_eq!(body["record"]["lifecycle"], Value::from("active"));
         }
+
+        let mut bad_record_value = personal_record.clone();
+        bad_record_value["value"] = Value::from("not-an-object");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "core:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000A).to_hex(),
+                    "record": bad_record_value
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.value")
+        );
+
+        let mut bad_provenance_value = personal_record.clone();
+        bad_provenance_value["provenance"]["value"] = Value::from("not-an-object");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "core:write",
+                Some(&json!({
+                    "id": seeded_test_entity_id(0x1219_000B).to_hex(),
+                    "record": bad_provenance_value
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["details"]["field"],
+            Value::from("record.provenance.value")
+        );
 
         let read_path = format!("/v1/companion/register/records/{personal_id}");
         let (status, body) = route_json(
