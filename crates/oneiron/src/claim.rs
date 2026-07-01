@@ -31,6 +31,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::affect::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure};
 use crate::error::{Error, Result};
 use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
 
@@ -86,6 +87,12 @@ pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "lexical.query_hint";
 
 /// Pinned companion-expression predicate for the relationship/persona layer.
 pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
+
+/// Claim predicate for an unresolved conflict state.
+pub const PREDICATE_CONFLICT_OPEN: &str = "conflict.open";
+
+/// Claim predicate for a resolved conflict state.
+pub const PREDICATE_CONFLICT_RESOLVED: &str = "conflict.resolved";
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
 pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
@@ -747,6 +754,12 @@ pub(crate) fn validate_claim_body_and_decode(
         lexical_query_hint_target(&body)?;
     } else if body.predicate == PREDICATE_COMPANION_EXPRESSION {
         validate_companion_expression_claim_structure(&body)?;
+    } else if body.predicate == AFFECT_TRIGGER_PREDICATE {
+        validate_affect_trigger_claim_structure(&body)?;
+    } else if body.predicate == PREDICATE_CONFLICT_OPEN
+        || body.predicate == PREDICATE_CONFLICT_RESOLVED
+    {
+        validate_conflict_claim_structure(&body)?;
     }
     Ok(body)
 }
@@ -765,6 +778,20 @@ fn validate_companion_expression_claim_structure(body: &ClaimBody) -> Result<()>
             "expression must be professional|warm|unrestricted",
         )),
     }
+}
+
+fn validate_conflict_claim_structure(body: &ClaimBody) -> Result<()> {
+    if !matches!(body.subject, ClaimSubject::Entity(_)) {
+        return Err(Error::InvalidClaimBody(
+            "conflict claim subject must be an entity",
+        ));
+    }
+    if matches!(body.value, Value::Nil) {
+        return Err(Error::InvalidClaimBody(
+            "conflict claim value must not be nil",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
@@ -1260,6 +1287,249 @@ mod tests {
             validate_claim_body_bytes(&encode(Value::Map(Vec::new()))?, false),
             Err(Error::InvalidClaimBody(
                 "companion.expression value must be a string"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn affect_trigger_write_door_validates_value_shape() -> Result<()> {
+        let affected_person = EntityId::from_bytes([0x44; 16]).expect("valid id");
+        let trigger_ref = EntityId::from_bytes([0x45; 16]).expect("valid id");
+        let value = crate::affect::AffectTriggerValue::new(
+            affected_person,
+            trigger_ref,
+            crate::affect::VadDelta::new(-0.4, 0.2, -0.1)?,
+            0.82,
+            3,
+            12,
+        )?;
+        let encode_with_confidence =
+            |subject: ClaimSubject, value: Value, confidence: f32| -> Result<Vec<u8>> {
+                let body = ClaimBody::new(
+                    crate::affect::AFFECT_TRIGGER_PREDICATE,
+                    subject,
+                    value,
+                    confidence,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                );
+                encode_claim_body(&body)
+            };
+        let encode = |subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
+            encode_with_confidence(subject, value, 0.82)
+        };
+        let duplicate_top_level_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            entries.push((Value::from("confidence"), Value::F32(value.confidence())));
+            Value::Map(entries)
+        };
+        let duplicate_vad_delta_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            vad_entries.push((Value::from("arousal"), Value::F32(0.2)));
+            Value::Map(entries)
+        };
+        let f64_arousal_rounded_into_range_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            let Some((_, arousal)) = vad_entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("arousal"))
+            else {
+                panic!("vadDelta value has arousal");
+            };
+            *arousal = Value::F64(1.0_f64 + f64::EPSILON);
+            Value::Map(entries)
+        };
+        let integer_vad_delta_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            for (_, component) in vad_entries {
+                *component = Value::from(0_i64);
+            }
+            Value::Map(entries)
+        };
+
+        validate_claim_body_bytes(
+            &encode(
+                ClaimSubject::Entity(affected_person),
+                crate::affect::affect_trigger_value(&value),
+            )?,
+            false,
+        )?;
+
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(trigger_ref),
+                    crate::affect::affect_trigger_value(&value),
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "affect.trigger affectedPerson must match subject"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    Value::Map(Vec::new())
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(_))
+        );
+        validate_claim_body_bytes(
+            &encode(
+                ClaimSubject::Entity(affected_person),
+                integer_vad_delta_value(),
+            )?,
+            false,
+        )?;
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode_with_confidence(
+                    ClaimSubject::Entity(affected_person),
+                    crate::affect::affect_trigger_value(&value),
+                    0.81
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "affect.trigger wrapper confidence must mirror value confidence"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    duplicate_top_level_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "duplicate affect.trigger value key"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    duplicate_vad_delta_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody("duplicate vadDelta value key"))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    f64_arousal_rounded_into_range_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "vadDelta arousal must be finite in [-1, 1]"
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conflict_predicates_validate_as_ordinary_claims() -> Result<()> {
+        let subject = EntityId::from_bytes([0x46; 16]).expect("valid id");
+        let encode = |predicate: &str, subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
+            let body = ClaimBody::new(
+                predicate,
+                subject,
+                value,
+                0.7,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Superseded,
+            );
+            encode_claim_body(&body)
+        };
+
+        validate_claim_body_bytes(
+            &encode(
+                PREDICATE_CONFLICT_OPEN,
+                ClaimSubject::Entity(subject),
+                Value::from("two active interpretations disagree"),
+            )?,
+            false,
+        )?;
+        validate_claim_body_bytes(
+            &encode(
+                PREDICATE_CONFLICT_RESOLVED,
+                ClaimSubject::Entity(subject),
+                Value::from("resolved by newer observation"),
+            )?,
+            false,
+        )?;
+
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    PREDICATE_CONFLICT_OPEN,
+                    ClaimSubject::Entity(subject),
+                    Value::Nil,
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "conflict claim value must not be nil"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    PREDICATE_CONFLICT_RESOLVED,
+                    ClaimSubject::Edge {
+                        source: EntityId::from_bytes([0x47; 16]).expect("valid id"),
+                        kind: EdgeKind::Mentions,
+                        target: EntityId::from_bytes([0x48; 16]).expect("valid id"),
+                    },
+                    Value::from("edge-scoped conflict"),
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "conflict claim subject must be an entity"
             ))
         );
         Ok(())
