@@ -6550,14 +6550,14 @@ fn resolve_eiri_companion_assembly(
     companion: Option<&EiriCompanionControls>,
     session_id: &str,
 ) -> Result<oneiron::EiriCompanionAssembly, ApiError> {
-    let person_ref = companion
-        .and_then(|controls| controls.person_ref.as_deref())
-        .map(|value| parse_entity_id_param(value, "companion.person_ref"))
-        .transpose()?;
-    let persona_ref = companion
-        .and_then(|controls| controls.persona_ref.as_deref())
-        .map(|value| parse_entity_id_param(value, "companion.persona_ref"))
-        .transpose()?;
+    let (person_ref_wire, person_ref) = parse_companion_ref(
+        companion.and_then(|controls| controls.person_ref.as_deref()),
+        "companion.person_ref",
+    )?;
+    let (persona_ref_wire, persona_ref) = parse_companion_ref(
+        companion.and_then(|controls| controls.persona_ref.as_deref()),
+        "companion.persona_ref",
+    )?;
     let requested_expression = companion
         .and_then(|controls| controls.expression.as_deref())
         .map(|value| {
@@ -6575,32 +6575,64 @@ fn resolve_eiri_companion_assembly(
     })?;
     let relationship_ref = person_ref.zip(persona_ref);
     let mut expressions = oneiron::CompanionExpressionRegister::new();
-    let seed_resolution =
-        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref);
-    if let Some(expression) = requested_expression
-        && let Some(key) = seed_resolution
+    let resolution = if let Some(expression) = requested_expression {
+        let seed_resolution = register.resolve_companion_scope(
+            &expressions,
+            person_ref,
+            persona_ref,
+            relationship_ref,
+        );
+        if let Some(key) = seed_resolution
             .relationship_key
             .as_ref()
             .or(seed_resolution.persona_key.as_ref())
-    {
-        expressions
-            .update(key.clone(), expression)
-            .map_err(|error| {
-                tracing::error!(error = %error, "companion expression registration failed");
-                core_engine_error("companion expression registration failed", error)
-            })?;
-    }
-    let resolution =
-        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref);
+        {
+            expressions
+                .update(key.clone(), expression)
+                .map_err(|error| {
+                    tracing::error!(error = %error, "companion expression registration failed");
+                    core_engine_error("companion expression registration failed", error)
+                })?;
+            register.resolve_companion_scope(
+                &expressions,
+                person_ref,
+                persona_ref,
+                relationship_ref,
+            )
+        } else {
+            seed_resolution
+        }
+    } else {
+        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref)
+    };
+    let expression = requested_expression.unwrap_or(resolution.expression);
 
     Ok(oneiron::EiriCompanionAssembly {
         caller: Some(session_id.to_owned()),
         scope: Some(companion_scope_wire(&resolution.scope).to_owned()),
         scope_source: Some(resolution.source.as_str().to_owned()),
-        person_ref: person_ref.map(|id| id.to_hex()),
-        persona_ref: persona_ref.map(|id| id.to_hex()),
-        expression: Some(resolution.expression.as_str().to_owned()),
+        person_ref: person_ref_wire,
+        persona_ref: persona_ref_wire,
+        expression: Some(expression.as_str().to_owned()),
     })
+}
+
+fn parse_companion_ref(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<(Option<String>, Option<oneiron::EntityId>), ApiError> {
+    let Some(raw) = value else {
+        return Ok((None, None));
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok((None, None));
+    }
+    if trimmed.len() == 32 && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let id = parse_entity_id_param(trimmed, field)?;
+        return Ok((Some(id.to_hex()), Some(id)));
+    }
+    Ok((Some(trimmed.to_owned()), None))
 }
 
 fn validate_eiri_session_id(session_id: &str, field: &'static str) -> Result<(), ApiError> {
@@ -13425,7 +13457,7 @@ mod tests {
             }
         });
         let (status, body) = route_json(
-            server,
+            server.clone(),
             Request::builder()
                 .method("POST")
                 .uri("/api/context-pack")
@@ -13440,6 +13472,34 @@ mod tests {
             body["details"]["field"],
             Value::from("companion.expression")
         );
+
+        let opaque_request = json!({
+            "query": "warm companion route needle",
+            "context_version": "v4",
+            "companion": {
+                "person_ref": "opaque-person-ref",
+                "persona_ref": "persona-route-test",
+                "expression": "warm"
+            }
+        });
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-caller", "warm-companion-api")
+                .body(Body::from(opaque_request.to_string()))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let companion = &body["memory_board"]["companion"];
+        assert_eq!(companion["scope"], Value::from("neutral"));
+        assert_eq!(companion["scope_source"], Value::from("neutral_default"));
+        assert_eq!(companion["expression"], Value::from("warm"));
+        assert_eq!(companion["person_ref"], Value::from("opaque-person-ref"));
+        assert_eq!(companion["persona_ref"], Value::from("persona-route-test"));
     }
 
     #[test]
