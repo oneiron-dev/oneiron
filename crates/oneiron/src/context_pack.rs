@@ -1847,6 +1847,104 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
+        let (_tmp, vault) = open_test_vault();
+        let occurred = TimeRange { start: 1, end: 1 };
+        let actor = EntityId::from_bytes_unchecked([0x81; 16]);
+        let person = EntityId::from_bytes_unchecked([0x82; 16]);
+        let trigger = EntityId::from_bytes_unchecked([0x83; 16]);
+        let claim = EntityId::from_bytes_unchecked([0x84; 16]);
+        vault.put_entity(
+            &actor,
+            crate::types::ENTITY_TYPE_PERSON,
+            occurred,
+            1,
+            b"actor",
+        )?;
+        vault.put_entity(
+            &person,
+            crate::types::ENTITY_TYPE_PERSON,
+            occurred,
+            1,
+            b"person",
+        )?;
+        put_text_entity(
+            &vault,
+            &trigger,
+            crate::types::ENTITY_TYPE_TURN,
+            "affect trigger source turn",
+            serde_json::json!({
+                "txt": "affect trigger source turn",
+                "spkr": "user",
+                "at": 2_u64
+            }),
+        )?;
+
+        let envelope = crate::WriteEnvelope::new(
+            crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
+            crate::ClaimSource::Observed,
+            crate::WriteProvenance::new(rmpv::Value::from("dreamer"))?,
+            crate::ClaimApprovalStatus::Approved,
+        );
+        let trigger_value = crate::AffectTriggerValue::new(
+            person,
+            trigger,
+            crate::VadDelta::new(-0.1, 0.25, -0.2)?,
+            0.67,
+            4,
+            16,
+        )?;
+        vault
+            .batch()
+            .affect_trigger_claim(
+                &claim,
+                trigger_value,
+                &envelope,
+                TimeRange { start: 3, end: 3 },
+                4,
+            )
+            .text(&claim, &[("body", "affect trigger retrieval needle")])
+            .commit()?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("affect trigger retrieval needle", 10)
+            .run()?;
+        let fields = pack
+            .results
+            .iter()
+            .find(|entity| entity.id == claim)
+            .and_then(|entity| entity.fields.as_ref())
+            .expect("affect trigger claim fields");
+        assert_eq!(
+            fields.get("pred"),
+            Some(&serde_json::Value::String(
+                crate::AFFECT_TRIGGER_PREDICATE.to_owned()
+            ))
+        );
+        let val = fields
+            .get("val")
+            .and_then(serde_json::Value::as_object)
+            .expect("affect trigger value map");
+        let person_hex = person.to_hex();
+        let trigger_hex = trigger.to_hex();
+        assert_eq!(
+            val.get("affectedPerson")
+                .and_then(serde_json::Value::as_str),
+            Some(person_hex.as_str())
+        );
+        assert_eq!(
+            val.get("triggerRef").and_then(serde_json::Value::as_str),
+            Some(trigger_hex.as_str())
+        );
+        assert_eq!(
+            val.get("observedN").and_then(serde_json::Value::as_u64),
+            Some(16)
+        );
+        Ok(())
+    }
+
     /// Writes a structurally valid CLAIM (type 0, D11 pinned body keys) plus
     /// a text row so it is retrievable through `search_text`.
     fn put_claim_text_entity(
