@@ -121,12 +121,13 @@ fn classify_token(token: &str) -> Option<&'static str> {
 }
 
 fn is_aws_access_key_id(token: &str) -> bool {
-    token.as_bytes().windows(20).any(|candidate| {
-        (candidate.starts_with(b"AKIA") || candidate.starts_with(b"ASIA"))
-            && candidate
-                .iter()
-                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-    })
+    let candidate = token.as_bytes();
+    if candidate.len() < 20 || !(candidate.starts_with(b"AKIA") || candidate.starts_with(b"ASIA")) {
+        return false;
+    }
+    candidate[..20]
+        .iter()
+        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
 fn is_github_token(token: &str) -> bool {
@@ -169,25 +170,17 @@ fn suffix_matches(
         return false;
     }
 
-    token
-        .windows(prefix.len())
-        .enumerate()
-        .any(|(start, window)| {
-            if window != prefix {
-                return false;
-            }
-            let suffix_start = start + prefix.len();
-            let min_suffix_end = suffix_start + suffix_len;
-            if min_suffix_end > token.len() {
-                return false;
-            }
-            let suffix = if exact_len {
-                &token[suffix_start..min_suffix_end]
-            } else {
-                &token[suffix_start..]
-            };
-            suffix.iter().copied().all(allowed)
-        })
+    if !token.starts_with(prefix) {
+        return false;
+    }
+    let suffix_start = prefix.len();
+    let min_suffix_end = suffix_start + suffix_len;
+    let suffix = if exact_len {
+        &token[suffix_start..min_suffix_end]
+    } else {
+        &token[suffix_start..]
+    };
+    suffix.iter().copied().all(allowed)
 }
 
 fn is_ascii_token_body(byte: u8) -> bool {
@@ -245,6 +238,19 @@ mod tests {
                 }
                 other => panic!("expected GateWriteRejected, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn scan_payload_allows_secret_prefix_embedded_in_larger_identifier() {
+        for payload in [
+            "pack=myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
+            "pack=myAKIA0123456789ABCDEF_label",
+            "pack=myAIza0123456789abcdefghijklmnopqrstuvwxy_label",
+            "pack=mysk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_label",
+        ] {
+            scan_payload(payload.as_bytes())
+                .expect("embedded secret-like prefix in larger identifier is not a token");
         }
     }
 
