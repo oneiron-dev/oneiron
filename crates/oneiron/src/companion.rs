@@ -1009,7 +1009,13 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
         export_classification.ok_or(invalid_companion("missing required field export"))?,
     );
     let mut record = record;
-    record.lifecycle_events = lifecycle_events.unwrap_or_default();
+    record.lifecycle_events = match (schema_version, lifecycle_events) {
+        (COMPANION_RECORD_SCHEMA_VERSION, Some(events)) => events,
+        (COMPANION_RECORD_SCHEMA_VERSION, None) => {
+            return Err(invalid_companion("missing required field lifecycle_events"));
+        }
+        (_, events) => events.unwrap_or_default(),
+    };
     let expected_kind = kind.ok_or(invalid_companion("missing required field kind"))?;
     if record.kind() != expected_kind {
         return Err(invalid_companion("kind does not match subject shape"));
@@ -1633,6 +1639,40 @@ mod tests {
         assert!(matches!(
             err,
             Error::InvalidClaimBody("companion lifecycle events required for current schema")
+        ));
+
+        let mut missing_encoded = Vec::new();
+        rmpv::encode::write_value(
+            &mut missing_encoded,
+            &Value::Map(vec![
+                (
+                    Value::from(KEY_SCHEMA_VERSION),
+                    Value::from(COMPANION_RECORD_SCHEMA_VERSION),
+                ),
+                (Value::from(KEY_KIND), Value::from(record.kind().as_str())),
+                (Value::from(KEY_SCOPE), encode_scope(&record.scope)),
+                (Value::from(KEY_SUBJECT), encode_subject(&record.subject)),
+                (Value::from(KEY_VALUE), record.value.clone()),
+                (
+                    Value::from(KEY_PROVENANCE),
+                    encode_provenance(&record.provenance),
+                ),
+                (
+                    Value::from(KEY_LIFECYCLE),
+                    Value::from(ClaimLifecycleStatus::Retracted.as_str()),
+                ),
+                (
+                    Value::from(KEY_EXPORT),
+                    Value::from(record.export_classification.as_str()),
+                ),
+            ]),
+        )
+        .map_err(|_| Error::InvariantViolation("current companion encode failed"))?;
+        let err = decode_companion_record_body(&missing_encoded)
+            .expect_err("current schema decode requires lifecycle_events field");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("missing required field lifecycle_events")
         ));
 
         let mut encoded = Vec::new();
