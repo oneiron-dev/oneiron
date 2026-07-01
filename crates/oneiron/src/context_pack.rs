@@ -16,10 +16,11 @@ use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::types::{
-    ContextEntity, ContextPack, ContextPackRetrievalBudget, ENTITY_TYPE_CLAIM,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EmptyContext, EmptyReason, EntityId, FieldProfile,
-    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
-    TimeRange, TokenAllocation,
+    CompanionScope, CompanionSubject, ContextEntity, ContextPack, ContextPackRetrievalBudget,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation, companion_value_to_json,
+    decode_companion_record_body,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -1299,7 +1300,7 @@ fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            None => decode_entity_fields(raw).unwrap_or_default(),
+            None => decode_entity_fields(raw, header.entity_type).unwrap_or_default(),
         })
     } else {
         None
@@ -1395,12 +1396,16 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(raw: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+fn decode_entity_fields(raw: &[u8], entity_type: u8) -> Option<HashMap<String, serde_json::Value>> {
     if raw.len() <= ENTITY_METADATA_HEADER_LEN {
         return Some(HashMap::new());
     }
 
     let payload = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        return decode_companion_register_fields(payload);
+    }
+
     let mut cursor = Cursor::new(payload);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     let rmpv::Value::Map(entries) = value else {
@@ -1416,6 +1421,69 @@ fn decode_entity_fields(raw: &[u8]) -> Option<HashMap<String, serde_json::Value>
     }
 
     Some(out)
+}
+
+fn decode_companion_register_fields(raw: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+    let record = decode_companion_record_body(raw).ok()?;
+    let mut out = HashMap::new();
+    out.insert(
+        "kind".to_owned(),
+        serde_json::Value::String(record.kind().as_str().to_owned()),
+    );
+    out.insert("scope".to_owned(), companion_scope_to_json(&record.scope));
+    out.insert(
+        "subject".to_owned(),
+        companion_subject_to_json(&record.subject),
+    );
+    out.insert(
+        "lifecycle".to_owned(),
+        serde_json::Value::String(record.lifecycle.as_str().to_owned()),
+    );
+    out.insert(
+        "export".to_owned(),
+        serde_json::Value::String(record.export_classification.as_str().to_owned()),
+    );
+    out.insert(
+        "provenance".to_owned(),
+        serde_json::json!({
+            "actor_ref": record.provenance.actor_ref.to_hex(),
+            "actor_class": record.provenance.actor_class as u8,
+            "source": record.provenance.source.as_str(),
+            "approval": record.provenance.approval.as_str(),
+            "value": companion_value_to_json(&record.provenance.value),
+        }),
+    );
+    Some(out)
+}
+
+fn companion_scope_to_json(scope: &CompanionScope) -> serde_json::Value {
+    match scope {
+        CompanionScope::Neutral => serde_json::json!({ "kind": "neutral" }),
+        CompanionScope::Personal { person_ref } => {
+            serde_json::json!({ "kind": "personal", "person_ref": person_ref.to_hex() })
+        }
+        CompanionScope::SharedVault { vault_id } => {
+            serde_json::json!({ "kind": "shared_vault", "vault_id": vault_id })
+        }
+    }
+}
+
+fn companion_subject_to_json(subject: &CompanionSubject) -> serde_json::Value {
+    match subject {
+        CompanionSubject::Persona { persona_ref } => {
+            serde_json::json!({ "kind": "persona", "persona_ref": persona_ref.to_hex() })
+        }
+        CompanionSubject::Relationship {
+            source_ref,
+            target_ref,
+        } => serde_json::json!({
+            "kind": "relationship",
+            "relationship_ref": {
+                "source_ref": source_ref.to_hex(),
+                "target_ref": target_ref.to_hex(),
+            }
+        }),
+    }
 }
 
 fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
@@ -1678,6 +1746,90 @@ mod tests {
             .put(id, entity_type, TimeRange { start: 1, end: 1 }, 1, &payload)
             .text(id, &[("body", text)])
             .commit()
+    }
+
+    #[test]
+    fn companion_register_api_context_pack_retrieves_affect_without_private_note_leak() -> Result<()>
+    {
+        let (_tmp, vault) = open_test_vault();
+        let private_note = "private-companion-note-one1219";
+        let companion_id = EntityId::from_bytes_unchecked([0x71; 16]);
+        let turn_id = EntityId::from_bytes_unchecked([0x72; 16]);
+
+        let provenance = crate::CompanionProvenance::new(
+            EntityId::from_bytes_unchecked([0x73; 16]),
+            crate::EdgeActorClass::Agent,
+            crate::ClaimSource::UserStated,
+            crate::ClaimApprovalStatus::Approved,
+            crate::companion_value_from_json(&serde_json::json!({ "source": "fixture" }))?,
+        );
+        let record = crate::CompanionRecord::persona(
+            crate::CompanionScope::personal(EntityId::from_bytes_unchecked([0x74; 16])),
+            EntityId::from_bytes_unchecked([0x75; 16]),
+            crate::companion_value_from_json(&serde_json::json!({ "note": private_note }))?,
+            provenance,
+            crate::CompanionExportClassification::LocalOnly,
+        );
+        vault.create_companion_record(&companion_id, &record, 20)?;
+        vault
+            .batch()
+            .text(&companion_id, &[("body", private_note)])
+            .commit()?;
+
+        put_text_entity(
+            &vault,
+            &turn_id,
+            crate::types::ENTITY_TYPE_TURN,
+            "turn affect retrieval needle",
+            serde_json::json!({
+                "txt": "turn affect retrieval needle",
+                "spkr": "user",
+                "at": 21_u64
+            }),
+        )?;
+        vault.annotate_turn_vad(
+            &turn_id,
+            crate::VadAnnotation::new(
+                crate::Vad {
+                    valence: 0.2,
+                    arousal: 0.3,
+                    dominance: 0.4,
+                },
+                crate::VadAnnotationSource::ModelInference,
+                22,
+            )?,
+        )?;
+
+        let private_pack = vault.context_pack().search_text(private_note, 10).run()?;
+        let companion = private_pack
+            .results
+            .iter()
+            .find(|entity| entity.id == companion_id)
+            .expect("indexed companion record should hydrate");
+        let fields = companion.fields.as_ref().expect("companion fields");
+        assert!(
+            !fields.contains_key("value"),
+            "context-pack must not expose opaque private companion value"
+        );
+        assert!(
+            !serde_json::to_string(fields)
+                .expect("fields serialize")
+                .contains(private_note),
+            "context-pack metadata must not leak private note text"
+        );
+
+        let affect_pack = vault
+            .context_pack()
+            .search_text("turn affect retrieval needle", 10)
+            .run()?;
+        assert!(
+            affect_pack
+                .results
+                .iter()
+                .any(|entity| entity.id == turn_id),
+            "companion register tuning must not block affect-bearing turn retrieval"
+        );
+        Ok(())
     }
 
     /// Writes a structurally valid CLAIM (type 0, D11 pinned body keys) plus

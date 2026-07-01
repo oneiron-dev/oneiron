@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use rmpv::Value;
+use serde_json::Value as JsonValue;
 
 use crate::claim::{
     COMPANION_EXPRESSION_PROFESSIONAL, COMPANION_EXPRESSION_UNRESTRICTED,
@@ -17,6 +18,15 @@ use crate::error::{Error, Result};
 
 use super::{EdgeActorClass, EntityId, WriteEnvelope};
 
+/// Dedicated companion-register structural kind byte.
+///
+/// The companion pack owns bytes 64..=79; this API pins the register substrate
+/// to the first byte in that band and registers it lazily per vault.
+pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = super::TYPE_BYTE_BAND_COMPANION_START;
+/// Short-id prefix for companion-register rows.
+pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
+/// Pack id recorded in the vault-scoped structural-kind registry.
+pub const COMPANION_REGISTER_PACK_ID: &str = "oneiron-companion-register";
 /// Current companion record body schema version.
 pub const COMPANION_RECORD_SCHEMA_VERSION: u64 = 1;
 
@@ -402,6 +412,14 @@ impl CompanionRecord {
         }
         Ok(())
     }
+
+    /// Returns a copy of this record with the lifecycle retired/retracted.
+    pub fn retired(&self) -> Result<Self> {
+        let mut record = self.clone();
+        record.lifecycle = ClaimLifecycleStatus::Retracted;
+        record.validate()?;
+        Ok(record)
+    }
 }
 
 /// Stable lookup key for companion records.
@@ -436,7 +454,7 @@ impl CompanionRecordKey {
         }
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.scope.validate()
     }
 }
@@ -640,6 +658,64 @@ pub fn decode_companion_record_body(bytes: &[u8]) -> Result<CompanionRecord> {
     }
 
     decode_companion_record_value(&value)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_companion_record_body_bytes(bytes: &[u8]) -> Result<()> {
+    decode_companion_record_body(bytes).map(|_| ())
+}
+
+/// Converts JSON accepted by public APIs into the opaque MessagePack value
+/// carried by a companion record.
+pub fn companion_value_from_json(value: &JsonValue) -> Result<Value> {
+    let encoded = rmp_serde::to_vec_named(value)
+        .map_err(|_| invalid_companion("companion record value must be msgpack-encodable JSON"))?;
+    let mut cursor = Cursor::new(encoded.as_slice());
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| invalid_companion("companion record value is not valid MessagePack"))?;
+    if cursor.position() != encoded.len() as u64 {
+        return Err(invalid_companion(
+            "trailing bytes after companion record value",
+        ));
+    }
+    Ok(value)
+}
+
+/// Converts the opaque companion MessagePack value back to JSON for typed API
+/// envelopes. MessagePack binary/ext values are redacted because they are not
+/// JSON-shaped public API values.
+#[must_use]
+pub fn companion_value_to_json(value: &Value) -> JsonValue {
+    match value {
+        Value::Nil => JsonValue::Null,
+        Value::Boolean(value) => JsonValue::Bool(*value),
+        Value::Integer(value) => {
+            if let Some(value) = value.as_i64() {
+                serde_json::json!(value)
+            } else if let Some(value) = value.as_u64() {
+                serde_json::json!(value)
+            } else {
+                JsonValue::Null
+            }
+        }
+        Value::F32(value) => serde_json::json!(value),
+        Value::F64(value) => serde_json::json!(value),
+        Value::String(value) => JsonValue::String(value.as_str().unwrap_or_default().to_owned()),
+        Value::Binary(_) | Value::Ext(_, _) => JsonValue::Null,
+        Value::Array(values) => {
+            JsonValue::Array(values.iter().map(companion_value_to_json).collect())
+        }
+        Value::Map(entries) => {
+            let mut object = serde_json::Map::new();
+            for (key, value) in entries {
+                let Some(key) = key.as_str() else {
+                    continue;
+                };
+                object.insert(key.to_owned(), companion_value_to_json(value));
+            }
+            JsonValue::Object(object)
+        }
+    }
 }
 
 fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
@@ -1071,8 +1147,10 @@ fn invalid_companion(reason: &'static str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::batch::export::companion_export_layer;
     use crate::claim::ClaimSource;
     use crate::types::{WriteActor, WriteProvenance};
+    use crate::{Vault, VaultConfig};
 
     fn entity(seed: u8) -> EntityId {
         let mut bytes = [seed; 16];
@@ -1281,6 +1359,109 @@ mod tests {
             err,
             Error::InvalidClaimBody("shared-vault companion scope requires nonzero vault_id")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_api_persists_updates_exports_and_retires_privately() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let neutral_id = entity(0x51);
+        let personal_id = entity(0x52);
+        let shared_id = entity(0x53);
+        let neutral_persona = entity(0x61);
+        let personal_person = entity(0x62);
+        let shared_source = entity(0x63);
+        let shared_target = entity(0x64);
+        let neutral_scope = CompanionScope::neutral();
+        let personal_scope = CompanionScope::personal(personal_person);
+        let shared_scope = CompanionScope::shared_vault(9);
+
+        let neutral = CompanionRecord::persona(
+            neutral_scope.clone(),
+            neutral_persona,
+            Value::from("neutral @Oneiron"),
+            provenance(0xD1),
+            CompanionExportClassification::Portable,
+        );
+        let personal = CompanionRecord::persona(
+            personal_scope.clone(),
+            neutral_persona,
+            Value::Map(vec![(
+                Value::from("note"),
+                Value::from("private-person-note"),
+            )]),
+            provenance(0xD2),
+            CompanionExportClassification::LocalOnly,
+        );
+        let shared = CompanionRecord::relationship(
+            shared_scope.clone(),
+            shared_source,
+            shared_target,
+            Value::Map(vec![(
+                Value::from("note"),
+                Value::from("shared-vault-note"),
+            )]),
+            provenance(0xD3),
+            CompanionExportClassification::SharedVault,
+        );
+
+        vault.create_companion_record(&neutral_id, &neutral, 10)?;
+        vault.create_companion_record(&personal_id, &personal, 11)?;
+        vault.create_companion_record(&shared_id, &shared, 12)?;
+        assert_eq!(
+            vault.get_companion_record(&neutral_id)?,
+            Some(neutral.clone())
+        );
+        assert_eq!(
+            vault.companion_record_id_for_key(&personal.key())?,
+            Some(personal_id)
+        );
+
+        let duplicate_personal_id = entity(0x54);
+        let duplicate = vault
+            .create_companion_record(&duplicate_personal_id, &personal, 13)
+            .expect_err("duplicate register key must fail closed");
+        assert!(matches!(duplicate, Error::CompanionRecordAlreadyExists));
+
+        let mut updated_personal = personal;
+        updated_personal.value = Value::Map(vec![(
+            Value::from("note"),
+            Value::from("updated-private-note"),
+        )]);
+        vault.update_companion_record(&personal_id, &updated_personal, 14)?;
+        assert_eq!(
+            vault
+                .get_companion_record(&personal_id)?
+                .expect("updated personal record")
+                .value,
+            updated_personal.value
+        );
+
+        let register = vault.companion_register()?;
+        assert_eq!(register.records_in_scope(&neutral_scope).count(), 1);
+        assert_eq!(register.records_in_scope(&personal_scope).count(), 1);
+        assert_eq!(register.records_in_scope(&shared_scope).count(), 1);
+
+        let mut expressions = CompanionExpressionRegister::new();
+        expressions.update(neutral.key(), CompanionExpression::Warm)?;
+        expressions.update(updated_personal.key(), CompanionExpression::Unrestricted)?;
+        expressions.update(shared.key(), CompanionExpression::Professional)?;
+        let export = companion_export_layer(&register, &expressions);
+        assert_eq!(export.len(), 1);
+        assert_eq!(export.personas()[0].record(), &neutral);
+        assert_eq!(
+            export.personas()[0].expression(),
+            Some(CompanionExpression::Warm)
+        );
+
+        let retired = vault.retire_companion_record(&neutral_id, 15)?;
+        assert_eq!(retired.lifecycle, ClaimLifecycleStatus::Retracted);
+        let register = vault.companion_register()?;
+        assert!(
+            companion_export_layer(&register, &expressions).is_empty(),
+            "retired neutral record and private/shared records must not export"
+        );
         Ok(())
     }
 }

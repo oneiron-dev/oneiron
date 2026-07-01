@@ -158,6 +158,7 @@ pub enum ErrorKind {
     InvalidTemporalExpression,
     EntityNotFound,
     AccessGrantAlreadyExists,
+    CompanionRecordAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
     InvariantViolation,
@@ -375,6 +376,9 @@ pub enum Error {
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
+    /// Companion register creation attempted to reuse an existing id or key.
+    #[error("companion record already exists")]
+    CompanionRecordAlreadyExists,
     /// A concurrent write invalidated an operation that relied on a stable snapshot.
     #[error("concurrent write detected: {0}")]
     ConcurrentWrite(&'static str),
@@ -847,6 +851,7 @@ impl Error {
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
+            Self::CompanionRecordAlreadyExists => ErrorKind::CompanionRecordAlreadyExists,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
