@@ -8016,6 +8016,135 @@ fn coping_outcome_update_from_later_turn_vad_delta_supersedes_previous_claim() -
 }
 
 #[test]
+fn coping_outcome_update_rejects_backfilled_supersession_timestamp() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let strategy_ref = EntityId::now();
+    let outcome = EntityId::now();
+
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
+    let body = coping_outcome_fixture_body(
+        person,
+        strategy_ref,
+        CopingStrategy::CogChg,
+        VadDelta::new(0.2, -0.1, 0.1)?,
+        0.7,
+        ClaimLifecycleStatus::Active,
+        50,
+    )?;
+    vault.put_claim(&outcome, &body, test_time_range(50, u64::MAX), 50)?;
+
+    let err = vault
+        .update_coping_outcome_from_turn_vad_delta(
+            &outcome,
+            strategy_ref,
+            VadDelta::new(0.1, -0.1, 0.1)?,
+            0.8,
+            40,
+        )
+        .expect_err("backfilled supersession must not invert the active interval");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody(
+            "coping.outcome update timestamp must not precede active valid_from"
+        )
+    );
+
+    let old = vault
+        .get_claim(&outcome)?
+        .expect("rejected update leaves prior outcome readable");
+    assert_eq!(old.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(old.valid_to, None);
+    assert_eq!(entity_header(&vault, &outcome)?.occurred_end, u64::MAX);
+    let claims = vault.claims_for_subject(&person)?;
+    assert_eq!(claims, vec![outcome]);
+    Ok(())
+}
+
+#[test]
+fn coping_outcome_update_rejects_unrelated_baseline_turn() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let baseline_turn = EntityId::now();
+    let wrong_baseline_turn = EntityId::now();
+    let later_turn = EntityId::now();
+    let outcome = EntityId::now();
+
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"person",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &baseline_turn,
+        10,
+        Vad {
+            valence: -0.5,
+            arousal: 0.8,
+            dominance: 0.1,
+        },
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &wrong_baseline_turn,
+        11,
+        Vad {
+            valence: 0.5,
+            arousal: 0.1,
+            dominance: 0.9,
+        },
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &later_turn,
+        20,
+        Vad {
+            valence: 0.3,
+            arousal: 0.4,
+            dominance: 0.7,
+        },
+    )?;
+
+    let body = coping_outcome_fixture_body(
+        person,
+        baseline_turn,
+        CopingStrategy::CogChg,
+        VadDelta::new(-0.2, 0.2, -0.1)?,
+        0.4,
+        ClaimLifecycleStatus::Active,
+        50,
+    )?;
+    vault.put_claim(&outcome, &body, test_time_range(50, u64::MAX), 50)?;
+
+    let err = vault
+        .update_coping_outcome_from_turn_vad(&outcome, &wrong_baseline_turn, &later_turn, 0.8, 200)
+        .expect_err("unrelated baseline turn must not update the outcome ledger");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("baseline turn must match coping.outcome strategyRef")
+    );
+
+    let old = vault
+        .get_claim(&outcome)?
+        .expect("rejected update leaves prior outcome readable");
+    assert_eq!(old.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(old.valid_to, None);
+    assert_eq!(entity_header(&vault, &outcome)?.occurred_end, u64::MAX);
+    let claims = vault.claims_for_subject(&person)?;
+    assert_eq!(claims, vec![outcome]);
+    Ok(())
+}
+
+#[test]
 fn coping_outcome_retrieval_queries_prior_successful_strategies() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let person = EntityId::now();
