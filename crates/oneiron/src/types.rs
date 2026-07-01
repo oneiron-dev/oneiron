@@ -15,9 +15,10 @@ pub use companion::{
     COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, COMPANION_REGISTER_PACK_ID,
     COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification, CompanionExpression,
     CompanionExpressionRegister, CompanionProvenance, CompanionRecord, CompanionRecordKey,
-    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionSubject,
-    ENTITY_TYPE_COMPANION_REGISTER, companion_value_from_json, companion_value_to_json,
-    decode_companion_record_body, encode_companion_record_body,
+    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionScopeResolution,
+    CompanionScopeResolutionSource, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
+    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
+    encode_companion_record_body,
 };
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
@@ -2440,8 +2441,11 @@ impl EiriMemoryBoardBudget {
 #[serde(rename_all = "snake_case")]
 pub struct EiriCompanionAssembly {
     pub caller: Option<String>,
+    pub scope: Option<String>,
+    pub scope_source: Option<String>,
     pub person_ref: Option<String>,
     pub persona_ref: Option<String>,
+    pub expression: Option<String>,
 }
 
 /// One stable row in the Eiri Context v4 memory board.

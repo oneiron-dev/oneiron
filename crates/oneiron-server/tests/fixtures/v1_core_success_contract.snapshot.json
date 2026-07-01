@@ -230,8 +230,11 @@
           },
           "companion": {
             "caller": "7e000000000000000000000012210004",
+            "expression": "professional",
             "person_ref": "7e000000000000000000000012210005",
-            "persona_ref": "7e000000000000000000000012210006"
+            "persona_ref": "7e000000000000000000000012210006",
+            "scope": "neutral",
+            "scope_source": "neutral_default"
           },
           "rows": [
             {

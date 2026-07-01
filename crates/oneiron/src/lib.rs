@@ -125,8 +125,9 @@ pub use crate::store::{
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, CompanionExportClassification, CompanionExpression,
     CompanionExpressionRegister, CompanionProvenance, CompanionRecord, CompanionRecordKey,
-    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionSubject, ContextEntity,
-    ContextPack, ContextPackRetrievalBudget, DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4,
+    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionScopeResolution,
+    CompanionScopeResolutionSource, CompanionSubject, ContextEntity, ContextPack,
+    ContextPackRetrievalBudget, DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_FEDERATION_GRANT, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
