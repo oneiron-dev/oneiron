@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod access_grant;
+pub mod affect;
 pub mod analyzer;
 pub mod batch;
 pub(crate) mod bm25;
@@ -36,6 +37,10 @@ mod vault;
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
     AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
+};
+pub use crate::affect::{
+    CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
+    ClaimVadTurnEvidence,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,

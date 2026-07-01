@@ -910,6 +910,26 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Adds an operational VAD rewrite for an EXISTING semantic edge.
+    ///
+    /// Mirrors [`BatchBuilder::set_edge_vad`] for callers composing writes in
+    /// an externally-owned transaction.
+    pub fn set_edge_vad(
+        mut self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        vad: Vad,
+    ) -> Self {
+        self.ops.push(BatchOp::SetEdgeVad {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            vad,
+        });
+        self
+    }
+
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
         self.ops.push(BatchOp::DeleteEdge {

@@ -8,10 +8,10 @@ use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -21,7 +21,9 @@ use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
+use crate::batch::{
+    ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
+};
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
@@ -70,6 +72,16 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 
 fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
+}
+
+fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(output) => output,
+        std::task::Poll::Pending => panic!("test future unexpectedly yielded"),
+    }
 }
 
 fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
@@ -7173,6 +7185,548 @@ fn turn_vad_annotation_rejects_edge_vad_range_violations() -> Result<()> {
         .expect_err("invalid turn VAD must reject");
     assert_invalid_vad(err, VadComponent::Arousal, -0.01);
     assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+    Ok(())
+}
+
+fn put_claim_vad_turn(vault: &Vault, id: &EntityId, learned_at: u64, vad: Vad) -> Result<()> {
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "txt": "claim VAD fixture turn",
+    }))
+    .expect("encode turn body");
+    vault.put_entity(
+        id,
+        ENTITY_TYPE_TURN,
+        test_time_range(learned_at, learned_at),
+        learned_at,
+        &body,
+    )?;
+    vault.annotate_turn_vad(
+        id,
+        VadAnnotation::new(vad, VadAnnotationSource::ModelInference, learned_at + 10)?,
+    )?;
+    Ok(())
+}
+
+fn claim_vad_fixture_body(subject: EntityId, turns: &[EntityId]) -> ClaimBody {
+    let mut body = ClaimBody::new(
+        "dream.symbol",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("blue door"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(rmpv::Value::Array(
+        turns
+            .iter()
+            .map(|turn| rmpv::Value::Binary(turn.as_bytes().to_vec()))
+            .collect(),
+    ));
+    body.source = Some(ClaimSource::Inferred);
+    body
+}
+
+fn assert_vad_close(actual: Vad, expected: Vad) {
+    const EPSILON: f32 = 0.000_001;
+    assert!((actual.valence - expected.valence).abs() < EPSILON);
+    assert!((actual.arousal - expected.arousal).abs() < EPSILON);
+    assert!((actual.dominance - expected.dominance).abs() < EPSILON);
+}
+
+fn entity_header(vault: &Vault, id: &EntityId) -> Result<EntityMetadataHeader> {
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))
+}
+
+#[test]
+fn claim_vad_consolidation_populates_semantic_edges_from_fixture_turns() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let actor = EntityId::now();
+    let turn_a = EntityId::now();
+    let turn_b = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"actor",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn_a,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn_b,
+        20,
+        Vad {
+            valence: 0.6,
+            arousal: 0.2,
+            dominance: 0.4,
+        },
+    )?;
+
+    let body = claim_vad_fixture_body(subject, &[turn_a, turn_b]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+    vault.put_edge(&actor, EdgeKind::Supports, &claim, 1.0)?;
+    vault.put_edge(&claim, EdgeKind::BelongsTo, &subject, 1.0)?;
+
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    let expected = Vad {
+        valence: 0.4,
+        arousal: 0.3,
+        dominance: 0.5,
+    };
+    assert_vad_close(outcome.vad.expect("computed VAD"), expected);
+    assert_eq!(outcome.evidence_turns.len(), 2);
+    assert_eq!(outcome.semantic_edges_updated, 2);
+    assert!(
+        outcome.structural_edges_skipped >= 2,
+        "claim_of and belongs_to stay structural"
+    );
+
+    let outgoing = vault.edges_out(&claim)?;
+    let mentions = outgoing
+        .iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic claim edge");
+    assert_vad_close(mentions.vad.expect("semantic edge VAD"), expected);
+
+    let incoming = vault.edges_in(&claim)?;
+    let supports = incoming
+        .iter()
+        .find(|edge| edge.kind == EdgeKind::Supports && edge.target == actor)
+        .expect("incoming semantic claim edge");
+    assert_vad_close(supports.vad.expect("incoming semantic edge VAD"), expected);
+
+    let belongs_to = EdgeRef::new(claim, EdgeKind::BelongsTo, subject);
+    let (structural_out, structural_in) = raw_edge_values(&vault, &belongs_to)?;
+    let structural_out = structural_out.expect("belongs_to edge");
+    assert_eq!(structural_out.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    assert_eq!(structural_in.as_deref(), Some(structural_out.as_slice()));
+    assert_eq!(
+        decode_edge_value_for_kind(EdgeKind::BelongsTo, &structural_out)?.vad,
+        None
+    );
+
+    let state_id = outcome
+        .reappraisal
+        .created_claim_id
+        .expect("first consolidation creates state");
+    let state = vault.get_claim(&state_id)?.expect("claim-VAD state claim");
+    assert_eq!(state.predicate, CLAIM_VAD_REAPPRAISAL_PREDICATE);
+    assert_eq!(state.subject, ClaimSubject::Entity(claim));
+    assert_eq!(state.source, Some(ClaimSource::Inferred));
+    assert_eq!(state.lifecycle, ClaimLifecycleStatus::Active);
+    let state_header = entity_header(&vault, &state_id)?;
+    assert_eq!(state_header.occurred_start, 100);
+    assert_eq!(state_header.occurred_end, u64::MAX);
+    assert!(
+        state.evidence.is_some(),
+        "turn evidence provenance is stored"
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_reappraisal_preserves_provenance_and_supersession() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.1,
+            arousal: 0.2,
+            dominance: 0.3,
+        },
+    )?;
+    let body = claim_vad_fixture_body(subject, &[turn]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+
+    let first = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    let old_state_id = first
+        .reappraisal
+        .created_claim_id
+        .expect("initial state claim");
+    let old_before = vault
+        .get_claim(&old_state_id)?
+        .expect("initial state remains readable");
+
+    vault.annotate_turn_vad(
+        &turn,
+        VadAnnotation::new(
+            Vad {
+                valence: 0.7,
+                arousal: 0.6,
+                dominance: 0.5,
+            },
+            VadAnnotationSource::UserSelfReport,
+            150,
+        )?,
+    )?;
+    let second = block_on_ready(vault.consolidate_claim_vad(&claim, 200))?;
+    let new_state_id = second
+        .reappraisal
+        .created_claim_id
+        .expect("changed evidence creates a reappraisal");
+    assert_eq!(second.reappraisal.superseded_claim_ids, vec![old_state_id]);
+    assert_ne!(new_state_id, old_state_id);
+
+    let old_after = vault
+        .get_claim(&old_state_id)?
+        .expect("superseded state stays readable");
+    assert_eq!(old_after.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_after.valid_to, Some(200));
+    assert_eq!(entity_header(&vault, &old_state_id)?.occurred_end, 200);
+    assert_eq!(old_after.source, old_before.source);
+    assert_eq!(old_after.evidence, old_before.evidence);
+
+    let new_state = vault
+        .get_claim(&new_state_id)?
+        .expect("new state claim readable");
+    assert_eq!(new_state.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(new_state.source, Some(ClaimSource::Inferred));
+    assert!(new_state.evidence.is_some());
+    assert_eq!(entity_header(&vault, &new_state_id)?.occurred_end, u64::MAX);
+
+    let supersedes = EdgeRef::new(new_state_id, EdgeKind::Supersedes, old_state_id);
+    let (out, inn) = raw_edge_values(&vault, &supersedes)?;
+    let out = out.expect("supersedes edge");
+    assert_eq!(out.len(), EDGE_VALUE_STRUCTURAL_LEN);
+    assert_eq!(inn.as_deref(), Some(out.as_slice()));
+    assert_eq!(
+        decode_edge_value_for_kind(EdgeKind::Supersedes, &out)?.vad,
+        None
+    );
+
+    let expected = Vad {
+        valence: 0.7,
+        arousal: 0.6,
+        dominance: 0.5,
+    };
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("updated VAD"), expected);
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_rejects_derived_state_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.1,
+            arousal: 0.2,
+            dominance: 0.3,
+        },
+    )?;
+    let body = claim_vad_fixture_body(subject, &[turn]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    let state_id = outcome
+        .reappraisal
+        .created_claim_id
+        .expect("initial state claim");
+    let err = block_on_ready(vault.consolidate_claim_vad(&state_id, 110))
+        .expect_err("derived state claims must not recursively consolidate");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("claim VAD state claims cannot be consolidated")
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_rejects_turn_vad_annotation_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let turn = EntityId::now();
+
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+    let annotation_claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
+    let err = block_on_ready(vault.consolidate_claim_vad(&annotation_claim_id, 110))
+        .expect_err("turn VAD annotation claims must not recursively consolidate");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("turn VAD annotation claims cannot be consolidated")
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    let mut turns = Vec::new();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    for learned_at in 10..20 {
+        let turn = EntityId::now();
+        put_claim_vad_turn(
+            &vault,
+            &turn,
+            learned_at,
+            Vad {
+                valence: 1.0,
+                arousal: 1.0,
+                dominance: 1.0,
+            },
+        )?;
+        turns.push(turn);
+    }
+    let body = claim_vad_fixture_body(subject, &turns);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    assert_vad_close(
+        outcome.vad.expect("computed VAD"),
+        Vad {
+            valence: 1.0,
+            arousal: 1.0,
+            dominance: 1.0,
+        },
+    );
+    assert_eq!(outcome.evidence_turns.len(), 10);
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_rejects_missing_and_closed_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let missing = EntityId::now();
+    let err = block_on_ready(vault.consolidate_claim_vad(&missing, 10))
+        .expect_err("missing claim must fail");
+    assert_matches!(err, Error::EntityNotFound);
+
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let body = claim_vad_fixture_body(subject, &[]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.retract_claim(&claim, 40)?;
+
+    let err = block_on_ready(vault.consolidate_claim_vad(&claim, 50))
+        .expect_err("closed claim must fail");
+    assert_matches!(
+        err,
+        Error::ClaimAlreadyClosed {
+            status: ClaimLifecycleStatus::Retracted
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_without_evidence_clears_edges_without_state() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let body = claim_vad_fixture_body(subject, &[]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge_with_vad(
+        &claim,
+        EdgeKind::Mentions,
+        &subject,
+        0.6,
+        Vad {
+            valence: 0.9,
+            arousal: 0.7,
+            dominance: 0.8,
+        },
+    )?;
+
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    assert_eq!(outcome.vad, None);
+    assert!(outcome.evidence_turns.is_empty());
+    assert_eq!(outcome.semantic_edges_updated, 1);
+    assert_eq!(outcome.reappraisal.active_claim_id, None);
+    assert_eq!(outcome.reappraisal.created_claim_id, None);
+    assert!(outcome.reappraisal.superseded_claim_ids.is_empty());
+
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("cleared VAD"), Vad::NEUTRAL);
+
+    let mut active_claim_vad_states = Vec::new();
+    for state_id in vault.claims_for_subject(&claim)? {
+        let Some(state) = vault.get_claim(&state_id)? else {
+            continue;
+        };
+        if state.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+            && state.lifecycle == ClaimLifecycleStatus::Active
+        {
+            active_claim_vad_states.push(state_id);
+        }
+    }
+    assert!(active_claim_vad_states.is_empty());
+    Ok(())
+}
+
+#[test]
+fn claim_vad_reappraisal_clears_state_when_turn_evidence_disappears() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.6,
+            arousal: 0.4,
+            dominance: 0.8,
+        },
+    )?;
+    let body = claim_vad_fixture_body(subject, &[turn]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+
+    let first = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    assert!(first.vad.is_some());
+    let old_state_id = first
+        .reappraisal
+        .created_claim_id
+        .expect("initial state claim");
+    let old_before = vault
+        .get_claim(&old_state_id)?
+        .expect("initial state remains readable");
+
+    vault.batch().delete(&turn).commit()?;
+    assert_eq!(vault.get_turn_vad_annotation(&turn)?, None);
+
+    let second = block_on_ready(vault.consolidate_claim_vad(&claim, 200))?;
+    assert_eq!(second.vad, None);
+    assert!(second.evidence_turns.is_empty());
+    assert_eq!(second.semantic_edges_updated, 1);
+    assert_eq!(second.reappraisal.active_claim_id, None);
+    assert_eq!(second.reappraisal.created_claim_id, None);
+    assert_eq!(second.reappraisal.superseded_claim_ids, vec![old_state_id]);
+
+    let old_after = vault
+        .get_claim(&old_state_id)?
+        .expect("superseded state stays readable");
+    assert_eq!(old_after.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old_after.valid_to, Some(200));
+    assert_eq!(old_after.source, old_before.source);
+    assert_eq!(old_after.evidence, old_before.evidence);
+
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("cleared VAD"), Vad::NEUTRAL);
+
+    let mut active_claim_vad_states = Vec::new();
+    for state_id in vault.claims_for_subject(&claim)? {
+        let Some(state) = vault.get_claim(&state_id)? else {
+            continue;
+        };
+        if state.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+            && state.lifecycle == ClaimLifecycleStatus::Active
+        {
+            active_claim_vad_states.push(state_id);
+        }
+    }
+    assert!(
+        active_claim_vad_states.is_empty(),
+        "removed evidence must not leave an active claim-VAD state"
+    );
     Ok(())
 }
 
