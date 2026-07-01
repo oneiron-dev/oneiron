@@ -529,9 +529,25 @@ impl CompanionRecord {
         Ok(())
     }
 
-    /// Returns a copy of this record with the lifecycle retired/retracted.
+    /// Returns a copy of this record with the lifecycle retired/retracted
+    /// without stamping a lifecycle event.
+    ///
+    /// Use [`Self::retired_at`] for auditable retire transitions.
     pub fn retired(&self) -> Result<Self> {
-        self.retired_at(0)
+        if self.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(invalid_companion(
+                "companion record retire requires active record",
+            ));
+        }
+        if !self.lifecycle_events.is_empty() {
+            return Err(invalid_companion(
+                "companion record retire requires explicit timestamp",
+            ));
+        }
+        let mut record = self.clone();
+        record.lifecycle = ClaimLifecycleStatus::Retracted;
+        record.validate()?;
+        Ok(record)
     }
 
     /// Returns a copy of this record with a stamped retired lifecycle event.
@@ -1504,6 +1520,9 @@ mod tests {
             ),
             CompanionExportClassification::SharedVault,
         );
+        let unstamped_retired = record.retired()?;
+        assert_eq!(unstamped_retired.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(unstamped_retired.lifecycle_events.is_empty());
         record.lifecycle = ClaimLifecycleStatus::Superseded;
         record
             .lifecycle_events
