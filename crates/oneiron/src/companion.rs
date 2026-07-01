@@ -700,7 +700,10 @@ pub fn companion_value_to_json(value: &Value) -> JsonValue {
         }
         Value::F32(value) => serde_json::json!(value),
         Value::F64(value) => serde_json::json!(value),
-        Value::String(value) => JsonValue::String(value.as_str().unwrap_or_default().to_owned()),
+        Value::String(value) => match value.as_str() {
+            Some(value) => JsonValue::String(value.to_owned()),
+            None => serde_json::json!({ "redacted": "invalid_utf8_string" }),
+        },
         Value::Binary(_) | Value::Ext(_, _) => JsonValue::Null,
         Value::Array(values) => {
             JsonValue::Array(values.iter().map(companion_value_to_json).collect())
@@ -1463,5 +1466,17 @@ mod tests {
             "retired neutral record and private/shared records must not export"
         );
         Ok(())
+    }
+
+    #[test]
+    fn companion_register_api_redacts_invalid_msgpack_strings() {
+        let encoded = [0xA1, 0xFF];
+        let mut cursor = &encoded[..];
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode invalid utf8 string");
+
+        assert_eq!(
+            companion_value_to_json(&value),
+            serde_json::json!({ "redacted": "invalid_utf8_string" })
+        );
     }
 }
