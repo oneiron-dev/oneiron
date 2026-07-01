@@ -12,9 +12,11 @@ use crate::claim::{
 #[path = "companion.rs"]
 pub mod companion;
 pub use companion::{
-    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, CompanionExportClassification,
-    CompanionExpression, CompanionExpressionRegister, CompanionProvenance, CompanionRecord,
-    CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope, CompanionSubject,
+    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, COMPANION_REGISTER_PACK_ID,
+    COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification, CompanionExpression,
+    CompanionExpressionRegister, CompanionProvenance, CompanionRecord, CompanionRecordKey,
+    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionSubject,
+    ENTITY_TYPE_COMPANION_REGISTER, companion_value_from_json, companion_value_to_json,
     decode_companion_record_body, encode_companion_record_body,
 };
 
