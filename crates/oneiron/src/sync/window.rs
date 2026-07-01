@@ -26,7 +26,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHe
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{EntityId, decode_edge_value_for_kind};
+use crate::types::{
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, EntityId,
+    decode_companion_record_body, decode_edge_value_for_kind,
+};
 use loro::{CommitOptions, LoroDoc, Subscription};
 
 /// A loaded window Doc with its observer subscriptions.
@@ -626,6 +629,18 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 continue;
             }
         };
+
+        if skip_companion_register_sync_mirror(&raw) {
+            if map_contains_binary(&entities_map, &hex_id) {
+                map_delete(&entities_map, &hex_id)?;
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
+            vault.with_write_txn(|wtxn| {
+                vault.store.sync_state.delete(wtxn, marker_key)?;
+                Ok(())
+            })?;
+            continue;
+        }
 
         // Check if tombstoned in CRDT — value-agnostic, entity-canonical
         // presence: a non-binary tombstone still decodes HARD downstream
@@ -1530,18 +1545,28 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        if !map_contains_binary(&entities_map, &hex_id) {
-            let Some(raw) = vault.get_raw(id)? else {
-                continue;
-            };
+        let Some(raw) = vault.get_raw(id)? else {
+            continue;
+        };
 
-            if !reverse_remat_skip_redaction_receipt_mirror(&raw) {
-                map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
-                    Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+        if skip_companion_register_sync_mirror(&raw) {
+            if map_contains_binary(&entities_map, &hex_id) {
+                map_delete(&entities_map, &hex_id).map_err(|e| {
+                    Error::SyncProtocolError(format!("reverse remat local companion remove: {e}"))
                 })?;
                 wrote_any = true;
-                count += 1;
             }
+            continue;
+        }
+
+        if !map_contains_binary(&entities_map, &hex_id)
+            && !reverse_remat_skip_redaction_receipt_mirror(&raw)
+        {
+            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
+                Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
+            })?;
+            wrote_any = true;
+            count += 1;
         }
 
         let edges_out = vault.edges_out(id)?;
@@ -1578,6 +1603,18 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     }
 
     Ok(count)
+}
+
+fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return false;
+    };
+    if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+        return false;
+    }
+    decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+        .unwrap_or(true)
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
@@ -1656,7 +1693,13 @@ pub mod test_hooks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::VaultConfig;
+    use rmpv::Value;
+
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::types::{
+        CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
+        EdgeActorClass, VaultConfig, encode_companion_record_body,
+    };
 
     fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
         let dir = tempfile::tempdir().unwrap();
@@ -1687,6 +1730,25 @@ mod tests {
         .unwrap();
         window.doc.commit();
         id
+    }
+
+    fn companion_record(
+        persona_ref: EntityId,
+        export_classification: CompanionExportClassification,
+    ) -> CompanionRecord {
+        CompanionRecord::persona(
+            CompanionScope::neutral(),
+            persona_ref,
+            Value::from("private companion tuning"),
+            CompanionProvenance::new(
+                EntityId::from_bytes([0xB9; 16]).unwrap(),
+                EdgeActorClass::Agent,
+                ClaimSource::UserStated,
+                ClaimApprovalStatus::Approved,
+                Value::from("private provenance"),
+            ),
+            export_classification,
+        )
     }
 
     /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
@@ -1858,6 +1920,43 @@ mod tests {
             "pruned ops must reload from the d:w: snapshot"
         );
         assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
+    }
+
+    #[test]
+    fn companion_register_api_reverse_remat_excludes_local_only_records() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let window_key = WindowKey::new("2026-03");
+        let learned_at = window_key.start_timestamp().unwrap() + 60;
+        let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
+        let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
+        let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
+        let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+
+        vault.create_companion_record(&local_id, &local, learned_at)?;
+        vault.create_companion_record(&portable_id, &portable, learned_at)?;
+
+        let doc = create_window_doc("source", &window_key);
+        let entities = doc.get_map("entities");
+        let mut stale_local_blob = Vec::new();
+        stale_local_blob.push(ENTITY_TYPE_COMPANION_REGISTER);
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
+        stale_local_blob.extend_from_slice(&encode_companion_record_body(&local)?);
+        map_insert_bytes(&entities, &local_id.to_hex(), &stale_local_blob)?;
+        doc.commit();
+
+        reverse_rematerialize(&vault, &doc, &window_key)?;
+
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "reverse remat must remove stale local-only companion register rows"
+        );
+        assert!(
+            map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
+            "reverse remat should mirror syncable companion register rows"
+        );
+        Ok(())
     }
 
     /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge

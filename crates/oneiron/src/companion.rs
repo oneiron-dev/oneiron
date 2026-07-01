@@ -660,11 +660,6 @@ pub fn decode_companion_record_body(bytes: &[u8]) -> Result<CompanionRecord> {
     decode_companion_record_value(&value)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn validate_companion_record_body_bytes(bytes: &[u8]) -> Result<()> {
-    decode_companion_record_body(bytes).map(|_| ())
-}
-
 /// Converts JSON accepted by public APIs into the opaque MessagePack value
 /// carried by a companion record.
 pub fn companion_value_from_json(value: &JsonValue) -> Result<Value> {
@@ -1152,7 +1147,7 @@ mod tests {
     use super::*;
     use crate::batch::export::companion_export_layer;
     use crate::claim::ClaimSource;
-    use crate::types::{WriteActor, WriteProvenance};
+    use crate::types::{TimeRange, WriteActor, WriteProvenance};
     use crate::{Vault, VaultConfig};
 
     fn entity(seed: u8) -> EntityId {
@@ -1426,6 +1421,18 @@ mod tests {
             .create_companion_record(&duplicate_personal_id, &personal, 13)
             .expect_err("duplicate register key must fail closed");
         assert!(matches!(duplicate, Error::CompanionRecordAlreadyExists));
+        let raw_duplicate = vault
+            .batch()
+            .put(
+                &entity(0x56),
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 13, end: 13 },
+                13,
+                &encode_companion_record_body(&personal)?,
+            )
+            .commit()
+            .expect_err("raw batch put must preserve companion register key uniqueness");
+        assert!(matches!(raw_duplicate, Error::CompanionRecordAlreadyExists));
 
         let mut updated_personal = personal;
         updated_personal.value = Value::Map(vec![(
@@ -1471,6 +1478,21 @@ mod tests {
             .expect_err("retired records must not reactivate through update");
         assert!(matches!(
             err,
+            Error::InvalidClaimBody("companion record is retired")
+        ));
+        let raw_reactivation = vault
+            .batch()
+            .put(
+                &neutral_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 16, end: 16 },
+                16,
+                &encode_companion_record_body(&neutral)?,
+            )
+            .commit()
+            .expect_err("raw batch put must not reactivate retired companion records");
+        assert!(matches!(
+            raw_reactivation,
             Error::InvalidClaimBody("companion record is retired")
         ));
         assert_eq!(vault.companion_record_id_for_key(&neutral.key())?, None);
