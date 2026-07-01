@@ -2497,8 +2497,9 @@ async fn refresh_companion_profile(
     let persona_ref = parse_entity_id_param(&persona_ref, "persona_ref")?;
     let query_source_revision_ids =
         parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
+    let body_source_revision_ids = parse_source_revision_ids_body(req.source_revision_ids)?;
     let selected_source_revision_ids =
-        parse_source_revision_ids_body(req.source_revision_ids)?.or(query_source_revision_ids);
+        select_refresh_source_revision_ids(body_source_revision_ids, query_source_revision_ids)?;
     let requested_principal_ref = params
         .principal_ref
         .as_deref()
@@ -2731,6 +2732,20 @@ fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {
 
 fn non_empty_source_revision_ids(ids: Vec<oneiron::EntityId>) -> Option<Vec<oneiron::EntityId>> {
     (!ids.is_empty()).then_some(ids)
+}
+
+fn select_refresh_source_revision_ids(
+    body_source_revision_ids: Option<Vec<oneiron::EntityId>>,
+    query_source_revision_ids: Option<Vec<oneiron::EntityId>>,
+) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
+    match (body_source_revision_ids, query_source_revision_ids) {
+        (Some(body), Some(query)) if body != query => Err(ApiError::bad_request(
+            "sourceRevisionIds query and body values must match when both are provided",
+            Some("sourceRevisionIds"),
+        )),
+        (Some(body), _) => Ok(Some(body)),
+        (None, query) => Ok(query),
+    }
 }
 
 fn require_companion_profile_read(auth: &CoreAuth) -> Result<(), ApiError> {
@@ -11251,6 +11266,47 @@ mod tests {
                 "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
             })
         );
+
+        let conflict_request = json!({
+            "sourceRevisionIds": [keep_source.to_hex()],
+        });
+        let (conflict_status, conflict_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&conflict_request),
+            ),
+        )
+        .await;
+        assert_eq!(conflict_status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&conflict_body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&conflict_body)["details"]["field"],
+            Value::from("sourceRevisionIds")
+        );
+
+        let refresh_empty_query_path = format!(
+            "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds=",
+            persona_ref.to_hex(),
+            person_ref.to_hex()
+        );
+        let (empty_query_status, empty_query_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &refresh_empty_query_path,
+                "companion:profile:read",
+                &principal_ref.to_hex(),
+                Some(&json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(empty_query_status, StatusCode::OK);
+        assert_eq!(empty_query_body["state"], Value::from("fresh"));
+        assert!(empty_query_body["next_action"].is_null());
 
         let (empty_status, empty_body) = route_json(
             server,
