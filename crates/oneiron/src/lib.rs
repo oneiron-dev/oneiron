@@ -38,6 +38,11 @@ pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
     AccessGrantScope, AccessGrantStatus, decode_access_grant_body, encode_access_grant_body,
 };
+pub use crate::affect::coping::{
+    COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue,
+    CopingStrategy, coping_delta_successful, coping_outcome_claim_candidate, coping_outcome_value,
+    decode_coping_outcome_claim, decode_coping_outcome_value,
+};
 pub use crate::affect::{
     AFFECT_TRIGGER_PREDICATE, AffectTriggerValue, CLAIM_VAD_REAPPRAISAL_PREDICATE,
     ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, VadDelta,

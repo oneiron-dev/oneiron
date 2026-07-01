@@ -31,7 +31,11 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::affect::{AFFECT_TRIGGER_PREDICATE, validate_affect_trigger_claim_structure};
+use crate::affect::{
+    AFFECT_TRIGGER_PREDICATE,
+    coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
+    validate_affect_trigger_claim_structure,
+};
 use crate::error::{Error, Result};
 use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
 
@@ -756,6 +760,8 @@ pub(crate) fn validate_claim_body_and_decode(
         validate_companion_expression_claim_structure(&body)?;
     } else if body.predicate == AFFECT_TRIGGER_PREDICATE {
         validate_affect_trigger_claim_structure(&body)?;
+    } else if body.predicate == COPING_OUTCOME_PREDICATE {
+        validate_coping_outcome_claim_structure(&body)?;
     } else if body.predicate == PREDICATE_CONFLICT_OPEN
         || body.predicate == PREDICATE_CONFLICT_RESOLVED
     {
