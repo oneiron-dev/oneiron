@@ -147,7 +147,7 @@ fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     .map_err(|_| Error::CorruptedIndex("type index key"))
 }
 
-fn companion_record_id_for_key_in_txn(
+pub(crate) fn companion_record_id_for_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &CompanionRecordKey,

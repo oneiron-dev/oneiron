@@ -19,8 +19,9 @@ use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decod
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD,
-    EdgeKind, EntityId, TypeByteBand, band_of,
+    CompanionExportClassification, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD, EdgeKind, EntityId,
+    TypeByteBand, band_of, decode_companion_record_body,
 };
 
 use super::bridge::parse_edge_key;
@@ -656,6 +657,11 @@ fn entity_selector_decision(
     facet_scope: &HashMap<EntityId, FacetScope>,
 ) -> Option<EntitySelectorDecision> {
     let header = EntityMetadataHeader::parse(blob)?;
+    if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
+        && !companion_register_passes_selector(blob)
+    {
+        return None;
+    }
     if selector.band_filter_active() && !selector.bands.contains(&band_of(header.entity_type)) {
         return None;
     }
@@ -696,6 +702,12 @@ fn entity_selector_decision(
         facet_visible,
         facet_seed,
     })
+}
+
+fn companion_register_passes_selector(blob: &[u8]) -> bool {
+    decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..])
+        .map(|record| record.export_classification != CompanionExportClassification::LocalOnly)
+        .unwrap_or(false)
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {
@@ -885,8 +897,9 @@ mod tests {
     use crate::sync::bridge::encode_edge_value_for_crdt;
     use crate::sync::loro_support::map_get_bytes;
     use crate::types::{
+        CompanionProvenance, CompanionRecord, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
         ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
-        EdgeActorClass, TimeRange, Vad,
+        EdgeActorClass, TimeRange, Vad, encode_companion_record_body,
     };
 
     fn entity_id(byte: u8) -> EntityId {
@@ -938,6 +951,26 @@ mod tests {
         claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
         claim.source = Some(ClaimSource::ToolOutput);
         entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
+    }
+
+    fn companion_record_body(
+        persona_ref: EntityId,
+        export_classification: CompanionExportClassification,
+    ) -> Vec<u8> {
+        let record = CompanionRecord::persona(
+            CompanionScope::neutral(),
+            persona_ref,
+            Value::from("private companion tuning"),
+            CompanionProvenance::new(
+                entity_id(0xB8),
+                EdgeActorClass::Agent,
+                ClaimSource::UserStated,
+                ClaimApprovalStatus::Approved,
+                Value::from("private provenance"),
+            ),
+            export_classification,
+        );
+        encode_companion_record_body(&record).unwrap()
     }
 
     fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<u8> {
@@ -1304,6 +1337,50 @@ mod tests {
         assert_eq!(
             edge_count, 2,
             "only edges whose endpoints survived the selector should replicate"
+        );
+    }
+
+    #[test]
+    fn companion_register_api_selector_suppresses_local_only_records() {
+        let member = entity_id(0x39);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("source", &window_key);
+
+        let local_id = entity_id(0x3A);
+        let portable_id = entity_id(0x3B);
+        insert_entity(
+            &doc,
+            local_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_record_body(local_id, CompanionExportClassification::LocalOnly),
+        );
+        insert_entity(
+            &doc,
+            portable_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_record_body(portable_id, CompanionExportClassification::Portable),
+        );
+        doc.commit();
+
+        let selector = SyncSelector::new(
+            grant_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![],
+            vec![TypeByteBand::Companion],
+        );
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window_key, test_selector_scope(), &selector)
+                .unwrap();
+        let entities = filtered.get_map("entities");
+        assert!(
+            map_get_bytes(&entities, &local_id.to_hex()).is_none(),
+            "selector export must not include local-only companion register records"
+        );
+        assert!(
+            map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
+            "selector export should keep syncable companion register records"
         );
     }
 
