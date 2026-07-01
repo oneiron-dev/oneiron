@@ -2558,23 +2558,26 @@ fn validate_companion_register_put(
     }
 
     if record.lifecycle == ClaimLifecycleStatus::Active {
-        if let Some(existing_id) =
-            crate::vault::companion_record_id_for_key_in_txn(store, &*wtxn, &key)?
+        let terminal_lifecycle_event_kind = record.terminal_lifecycle_event_kind();
+        let prior_lifecycle_events =
+            if terminal_lifecycle_event_kind == Some(CompanionLifecycleEventKind::Revived) {
+                Some(&record.lifecycle_events[..record.lifecycle_events.len() - 1])
+            } else {
+                None
+            };
+        let lookup = crate::vault::companion_record_key_lookup_in_txn(
+            store,
+            &*wtxn,
+            &key,
+            prior_lifecycle_events,
+        )?;
+        if let Some(existing_id) = lookup.active_id
             && existing_id != *id
         {
             return Err(Error::CompanionRecordAlreadyExists);
         }
-        if record.terminal_lifecycle_event_kind() == Some(CompanionLifecycleEventKind::Revived) {
-            let prior_lifecycle_events =
-                &record.lifecycle_events[..record.lifecycle_events.len() - 1];
-            let persisted_retired =
-                crate::vault::companion_retired_record_id_for_key_and_lifecycle_events_in_txn(
-                    store,
-                    &*wtxn,
-                    &key,
-                    prior_lifecycle_events,
-                )?
-                .is_some();
+        if let Some(prior_lifecycle_events) = prior_lifecycle_events {
+            let persisted_retired = lookup.retired_history_id.is_some();
             let same_batch_retired = companion_retired_histories.is_some_and(|histories| {
                 histories.contains(&(key.clone(), prior_lifecycle_events.to_vec()))
             });
@@ -2583,11 +2586,19 @@ fn validate_companion_register_put(
                     "companion record revive requires retired history",
                 ));
             }
-        } else if let Some(existing_id) =
-            crate::vault::companion_record_any_id_for_key_in_txn(store, &*wtxn, &key)?
-            && existing_id != *id
-        {
-            return Err(Error::CompanionRecordAlreadyExists);
+        } else {
+            if terminal_lifecycle_event_kind != Some(CompanionLifecycleEventKind::Created)
+                || record.lifecycle_events.len() != 1
+            {
+                return Err(Error::InvalidClaimBody(
+                    "companion create lifecycle history must be canonical",
+                ));
+            }
+            if let Some(existing_id) = lookup.any_id
+                && existing_id != *id
+            {
+                return Err(Error::CompanionRecordAlreadyExists);
+            }
         }
     }
 

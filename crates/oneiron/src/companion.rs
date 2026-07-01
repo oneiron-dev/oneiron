@@ -1754,6 +1754,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default())?;
         let id = entity(0xC1);
+        let forged_id = entity(0xC5);
         let mut record = CompanionRecord::persona(
             CompanionScope::personal(entity(0xC2)),
             entity(0xC3),
@@ -1766,6 +1767,28 @@ mod tests {
             CompanionLifecycleEvent::retired(2),
             CompanionLifecycleEvent::revived(3),
         ];
+
+        let mut forged_create_history = record.clone();
+        forged_create_history.lifecycle_events = vec![
+            CompanionLifecycleEvent::created(1),
+            CompanionLifecycleEvent::retired(2),
+            CompanionLifecycleEvent::created(3),
+        ];
+        let err = vault
+            .batch()
+            .put(
+                &forged_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 3, end: 3 },
+                3,
+                &encode_companion_record_body(&forged_create_history)?,
+            )
+            .commit()
+            .expect_err("raw active create history must be canonical");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion create lifecycle history must be canonical")
+        ));
 
         vault.create_companion_record(&id, &record, 40)?;
 
