@@ -2044,7 +2044,9 @@ mod tests {
         stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
         stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
         stale_local_blob.extend_from_slice(&learned_at.to_be_bytes());
-        stale_local_blob.extend_from_slice(&encode_companion_record_body(&local)?);
+        stale_local_blob.extend_from_slice(&encode_companion_record_body(
+            &local.created_at(learned_at)?,
+        )?);
         map_insert_bytes(&entities, &local_id.to_hex(), &stale_local_blob)?;
         let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
         map_insert_bytes(
@@ -2102,7 +2104,7 @@ mod tests {
             &make_entity_blob(
                 ENTITY_TYPE_COMPANION_REGISTER,
                 learned_at,
-                &encode_companion_record_body(&local)?,
+                &encode_companion_record_body(&local.created_at(learned_at)?)?,
             ),
         )?;
         map_insert_bytes(
@@ -2111,7 +2113,7 @@ mod tests {
             &make_entity_blob(
                 ENTITY_TYPE_COMPANION_REGISTER,
                 learned_at,
-                &encode_companion_record_body(&portable)?,
+                &encode_companion_record_body(&portable.created_at(learned_at)?)?,
             ),
         )?;
         let local_edge_key = format_edge_key(&portable_id, EdgeKind::Mentions, &local_id);
@@ -2174,7 +2176,7 @@ mod tests {
             &make_entity_blob(
                 ENTITY_TYPE_COMPANION_REGISTER,
                 learned_at,
-                &encode_companion_record_body(&local)?,
+                &encode_companion_record_body(&local.created_at(learned_at)?)?,
             ),
         )?;
         let local_edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
