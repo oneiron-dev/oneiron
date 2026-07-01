@@ -6,6 +6,8 @@ use crate::claim::{ClaimBody, ClaimSubject, unit_interval_f32};
 use crate::error::{Error, Result};
 use crate::types::{ClaimCandidate, ENTITY_ID_LEN, EntityId, Vad, VadAnnotation};
 
+pub mod coping;
+
 pub const AFFECT_TRIGGER_PREDICATE: &str = "affect.trigger";
 pub const CLAIM_VAD_REAPPRAISAL_PREDICATE: &str = "affect.claim_vad";
 
