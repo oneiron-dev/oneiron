@@ -24,9 +24,9 @@ use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
     EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
     EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
-    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad,
-    WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
-    validate_edge_weight,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_PSYCH_PROFILE, EdgeKind, EdgeProvenanceFlags,
+    EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2325,6 +2325,8 @@ fn apply_put(
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
+        crate::types::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     }

@@ -9,9 +9,10 @@ use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -3365,8 +3366,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 5,
-        "ONE-1293 pins the current storage ABI at 5",
+        STORAGE_ABI_VERSION, 6,
+        "ONE-1204 pins the current storage ABI at 6",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3386,10 +3387,45 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
             err,
             Error::StorageAbiVersionChanged {
                 stored: Some(4),
-                current: 5,
+                current: STORAGE_ABI_VERSION,
             }
         ),
-        "expected StorageAbiVersionChanged {{ stored: Some(4), current: 5 }}, got {err:?}"
+        "expected StorageAbiVersionChanged {{ stored: Some(4), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1204 fail-closed gate over registering persistent maintenance type
+/// PSYCH_PROFILE at byte 129: v5 code does not know this persistent entity
+/// kind, so v5 vaults must not open under ABI v6 without rebuild.
+#[test]
+fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 6,
+        "ONE-1204 pins the current storage ABI at 6",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(5))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1204 ABI v5 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(5),
+                current: STORAGE_ABI_VERSION,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(5), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
     Ok(())
 }
@@ -5030,8 +5066,8 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     let report = vault.doctor()?;
     serde_json::to_value(&report).expect("doctor report must serialize");
 
-    assert_eq!(report.storage_abi_version, Some(5));
-    assert_eq!(report.storage_schema_version, Some(1));
+    assert_eq!(report.storage_abi_version, Some(STORAGE_ABI_VERSION));
+    assert_eq!(report.storage_schema_version, Some(STORAGE_SCHEMA_VERSION));
     assert_eq!(
         report.embedding_model_id,
         Some("doctor-model-v1".to_owned())
@@ -5965,7 +6001,8 @@ fn all_entity_type_prefixes() {
     // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
     // = core (band 1–63); COMPANION_REGISTER = companion pack (band
     // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = productivity pack
-    // (band 80–99); REDACTION_AUDIT = maintenance (band 120+).
+    // (band 80–99); REDACTION_AUDIT/MODEL/POLICY_MANIFEST/
+    // FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE = maintenance (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6162,6 +6199,13 @@ fn all_entity_type_prefixes() {
         (
             "ACCESS_GRANT",
             128,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
+        (
+            "PSYCH_PROFILE",
+            ENTITY_TYPE_PSYCH_PROFILE,
             None,
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
