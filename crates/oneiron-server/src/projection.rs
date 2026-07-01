@@ -1,9 +1,10 @@
 use std::fmt;
 
 use oneiron::types::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, entity_type_registry_entry,
+    CompanionScope, CompanionSubject, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    decode_companion_record_body, entity_type_registry_entry,
 };
 use oneiron::{EdgeInfo, EntityId, FieldProfile, Vault};
 use serde::de::{self, Visitor};
@@ -109,7 +110,7 @@ pub fn project_entity_parts(
     view: View,
 ) -> Value {
     let id_hex = id.to_hex();
-    let fields = decode_body_fields(body);
+    let fields = decode_body_fields(entity_type, body);
     let label = label_from_fields(&fields).unwrap_or_else(|| id_hex.clone());
 
     match view {
@@ -233,7 +234,16 @@ fn entity_kind(entity_type: u8) -> String {
     )
 }
 
-fn decode_body_fields(body: &[u8]) -> Map<String, Value> {
+fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
+    if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        return decode_companion_register_fields(body).unwrap_or_else(|| {
+            Map::from_iter([(
+                "redacted".to_owned(),
+                Value::String("invalid_companion_register_body".to_owned()),
+            )])
+        });
+    }
+
     match rmp_serde::from_slice::<Value>(body) {
         Ok(Value::Object(fields)) => fields,
         Ok(value) => Map::from_iter([("body".to_owned(), value)]),
@@ -241,6 +251,70 @@ fn decode_body_fields(body: &[u8]) -> Map<String, Value> {
             "bodyBytes".to_owned(),
             Value::Array(body.iter().map(|byte| json!(byte)).collect()),
         )]),
+    }
+}
+
+fn decode_companion_register_fields(body: &[u8]) -> Option<Map<String, Value>> {
+    let record = decode_companion_record_body(body).ok()?;
+    let mut fields = Map::new();
+    fields.insert(
+        "record_kind".to_owned(),
+        Value::String(record.kind().as_str().to_owned()),
+    );
+    fields.insert("scope".to_owned(), companion_scope_to_json(&record.scope));
+    fields.insert(
+        "subject".to_owned(),
+        companion_subject_to_json(&record.subject),
+    );
+    fields.insert(
+        "lifecycle".to_owned(),
+        Value::String(record.lifecycle.as_str().to_owned()),
+    );
+    fields.insert(
+        "export".to_owned(),
+        Value::String(record.export_classification.as_str().to_owned()),
+    );
+    fields.insert(
+        "provenance".to_owned(),
+        json!({
+            "actor_ref": record.provenance.actor_ref.to_hex(),
+            "actor_class": record.provenance.actor_class as u8,
+            "source": record.provenance.source.as_str(),
+            "approval": record.provenance.approval.as_str(),
+        }),
+    );
+    Some(fields)
+}
+
+fn companion_scope_to_json(scope: &CompanionScope) -> Value {
+    match scope {
+        CompanionScope::Neutral => json!({ "kind": "neutral" }),
+        CompanionScope::Personal { person_ref } => {
+            json!({ "kind": "personal", "person_ref": person_ref.to_hex() })
+        }
+        CompanionScope::SharedVault { vault_id } => {
+            json!({ "kind": "shared_vault", "vault_id": vault_id })
+        }
+        _ => json!({ "kind": "unknown" }),
+    }
+}
+
+fn companion_subject_to_json(subject: &CompanionSubject) -> Value {
+    match subject {
+        CompanionSubject::Persona { persona_ref } => {
+            json!({ "kind": "persona", "persona_ref": persona_ref.to_hex() })
+        }
+        CompanionSubject::Relationship {
+            source_ref,
+            target_ref,
+        } => json!({
+            "kind": "relationship",
+            "relationship_ref": {
+                "source_ref": source_ref.to_hex(),
+                "target_ref": target_ref.to_hex(),
+            },
+        }),
+        _ => json!({ "kind": "unknown" }),
     }
 }
 
@@ -356,7 +430,12 @@ fn profile_fields(entity_type: u8, profile: FieldProfile) -> &'static [&'static 
 mod tests {
     use std::collections::BTreeSet;
 
-    use oneiron::types::ENTITY_TYPE_REGISTRY;
+    use oneiron::types::{ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_REGISTRY};
+    use oneiron::{
+        ClaimApprovalStatus, ClaimSource, CompanionExportClassification, CompanionProvenance,
+        CompanionRecord, CompanionScope, EdgeActorClass, companion_value_from_json,
+        encode_companion_record_body,
+    };
 
     use super::*;
 
@@ -454,5 +533,70 @@ mod tests {
         assert_eq!(full["kind"], "TASK");
         assert_eq!(full["label"], "Ship projection");
         assert_eq!(full["updatedAt"], 1_777_000_000_u64);
+    }
+
+    #[test]
+    fn companion_register_api_projection_redacts_private_values() {
+        let id = EntityId::from_bytes([0x51; 16]).unwrap();
+        let actor = EntityId::from_bytes([0x52; 16]).unwrap();
+        let record = CompanionRecord::persona(
+            CompanionScope::neutral(),
+            id,
+            companion_value_from_json(&json!({
+                "note": "private companion projection note",
+            }))
+            .unwrap(),
+            CompanionProvenance::new(
+                actor,
+                EdgeActorClass::Agent,
+                ClaimSource::UserStated,
+                ClaimApprovalStatus::Approved,
+                companion_value_from_json(&json!({
+                    "note": "private companion provenance note",
+                }))
+                .unwrap(),
+            ),
+            CompanionExportClassification::Portable,
+        );
+        let body = encode_companion_record_body(&record).unwrap();
+
+        for view in [View::Standard, View::Full] {
+            let value = project_entity_parts(
+                &id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                1_777_000_000,
+                &body,
+                view,
+            );
+            let rendered = serde_json::to_string(&value).unwrap();
+            assert!(!rendered.contains("private companion projection note"));
+            assert!(!rendered.contains("private companion provenance note"));
+            assert!(
+                value
+                    .as_object()
+                    .unwrap()
+                    .get("provenance")
+                    .and_then(Value::as_object)
+                    .is_some_and(|provenance| !provenance.contains_key("value")),
+                "projection provenance must omit opaque provenance.value"
+            );
+        }
+    }
+
+    #[test]
+    fn companion_register_api_projection_redacts_malformed_body_bytes() {
+        let id = EntityId::from_bytes([0x53; 16]).unwrap();
+        let value = project_entity_parts(
+            &id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            1_777_000_000,
+            b"private malformed companion bytes",
+            View::Full,
+        );
+
+        let rendered = serde_json::to_string(&value).unwrap();
+        assert_eq!(value["redacted"], "invalid_companion_register_body");
+        assert!(!rendered.contains("private malformed companion bytes"));
+        assert!(!value.as_object().unwrap().contains_key("bodyBytes"));
     }
 }
