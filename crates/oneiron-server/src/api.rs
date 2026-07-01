@@ -6,7 +6,7 @@
 //! Auth: shared secret header for Phase 1.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -110,6 +110,8 @@ const RESUME_NOTIFICATION_LIMIT: usize = 128;
 const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
+static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<BTreeMap<String, oneiron::EiriSessionRagState>>> =
+    OnceLock::new();
 
 #[derive(OpenApi)]
 #[openapi(
@@ -211,6 +213,10 @@ const CORE_MAX_LIST_LIMIT: usize = 1000;
         ContextPackTimeControls,
         ContextPackRetrievalBudgetControls,
         ContextPackBudgetControls,
+        EiriMemoryBoardControls,
+        EiriMemoryBoardSlotControls,
+        EiriSessionRagControls,
+        EiriCompanionControls,
         CoreContextPackRequest,
         CoreContextPackResponse,
         CoreContextEntity,
@@ -2694,14 +2700,14 @@ async fn resume(
 
 fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiError> {
     Ok(ResumeBundle::new(
-        resume_session_context(server)?,
+        resume_session_context(server, caller)?,
         pending_notifications(server, caller)?,
         pending_unprocessed_items(server, caller),
         current_resume_budget(server),
     ))
 }
 
-fn resume_session_context(server: &SyncServer) -> Result<SessionContext, ApiError> {
+fn resume_session_context(server: &SyncServer, caller: &str) -> Result<SessionContext, ApiError> {
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
@@ -2732,6 +2738,7 @@ fn resume_session_context(server: &SyncServer) -> Result<SessionContext, ApiErro
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
+        rag_state: current_eiri_session_rag_state(&server.vault, caller),
     })
 }
 
@@ -4363,6 +4370,67 @@ struct ContextPackBudgetControls {
     retrieval: Option<ContextPackRetrievalBudgetControls>,
 }
 
+/// Eiri Context v4 memory-board per-slot row caps.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct EiriMemoryBoardSlotControls {
+    #[serde(default)]
+    #[schema(example = 4)]
+    claims: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 2)]
+    turns: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 2)]
+    summaries: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 1)]
+    facets: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 1)]
+    companions: Option<usize>,
+    #[serde(default)]
+    #[schema(example = 1)]
+    other: Option<usize>,
+}
+
+/// Eiri Context v4 memory-board controls.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct EiriMemoryBoardControls {
+    /// Whether to emit the v4 memory board. Defaults to true when v4 is requested.
+    #[serde(default)]
+    #[schema(example = true)]
+    enabled: Option<bool>,
+    /// Exact per-slot row caps for the memory board.
+    #[serde(default)]
+    slots: Option<EiriMemoryBoardSlotControls>,
+}
+
+/// Eiri Context v4 session RAG controls.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct EiriSessionRagControls {
+    /// Stable caller/session key used to carry RAG state across calls.
+    #[serde(default, rename = "session_id", alias = "sessionId")]
+    #[schema(example = "default")]
+    session_id: Option<String>,
+}
+
+/// Companion context that influences Eiri Context v4 assembly.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+struct EiriCompanionControls {
+    #[serde(default, rename = "person_ref", alias = "personRef")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    person_ref: Option<String>,
+    #[serde(default, rename = "persona_ref", alias = "personaRef")]
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    persona_ref: Option<String>,
+}
+
+struct EiriContextV4Request {
+    memory_board_budget: Option<oneiron::EiriMemoryBoardBudget>,
+    session_id: String,
+    companion: Option<oneiron::EiriCompanionAssembly>,
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -4425,6 +4493,19 @@ struct CoreContextPackRequest {
     /// Optional retrieval and serialization budget controls.
     #[serde(default)]
     budget: Option<ContextPackBudgetControls>,
+    /// Optional context format version. Use "v4" to request Eiri Context v4 fields.
+    #[serde(default, rename = "context_version", alias = "contextVersion")]
+    #[schema(example = "v4")]
+    context_version: Option<String>,
+    /// Optional Eiri Context v4 memory-board controls.
+    #[serde(default, rename = "memory_board", alias = "memoryBoard")]
+    memory_board: Option<EiriMemoryBoardControls>,
+    /// Optional Eiri Context v4 session RAG controls.
+    #[serde(default, rename = "session_rag", alias = "sessionRag")]
+    session_rag: Option<EiriSessionRagControls>,
+    /// Optional companion scope for Eiri Context v4 assembly.
+    #[serde(default)]
+    companion: Option<EiriCompanionControls>,
 }
 
 /// Hydrated context edge.
@@ -4599,6 +4680,10 @@ struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreContextPackResponse {
+    /// Optional context format version for v4 response extensions.
+    #[serde(rename = "context_version", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "v4")]
+    context_version: Option<String>,
     /// Primary hydrated retrieval results.
     results: Vec<CoreContextEntity>,
     /// Neighbor entities hydrated through edge expansion.
@@ -4609,6 +4694,14 @@ struct CoreContextPackResponse {
     state: CoreContextPackState,
     /// Retrieval evidence and score breakdown.
     evidence: CoreContextPackEvidence,
+    /// Eiri Context v4 memory-board rows when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    memory_board: Option<oneiron::EiriMemoryBoard>,
+    /// Eiri Context v4 session RAG state when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    session_rag: Option<oneiron::EiriSessionRagState>,
     /// Empty-result context when no entities surface.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
@@ -5405,6 +5498,16 @@ async fn core_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
+    let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
+    let eiri_context = resolve_eiri_context_v4_request(
+        req.context_version.as_deref(),
+        req.memory_board.as_ref(),
+        req.session_rag.as_ref(),
+        req.companion.as_ref(),
+        req.limit,
+        max_neighbors,
+        fallback_session_id,
+    )?;
 
     let mut builder = server
         .vault
@@ -5431,6 +5534,7 @@ async fn core_context_pack(
         builder,
         projection,
         "core context-pack failed",
+        eiri_context,
     )?))
 }
 
@@ -5927,11 +6031,144 @@ fn apply_context_pack_budget<'a>(
     Ok(builder)
 }
 
+fn resolve_eiri_context_v4_request(
+    context_version: Option<&str>,
+    memory_board: Option<&EiriMemoryBoardControls>,
+    session_rag: Option<&EiriSessionRagControls>,
+    companion: Option<&EiriCompanionControls>,
+    limit: usize,
+    default_selected_edges: usize,
+    fallback_session_id: &str,
+) -> Result<Option<EiriContextV4Request>, ApiError> {
+    let requested = context_version.is_some()
+        || memory_board.is_some()
+        || session_rag.is_some()
+        || companion.is_some();
+    if !requested {
+        return Ok(None);
+    }
+
+    let version = context_version.unwrap_or(oneiron::EIRI_CONTEXT_VERSION_V4);
+    if version != oneiron::EIRI_CONTEXT_VERSION_V4 {
+        return Err(ApiError::bad_request(
+            "context_version must be v4",
+            Some("context_version"),
+        ));
+    }
+
+    let session_id = session_rag
+        .and_then(|state| state.session_id.as_deref())
+        .unwrap_or(fallback_session_id)
+        .trim();
+    if session_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "session_rag.session_id must be non-empty",
+            Some("session_rag.session_id"),
+        ));
+    }
+
+    let memory_board_budget = memory_board
+        .and_then(|controls| controls.enabled)
+        .unwrap_or(true)
+        .then(|| eiri_memory_board_budget(memory_board, limit, default_selected_edges));
+
+    let companion = Some(oneiron::EiriCompanionAssembly {
+        caller: Some(fallback_session_id.to_owned()),
+        person_ref: companion.and_then(|controls| controls.person_ref.clone()),
+        persona_ref: companion.and_then(|controls| controls.persona_ref.clone()),
+    });
+
+    Ok(Some(EiriContextV4Request {
+        memory_board_budget,
+        session_id: session_id.to_owned(),
+        companion,
+    }))
+}
+
+fn eiri_memory_board_budget(
+    controls: Option<&EiriMemoryBoardControls>,
+    limit: usize,
+    default_selected_edges: usize,
+) -> oneiron::EiriMemoryBoardBudget {
+    let retrieval_defaults = oneiron::ContextPackRetrievalBudget::from_limit(
+        limit,
+        oneiron::TokenAllocation::default(),
+        default_selected_edges,
+    );
+    let defaults = oneiron::EiriMemoryBoardBudget::new(
+        retrieval_defaults.claims,
+        retrieval_defaults.turns,
+        retrieval_defaults.summaries,
+        retrieval_defaults.facets,
+        retrieval_defaults.other,
+        retrieval_defaults.other,
+    );
+    let Some(slots) = controls.and_then(|controls| controls.slots.as_ref()) else {
+        return defaults;
+    };
+
+    oneiron::EiriMemoryBoardBudget::new(
+        slots.claims.unwrap_or(defaults.claims),
+        slots.turns.unwrap_or(defaults.turns),
+        slots.summaries.unwrap_or(defaults.summaries),
+        slots.facets.unwrap_or(defaults.facets),
+        slots.companions.unwrap_or(defaults.companions),
+        slots.other.unwrap_or(defaults.other),
+    )
+}
+
+fn eiri_session_rag_store() -> &'static Mutex<BTreeMap<String, oneiron::EiriSessionRagState>> {
+    EIRI_SESSION_RAG_STATE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn eiri_session_rag_key(vault: &oneiron::Vault, session_id: &str) -> String {
+    format!("{vault:p}:{session_id}")
+}
+
+fn current_eiri_session_rag_state(
+    vault: &oneiron::Vault,
+    session_id: &str,
+) -> oneiron::EiriSessionRagState {
+    let key = eiri_session_rag_key(vault, session_id);
+    let mut guard = eiri_session_rag_store()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard
+        .entry(key)
+        .or_insert_with(|| oneiron::EiriSessionRagState::new(session_id))
+        .clone()
+}
+
+fn advance_eiri_session_rag_state(
+    vault: &oneiron::Vault,
+    session_id: &str,
+    pack: &oneiron::ContextPack,
+    evidence: &CoreContextPackEvidence,
+) -> oneiron::EiriSessionRagState {
+    let key = eiri_session_rag_key(vault, session_id);
+    let mut guard = eiri_session_rag_store()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let state = guard
+        .entry(key)
+        .or_insert_with(|| oneiron::EiriSessionRagState::new(session_id));
+    state.revision = state.revision.saturating_add(1);
+    state.query_count = state.query_count.saturating_add(1);
+    state.last_retrieval_run_id = evidence.retrieval_run_id.clone();
+    state.last_result_ids = pack
+        .results
+        .iter()
+        .map(|entity| entity.id.to_hex())
+        .collect();
+    state.clone()
+}
+
 fn run_context_pack_builder(
     vault: &oneiron::Vault,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
     error_context: &'static str,
+    eiri_context: Option<EiriContextV4Request>,
 ) -> Result<CoreContextPackResponse, ApiError> {
     let pack = builder
         .run_projected_json_with_telemetry(&projection)
@@ -5943,7 +6180,31 @@ fn run_context_pack_builder(
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
-    Ok(core_context_pack_response(pack, evidence))
+    let memory_board = eiri_context
+        .as_ref()
+        .and_then(|context| context.memory_board_budget)
+        .map(|budget| {
+            oneiron::context_pack::assemble_eiri_memory_board(
+                &pack,
+                budget,
+                eiri_context
+                    .as_ref()
+                    .and_then(|context| context.companion.clone()),
+            )
+        });
+    let session_rag = eiri_context.as_ref().map(|context| {
+        advance_eiri_session_rag_state(vault, &context.session_id, &pack, &evidence)
+    });
+    let context_version = eiri_context
+        .as_ref()
+        .map(|_| oneiron::EIRI_CONTEXT_VERSION_V4.to_owned());
+    Ok(core_context_pack_response(
+        pack,
+        evidence,
+        context_version,
+        memory_board,
+        session_rag,
+    ))
 }
 
 fn run_core_query(
@@ -6058,9 +6319,13 @@ fn core_context_pack_evidence_for_results(
 fn core_context_pack_response(
     pack: oneiron::ContextPack,
     evidence: CoreContextPackEvidence,
+    context_version: Option<String>,
+    memory_board: Option<oneiron::EiriMemoryBoard>,
+    session_rag: Option<oneiron::EiriSessionRagState>,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        context_version,
         results: pack.results.into_iter().map(core_context_entity).collect(),
         neighbors: pack
             .neighbors
@@ -6070,6 +6335,8 @@ fn core_context_pack_response(
         stats: core_context_pack_stats(pack.stats),
         state,
         evidence,
+        memory_board,
+        session_rag,
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
@@ -7175,6 +7442,19 @@ struct ContextPackRequest {
     /// Optional retrieval and serialization budget controls.
     #[serde(default)]
     budget: Option<ContextPackBudgetControls>,
+    /// Optional context format version. Use "v4" to request Eiri Context v4 fields.
+    #[serde(default, rename = "context_version", alias = "contextVersion")]
+    #[schema(example = "v4")]
+    context_version: Option<String>,
+    /// Optional Eiri Context v4 memory-board controls.
+    #[serde(default, rename = "memory_board", alias = "memoryBoard")]
+    memory_board: Option<EiriMemoryBoardControls>,
+    /// Optional Eiri Context v4 session RAG controls.
+    #[serde(default, rename = "session_rag", alias = "sessionRag")]
+    session_rag: Option<EiriSessionRagControls>,
+    /// Optional companion scope for Eiri Context v4 assembly.
+    #[serde(default)]
+    companion: Option<EiriCompanionControls>,
 }
 
 /// Context pack assembly.
@@ -7230,6 +7510,7 @@ async fn context_pack(
     payload: Result<Json<ContextPackRequest>, JsonRejection>,
 ) -> Result<Json<CoreContextPackResponse>, ApiError> {
     check_api_auth(&headers, &server.config)?;
+    let caller = resume_caller(&headers);
     let req = json_payload(payload)?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
@@ -7259,6 +7540,15 @@ async fn context_pack(
         .unwrap_or(View::Standard);
     let projection =
         context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
+    let eiri_context = resolve_eiri_context_v4_request(
+        req.context_version.as_deref(),
+        req.memory_board.as_ref(),
+        req.session_rag.as_ref(),
+        req.companion.as_ref(),
+        req.limit,
+        max_neighbors,
+        &caller,
+    )?;
 
     let mut builder = server
         .vault
@@ -7291,6 +7581,7 @@ async fn context_pack(
         builder,
         projection,
         "context-pack failed",
+        eiri_context,
     )?))
 }
 
@@ -7352,6 +7643,10 @@ mod tests {
         "ContextPackPolicyControls",
         "ContextPackRetrievalBudgetControls",
         "ContextPackTimeControls",
+        "EiriCompanionControls",
+        "EiriMemoryBoardControls",
+        "EiriMemoryBoardSlotControls",
+        "EiriSessionRagControls",
         "CoreContextPackEvidence",
         "CoreContextPackRequest",
         "CoreContextPackResponse",
@@ -7826,6 +8121,7 @@ mod tests {
                         "query_time_us" => *value = Value::from("<duration-us>"),
                         "request_id" => *value = Value::from("<request-id>"),
                         "requestId" => *value = Value::from("<request-id>"),
+                        "last_retrieval_run_id" => *value = Value::from("<retrieval-run-id>"),
                         "retrieval_run_id" => *value = Value::from("<retrieval-run-id>"),
                         _ => normalize_contract_body(value),
                     }
@@ -8230,6 +8526,9 @@ mod tests {
         let batch_id = seeded_test_entity_id(0x1221_0001).to_hex();
         let conversation_id = seeded_test_entity_id(0x1221_0002).to_hex();
         let turn_id = seeded_test_entity_id(0x1221_0003).to_hex();
+        let eiri_principal_ref = seeded_test_entity_id(0x1221_0004).to_hex();
+        let eiri_person_ref = seeded_test_entity_id(0x1221_0005).to_hex();
+        let eiri_persona_ref = seeded_test_entity_id(0x1221_0006).to_hex();
         let mut exchanges = Vec::new();
 
         let batch_request = json!({
@@ -8322,6 +8621,59 @@ mod tests {
             Some(context_pack_request),
             status,
             context_pack_body,
+        ));
+
+        let context_pack_v4_request = json!({
+            "query": "contractneedle",
+            "limit": 3,
+            "view": "full",
+            "include_edges": false,
+            "context_version": "v4",
+            "memory_board": {
+                "slots": {
+                    "claims": 0,
+                    "turns": 1,
+                    "summaries": 0,
+                    "facets": 0,
+                    "companions": 0,
+                    "other": 0
+                }
+            },
+            "session_rag": {},
+            "companion": {
+                "person_ref": eiri_person_ref,
+                "persona_ref": eiri_persona_ref
+            }
+        });
+        let (status, context_pack_v4_body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &eiri_principal_ref,
+                Some(&context_pack_v4_request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(context_pack_v4_body["context_version"], Value::from("v4"));
+        assert_eq!(
+            context_pack_v4_body["memory_board"]["budget"]["turns"],
+            Value::from(1)
+        );
+        assert_eq!(
+            context_pack_v4_body["session_rag"]["query_count"],
+            Value::from(1)
+        );
+        exchanges.push(contract_exchange(
+            "core_context_pack_v4",
+            "POST",
+            "/v1/core/context-pack",
+            Some("core:read"),
+            Some(context_pack_v4_request),
+            status,
+            context_pack_v4_body,
         ));
 
         let hydrate_request = json!({
@@ -12201,6 +12553,166 @@ mod tests {
             body["evidence"]["retrieval_run_id"]
         );
         assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_memory_board_enforces_slots_and_carries_session_rag() {
+        let (_dir, server) = test_server();
+        let turn_a = seeded_test_entity_id(0x0012_6301);
+        let turn_b = seeded_test_entity_id(0x0012_6302);
+        let summary = seeded_test_entity_id(0x0012_6303);
+        let body_a = rmp_serde::to_vec_named(&json!({
+            "txt": "eiri v4 needle alpha",
+            "spkr": "user",
+            "at": 700_u64
+        }))
+        .expect("encode turn body");
+        let body_b = rmp_serde::to_vec_named(&json!({
+            "txt": "eiri v4 needle beta",
+            "spkr": "assistant",
+            "at": 701_u64
+        }))
+        .expect("encode turn body");
+        let summary_body = rmp_serde::to_vec_named(&json!({
+            "txt": "eiri v4 needle summary"
+        }))
+        .expect("encode summary body");
+
+        server
+            .vault
+            .batch()
+            .put(
+                &turn_a,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 700,
+                    end: 700,
+                },
+                700,
+                &body_a,
+            )
+            .text(&turn_a, &[("body", "eiri v4 needle alpha")])
+            .put(
+                &turn_b,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 701,
+                    end: 701,
+                },
+                701,
+                &body_b,
+            )
+            .text(&turn_b, &[("body", "eiri v4 needle beta")])
+            .put(
+                &summary,
+                oneiron::types::ENTITY_TYPE_SUMMARY,
+                oneiron::TimeRange {
+                    start: 702,
+                    end: 702,
+                },
+                702,
+                &summary_body,
+            )
+            .text(&summary, &[("body", "eiri v4 needle summary")])
+            .commit()
+            .expect("seed context v4 rows");
+
+        let request = json!({
+            "query": "eiri v4 needle",
+            "limit": 10,
+            "context_version": "v4",
+            "memory_board": {
+                "slots": {
+                    "claims": 0,
+                    "turns": 1,
+                    "summaries": 1,
+                    "facets": 0,
+                    "companions": 0,
+                    "other": 0
+                }
+            },
+            "session_rag": { "session_id": "eiri-session-api" },
+            "companion": { "persona_ref": "persona-route-test" }
+        });
+
+        let eiri_request = || {
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .header("x-oneiron-caller", "eiri-session-api")
+                .body(Body::from(request.to_string()))
+                .expect("request")
+        };
+
+        let (status, first_body) = route_json(server.clone(), eiri_request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(first_body["context_version"], Value::from("v4"));
+        assert_eq!(first_body["memory_board"]["version"], Value::from("v4"));
+        assert_eq!(
+            first_body["memory_board"]["budget"]["turns"],
+            Value::from(1)
+        );
+        assert_eq!(
+            first_body["memory_board"]["budget"]["summaries"],
+            Value::from(1)
+        );
+        let rows = first_body["memory_board"]["rows"]
+            .as_array()
+            .expect("memory board rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["row_index"], Value::from(0));
+        assert_eq!(rows[0]["slot"], Value::from("turns"));
+        assert_eq!(rows[1]["row_index"], Value::from(1));
+        assert_eq!(rows[1]["slot"], Value::from("summaries"));
+        assert_eq!(
+            first_body["memory_board"]["companion"]["caller"],
+            Value::from("eiri-session-api")
+        );
+        assert_eq!(
+            first_body["memory_board"]["companion"]["persona_ref"],
+            Value::from("persona-route-test")
+        );
+        assert_eq!(
+            first_body["session_rag"]["session_id"],
+            Value::from("eiri-session-api")
+        );
+        assert_eq!(first_body["session_rag"]["revision"], Value::from(1));
+        assert_eq!(first_body["session_rag"]["query_count"], Value::from(1));
+        assert!(
+            first_body["session_rag"]["last_retrieval_run_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        );
+        assert_eq!(
+            first_body["session_rag"]["last_result_ids"]
+                .as_array()
+                .map(Vec::len),
+            first_body["results"].as_array().map(Vec::len)
+        );
+
+        let (status, second_body) = route_json(server.clone(), eiri_request()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(second_body["session_rag"]["revision"], Value::from(2));
+        assert_eq!(second_body["session_rag"]["query_count"], Value::from(2));
+
+        let resume_request = Request::builder()
+            .method("POST")
+            .uri("/api/companion/resume")
+            .header(CONTENT_TYPE, "application/json")
+            .header("x-oneiron-caller", "eiri-session-api")
+            .body(Body::from("{}"))
+            .expect("resume request");
+        let (status, resume_body) = route_json(server, resume_request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            resume_body["session"]["rag_state"]["session_id"],
+            Value::from("eiri-session-api")
+        );
+        assert_eq!(
+            resume_body["session"]["rag_state"]["query_count"],
+            Value::from(2)
+        );
     }
 
     #[tokio::test]

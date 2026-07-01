@@ -90,6 +90,7 @@ fn sample_resume_bundle(tokens_used: u64, tokens_limit: u64) -> ResumeBundle {
             api_version: "v1".to_owned(),
             counts: BTreeMap::from([("16".to_owned(), 1)]),
             last_activity: Some(42),
+            rag_state: EiriSessionRagState::new("default"),
         },
         vec![NotificationItem {
             id: seeded_entity_id(0x2141).to_hex(),
@@ -137,6 +138,7 @@ fn resume_bundle_empty_surfaces_serialize_as_empty_arrays() {
             api_version: "v1".to_owned(),
             counts: BTreeMap::new(),
             last_activity: None,
+            rag_state: EiriSessionRagState::new("default"),
         },
         Vec::new(),
         Vec::new(),
