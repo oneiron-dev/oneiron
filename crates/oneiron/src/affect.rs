@@ -204,31 +204,34 @@ pub fn decode_affect_trigger_value(value: &Value) -> Result<AffectTriggerValue> 
         };
         match key {
             AFFECT_TRIGGER_KEY_AFFECTED_PERSON => {
-                reject_duplicate(&mut seen_affected_person)?;
+                reject_duplicate(
+                    &mut seen_affected_person,
+                    "duplicate affect.trigger value key",
+                )?;
                 affected_person = Some(decode_entity_ref(
                     value,
                     "affectedPerson must be a canonical entity ref",
                 )?);
             }
             AFFECT_TRIGGER_KEY_TRIGGER_REF => {
-                reject_duplicate(&mut seen_trigger_ref)?;
+                reject_duplicate(&mut seen_trigger_ref, "duplicate affect.trigger value key")?;
                 trigger_ref = Some(decode_entity_ref(
                     value,
                     "triggerRef must be a canonical entity ref",
                 )?);
             }
             AFFECT_TRIGGER_KEY_VAD_DELTA => {
-                reject_duplicate(&mut seen_vad_delta)?;
+                reject_duplicate(&mut seen_vad_delta, "duplicate affect.trigger value key")?;
                 vad_delta = Some(decode_vad_delta(value)?);
             }
             AFFECT_TRIGGER_KEY_CONFIDENCE => {
-                reject_duplicate(&mut seen_confidence)?;
+                reject_duplicate(&mut seen_confidence, "duplicate affect.trigger value key")?;
                 confidence = Some(unit_interval_f32(value).ok_or(Error::InvalidClaimBody(
                     "affect.trigger confidence must be finite in [0, 1]",
                 ))?);
             }
             AFFECT_TRIGGER_KEY_K => {
-                reject_duplicate(&mut seen_k)?;
+                reject_duplicate(&mut seen_k, "duplicate affect.trigger value key")?;
                 k = Some(
                     value
                         .as_u64()
@@ -236,7 +239,7 @@ pub fn decode_affect_trigger_value(value: &Value) -> Result<AffectTriggerValue> 
                 );
             }
             AFFECT_TRIGGER_KEY_OBSERVED_N => {
-                reject_duplicate(&mut seen_observed_n)?;
+                reject_duplicate(&mut seen_observed_n, "duplicate affect.trigger value key")?;
                 let observed = value.as_u64().ok_or(Error::InvalidClaimBody(
                     "observedN must be a positive integer",
                 ))?;
@@ -290,6 +293,11 @@ pub(crate) fn validate_affect_trigger_claim_structure(body: &ClaimBody) -> Resul
     if value.affected_person != subject {
         return Err(Error::InvalidClaimBody(
             "affect.trigger affectedPerson must match subject",
+        ));
+    }
+    if body.confidence.to_bits() != value.confidence.to_bits() {
+        return Err(Error::InvalidClaimBody(
+            "affect.trigger wrapper confidence must mirror value confidence",
         ));
     }
     Ok(())
@@ -367,11 +375,9 @@ fn validate_trigger_confidence(confidence: f32) -> Result<()> {
     Ok(())
 }
 
-fn reject_duplicate(seen: &mut bool) -> Result<()> {
+fn reject_duplicate(seen: &mut bool, error: &'static str) -> Result<()> {
     if *seen {
-        return Err(Error::InvalidClaimBody(
-            "duplicate affect.trigger value key",
-        ));
+        return Err(Error::InvalidClaimBody(error));
     }
     *seen = true;
     Ok(())
@@ -406,16 +412,34 @@ fn decode_vad_delta(value: &Value) -> Result<VadDelta> {
         };
         match key {
             AFFECT_TRIGGER_VAD_KEY_VALENCE => {
-                reject_duplicate(&mut seen_valence)?;
-                valence = Some(finite_f32(value, "vadDelta valence must be a number")?);
+                reject_duplicate(&mut seen_valence, "duplicate vadDelta value key")?;
+                valence = Some(finite_f32_in_range(
+                    value,
+                    -2.0,
+                    2.0,
+                    "vadDelta valence must be a number",
+                    "vadDelta valence must be finite in [-2, 2]",
+                )?);
             }
             AFFECT_TRIGGER_VAD_KEY_AROUSAL => {
-                reject_duplicate(&mut seen_arousal)?;
-                arousal = Some(finite_f32(value, "vadDelta arousal must be a number")?);
+                reject_duplicate(&mut seen_arousal, "duplicate vadDelta value key")?;
+                arousal = Some(finite_f32_in_range(
+                    value,
+                    -1.0,
+                    1.0,
+                    "vadDelta arousal must be a number",
+                    "vadDelta arousal must be finite in [-1, 1]",
+                )?);
             }
             AFFECT_TRIGGER_VAD_KEY_DOMINANCE => {
-                reject_duplicate(&mut seen_dominance)?;
-                dominance = Some(finite_f32(value, "vadDelta dominance must be a number")?);
+                reject_duplicate(&mut seen_dominance, "duplicate vadDelta value key")?;
+                dominance = Some(finite_f32_in_range(
+                    value,
+                    -1.0,
+                    1.0,
+                    "vadDelta dominance must be a number",
+                    "vadDelta dominance must be finite in [-1, 1]",
+                )?);
             }
             _ => {
                 return Err(Error::InvalidClaimBody(
@@ -432,16 +456,22 @@ fn decode_vad_delta(value: &Value) -> Result<VadDelta> {
     )
 }
 
-fn finite_f32(value: &Value, error: &'static str) -> Result<f32> {
+fn finite_f32_in_range(
+    value: &Value,
+    min: f64,
+    max: f64,
+    type_error: &'static str,
+    range_error: &'static str,
+) -> Result<f32> {
     let parsed = match value {
-        Value::F32(value) => *value,
-        Value::F64(value) => *value as f32,
-        _ => return Err(Error::InvalidClaimBody(error)),
+        Value::F32(value) => f64::from(*value),
+        Value::F64(value) => *value,
+        _ => return Err(Error::InvalidClaimBody(type_error)),
     };
-    if !parsed.is_finite() {
-        return Err(Error::InvalidClaimBody(error));
+    if !parsed.is_finite() || !(min..=max).contains(&parsed) {
+        return Err(Error::InvalidClaimBody(range_error));
     }
-    Ok(parsed)
+    Ok(parsed as f32)
 }
 
 fn vad_delta_value(delta: VadDelta) -> Value {
