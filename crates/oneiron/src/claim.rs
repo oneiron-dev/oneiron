@@ -1516,6 +1516,21 @@ mod tests {
             ),
             Err(Error::InvalidClaimBody("k must not exceed observedN"))
         );
+        let legacy_impossible_count_value = impossible_trigger_count_value();
+        let legacy_trigger =
+            crate::affect::decode_affect_trigger_value(&legacy_impossible_count_value)?;
+        assert_eq!(legacy_trigger.k(), 13);
+        assert_eq!(legacy_trigger.observed_n(), 12);
+        let legacy_body = ClaimBody::new(
+            crate::affect::AFFECT_TRIGGER_PREDICATE,
+            ClaimSubject::Entity(affected_person),
+            legacy_impossible_count_value,
+            0.82,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        let legacy_salience = psych_mirror_claim_affect_salience(&legacy_body)?;
+        assert!(legacy_salience.is_finite());
         validate_claim_body_bytes(
             &encode(
                 ClaimSubject::Entity(affected_person),
