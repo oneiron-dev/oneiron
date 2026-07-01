@@ -1792,6 +1792,7 @@ mod tests {
         let revived_id = entity(0xD2);
         let forged_id = entity(0xD3);
         let mismatched_id = entity(0xD4);
+        let duplicate_id = entity(0xD8);
         let record = CompanionRecord::persona(
             CompanionScope::personal(entity(0xD5)),
             entity(0xD6),
@@ -1865,7 +1866,66 @@ mod tests {
 
         assert_eq!(
             vault.get_companion_record(&revived_id)?,
-            Some(valid_revived)
+            Some(valid_revived.clone())
+        );
+
+        let err = vault
+            .batch()
+            .put(
+                &duplicate_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 23, end: 23 },
+                23,
+                &encode_companion_record_body(&valid_revived)?,
+            )
+            .commit()
+            .expect_err("second raw active revived row for key must be rejected");
+        assert!(matches!(err, Error::CompanionRecordAlreadyExists));
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let retired_id = entity(0xE1);
+        let revived_id = entity(0xE2);
+        let record = CompanionRecord::persona(
+            CompanionScope::personal(entity(0xE3)),
+            entity(0xE4),
+            Value::from("same batch revived row"),
+            provenance(0xE5),
+            CompanionExportClassification::Portable,
+        );
+        let retired = record.created_at(30)?.retired_at(31)?;
+        let revived = retired.revived_at(32)?;
+
+        vault
+            .batch()
+            .put(
+                &revived_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 32, end: 32 },
+                32,
+                &encode_companion_record_body(&revived)?,
+            )
+            .put(
+                &retired_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 31, end: 31 },
+                31,
+                &encode_companion_record_body(&retired)?,
+            )
+            .commit()?;
+
+        assert_eq!(
+            vault.get_companion_record(&revived_id)?,
+            Some(revived.clone())
+        );
+        assert_eq!(vault.get_companion_record(&retired_id)?, Some(retired));
+        assert_eq!(
+            vault.companion_register()?.lookup(&revived.key()),
+            Some(&revived)
         );
         Ok(())
     }
