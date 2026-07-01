@@ -192,6 +192,10 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // any byte is staged) — quarantine-and-continue, same class as
         // CycleDetected.
         | ErrorKind::ChildOfCardinality
+        // A remote companion register row duplicating a local active
+        // `(scope, subject)` key is a rejection of that remote row, not a
+        // local storage failure. Quarantine it so remat can continue.
+        | ErrorKind::CompanionRecordAlreadyExists
         // ONE-1134: a remote type-120 blob failing the pinned
         // redactionAuditReceipt structural validation, or carrying divergent
         // bytes for an EXISTING receipt id (immutable audit record — keep
@@ -1249,6 +1253,10 @@ mod tests {
         );
         assert_eq!(remote_rejection_reason(&other_gate), None);
         assert_eq!(remote_rejection_reason(&pending_secret_scan), None);
+        assert_eq!(
+            remote_rejection_reason(&Error::CompanionRecordAlreadyExists).as_deref(),
+            Some("CompanionRecordAlreadyExists")
+        );
     }
 
     /// Pinned retention decision: 4096 rows, ≤30 days.

@@ -1639,6 +1639,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
+            if local_entity_is_unsyncable_companion(vault, &edge.target)? {
+                continue;
+            }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             if map_contains_binary(&edges_map, &edge_key) {
                 continue;
@@ -1673,6 +1676,13 @@ fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
     }
     decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
         .map(|record| record.export_classification == CompanionExportClassification::LocalOnly)
+}
+
+fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
+    let Some(raw) = vault.get_raw(id)? else {
+        return Ok(false);
+    };
+    skip_companion_register_sync_mirror(&raw)
 }
 
 fn delete_edges_touching_entities(
@@ -2011,11 +2021,20 @@ mod tests {
         let learned_at = window_key.start_timestamp().unwrap() + 60;
         let local_id = EntityId::from_bytes([0x31; 16]).unwrap();
         let portable_id = EntityId::from_bytes([0x32; 16]).unwrap();
+        let external_local_id = EntityId::from_bytes([0x35; 16]).unwrap();
         let local = companion_record(local_id, CompanionExportClassification::LocalOnly);
         let portable = companion_record(portable_id, CompanionExportClassification::Portable);
+        let external_local =
+            companion_record(external_local_id, CompanionExportClassification::LocalOnly);
 
         vault.create_companion_record(&local_id, &local, learned_at)?;
         vault.create_companion_record(&portable_id, &portable, learned_at)?;
+        vault.create_companion_record(
+            &external_local_id,
+            &external_local,
+            window_key.end_timestamp().unwrap() + 60,
+        )?;
+        vault.put_edge(&portable_id, EdgeKind::Mentions, &external_local_id, 0.8)?;
 
         let doc = create_window_doc("source", &window_key);
         let entities = doc.get_map("entities");
@@ -2042,6 +2061,8 @@ mod tests {
         doc.commit();
 
         reverse_rematerialize(&vault, &doc, &window_key)?;
+        let external_local_edge_key =
+            format_edge_key(&portable_id, EdgeKind::Mentions, &external_local_id);
 
         assert!(
             map_get_bytes(&entities, &local_id.to_hex()).is_none(),
@@ -2054,6 +2075,10 @@ mod tests {
         assert!(
             map_get_bytes(&edges, &local_edge_key).is_none(),
             "reverse remat must remove edges touching local-only companion register rows"
+        );
+        assert!(
+            map_get_bytes(&edges, &external_local_edge_key).is_none(),
+            "reverse remat must not backfill edges to out-of-window local-only companion targets"
         );
         Ok(())
     }

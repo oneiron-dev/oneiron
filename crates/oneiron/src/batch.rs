@@ -16,11 +16,11 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
-    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
-    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad,
-    WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
-    validate_edge_weight,
+    ClaimCandidate, CompanionExportClassification, DecodedEdgeValue, EDGE_KEY_LEN,
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    ENTITY_ID_LEN, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId,
+    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
+    encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2328,6 +2328,13 @@ fn validate_companion_register_put(
                 && &existing_raw[ENTITY_METADATA_HEADER_LEN..] != data
             {
                 return Err(Error::InvalidClaimBody("companion record is retired"));
+            }
+            if existing.export_classification != CompanionExportClassification::LocalOnly
+                && record.export_classification == CompanionExportClassification::LocalOnly
+            {
+                return Err(Error::InvalidClaimBody(
+                    "companion record export cannot be downgraded to local_only",
+                ));
             }
         }
     }

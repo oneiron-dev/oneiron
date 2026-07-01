@@ -51,16 +51,16 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionRecord,
-    CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityClassification, EntityId, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
-    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
-    bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
+    CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
     edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
@@ -956,6 +956,13 @@ impl Vault {
         if existing.key() != record.key() {
             return Err(Error::InvalidClaimBody(
                 "companion record key cannot change",
+            ));
+        }
+        if existing.export_classification != CompanionExportClassification::LocalOnly
+            && record.export_classification == CompanionExportClassification::LocalOnly
+        {
+            return Err(Error::InvalidClaimBody(
+                "companion record export cannot be downgraded to local_only",
             ));
         }
         self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;

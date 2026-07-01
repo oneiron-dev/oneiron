@@ -1497,6 +1497,31 @@ mod tests {
             Some(CompanionExpression::Warm)
         );
 
+        let mut local_only_downgrade = neutral.clone();
+        local_only_downgrade.export_classification = CompanionExportClassification::LocalOnly;
+        let downgrade_err = vault
+            .update_companion_record(&neutral_id, &local_only_downgrade, 15)
+            .expect_err("exported companion records must not silently downgrade to local_only");
+        assert!(matches!(
+            downgrade_err,
+            Error::InvalidClaimBody("companion record export cannot be downgraded to local_only")
+        ));
+        let raw_downgrade = vault
+            .batch()
+            .put(
+                &neutral_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 15, end: 15 },
+                15,
+                &encode_companion_record_body(&local_only_downgrade)?,
+            )
+            .commit()
+            .expect_err("raw batch put must reject export downgrades");
+        assert!(matches!(
+            raw_downgrade,
+            Error::InvalidClaimBody("companion record export cannot be downgraded to local_only")
+        ));
+
         let retired = vault.retire_companion_record(&neutral_id, 15)?;
         assert_eq!(retired.lifecycle, ClaimLifecycleStatus::Retracted);
         let register = vault.companion_register()?;
