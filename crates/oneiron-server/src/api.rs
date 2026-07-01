@@ -7896,6 +7896,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidCodeArtifactBody
+        | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody
         | ErrorKind::MaintenanceKindNotWritable
@@ -14157,6 +14158,27 @@ mod tests {
         assert!(
             error.message().contains("unsupported temporal expression"),
             "message should expose the temporal parse failure"
+        );
+    }
+
+    #[test]
+    fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
+        let error = core_engine_error(
+            "core batch commit failed",
+            oneiron::Error::InvalidSkillBody("provenance must be a non-empty MessagePack map"),
+        );
+
+        assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error.code(), ErrorCode::BadRequest);
+        assert!(
+            error.message().contains("invalid SKILL body"),
+            "message should expose the SKILL validation failure"
+        );
+        assert!(
+            error
+                .message()
+                .contains("provenance must be a non-empty MessagePack map"),
+            "message should expose the specific SKILL validation detail"
         );
     }
 

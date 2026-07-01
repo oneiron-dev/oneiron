@@ -27,6 +27,7 @@ pub(crate) mod ppr;
 pub mod provenance;
 pub mod recovery;
 pub mod serialize;
+pub mod skill;
 pub mod store;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
@@ -117,6 +118,11 @@ pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
+};
+pub use crate::skill::{
+    SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
+    SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
+    decode_skill_record, encode_skill_record,
 };
 pub use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
