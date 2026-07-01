@@ -90,7 +90,16 @@ fn detect_secret(haystack: &str) -> Option<&'static str> {
 }
 
 fn contains_private_key_marker(haystack: &str) -> bool {
-    haystack.contains("-----BEGIN ") && haystack.contains(" PRIVATE KEY-----")
+    haystack.lines().any(|line| {
+        let Some(start) = line.find("-----BEGIN ") else {
+            return false;
+        };
+        let marker = &line[start + "-----BEGIN ".len()..];
+        let Some(end) = marker.find("-----") else {
+            return false;
+        };
+        marker[..end].contains("PRIVATE KEY")
+    })
 }
 
 fn classify_token(token: &str) -> Option<&'static str> {
@@ -112,11 +121,13 @@ fn classify_token(token: &str) -> Option<&'static str> {
 }
 
 fn is_aws_access_key_id(token: &str) -> bool {
-    token.len() == 20
-        && (token.starts_with("AKIA") || token.starts_with("ASIA"))
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    let candidate = token.as_bytes();
+    if candidate.len() < 20 || !(candidate.starts_with(b"AKIA") || candidate.starts_with(b"ASIA")) {
+        return false;
+    }
+    candidate[..20]
+        .iter()
+        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
 fn is_github_token(token: &str) -> bool {
@@ -153,14 +164,23 @@ fn suffix_matches(
     exact_len: bool,
     allowed: fn(u8) -> bool,
 ) -> bool {
-    let Some(suffix) = token.strip_prefix(prefix) else {
+    let token = token.as_bytes();
+    let prefix = prefix.as_bytes();
+    if prefix.is_empty() || token.len() < prefix.len() + suffix_len {
         return false;
-    };
-    if exact_len {
-        suffix.len() == suffix_len && suffix.bytes().all(allowed)
-    } else {
-        suffix.len() >= suffix_len && suffix.bytes().all(allowed)
     }
+
+    if !token.starts_with(prefix) {
+        return false;
+    }
+    let suffix_start = prefix.len();
+    let min_suffix_end = suffix_start + suffix_len;
+    let suffix = if exact_len {
+        &token[suffix_start..min_suffix_end]
+    } else {
+        &token[suffix_start..]
+    };
+    suffix.iter().copied().all(allowed)
 }
 
 fn is_ascii_token_body(byte: u8) -> bool {
@@ -187,6 +207,66 @@ mod tests {
                     &[REASON_DETECTED, REASON_GITHUB_TOKEN]
                 );
                 assert!(reason_codes.iter().all(|code| code.starts_with("gate.")));
+            }
+            other => panic!("expected GateWriteRejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
+        for (payload, expected_reason) in [
+            ("id=AKIA0123456789ABCDEF_suffix", REASON_AWS_ACCESS_KEY_ID),
+            (
+                "token=ghp_0123456789abcdefghijklmnopqrstuvwxyz_suffix",
+                REASON_GITHUB_TOKEN,
+            ),
+            (
+                "key=AIza0123456789abcdefghijklmnopqrstuvwxy_suffix",
+                REASON_GOOGLE_API_KEY,
+            ),
+            (
+                "token=sk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_suffix",
+                REASON_OPENAI_KEY,
+            ),
+        ] {
+            let err = scan_payload(payload.as_bytes())
+                .expect_err("exact-length secret prefix with suffix label must reject");
+
+            match err {
+                Error::GateWriteRejected { reason_codes, .. } => {
+                    assert_eq!(reason_codes.as_slice(), &[REASON_DETECTED, expected_reason]);
+                }
+                other => panic!("expected GateWriteRejected, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn scan_payload_allows_secret_prefix_embedded_in_larger_identifier() {
+        for payload in [
+            "pack=myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
+            "pack=myAKIA0123456789ABCDEF_label",
+            "pack=myAIza0123456789abcdefghijklmnopqrstuvwxy_label",
+            "pack=mysk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_label",
+        ] {
+            scan_payload(payload.as_bytes())
+                .expect("embedded secret-like prefix in larger identifier is not a token");
+        }
+    }
+
+    #[test]
+    fn scan_payload_rejects_pgp_private_key_armor() {
+        let err = scan_payload(
+            b"-----BEGIN PGP PRIVATE KEY BLOCK-----\nsynthetic-private-key-fixture\n-----END PGP PRIVATE KEY BLOCK-----",
+        )
+        .expect_err("PGP private key armor must reject");
+
+        match err {
+            Error::GateWriteRejected { reason_codes, .. } => {
+                assert_eq!(
+                    reason_codes.as_slice(),
+                    &[REASON_DETECTED, REASON_PRIVATE_KEY]
+                );
             }
             other => panic!("expected GateWriteRejected, got {other:?}"),
         }
