@@ -7432,6 +7432,95 @@ fn claim_vad_reappraisal_preserves_provenance_and_supersession() -> Result<()> {
 }
 
 #[test]
+fn claim_vad_consolidation_rejects_missing_and_closed_claims() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let missing = EntityId::now();
+    let err = block_on_ready(vault.consolidate_claim_vad(&missing, 10))
+        .expect_err("missing claim must fail");
+    assert_matches!(err, Error::EntityNotFound);
+
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let body = claim_vad_fixture_body(subject, &[]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.retract_claim(&claim, 40)?;
+
+    let err = block_on_ready(vault.consolidate_claim_vad(&claim, 50))
+        .expect_err("closed claim must fail");
+    assert_matches!(
+        err,
+        Error::ClaimAlreadyClosed {
+            status: ClaimLifecycleStatus::Retracted
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_without_evidence_clears_edges_without_state() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    let body = claim_vad_fixture_body(subject, &[]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge_with_vad(
+        &claim,
+        EdgeKind::Mentions,
+        &subject,
+        0.6,
+        Vad {
+            valence: 0.9,
+            arousal: 0.7,
+            dominance: 0.8,
+        },
+    )?;
+
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    assert_eq!(outcome.vad, None);
+    assert!(outcome.evidence_turns.is_empty());
+    assert_eq!(outcome.semantic_edges_updated, 1);
+    assert_eq!(outcome.reappraisal.active_claim_id, None);
+    assert_eq!(outcome.reappraisal.created_claim_id, None);
+    assert!(outcome.reappraisal.superseded_claim_ids.is_empty());
+
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("cleared VAD"), Vad::NEUTRAL);
+
+    let mut active_claim_vad_states = Vec::new();
+    for state_id in vault.claims_for_subject(&claim)? {
+        let Some(state) = vault.get_claim(&state_id)? else {
+            continue;
+        };
+        if state.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+            && state.lifecycle == ClaimLifecycleStatus::Active
+        {
+            active_claim_vad_states.push(state_id);
+        }
+    }
+    assert!(active_claim_vad_states.is_empty());
+    Ok(())
+}
+
+#[test]
 fn claim_vad_reappraisal_clears_state_when_turn_evidence_disappears() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
