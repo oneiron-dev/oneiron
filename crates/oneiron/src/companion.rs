@@ -1823,6 +1823,8 @@ mod tests {
             retired.lifecycle_events,
             vec![CompanionLifecycleEvent::retired(15)]
         );
+        let repeated_retire = vault.retire_companion_record(&neutral_id, 16)?;
+        assert_eq!(repeated_retire, retired);
         let register = vault.companion_register()?;
         assert!(
             companion_export_layer(&register, &expressions).is_empty(),
