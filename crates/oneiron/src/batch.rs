@@ -37,6 +37,15 @@ pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 
+fn conflict_claim_candidate(
+    predicate: &'static str,
+    subject: EntityId,
+    value: Value,
+    confidence: f32,
+) -> ClaimCandidate {
+    ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
+}
+
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) struct EdgeValueFields {
@@ -367,12 +376,7 @@ impl<'a> BatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(
-                PREDICATE_CONFLICT_OPEN,
-                ClaimSubject::Entity(subject),
-                value,
-                confidence,
-            ),
+            conflict_claim_candidate(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
             envelope,
             occurred,
             learned_at,
@@ -396,12 +400,7 @@ impl<'a> BatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(
-                PREDICATE_CONFLICT_RESOLVED,
-                ClaimSubject::Entity(subject),
-                value,
-                confidence,
-            ),
+            conflict_claim_candidate(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
             envelope,
             occurred,
             learned_at,
@@ -910,12 +909,7 @@ impl<'a> TxnBatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(
-                PREDICATE_CONFLICT_OPEN,
-                ClaimSubject::Entity(subject),
-                value,
-                confidence,
-            ),
+            conflict_claim_candidate(PREDICATE_CONFLICT_OPEN, subject, value, confidence),
             envelope,
             occurred,
             learned_at,
@@ -939,12 +933,7 @@ impl<'a> TxnBatchBuilder<'a> {
     ) -> Self {
         self.claim_candidate(
             id,
-            ClaimCandidate::new(
-                PREDICATE_CONFLICT_RESOLVED,
-                ClaimSubject::Entity(subject),
-                value,
-                confidence,
-            ),
+            conflict_claim_candidate(PREDICATE_CONFLICT_RESOLVED, subject, value, confidence),
             envelope,
             occurred,
             learned_at,

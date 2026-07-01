@@ -32,9 +32,9 @@ const CLAIM_VAD_EVIDENCE_KEY_ANNOTATED_AT: &str = "annotated_at";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VadDelta {
-    pub valence: f32,
-    pub arousal: f32,
-    pub dominance: f32,
+    valence: f32,
+    arousal: f32,
+    dominance: f32,
 }
 
 impl VadDelta {
@@ -53,16 +53,31 @@ impl VadDelta {
         validate_delta_component(self.arousal, -1.0, 1.0, "vadDelta arousal")?;
         validate_delta_component(self.dominance, -1.0, 1.0, "vadDelta dominance")
     }
+
+    #[must_use]
+    pub fn valence(self) -> f32 {
+        self.valence
+    }
+
+    #[must_use]
+    pub fn arousal(self) -> f32 {
+        self.arousal
+    }
+
+    #[must_use]
+    pub fn dominance(self) -> f32 {
+        self.dominance
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AffectTriggerValue {
-    pub affected_person: EntityId,
-    pub trigger_ref: EntityId,
-    pub vad_delta: VadDelta,
-    pub confidence: f32,
-    pub k: u64,
-    pub observed_n: u64,
+    affected_person: EntityId,
+    trigger_ref: EntityId,
+    vad_delta: VadDelta,
+    confidence: f32,
+    k: u64,
+    observed_n: u64,
 }
 
 impl AffectTriggerValue {
@@ -87,6 +102,36 @@ impl AffectTriggerValue {
             k,
             observed_n,
         })
+    }
+
+    #[must_use]
+    pub fn affected_person(&self) -> EntityId {
+        self.affected_person
+    }
+
+    #[must_use]
+    pub fn trigger_ref(&self) -> EntityId {
+        self.trigger_ref
+    }
+
+    #[must_use]
+    pub fn vad_delta(&self) -> VadDelta {
+        self.vad_delta
+    }
+
+    #[must_use]
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+
+    #[must_use]
+    pub fn k(&self) -> u64 {
+        self.k
+    }
+
+    #[must_use]
+    pub fn observed_n(&self) -> u64 {
+        self.observed_n
     }
 }
 
@@ -466,6 +511,13 @@ fn finite_f32_in_range(
     let parsed = match value {
         Value::F32(value) => f64::from(*value),
         Value::F64(value) => *value,
+        Value::Integer(value) => {
+            if let Some(value) = value.as_i64() {
+                value as f64
+            } else {
+                return Err(Error::InvalidClaimBody(type_error));
+            }
+        }
         _ => return Err(Error::InvalidClaimBody(type_error)),
     };
     if !parsed.is_finite() || !(min..=max).contains(&parsed) {

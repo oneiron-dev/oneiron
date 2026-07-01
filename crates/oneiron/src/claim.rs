@@ -1323,7 +1323,7 @@ mod tests {
             let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
                 panic!("affect.trigger value is a map");
             };
-            entries.push((Value::from("confidence"), Value::F32(value.confidence)));
+            entries.push((Value::from("confidence"), Value::F32(value.confidence())));
             Value::Map(entries)
         };
         let duplicate_vad_delta_value = || {
@@ -1364,6 +1364,24 @@ mod tests {
             *arousal = Value::F64(1.0_f64 + f64::EPSILON);
             Value::Map(entries)
         };
+        let integer_vad_delta_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            for (_, component) in vad_entries {
+                *component = Value::from(0_i64);
+            }
+            Value::Map(entries)
+        };
 
         validate_claim_body_bytes(
             &encode(
@@ -1395,6 +1413,13 @@ mod tests {
             ),
             Err(Error::InvalidClaimBody(_))
         );
+        validate_claim_body_bytes(
+            &encode(
+                ClaimSubject::Entity(affected_person),
+                integer_vad_delta_value(),
+            )?,
+            false,
+        )?;
         assert_matches!(
             validate_claim_body_bytes(
                 &encode_with_confidence(
@@ -1488,6 +1513,23 @@ mod tests {
             ),
             Err(Error::InvalidClaimBody(
                 "conflict claim value must not be nil"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    PREDICATE_CONFLICT_RESOLVED,
+                    ClaimSubject::Edge {
+                        source: EntityId::from_bytes([0x47; 16]).expect("valid id"),
+                        kind: EdgeKind::Mentions,
+                        target: EntityId::from_bytes([0x48; 16]).expect("valid id"),
+                    },
+                    Value::from("edge-scoped conflict"),
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "conflict claim subject must be an entity"
             ))
         );
         Ok(())

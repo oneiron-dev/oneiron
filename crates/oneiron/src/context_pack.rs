@@ -906,7 +906,7 @@ fn validate_claim_value_references(
     let Some(value) = crate::affect::decode_affect_trigger_claim(body)? else {
         return Ok(());
     };
-    validate_pack_payload_reference(store, rtxn, &value.trigger_ref, quarantine_index)
+    validate_pack_payload_reference(store, rtxn, &value.trigger_ref(), quarantine_index)
 }
 
 fn load_pack_quarantine_index(store: &Store, rtxn: &RoTxn<'_>) -> Result<PackQuarantineIndex> {
@@ -1955,6 +1955,23 @@ mod tests {
             val.get("observedN").and_then(serde_json::Value::as_u64),
             Some(16)
         );
+        assert_eq!(val.get("k").and_then(serde_json::Value::as_u64), Some(4));
+        let confidence = val
+            .get("confidence")
+            .and_then(serde_json::Value::as_f64)
+            .expect("affect trigger confidence");
+        assert!((confidence - 0.67).abs() < 1e-6);
+        let vad_delta = val
+            .get("vadDelta")
+            .and_then(serde_json::Value::as_object)
+            .expect("affect trigger vadDelta");
+        for (key, expected) in [("valence", -0.1), ("arousal", 0.25), ("dominance", -0.2)] {
+            let actual = vad_delta
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .expect("vadDelta component");
+            assert!((actual - expected).abs() < 1e-6, "{key}");
+        }
         Ok(())
     }
 
@@ -3608,7 +3625,7 @@ mod tests {
             crate::AFFECT_TRIGGER_PREDICATE,
             crate::claim::ClaimSubject::Entity(person),
             crate::affect::affect_trigger_value(&trigger_value),
-            trigger_value.confidence,
+            trigger_value.confidence(),
             crate::claim::ClaimApprovalStatus::Auto,
             crate::claim::ClaimLifecycleStatus::Active,
         );
