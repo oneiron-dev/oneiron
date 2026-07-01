@@ -19,6 +19,7 @@ const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_EVENT,
     ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_SKILL,
     ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_PLACE,
@@ -1034,9 +1035,9 @@ fn token_budget_droppable_count(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
 
 fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
     match entity_type {
-        0 => allocation.claims,
-        1 => allocation.turns,
-        8 => allocation.summaries,
+        ENTITY_TYPE_CLAIM | ENTITY_TYPE_COMPANION_REGISTER => allocation.claims,
+        ENTITY_TYPE_TURN => allocation.turns,
+        ENTITY_TYPE_SUMMARY => allocation.summaries,
         _ => allocation.other,
     }
 }
@@ -2153,6 +2154,7 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
             &["kind", "scope", "subject", "lifecycle", "export"]
         }
         (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full) => &[
+            "schema_version",
             "kind",
             "scope",
             "subject",
@@ -4516,6 +4518,10 @@ mod tests {
         let actor_ref = EntityId::from_bytes_unchecked([0x35; 16]).to_hex();
 
         let persona_fields = HashMap::from([
+            (
+                "schema_version".to_owned(),
+                serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            ),
             ("kind".to_owned(), Value::String("persona".to_owned())),
             ("scope".to_owned(), serde_json::json!({ "kind": "neutral" })),
             (
@@ -4542,6 +4548,10 @@ mod tests {
             ),
         ]);
         let relationship_fields = HashMap::from([
+            (
+                "schema_version".to_owned(),
+                serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            ),
             ("kind".to_owned(), Value::String("relationship".to_owned())),
             (
                 "scope".to_owned(),
@@ -4630,6 +4640,7 @@ mod tests {
             Value::String("relationship".to_owned())
         );
         assert!(records[0].get("provenance").is_none());
+        assert!(records[0].get("schema_version").is_none());
         assert!(records[0].get("value").is_none());
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard),
@@ -4639,13 +4650,78 @@ mod tests {
         let cfg_full = config(PackFormat::Json, FieldProfile::Full);
         let full: Value =
             serde_json::from_slice(&serialize_pack(&pack, &cfg_full)).expect("json parse");
+        assert_eq!(
+            full["companion_records"][0]["schema_version"],
+            serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)
+        );
         assert!(full["companion_records"][0].get("provenance").is_some());
         assert!(full["companion_records"][0].get("value").is_none());
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Full),
+            &[
+                "schema_version",
+                "kind",
+                "scope",
+                "subject",
+                "lifecycle",
+                "export",
+                "provenance"
+            ]
+        );
 
         let cfg_plain = config(PackFormat::Plaintext, FieldProfile::Standard);
         let text = String::from_utf8(serialize_pack(&pack, &cfg_plain)).expect("utf8");
         assert!(text.contains("COMPANION_RECORDS"));
         assert!(text.contains("relationship"));
+    }
+
+    #[test]
+    fn companion_register_records_budget_with_fixed_state_allocation() {
+        assert!(GROUP_ORDER.contains(&ENTITY_TYPE_COMPANION_REGISTER));
+
+        let source_id = [0x64; 16];
+        let groups = group_entities(vec![PreparedEntity {
+            entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+            score: 0.9,
+            source: PreparedEntitySource::Result,
+            source_id,
+            id: "cr01".to_owned(),
+            fields: vec![
+                ("kind".to_owned(), Value::String("persona".to_owned())),
+                ("scope".to_owned(), serde_json::json!({ "kind": "neutral" })),
+                (
+                    "subject".to_owned(),
+                    serde_json::json!({
+                        "kind": "persona",
+                        "persona_ref": EntityId::from_bytes_unchecked([0x31; 16]).to_hex(),
+                    }),
+                ),
+            ],
+        }]);
+        let needed = estimate_groups_chars(&groups);
+        let zero_other_allocation = TokenAllocation {
+            claims: 1.0,
+            turns: 0.0,
+            summaries: 0.0,
+            other: 0.0,
+        };
+
+        assert_eq!(
+            type_fraction(ENTITY_TYPE_COMPANION_REGISTER, &zero_other_allocation),
+            zero_other_allocation.claims
+        );
+
+        let (budgeted, used) = budget_groups(&groups, &zero_other_allocation, needed);
+        let records = budgeted
+            .iter()
+            .find_map(|(entity_type, rows)| {
+                (*entity_type == ENTITY_TYPE_COMPANION_REGISTER).then_some(rows)
+            })
+            .expect("companion register group should keep state allocation budget");
+
+        assert_eq!(used, needed);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source_id, source_id);
     }
 
     #[test]
