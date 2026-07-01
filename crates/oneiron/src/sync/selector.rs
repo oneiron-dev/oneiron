@@ -245,7 +245,7 @@ pub fn filtered_window_doc(
     selector: &SyncSelector,
 ) -> Result<LoroDoc> {
     authorize_sync_selector(vault, grant_scope, selector)?;
-    Ok(filter_window_doc(source, key, selector))
+    Ok(filter_window_doc(source, key, grant_scope, selector))
 }
 
 /// Role carried by a member/guest federation import path.
@@ -495,7 +495,12 @@ pub fn authorize_sync_selector(
     Ok(())
 }
 
-fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector) -> LoroDoc {
+fn filter_window_doc(
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> LoroDoc {
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -527,7 +532,9 @@ fn filter_window_doc(source: &LoroDoc, key: &WindowKey, selector: &SyncSelector)
         if tombstoned.contains(&id) {
             return;
         }
-        let Some(decision) = entity_selector_decision(&id, blob, selector, &facet_scope) else {
+        let Some(decision) =
+            entity_selector_decision(&id, blob, grant_scope, selector, &facet_scope)
+        else {
             return;
         };
         candidates.insert(id);
@@ -655,12 +662,13 @@ fn facet_scope_by_source(
 fn entity_selector_decision(
     id: &EntityId,
     blob: &[u8],
+    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     facet_scope: &HashMap<EntityId, FacetScope>,
 ) -> Option<EntitySelectorDecision> {
     let header = EntityMetadataHeader::parse(blob)?;
     if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER
-        && !companion_register_passes_selector(blob)
+        && !companion_register_passes_selector(blob, grant_scope)
     {
         return None;
     }
@@ -706,14 +714,31 @@ fn entity_selector_decision(
     })
 }
 
-fn companion_register_passes_selector(blob: &[u8]) -> bool {
-    decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| {
-            record.lifecycle == ClaimLifecycleStatus::Active
-                && record.export_classification == CompanionExportClassification::Portable
-                && !matches!(record.scope, CompanionScope::SharedVault { .. })
-        })
-        .unwrap_or(false)
+fn companion_register_passes_selector(blob: &[u8], grant_scope: FederationGrantScope) -> bool {
+    let Ok(record) = decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..]) else {
+        return false;
+    };
+    if !matches!(
+        record.lifecycle,
+        ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
+    ) {
+        return false;
+    }
+    match record.export_classification {
+        CompanionExportClassification::LocalOnly => false,
+        CompanionExportClassification::Portable => {
+            !matches!(record.scope, CompanionScope::SharedVault { .. })
+        }
+        CompanionExportClassification::SharedVault => {
+            let FederationGrantScope::Vault {
+                vault_id: grant_vault_id,
+            } = grant_scope;
+            matches!(
+                record.scope,
+                CompanionScope::SharedVault { vault_id } if vault_id == grant_vault_id
+            )
+        }
+    }
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {
@@ -975,7 +1000,21 @@ mod tests {
         scope: CompanionScope,
         export_classification: CompanionExportClassification,
     ) -> Vec<u8> {
-        let record = CompanionRecord::persona(
+        companion_record_body_in_scope_with_lifecycle(
+            persona_ref,
+            scope,
+            export_classification,
+            ClaimLifecycleStatus::Active,
+        )
+    }
+
+    fn companion_record_body_in_scope_with_lifecycle(
+        persona_ref: EntityId,
+        scope: CompanionScope,
+        export_classification: CompanionExportClassification,
+        lifecycle: ClaimLifecycleStatus,
+    ) -> Vec<u8> {
+        let mut record = CompanionRecord::persona(
             scope,
             persona_ref,
             Value::from("private companion tuning"),
@@ -988,6 +1027,7 @@ mod tests {
             ),
             export_classification,
         );
+        record.lifecycle = lifecycle;
         encode_companion_record_body(&record).unwrap()
     }
 
@@ -1368,6 +1408,8 @@ mod tests {
         let local_id = entity_id(0x3A);
         let portable_id = entity_id(0x3B);
         let shared_id = entity_id(0x3C);
+        let other_shared_id = entity_id(0x3D);
+        let retired_portable_id = entity_id(0x3E);
         insert_entity(
             &doc,
             local_id,
@@ -1388,6 +1430,27 @@ mod tests {
                 shared_id,
                 CompanionScope::shared_vault(7),
                 CompanionExportClassification::SharedVault,
+            ),
+        );
+        insert_entity(
+            &doc,
+            other_shared_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_record_body_in_scope(
+                other_shared_id,
+                CompanionScope::shared_vault(8),
+                CompanionExportClassification::SharedVault,
+            ),
+        );
+        insert_entity(
+            &doc,
+            retired_portable_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_record_body_in_scope_with_lifecycle(
+                retired_portable_id,
+                CompanionScope::neutral(),
+                CompanionExportClassification::Portable,
+                ClaimLifecycleStatus::Retracted,
             ),
         );
         doc.commit();
@@ -1412,8 +1475,16 @@ mod tests {
             "selector export should keep syncable companion register records"
         );
         assert!(
-            map_get_bytes(&entities, &shared_id.to_hex()).is_none(),
-            "selector export must not include shared-vault companion register records"
+            map_get_bytes(&entities, &shared_id.to_hex()).is_some(),
+            "selector export should keep companion records for the authorized shared vault"
+        );
+        assert!(
+            map_get_bytes(&entities, &other_shared_id.to_hex()).is_none(),
+            "selector export must not include another shared vault's companion register records"
+        );
+        assert!(
+            map_get_bytes(&entities, &retired_portable_id.to_hex()).is_some(),
+            "selector export should propagate portable companion retirement records"
         );
     }
 
