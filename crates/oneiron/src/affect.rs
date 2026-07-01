@@ -227,6 +227,23 @@ pub fn affect_trigger_value(value: &AffectTriggerValue) -> Value {
 }
 
 pub fn decode_affect_trigger_value(value: &Value) -> Result<AffectTriggerValue> {
+    decode_affect_trigger_value_with_count_mode(value, AffectTriggerCountMode::LegacyCompatible)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AffectTriggerCountMode {
+    Strict,
+    LegacyCompatible,
+}
+
+fn decode_affect_trigger_value_strict(value: &Value) -> Result<AffectTriggerValue> {
+    decode_affect_trigger_value_with_count_mode(value, AffectTriggerCountMode::Strict)
+}
+
+fn decode_affect_trigger_value_with_count_mode(
+    value: &Value,
+    count_mode: AffectTriggerCountMode,
+) -> Result<AffectTriggerValue> {
     let Value::Map(entries) = value else {
         return Err(Error::InvalidClaimBody(
             "affect.trigger value must be a map",
@@ -306,14 +323,33 @@ pub fn decode_affect_trigger_value(value: &Value) -> Result<AffectTriggerValue> 
         }
     }
 
-    AffectTriggerValue::new(
-        affected_person.ok_or(Error::InvalidClaimBody("missing affectedPerson"))?,
-        trigger_ref.ok_or(Error::InvalidClaimBody("missing triggerRef"))?,
-        vad_delta.ok_or(Error::InvalidClaimBody("missing vadDelta"))?,
-        confidence.ok_or(Error::InvalidClaimBody("missing affect.trigger confidence"))?,
-        k.ok_or(Error::InvalidClaimBody("missing k"))?,
-        observed_n.ok_or(Error::InvalidClaimBody("missing observedN"))?,
-    )
+    let affected_person =
+        affected_person.ok_or(Error::InvalidClaimBody("missing affectedPerson"))?;
+    let trigger_ref = trigger_ref.ok_or(Error::InvalidClaimBody("missing triggerRef"))?;
+    let vad_delta = vad_delta.ok_or(Error::InvalidClaimBody("missing vadDelta"))?;
+    let confidence =
+        confidence.ok_or(Error::InvalidClaimBody("missing affect.trigger confidence"))?;
+    let k = k.ok_or(Error::InvalidClaimBody("missing k"))?;
+    let observed_n = observed_n.ok_or(Error::InvalidClaimBody("missing observedN"))?;
+
+    match count_mode {
+        AffectTriggerCountMode::Strict => AffectTriggerValue::new(
+            affected_person,
+            trigger_ref,
+            vad_delta,
+            confidence,
+            k,
+            observed_n,
+        ),
+        AffectTriggerCountMode::LegacyCompatible => Ok(AffectTriggerValue {
+            affected_person,
+            trigger_ref,
+            vad_delta,
+            confidence,
+            k,
+            observed_n,
+        }),
+    }
 }
 
 pub fn decode_affect_trigger_claim(body: &ClaimBody) -> Result<Option<AffectTriggerValue>> {
@@ -339,7 +375,7 @@ pub(crate) fn validate_affect_trigger_claim_structure(body: &ClaimBody) -> Resul
             "affect.trigger subject must be an entity",
         ));
     };
-    let value = decode_affect_trigger_value(&body.value)?;
+    let value = decode_affect_trigger_value_strict(&body.value)?;
     if value.affected_person != subject {
         return Err(Error::InvalidClaimBody(
             "affect.trigger affectedPerson must match subject",
