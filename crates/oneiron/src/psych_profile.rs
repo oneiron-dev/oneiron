@@ -105,19 +105,19 @@ pub enum PsychProfileSnapshotStatus {
 }
 
 impl PsychProfileSnapshotStatus {
-    /// Returns the pinned on-disk string for this status.
+    /// Returns the pinned on-disk integer code for this status.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub const fn as_code(self) -> u64 {
         match self {
-            Self::Fresh => "fresh",
-            Self::Stale => "stale",
+            Self::Fresh => 1,
+            Self::Stale => 2,
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    fn parse_code(value: u64) -> Option<Self> {
         match value {
-            "fresh" => Some(Self::Fresh),
-            "stale" => Some(Self::Stale),
+            1 => Some(Self::Fresh),
+            2 => Some(Self::Stale),
             _ => None,
         }
     }
@@ -277,7 +277,7 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
         ),
         (
             Value::from(KEY_STATUS),
-            Value::from(profile.status.as_str()),
+            Value::from(profile.status.as_code()),
         ),
     ]);
 
@@ -330,9 +330,9 @@ fn decode_psych_profile_value(value: &Value) -> Result<PsychProfile> {
         )?)?,
         confidence: decode_confidence(required_value(entries, KEY_CONFIDENCE)?)?,
         status: required_value(entries, KEY_STATUS)?
-            .as_str()
-            .and_then(PsychProfileSnapshotStatus::parse)
-            .ok_or_else(|| invalid_profile("status must be fresh or stale"))?,
+            .as_u64()
+            .and_then(PsychProfileSnapshotStatus::parse_code)
+            .ok_or_else(|| invalid_profile("status must be typed code 1 or 2"))?,
     };
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(PSYCH_PROFILE_SCHEMA_VERSION) {
@@ -381,6 +381,12 @@ fn canonical_source_revision_ids(mut ids: Vec<EntityId>) -> Result<Vec<EntityId>
         ));
     }
     Ok(ids)
+}
+
+fn canonical_expected_source_revision_ids(mut ids: Vec<EntityId>) -> Vec<EntityId> {
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn encode_confidence(confidence: PsychProfileConfidence) -> Value {
@@ -553,7 +559,7 @@ impl crate::Vault {
             });
         }
         if let Some(expected) = expected_source_revision_ids {
-            let expected = canonical_source_revision_ids(expected.to_vec())?;
+            let expected = canonical_expected_source_revision_ids(expected.to_vec());
             if expected != profile.source_revision_ids {
                 let actual = profile.source_revision_ids.clone();
                 return Ok(PsychProfileState::Stale {
@@ -666,7 +672,7 @@ mod tests {
                 encode_source_revision_ids(&profile.source_revision_ids),
             ),
             (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
-            (KEY_STATUS, Value::from(profile.status.as_str())),
+            (KEY_STATUS, Value::from(profile.status.as_code())),
         ];
         entries.push(("unexpected", Value::from(true)));
 
@@ -695,12 +701,49 @@ mod tests {
                 ]),
             ),
             (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
-            (KEY_STATUS, Value::from(profile.status.as_str())),
+            (KEY_STATUS, Value::from(profile.status.as_code())),
         ];
 
         let err = decode_psych_profile_body(&msgpack_map(entries))
             .expect_err("stored source revisions must be canonical");
         assert_eq!(err.kind(), ErrorKind::InvalidPsychProfileBody);
+    }
+
+    #[test]
+    fn psych_profile_status_persists_as_typed_code_and_rejects_strings() -> Result<()> {
+        let profile = test_profile();
+        let encoded = encode_psych_profile_body(&profile)?;
+        let Value::Map(entries) = rmpv::decode::read_value(&mut Cursor::new(&encoded))
+            .expect("encoded profile is MessagePack")
+        else {
+            panic!("encoded profile must be a MessagePack map");
+        };
+        assert_eq!(
+            required_value(&entries, KEY_STATUS)?.as_u64(),
+            Some(profile.status.as_code())
+        );
+
+        let string_status_body = msgpack_map(vec![
+            (
+                KEY_SCHEMA_VERSION,
+                Value::from(PSYCH_PROFILE_SCHEMA_VERSION),
+            ),
+            (KEY_SUBJECT_REF, Value::from(profile.subject_ref.to_hex())),
+            (KEY_COMPACT, Value::from(profile.compact.as_str())),
+            (KEY_TEXT, Value::from(profile.text.as_str())),
+            (KEY_NARRATIVE, Value::from(profile.narrative.as_str())),
+            (
+                KEY_SOURCE_REVISION_IDS,
+                encode_source_revision_ids(&profile.source_revision_ids),
+            ),
+            (KEY_CONFIDENCE, encode_confidence(profile.confidence)),
+            (KEY_STATUS, Value::from("fresh")),
+        ]);
+
+        let err = decode_psych_profile_body(&string_status_body)
+            .expect_err("string status must fail closed under v6 schema");
+        assert_eq!(err.kind(), ErrorKind::InvalidPsychProfileBody);
+        Ok(())
     }
 
     #[test]
@@ -730,6 +773,20 @@ mod tests {
                 ..
             }
         ));
+
+        let empty_expected = vault.psych_profile_state(&id, Some(&[]))?;
+        match empty_expected {
+            PsychProfileState::Stale {
+                reason: PsychProfileStaleReason::SourceRevisionMismatch { expected, actual },
+                ..
+            } => {
+                assert!(expected.is_empty());
+                assert_eq!(actual, profile.source_revision_ids);
+            }
+            other => {
+                panic!("empty expected source set should produce typed stale state: {other:?}")
+            }
+        }
         Ok(())
     }
 
