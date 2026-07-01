@@ -15,8 +15,13 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::access_grant::{AccessGrant, decode_access_grant_body, encode_access_grant_body};
 use crate::affect::{
     CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,
-    ClaimVadTurnEvidence, claim_vad_evidence_value, claim_vad_value,
-    collect_claim_turn_evidence_refs, mean_vad,
+    ClaimVadTurnEvidence, VadDelta, claim_vad_evidence_value, claim_vad_value,
+    collect_claim_turn_evidence_refs,
+    coping::{
+        COPING_OUTCOME_PREDICATE, CopingOutcomeUpdate, coping_outcome_evidence_value,
+        coping_outcome_value, decode_coping_outcome_claim,
+    },
+    mean_vad,
 };
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::batch::{
@@ -1738,6 +1743,199 @@ impl Vault {
         }
         states.sort_by_key(|state| state.id);
         Ok(states)
+    }
+
+    /// Updates an active `coping.outcome` claim from two turn-level VAD
+    /// annotations. The baseline turn supplies the before state; the later
+    /// turn supplies the after state.
+    pub fn update_coping_outcome_from_turn_vad(
+        &self,
+        prior_claim_id: &EntityId,
+        baseline_turn_id: &EntityId,
+        later_turn_id: &EntityId,
+        confidence: f32,
+        now: u64,
+    ) -> Result<CopingOutcomeUpdate> {
+        let baseline =
+            self.get_turn_vad_annotation(baseline_turn_id)?
+                .ok_or(Error::InvalidClaimBody(
+                    "baseline turn VAD annotation missing",
+                ))?;
+        let later = self
+            .get_turn_vad_annotation(later_turn_id)?
+            .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
+        let delta = VadDelta::new(
+            later.vad.valence - baseline.vad.valence,
+            later.vad.arousal - baseline.vad.arousal,
+            later.vad.dominance - baseline.vad.dominance,
+        )?;
+        self.update_coping_outcome_from_turn_vad_delta_checked(
+            prior_claim_id,
+            *later_turn_id,
+            delta,
+            confidence,
+            now,
+            Some(*baseline_turn_id),
+        )
+    }
+
+    /// Supersedes an active `coping.outcome` claim with an updated aggregate
+    /// derived from a later turn-level VAD delta.
+    pub fn update_coping_outcome_from_turn_vad_delta(
+        &self,
+        prior_claim_id: &EntityId,
+        turn_id: EntityId,
+        vad_delta: VadDelta,
+        confidence: f32,
+        now: u64,
+    ) -> Result<CopingOutcomeUpdate> {
+        self.update_coping_outcome_from_turn_vad_delta_checked(
+            prior_claim_id,
+            turn_id,
+            vad_delta,
+            confidence,
+            now,
+            None,
+        )
+    }
+
+    fn update_coping_outcome_from_turn_vad_delta_checked(
+        &self,
+        prior_claim_id: &EntityId,
+        turn_id: EntityId,
+        vad_delta: VadDelta,
+        confidence: f32,
+        now: u64,
+        expected_strategy_ref: Option<EntityId>,
+    ) -> Result<CopingOutcomeUpdate> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, prior_claim_id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        let prior_body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if prior_body.predicate != COPING_OUTCOME_PREDICATE {
+            return Err(Error::InvalidClaimBody("claim is not a coping.outcome"));
+        }
+        if prior_body.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::ClaimAlreadyClosed {
+                status: prior_body.lifecycle,
+            });
+        }
+        let prior_value = decode_coping_outcome_claim(&prior_body)?
+            .ok_or(Error::InvalidClaimBody("claim is not a coping.outcome"))?;
+        if let Some(expected_strategy_ref) = expected_strategy_ref
+            && prior_value.strategy_ref() != expected_strategy_ref
+        {
+            return Err(Error::InvalidClaimBody(
+                "baseline turn must match coping.outcome strategyRef",
+            ));
+        }
+        let prior_valid_from = prior_body.valid_from.ok_or(Error::InvalidClaimBody(
+            "coping.outcome valid_from is required",
+        ))?;
+        if now < prior_valid_from || now < header.occurred_start {
+            return Err(Error::InvalidClaimBody(
+                "coping.outcome update timestamp must not precede active valid_from",
+            ));
+        }
+        let updated_value = prior_value.with_observation(vad_delta, confidence)?;
+        let ClaimSubject::Entity(subject) = prior_body.subject else {
+            return Err(Error::InvalidClaimBody(
+                "coping.outcome subject must be an entity",
+            ));
+        };
+
+        let new_claim_id = EntityId::now();
+        let mut closed = prior_body.clone();
+        closed.lifecycle = ClaimLifecycleStatus::Superseded;
+        closed.valid_to = Some(now);
+        let closed_data = encode_claim_body(&closed)?;
+
+        let mut updated_body = ClaimBody::new(
+            COPING_OUTCOME_PREDICATE,
+            prior_body.subject,
+            coping_outcome_value(&updated_value),
+            updated_value.confidence(),
+            prior_body.approval,
+            ClaimLifecycleStatus::Active,
+        );
+        updated_body.salience = prior_body.salience;
+        updated_body.evidence = Some(coping_outcome_evidence_value(
+            turn_id, vad_delta, confidence,
+        ));
+        updated_body.source = Some(ClaimSource::Inferred);
+        updated_body.valid_from = Some(now);
+        updated_body.world = prior_body.world;
+        updated_body.scope = prior_body.scope;
+        let updated_data = encode_claim_body(&updated_body)?;
+
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![
+                BatchOp::Put {
+                    id: *prior_claim_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: now,
+                    },
+                    learned_at: header.learned_at,
+                    data: closed_data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                },
+                BatchOp::Put {
+                    id: new_claim_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: now,
+                        end: u64::MAX,
+                    },
+                    learned_at: now,
+                    data: updated_data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                },
+                BatchOp::Edge {
+                    src: new_claim_id,
+                    kind: EdgeKind::ClaimOf,
+                    tgt: subject,
+                    weight: CLAIM_OF_DEFAULT_WEIGHT,
+                    vad: Vad::NEUTRAL,
+                },
+                BatchOp::EdgeWithCreatedAt {
+                    src: new_claim_id,
+                    kind: EdgeKind::Supersedes,
+                    tgt: *prior_claim_id,
+                    weight: SUPERSEDES_DEFAULT_WEIGHT,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                },
+            ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+
+        Ok(CopingOutcomeUpdate {
+            prior_claim_id: *prior_claim_id,
+            active_claim_id: new_claim_id,
+            superseded_claim_ids: vec![*prior_claim_id],
+            value: updated_value,
+        })
     }
 
     fn annotate_entity_vad(
