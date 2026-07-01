@@ -58,14 +58,24 @@ pub(crate) fn mean_vad(evidence: &[ClaimVadTurnEvidence]) -> Option<Vad> {
         return None;
     }
 
-    let len = evidence.len() as f32;
-    let mut vad = Vad::NEUTRAL;
+    let len = evidence.len() as f64;
+    let mut valence = 0.0_f64;
+    let mut arousal = 0.0_f64;
+    let mut dominance = 0.0_f64;
     for item in evidence {
-        vad.valence += item.annotation.vad.valence / len;
-        vad.arousal += item.annotation.vad.arousal / len;
-        vad.dominance += item.annotation.vad.dominance / len;
+        valence += f64::from(item.annotation.vad.valence);
+        arousal += f64::from(item.annotation.vad.arousal);
+        dominance += f64::from(item.annotation.vad.dominance);
     }
-    Some(vad)
+    Some(Vad {
+        valence: clamp_mean((valence / len) as f32, -1.0, 1.0),
+        arousal: clamp_mean((arousal / len) as f32, 0.0, 1.0),
+        dominance: clamp_mean((dominance / len) as f32, 0.0, 1.0),
+    })
+}
+
+fn clamp_mean(value: f32, min: f32, max: f32) -> f32 {
+    value.clamp(min, max)
 }
 
 pub(crate) fn claim_vad_value(vad: Vad, turn_count: usize) -> Value {
