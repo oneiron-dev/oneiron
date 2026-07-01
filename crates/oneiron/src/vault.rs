@@ -995,7 +995,8 @@ impl Vault {
         decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Retires a companion register record by rewriting it as retracted.
+    /// Retires a companion register record by rewriting it as retracted and
+    /// stamping an auditable lifecycle event.
     pub fn retire_companion_record(
         &self,
         id: &EntityId,
@@ -1003,11 +1004,45 @@ impl Vault {
     ) -> Result<CompanionRecord> {
         self.ensure_companion_register_kind()?;
         let mut wtxn = self.store.env.write_txn()?;
-        let retired = self.read_companion_record_in_txn(&wtxn, id)?.retired()?;
+        let retired = self
+            .read_companion_record_in_txn(&wtxn, id)?
+            .retired_at(retired_at)?;
         let data = encode_companion_record_body(&retired)?;
         self.apply_companion_record_body(&mut wtxn, id, retired_at, data)?;
         wtxn.commit()?;
         Ok(retired)
+    }
+
+    /// Revives a retired companion register record as a new active row.
+    ///
+    /// The retired row remains readable and inactive; the new id receives an
+    /// active copy with a typed revive event. Raw updates to retired rows still
+    /// fail closed through the generic companion-register put validator.
+    pub fn revive_companion_record(
+        &self,
+        retired_id: &EntityId,
+        revived_id: &EntityId,
+        revived_at: u64,
+    ) -> Result<CompanionRecord> {
+        self.ensure_companion_register_kind()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let revived = self
+            .read_companion_record_in_txn(&wtxn, retired_id)?
+            .revived_at(revived_at)?;
+        let key = revived.key();
+        if self
+            .store
+            .entities
+            .get(&wtxn, revived_id.as_bytes())?
+            .is_some()
+            || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
+        {
+            return Err(Error::CompanionRecordAlreadyExists);
+        }
+        let data = encode_companion_record_body(&revived)?;
+        self.apply_companion_record_body(&mut wtxn, revived_id, revived_at, data)?;
+        wtxn.commit()?;
+        Ok(revived)
     }
 
     /// Returns the entity id for a companion register key, if present.
