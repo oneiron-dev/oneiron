@@ -19,13 +19,14 @@ use crate::error::{Error, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
-use crate::types::companion::CompanionLifecycleEventKind;
+use crate::types::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
 use crate::types::{
-    ClaimCandidate, CompanionExportClassification, DecodedEdgeValue, EDGE_KEY_LEN,
-    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind,
-    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
-    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
+    ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
+    EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
+    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad,
+    WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
+    validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -37,6 +38,7 @@ pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
 pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
+type CompanionRetiredHistoryOverlay = HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
 
 fn conflict_claim_candidate(
     predicate: &'static str,
@@ -1386,6 +1388,7 @@ pub(crate) fn apply_ops(
     // `vectors` DB) and the rebuild runs after the op loop (ONE-324 AC11).
     let mut pending_hnsw_rebuild = false;
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
+    let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
 
     for (op_index, op) in ops.into_iter().enumerate() {
         match op {
@@ -1440,6 +1443,7 @@ pub(crate) fn apply_ops(
                     record_gate_decisions,
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
+                    Some(&companion_retired_histories),
                 )?;
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
@@ -1730,6 +1734,27 @@ fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
                     && !(*allow_maintenance && *allow_reserved_predicate)
             )
     })
+}
+
+fn companion_retired_histories_in_batch(ops: &[BatchOp]) -> Result<CompanionRetiredHistoryOverlay> {
+    let mut histories = CompanionRetiredHistoryOverlay::new();
+    for op in ops {
+        let BatchOp::Put {
+            entity_type, data, ..
+        } = op
+        else {
+            continue;
+        };
+        if *entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            continue;
+        }
+        let record = decode_companion_record_body(data)?;
+        record.validate_current_schema_lifecycle_events()?;
+        if record.lifecycle == ClaimLifecycleStatus::Retracted {
+            histories.insert((record.key(), record.lifecycle_events));
+        }
+    }
+    Ok(histories)
 }
 
 fn pending_gate_consent_ids_at_batch_start(
@@ -2078,6 +2103,7 @@ fn apply_claim_candidate(
         record_gate_decisions,
         persist_gate_pending_consent,
         can_resolve_pending_consent,
+        None,
     )?;
 
     let subject_id = match subject {
@@ -2179,6 +2205,7 @@ fn apply_put(
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
     can_resolve_pending_consent: bool,
+    companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
@@ -2299,7 +2326,7 @@ fn apply_put(
     } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
-        validate_companion_register_put(store, wtxn, &id, data)?;
+        validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -2478,6 +2505,7 @@ fn validate_companion_register_put(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     data: &[u8],
+    companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<()> {
     let record = decode_companion_record_body(data)?;
     record.validate_current_schema_lifecycle_events()?;
@@ -2530,18 +2558,47 @@ fn validate_companion_register_put(
     }
 
     if record.lifecycle == ClaimLifecycleStatus::Active {
-        if let Some(existing_id) =
-            crate::vault::companion_record_id_for_key_in_txn(store, &*wtxn, &key)?
+        let terminal_lifecycle_event_kind = record.terminal_lifecycle_event_kind();
+        let prior_lifecycle_events =
+            if terminal_lifecycle_event_kind == Some(CompanionLifecycleEventKind::Revived) {
+                Some(&record.lifecycle_events[..record.lifecycle_events.len() - 1])
+            } else {
+                None
+            };
+        let lookup = crate::vault::companion_record_key_lookup_in_txn(
+            store,
+            &*wtxn,
+            &key,
+            prior_lifecycle_events,
+        )?;
+        if let Some(existing_id) = lookup.active_id
             && existing_id != *id
         {
             return Err(Error::CompanionRecordAlreadyExists);
         }
-        if record.terminal_lifecycle_event_kind() != Some(CompanionLifecycleEventKind::Revived)
-            && let Some(existing_id) =
-                crate::vault::companion_record_any_id_for_key_in_txn(store, &*wtxn, &key)?
-            && existing_id != *id
-        {
-            return Err(Error::CompanionRecordAlreadyExists);
+        if let Some(prior_lifecycle_events) = prior_lifecycle_events {
+            let persisted_retired = lookup.retired_history_id.is_some();
+            let same_batch_retired = companion_retired_histories.is_some_and(|histories| {
+                histories.contains(&(key.clone(), prior_lifecycle_events.to_vec()))
+            });
+            if !(persisted_retired || same_batch_retired) {
+                return Err(Error::InvalidClaimBody(
+                    "companion record revive requires retired history",
+                ));
+            }
+        } else {
+            if terminal_lifecycle_event_kind != Some(CompanionLifecycleEventKind::Created)
+                || record.lifecycle_events.len() != 1
+            {
+                return Err(Error::InvalidClaimBody(
+                    "companion create lifecycle history must be canonical",
+                ));
+            }
+            if let Some(existing_id) = lookup.any_id
+                && existing_id != *id
+            {
+                return Err(Error::CompanionRecordAlreadyExists);
+            }
         }
     }
 

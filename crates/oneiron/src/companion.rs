@@ -546,7 +546,7 @@ impl CompanionRecord {
         self.lifecycle_events.last().map(|event| event.kind)
     }
 
-    /// Returns a copy of this active record with a created event if needed.
+    /// Returns a copy of this active record with canonical created history.
     pub fn created_at(&self, created_at: u64) -> Result<Self> {
         if self.lifecycle != ClaimLifecycleStatus::Active {
             return Err(invalid_companion(
@@ -554,11 +554,7 @@ impl CompanionRecord {
             ));
         }
         let mut record = self.clone();
-        if record.lifecycle_events.is_empty() {
-            record
-                .lifecycle_events
-                .push(CompanionLifecycleEvent::created(created_at));
-        }
+        record.lifecycle_events = vec![CompanionLifecycleEvent::created(created_at)];
         record.validate_current_schema_lifecycle_events()?;
         Ok(record)
     }
@@ -1750,6 +1746,210 @@ mod tests {
         let decoded = decode_companion_record_body(&encoded)?;
         assert_eq!(decoded, record);
         assert!(decoded.lifecycle_events.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_create_canonicalizes_caller_lifecycle_history() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let id = entity(0xC1);
+        let forged_id = entity(0xC5);
+        let mut record = CompanionRecord::persona(
+            CompanionScope::personal(entity(0xC2)),
+            entity(0xC3),
+            Value::from("canonical create"),
+            provenance(0xC4),
+            CompanionExportClassification::Portable,
+        );
+        record.lifecycle_events = vec![
+            CompanionLifecycleEvent::created(1),
+            CompanionLifecycleEvent::retired(2),
+            CompanionLifecycleEvent::revived(3),
+        ];
+
+        let mut forged_create_history = record.clone();
+        forged_create_history.lifecycle_events = vec![
+            CompanionLifecycleEvent::created(1),
+            CompanionLifecycleEvent::retired(2),
+            CompanionLifecycleEvent::created(3),
+        ];
+        let err = vault
+            .batch()
+            .put(
+                &forged_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 3, end: 3 },
+                3,
+                &encode_companion_record_body(&forged_create_history)?,
+            )
+            .commit()
+            .expect_err("raw active create history must be canonical");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion create lifecycle history must be canonical")
+        ));
+
+        vault.create_companion_record(&id, &record, 40)?;
+
+        let stored = vault
+            .get_companion_record(&id)?
+            .expect("created companion record");
+        assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(
+            stored.lifecycle_events,
+            vec![CompanionLifecycleEvent::created(40)]
+        );
+        assert_eq!(
+            record.created_at(41)?.lifecycle_events,
+            vec![CompanionLifecycleEvent::created(41)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_raw_revived_put_requires_matching_retired_history() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let retired_id = entity(0xD1);
+        let revived_id = entity(0xD2);
+        let forged_id = entity(0xD3);
+        let mismatched_id = entity(0xD4);
+        let duplicate_id = entity(0xD8);
+        let record = CompanionRecord::persona(
+            CompanionScope::personal(entity(0xD5)),
+            entity(0xD6),
+            Value::from("revived row"),
+            provenance(0xD7),
+            CompanionExportClassification::Portable,
+        );
+
+        let mut revived_without_predecessor = record.clone();
+        revived_without_predecessor.lifecycle_events = vec![
+            CompanionLifecycleEvent::created(10),
+            CompanionLifecycleEvent::retired(11),
+            CompanionLifecycleEvent::revived(12),
+        ];
+        let err = vault
+            .batch()
+            .put(
+                &forged_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 12, end: 12 },
+                12,
+                &encode_companion_record_body(&revived_without_predecessor)?,
+            )
+            .commit()
+            .expect_err("raw revived put must require a retired predecessor");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion record revive requires retired history")
+        ));
+
+        vault.create_companion_record(&retired_id, &record, 20)?;
+        let retired = vault.retire_companion_record(&retired_id, 21)?;
+
+        let mut mismatched_revived = record.clone();
+        mismatched_revived.lifecycle_events = vec![
+            CompanionLifecycleEvent::created(20),
+            CompanionLifecycleEvent::retired(99),
+            CompanionLifecycleEvent::revived(22),
+        ];
+        let err = vault
+            .batch()
+            .put(
+                &mismatched_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 22, end: 22 },
+                22,
+                &encode_companion_record_body(&mismatched_revived)?,
+            )
+            .commit()
+            .expect_err("raw revived put must match retired lifecycle history");
+        assert!(matches!(
+            err,
+            Error::InvalidClaimBody("companion record revive requires retired history")
+        ));
+
+        let mut valid_revived = record;
+        valid_revived.lifecycle_events = retired.lifecycle_events;
+        valid_revived
+            .lifecycle_events
+            .push(CompanionLifecycleEvent::revived(22));
+        vault
+            .batch()
+            .put(
+                &revived_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 22, end: 22 },
+                22,
+                &encode_companion_record_body(&valid_revived)?,
+            )
+            .commit()?;
+
+        assert_eq!(
+            vault.get_companion_record(&revived_id)?,
+            Some(valid_revived.clone())
+        );
+
+        let err = vault
+            .batch()
+            .put(
+                &duplicate_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 23, end: 23 },
+                23,
+                &encode_companion_record_body(&valid_revived)?,
+            )
+            .commit()
+            .expect_err("second raw active revived row for key must be rejected");
+        assert!(matches!(err, Error::CompanionRecordAlreadyExists));
+        Ok(())
+    }
+
+    #[test]
+    fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let retired_id = entity(0xE1);
+        let revived_id = entity(0xE2);
+        let record = CompanionRecord::persona(
+            CompanionScope::personal(entity(0xE3)),
+            entity(0xE4),
+            Value::from("same batch revived row"),
+            provenance(0xE5),
+            CompanionExportClassification::Portable,
+        );
+        let retired = record.created_at(30)?.retired_at(31)?;
+        let revived = retired.revived_at(32)?;
+
+        vault
+            .batch()
+            .put(
+                &revived_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 32, end: 32 },
+                32,
+                &encode_companion_record_body(&revived)?,
+            )
+            .put(
+                &retired_id,
+                ENTITY_TYPE_COMPANION_REGISTER,
+                TimeRange { start: 31, end: 31 },
+                31,
+                &encode_companion_record_body(&retired)?,
+            )
+            .commit()?;
+
+        assert_eq!(
+            vault.get_companion_record(&revived_id)?,
+            Some(revived.clone())
+        );
+        assert_eq!(vault.get_companion_record(&retired_id)?, Some(retired));
+        assert_eq!(
+            vault.companion_register()?.lookup(&revived.key()),
+            Some(&revived)
+        );
         Ok(())
     }
 
