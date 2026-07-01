@@ -1304,16 +1304,65 @@ mod tests {
             3,
             12,
         )?;
+        let encode_with_confidence =
+            |subject: ClaimSubject, value: Value, confidence: f32| -> Result<Vec<u8>> {
+                let body = ClaimBody::new(
+                    crate::affect::AFFECT_TRIGGER_PREDICATE,
+                    subject,
+                    value,
+                    confidence,
+                    ClaimApprovalStatus::Approved,
+                    ClaimLifecycleStatus::Active,
+                );
+                encode_claim_body(&body)
+            };
         let encode = |subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
-            let body = ClaimBody::new(
-                crate::affect::AFFECT_TRIGGER_PREDICATE,
-                subject,
-                value,
-                0.82,
-                ClaimApprovalStatus::Approved,
-                ClaimLifecycleStatus::Active,
-            );
-            encode_claim_body(&body)
+            encode_with_confidence(subject, value, 0.82)
+        };
+        let duplicate_top_level_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            entries.push((Value::from("confidence"), Value::F32(value.confidence)));
+            Value::Map(entries)
+        };
+        let duplicate_vad_delta_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            vad_entries.push((Value::from("arousal"), Value::F32(0.2)));
+            Value::Map(entries)
+        };
+        let f64_arousal_rounded_into_range_value = || {
+            let Value::Map(mut entries) = crate::affect::affect_trigger_value(&value) else {
+                panic!("affect.trigger value is a map");
+            };
+            let Some((_, vad_delta)) = entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("vadDelta"))
+            else {
+                panic!("affect.trigger value has vadDelta");
+            };
+            let Value::Map(vad_entries) = vad_delta else {
+                panic!("vadDelta value is a map");
+            };
+            let Some((_, arousal)) = vad_entries
+                .iter_mut()
+                .find(|(key, _)| key.as_str() == Some("arousal"))
+            else {
+                panic!("vadDelta value has arousal");
+            };
+            *arousal = Value::F64(1.0_f64 + f64::EPSILON);
+            Value::Map(entries)
         };
 
         validate_claim_body_bytes(
@@ -1345,6 +1394,53 @@ mod tests {
                 false,
             ),
             Err(Error::InvalidClaimBody(_))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode_with_confidence(
+                    ClaimSubject::Entity(affected_person),
+                    crate::affect::affect_trigger_value(&value),
+                    0.81
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "affect.trigger wrapper confidence must mirror value confidence"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    duplicate_top_level_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "duplicate affect.trigger value key"
+            ))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    duplicate_vad_delta_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody("duplicate vadDelta value key"))
+        );
+        assert_matches!(
+            validate_claim_body_bytes(
+                &encode(
+                    ClaimSubject::Entity(affected_person),
+                    f64_arousal_rounded_into_range_value()
+                )?,
+                false,
+            ),
+            Err(Error::InvalidClaimBody(
+                "vadDelta arousal must be finite in [-1, 1]"
+            ))
         );
         Ok(())
     }
