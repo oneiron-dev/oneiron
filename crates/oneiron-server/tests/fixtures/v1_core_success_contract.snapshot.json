@@ -164,6 +164,140 @@
     }
   },
   {
+    "name": "core_context_pack_v4",
+    "request": {
+      "auth": {
+        "scope": "core:read",
+        "type": "bearer"
+      },
+      "body": {
+        "companion": {
+          "person_ref": "7e000000000000000000000012210005",
+          "persona_ref": "7e000000000000000000000012210006"
+        },
+        "context_version": "v4",
+        "include_edges": false,
+        "limit": 3,
+        "memory_board": {
+          "slots": {
+            "claims": 0,
+            "companions": 0,
+            "facets": 0,
+            "other": 0,
+            "summaries": 0,
+            "turns": 1
+          }
+        },
+        "query": "contractneedle",
+        "session_rag": {},
+        "view": "full"
+      },
+      "method": "POST",
+      "path": "/v1/core/context-pack"
+    },
+    "response": {
+      "body": {
+        "context_version": "v4",
+        "evidence": {
+          "result_ids": [
+            "7e000000000000000000000012210001"
+          ],
+          "retrieval_run_id": "<retrieval-run-id>",
+          "scores": [
+            {
+              "components": [
+                {
+                  "rank": 1,
+                  "score": 0.4305951,
+                  "signal": "text"
+                }
+              ],
+              "final_rank": 1,
+              "final_score": 0.016393442,
+              "result_id": "7e000000000000000000000012210001"
+            }
+          ],
+          "telemetry_persisted": true
+        },
+        "memory_board": {
+          "budget": {
+            "claims": 0,
+            "companions": 0,
+            "facets": 0,
+            "other": 0,
+            "summaries": 0,
+            "turns": 1
+          },
+          "companion": {
+            "caller": "7e000000000000000000000012210004",
+            "person_ref": "7e000000000000000000000012210005",
+            "persona_ref": "7e000000000000000000000012210006"
+          },
+          "rows": [
+            {
+              "content_hash": "de",
+              "entity_type": 1,
+              "id": "7e000000000000000000000012210001",
+              "row_index": 0,
+              "score": 0.016393442,
+              "short_id": "tn1",
+              "slot": "turns",
+              "source": "result"
+            }
+          ],
+          "version": "v4"
+        },
+        "neighbors": [],
+        "results": [
+          {
+            "content_hash": "de",
+            "entity_type": 1,
+            "fields": {
+              "at": 1782357600,
+              "spkr": "user",
+              "txt": "blue hallway contractneedle"
+            },
+            "id": "7e000000000000000000000012210001",
+            "score": 0.016393442,
+            "short_id": "tn1"
+          }
+        ],
+        "session_rag": {
+          "last_result_ids": [
+            "7e000000000000000000000012210001"
+          ],
+          "last_retrieval_run_id": "<retrieval-run-id>",
+          "query_count": 1,
+          "revision": 1,
+          "session_id": "7e000000000000000000000012210004"
+        },
+        "state": {
+          "kind": "ok"
+        },
+        "stats": {
+          "candidates_considered": 1,
+          "claims_suppressed": 0,
+          "cosine_ghosts_dampened": 0,
+          "entities_hydrated": 1,
+          "items_dropped": {
+            "count": 0,
+            "reason": "token_budget"
+          },
+          "items_truncated": {
+            "count": 0,
+            "reason": "item_budget"
+          },
+          "neighbors_hydrated": 0,
+          "query_time_us": "<duration-us>",
+          "signals_used": [
+            "text"
+          ]
+        }
+      },
+      "status": 200
+    }
+  },
+  {
     "name": "core_hydrate",
     "request": {
       "auth": {
