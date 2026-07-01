@@ -10,15 +10,16 @@ use heed::RwTxn;
 use xxhash_rust::{xxh3::xxh3_128, xxh32::xxh32};
 
 use crate::Vault;
-use crate::claim::ClaimSubject;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::error::{Error, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
-    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind,
-    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_edge_value_for_kind,
+    ClaimCandidate, CompanionExportClassification, DecodedEdgeValue, EDGE_KEY_LEN,
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    ENTITY_ID_LEN, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId,
+    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
     encode_edge_value, validate_edge_weight,
 };
 
@@ -2148,6 +2149,8 @@ fn apply_put(
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+        validate_companion_register_put(store, wtxn, &id, data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -2319,6 +2322,52 @@ fn apply_put(
         had_vector_mutation,
         is_lexical_query_hint_claim,
     })
+}
+
+fn validate_companion_register_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    data: &[u8],
+) -> Result<()> {
+    let record = decode_companion_record_body(data)?;
+    let key = record.key();
+
+    if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
+        let header = EntityMetadataHeader::parse(existing_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
+            let existing =
+                decode_companion_record_body(&existing_raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if existing.key() != key {
+                return Err(Error::InvalidClaimBody(
+                    "companion record key cannot change",
+                ));
+            }
+            if existing.lifecycle != ClaimLifecycleStatus::Active
+                && &existing_raw[ENTITY_METADATA_HEADER_LEN..] != data
+            {
+                return Err(Error::InvalidClaimBody("companion record is retired"));
+            }
+            if existing.export_classification != CompanionExportClassification::LocalOnly
+                && record.export_classification == CompanionExportClassification::LocalOnly
+            {
+                return Err(Error::InvalidClaimBody(
+                    "companion record export cannot be downgraded to local_only",
+                ));
+            }
+        }
+    }
+
+    if record.lifecycle == ClaimLifecycleStatus::Active
+        && let Some(existing_id) =
+            crate::vault::companion_record_id_for_key_in_txn(store, &*wtxn, &key)?
+        && existing_id != *id
+    {
+        return Err(Error::CompanionRecordAlreadyExists);
+    }
+
+    Ok(())
 }
 
 struct AppliedVector {

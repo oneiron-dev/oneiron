@@ -56,14 +56,17 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EdgeProvenanceFlags, EdgeValueLayout, EntityId, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
-    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
-    bytes_to_hex_lower, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
+    CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -148,6 +151,34 @@ fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
             .map_err(|_| Error::CorruptedIndex("type index key"))?,
     )
     .map_err(|_| Error::CorruptedIndex("type index key"))
+}
+
+pub(crate) fn companion_record_id_for_key_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &CompanionRecordKey,
+) -> Result<Option<EntityId>> {
+    key.validate()?;
+    for index_entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+    {
+        let (type_key, _) = index_entry?;
+        let id = entity_id_from_type_index_key(type_key)?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            return Err(Error::CorruptedIndex("companion register type index"));
+        }
+        let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if record.lifecycle == ClaimLifecycleStatus::Active && record.key() == *key {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn vad_annotation_meta_key(
@@ -779,8 +810,7 @@ impl Vault {
     }
 
     /// Returns the dynamic StructuralKind registration for `type_byte`, if
-    /// this vault has one. Static CORE/semantic/maintenance entries are not
-    /// mirrored here.
+    /// this vault has one. Static registry entries are not mirrored here.
     #[must_use]
     pub fn structural_kind_registration(
         &self,
@@ -884,6 +914,141 @@ impl Vault {
         )
     }
 
+    /// Creates a companion register record when neither the entity id nor the
+    /// `(scope, subject)` register key is already present.
+    pub fn create_companion_record(
+        &self,
+        id: &EntityId,
+        record: &CompanionRecord,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.ensure_companion_register_kind()?;
+        if record.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody(
+                "companion record create must be active",
+            ));
+        }
+        let data = encode_companion_record_body(record)?;
+        let key = record.key();
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
+            || companion_record_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
+        {
+            return Err(Error::CompanionRecordAlreadyExists);
+        }
+        self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Writes or replaces a companion register record for an existing id.
+    ///
+    /// The register key is immutable for an existing record; callers that need
+    /// a different `(scope, subject)` should create a new record and retire the
+    /// old one.
+    pub fn update_companion_record(
+        &self,
+        id: &EntityId,
+        record: &CompanionRecord,
+        learned_at: u64,
+    ) -> Result<CompanionRecord> {
+        self.ensure_companion_register_kind()?;
+        if record.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody(
+                "companion record update must be active",
+            ));
+        }
+        let data = encode_companion_record_body(record)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let existing = self.read_companion_record_in_txn(&wtxn, id)?;
+        if existing.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::InvalidClaimBody("companion record is retired"));
+        }
+        if existing.key() != record.key() {
+            return Err(Error::InvalidClaimBody(
+                "companion record key cannot change",
+            ));
+        }
+        if existing.export_classification != CompanionExportClassification::LocalOnly
+            && record.export_classification == CompanionExportClassification::LocalOnly
+        {
+            return Err(Error::InvalidClaimBody(
+                "companion record export cannot be downgraded to local_only",
+            ));
+        }
+        self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
+        wtxn.commit()?;
+        Ok(record.clone())
+    }
+
+    /// Reads and decodes one companion register record by entity id.
+    pub fn get_companion_record(&self, id: &EntityId) -> Result<Option<CompanionRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Retires a companion register record by rewriting it as retracted.
+    pub fn retire_companion_record(
+        &self,
+        id: &EntityId,
+        retired_at: u64,
+    ) -> Result<CompanionRecord> {
+        self.ensure_companion_register_kind()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let retired = self.read_companion_record_in_txn(&wtxn, id)?.retired()?;
+        let data = encode_companion_record_body(&retired)?;
+        self.apply_companion_record_body(&mut wtxn, id, retired_at, data)?;
+        wtxn.commit()?;
+        Ok(retired)
+    }
+
+    /// Returns the entity id for a companion register key, if present.
+    pub fn companion_record_id_for_key(
+        &self,
+        key: &CompanionRecordKey,
+    ) -> Result<Option<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        companion_record_id_for_key_in_txn(&self.store, &rtxn, key)
+    }
+
+    /// Reads all companion records into an in-memory register snapshot.
+    pub fn companion_register(&self) -> Result<CompanionRegister> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut register = CompanionRegister::new();
+        for index_entry in self
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_COMPANION_REGISTER])?
+        {
+            let (type_key, _) = index_entry?;
+            let id = entity_id_from_type_index_key(type_key)?;
+            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+                return Err(Error::CorruptedIndex("companion register type index"));
+            };
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+                return Err(Error::CorruptedIndex("companion register type index"));
+            }
+            let record = decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if record.lifecycle != ClaimLifecycleStatus::Active {
+                continue;
+            }
+            if register.register(record)?.is_some() {
+                return Err(Error::CorruptedIndex("companion register duplicate key"));
+            }
+        }
+        Ok(register)
+    }
+
     fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.apply_access_grant_body(&mut wtxn, id, learned_at, data.to_vec())?;
@@ -913,6 +1078,102 @@ impl Vault {
                 learned_at,
                 data,
                 allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+
+    pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
+        if self.companion_register_kind_registered()? {
+            Ok(())
+        } else {
+            Err(Error::InvalidEntityType(ENTITY_TYPE_COMPANION_REGISTER))
+        }
+    }
+
+    fn companion_register_kind_registered(&self) -> Result<bool> {
+        let static_registered = entity_type_registry_entry(ENTITY_TYPE_COMPANION_REGISTER)
+            .is_some_and(|entry| {
+                entry.short_id_prefix == Some(COMPANION_REGISTER_SHORT_ID_PREFIX)
+                    && entry.classification == EntityClassification::Pack
+                    && entry.band == TypeByteBand::Companion
+            });
+        if !static_registered {
+            return Ok(false);
+        }
+
+        if let Some(registration) = self
+            .store
+            .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
+        {
+            let compatible_legacy_row = registration.short_id_prefix
+                == COMPANION_REGISTER_SHORT_ID_PREFIX
+                && registration.band == TypeByteBand::Companion
+                && registration.pack == COMPANION_REGISTER_PACK_ID;
+            if !compatible_legacy_row {
+                tracing::warn!(
+                    type_byte = ENTITY_TYPE_COMPANION_REGISTER,
+                    short_id_prefix = %registration.short_id_prefix,
+                    pack = %registration.pack,
+                    "companion register static kind collides with incompatible dynamic metadata"
+                );
+                return Err(Error::StructuralKindTypeByteCollision(
+                    ENTITY_TYPE_COMPANION_REGISTER,
+                ));
+            }
+            tracing::warn!(
+                type_byte = ENTITY_TYPE_COMPANION_REGISTER,
+                "companion register static kind found a redundant legacy dynamic metadata row"
+            );
+        }
+
+        Ok(true)
+    }
+
+    fn read_companion_record_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<CompanionRecord> {
+        let raw = self
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    }
+
+    fn apply_companion_record_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_COMPANION_REGISTER,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: false,
                 allow_reserved_predicate: false,
             }],
             self.text_index_trusted
