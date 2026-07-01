@@ -5,8 +5,8 @@
 //!
 //! Auth: shared secret header for Phase 1.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -24,6 +24,7 @@ use oneiron::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
 use utoipa::{IntoParams, OpenApi, ToSchema};
 
 use crate::auth::{CoreAuth, CoreScope, check_auth};
@@ -110,8 +111,70 @@ const RESUME_NOTIFICATION_LIMIT: usize = 128;
 const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
-static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<BTreeMap<String, oneiron::EiriSessionRagState>>> =
-    OnceLock::new();
+const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
+const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
+static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
+
+#[derive(Default)]
+struct EiriSessionRagStore {
+    entries: BTreeMap<String, oneiron::EiriSessionRagState>,
+    insertion_order: VecDeque<String>,
+}
+
+impl EiriSessionRagStore {
+    fn current(&mut self, key: String, session_id: &str) -> oneiron::EiriSessionRagState {
+        if let Some(state) = self.entries.get(&key) {
+            return state.clone();
+        }
+
+        self.evict_if_full();
+        let state = oneiron::EiriSessionRagState::new(session_id);
+        self.entries.insert(key.clone(), state.clone());
+        self.insertion_order.push_back(key);
+        state
+    }
+
+    fn advance(
+        &mut self,
+        key: String,
+        session_id: &str,
+        pack: &oneiron::ContextPack,
+        evidence: &CoreContextPackEvidence,
+    ) -> oneiron::EiriSessionRagState {
+        if !self.entries.contains_key(&key) {
+            self.evict_if_full();
+            self.entries
+                .insert(key.clone(), oneiron::EiriSessionRagState::new(session_id));
+            self.insertion_order.push_back(key.clone());
+        }
+
+        let state = self
+            .entries
+            .get_mut(&key)
+            .expect("entry inserted before mutation");
+        state.revision = state.revision.saturating_add(1);
+        state.query_count = state.query_count.saturating_add(1);
+        state.last_retrieval_run_id = evidence.retrieval_run_id.clone();
+        state.last_result_ids = pack
+            .results
+            .iter()
+            .map(|entity| entity.id.to_hex())
+            .collect();
+        state.clone()
+    }
+
+    fn evict_if_full(&mut self) {
+        while self.entries.len() >= EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
+            let Some(key) = self.insertion_order.pop_front() else {
+                self.entries.clear();
+                break;
+            };
+            if self.entries.remove(&key).is_some() {
+                break;
+            }
+        }
+    }
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -2761,19 +2824,23 @@ async fn resume(
 ) -> Result<Json<ResumeBundle>, ApiError> {
     check_api_auth(&headers, &server.config)?;
     let caller = resume_caller(&headers);
-    resume_bundle(&server, &caller).map(Json)
+    resume_bundle(&server, &caller).await.map(Json)
 }
 
-fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiError> {
+async fn resume_bundle(server: &SyncServer, caller: &str) -> Result<ResumeBundle, ApiError> {
     Ok(ResumeBundle::new(
-        resume_session_context(server, caller)?,
+        resume_session_context(server, caller).await?,
         pending_notifications(server, caller)?,
         pending_unprocessed_items(server, caller),
         current_resume_budget(server),
     ))
 }
 
-fn resume_session_context(server: &SyncServer, caller: &str) -> Result<SessionContext, ApiError> {
+async fn resume_session_context(
+    server: &SyncServer,
+    caller: &str,
+) -> Result<SessionContext, ApiError> {
+    validate_eiri_session_id(caller, "x-oneiron-caller")?;
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
@@ -2804,7 +2871,7 @@ fn resume_session_context(server: &SyncServer, caller: &str) -> Result<SessionCo
         api_version: API_LEVEL.to_owned(),
         counts,
         last_activity,
-        rag_state: current_eiri_session_rag_state(&server.vault, caller),
+        rag_state: current_eiri_session_rag_state(&server.vault, caller).await,
     })
 }
 
@@ -5595,13 +5662,16 @@ async fn core_context_pack(
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
     builder = apply_context_pack_budget(builder, req.budget.as_ref(), 0, req.limit, max_neighbors)?;
 
-    Ok(Json(run_context_pack_builder(
-        &server.vault,
-        builder,
-        projection,
-        "core context-pack failed",
-        eiri_context,
-    )?))
+    Ok(Json(
+        run_context_pack_builder(
+            &server.vault,
+            builder,
+            projection,
+            "core context-pack failed",
+            eiri_context,
+        )
+        .await?,
+    ))
 }
 
 /// List conversation entities.
@@ -6126,12 +6196,7 @@ fn resolve_eiri_context_v4_request(
         .and_then(|state| state.session_id.as_deref())
         .unwrap_or(fallback_session_id)
         .trim();
-    if session_id.is_empty() {
-        return Err(ApiError::bad_request(
-            "session_rag.session_id must be non-empty",
-            Some("session_rag.session_id"),
-        ));
-    }
+    validate_eiri_session_id(session_id, "session_rag.session_id")?;
 
     let memory_board_budget = memory_board
         .and_then(|controls| controls.enabled)
@@ -6149,6 +6214,22 @@ fn resolve_eiri_context_v4_request(
         session_id: session_id.to_owned(),
         companion,
     }))
+}
+
+fn validate_eiri_session_id(session_id: &str, field: &'static str) -> Result<(), ApiError> {
+    if session_id.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            format!("{field} must be non-empty"),
+            Some(field),
+        ));
+    }
+    if session_id.len() > EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES {
+        return Err(ApiError::bad_request(
+            format!("{field} must be at most {EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES} bytes"),
+            Some(field),
+        ));
+    }
+    Ok(())
 }
 
 fn eiri_memory_board_budget(
@@ -6183,53 +6264,39 @@ fn eiri_memory_board_budget(
     )
 }
 
-fn eiri_session_rag_store() -> &'static Mutex<BTreeMap<String, oneiron::EiriSessionRagState>> {
-    EIRI_SESSION_RAG_STATE.get_or_init(|| Mutex::new(BTreeMap::new()))
+fn eiri_session_rag_store() -> &'static Mutex<EiriSessionRagStore> {
+    EIRI_SESSION_RAG_STATE.get_or_init(|| Mutex::new(EiriSessionRagStore::default()))
 }
 
 fn eiri_session_rag_key(vault: &oneiron::Vault, session_id: &str) -> String {
     format!("{vault:p}:{session_id}")
 }
 
-fn current_eiri_session_rag_state(
+async fn current_eiri_session_rag_state(
     vault: &oneiron::Vault,
     session_id: &str,
 ) -> oneiron::EiriSessionRagState {
     let key = eiri_session_rag_key(vault, session_id);
-    let mut guard = eiri_session_rag_store()
+    eiri_session_rag_store()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    guard
-        .entry(key)
-        .or_insert_with(|| oneiron::EiriSessionRagState::new(session_id))
-        .clone()
+        .await
+        .current(key, session_id)
 }
 
-fn advance_eiri_session_rag_state(
+async fn advance_eiri_session_rag_state(
     vault: &oneiron::Vault,
     session_id: &str,
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
 ) -> oneiron::EiriSessionRagState {
     let key = eiri_session_rag_key(vault, session_id);
-    let mut guard = eiri_session_rag_store()
+    eiri_session_rag_store()
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let state = guard
-        .entry(key)
-        .or_insert_with(|| oneiron::EiriSessionRagState::new(session_id));
-    state.revision = state.revision.saturating_add(1);
-    state.query_count = state.query_count.saturating_add(1);
-    state.last_retrieval_run_id = evidence.retrieval_run_id.clone();
-    state.last_result_ids = pack
-        .results
-        .iter()
-        .map(|entity| entity.id.to_hex())
-        .collect();
-    state.clone()
+        .await
+        .advance(key, session_id, pack, evidence)
 }
 
-fn run_context_pack_builder(
+async fn run_context_pack_builder(
     vault: &oneiron::Vault,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
@@ -6258,9 +6325,11 @@ fn run_context_pack_builder(
                     .and_then(|context| context.companion.clone()),
             )
         });
-    let session_rag = eiri_context.as_ref().map(|context| {
-        advance_eiri_session_rag_state(vault, &context.session_id, &pack, &evidence)
-    });
+    let session_rag = if let Some(context) = eiri_context.as_ref() {
+        Some(advance_eiri_session_rag_state(vault, &context.session_id, &pack, &evidence).await)
+    } else {
+        None
+    };
     let context_version = eiri_context
         .as_ref()
         .map(|_| oneiron::EIRI_CONTEXT_VERSION_V4.to_owned());
@@ -7642,13 +7711,16 @@ async fn context_pack(
         max_neighbors,
     )?;
 
-    Ok(Json(run_context_pack_builder(
-        &server.vault,
-        builder,
-        projection,
-        "context-pack failed",
-        eiri_context,
-    )?))
+    Ok(Json(
+        run_context_pack_builder(
+            &server.vault,
+            builder,
+            projection,
+            "context-pack failed",
+            eiri_context,
+        )
+        .await?,
+    ))
 }
 
 #[cfg(test)]
@@ -12778,6 +12850,53 @@ mod tests {
         assert_eq!(
             resume_body["session"]["rag_state"]["query_count"],
             Value::from(2)
+        );
+    }
+
+    #[test]
+    fn eiri_session_rag_store_evicts_oldest_entries_at_capacity() {
+        let mut store = EiriSessionRagStore::default();
+        for index in 0..=EIRI_SESSION_RAG_STATE_MAX_ENTRIES {
+            let key = format!("vault:{index}");
+            let session_id = format!("session-{index}");
+            store.current(key, &session_id);
+        }
+
+        assert_eq!(store.entries.len(), EIRI_SESSION_RAG_STATE_MAX_ENTRIES);
+        assert!(!store.entries.contains_key("vault:0"));
+        assert!(
+            store
+                .entries
+                .contains_key(&format!("vault:{EIRI_SESSION_RAG_STATE_MAX_ENTRIES}"))
+        );
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_rejects_oversized_session_id() {
+        let (_dir, server) = test_server();
+        let request = json!({
+            "query": "eiri v4 needle",
+            "context_version": "v4",
+            "session_rag": {
+                "session_id": "x".repeat(EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES + 1)
+            }
+        });
+
+        let (status, body) = route_json(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri("/api/context-pack")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(request.to_string()))
+                .expect("request"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["details"]["field"],
+            Value::from("session_rag.session_id")
         );
     }
 
