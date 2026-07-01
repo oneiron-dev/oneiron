@@ -15,13 +15,15 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
+use crate::claim::{
+    ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
+};
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
-    CompanionExportClassification, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD, EdgeKind, EntityId,
-    TypeByteBand, band_of, decode_companion_record_body,
+    CompanionExportClassification, CompanionScope, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_WORLD, EdgeKind, EntityId, TypeByteBand, band_of, decode_companion_record_body,
 };
 
 use super::bridge::parse_edge_key;
@@ -706,7 +708,11 @@ fn entity_selector_decision(
 
 fn companion_register_passes_selector(blob: &[u8]) -> bool {
     decode_companion_record_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| record.export_classification != CompanionExportClassification::LocalOnly)
+        .map(|record| {
+            record.lifecycle == ClaimLifecycleStatus::Active
+                && record.export_classification == CompanionExportClassification::Portable
+                && !matches!(record.scope, CompanionScope::SharedVault { .. })
+        })
         .unwrap_or(false)
 }
 
@@ -957,8 +963,20 @@ mod tests {
         persona_ref: EntityId,
         export_classification: CompanionExportClassification,
     ) -> Vec<u8> {
-        let record = CompanionRecord::persona(
+        companion_record_body_in_scope(
+            persona_ref,
             CompanionScope::neutral(),
+            export_classification,
+        )
+    }
+
+    fn companion_record_body_in_scope(
+        persona_ref: EntityId,
+        scope: CompanionScope,
+        export_classification: CompanionExportClassification,
+    ) -> Vec<u8> {
+        let record = CompanionRecord::persona(
+            scope,
             persona_ref,
             Value::from("private companion tuning"),
             CompanionProvenance::new(
@@ -1349,6 +1367,7 @@ mod tests {
 
         let local_id = entity_id(0x3A);
         let portable_id = entity_id(0x3B);
+        let shared_id = entity_id(0x3C);
         insert_entity(
             &doc,
             local_id,
@@ -1360,6 +1379,16 @@ mod tests {
             portable_id,
             ENTITY_TYPE_COMPANION_REGISTER,
             &companion_record_body(portable_id, CompanionExportClassification::Portable),
+        );
+        insert_entity(
+            &doc,
+            shared_id,
+            ENTITY_TYPE_COMPANION_REGISTER,
+            &companion_record_body_in_scope(
+                shared_id,
+                CompanionScope::shared_vault(7),
+                CompanionExportClassification::SharedVault,
+            ),
         );
         doc.commit();
 
@@ -1381,6 +1410,10 @@ mod tests {
         assert!(
             map_get_bytes(&entities, &portable_id.to_hex()).is_some(),
             "selector export should keep syncable companion register records"
+        );
+        assert!(
+            map_get_bytes(&entities, &shared_id.to_hex()).is_none(),
+            "selector export must not include shared-vault companion register records"
         );
     }
 
