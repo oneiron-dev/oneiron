@@ -482,7 +482,7 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 }
 
 fn invalid_profile(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
+    Error::InvalidPsychProfileBody(reason)
 }
 
 impl crate::Vault {
@@ -632,7 +632,7 @@ mod tests {
             PsychProfileConfidence::new(1.1, 0.5, 0.5)
                 .expect_err("confidence outside unit interval")
                 .kind(),
-            ErrorKind::InvalidClaimBody
+            ErrorKind::InvalidPsychProfileBody
         );
         assert_eq!(
             PsychProfile::new(
@@ -645,7 +645,7 @@ mod tests {
             )
             .expect_err("missing source revisions")
             .kind(),
-            ErrorKind::InvalidClaimBody
+            ErrorKind::InvalidPsychProfileBody
         );
     }
 
@@ -672,7 +672,7 @@ mod tests {
 
         let err = decode_psych_profile_body(&msgpack_map(entries))
             .expect_err("unknown psych profile keys fail closed");
-        assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+        assert_eq!(err.kind(), ErrorKind::InvalidPsychProfileBody);
     }
 
     #[test]
@@ -700,7 +700,7 @@ mod tests {
 
         let err = decode_psych_profile_body(&msgpack_map(entries))
             .expect_err("stored source revisions must be canonical");
-        assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+        assert_eq!(err.kind(), ErrorKind::InvalidPsychProfileBody);
     }
 
     #[test]

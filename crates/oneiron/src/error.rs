@@ -172,6 +172,7 @@ pub enum ErrorKind {
     InvalidEntityType,
     InvalidFacet,
     InvalidClaimBody,
+    InvalidPsychProfileBody,
     InvalidCodeArtifactBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -425,6 +426,10 @@ pub enum Error {
     /// (D11 key set / D18 fail-closed gate). Nothing was written.
     #[error("invalid claim body: {0}")]
     InvalidClaimBody(&'static str),
+    /// A PSYCH_PROFILE entity body failed pinned structural validation.
+    /// Nothing was written.
+    #[error("invalid psych profile body: {0}")]
+    InvalidPsychProfileBody(&'static str),
     /// A CODE_ARTIFACT entity body failed the pinned replay-key validation.
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
@@ -865,6 +870,7 @@ impl Error {
             Self::InvalidEntityType(_) => ErrorKind::InvalidEntityType,
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
+            Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
