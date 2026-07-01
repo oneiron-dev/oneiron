@@ -1094,6 +1094,22 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> f32 {
+    let salience = body.salience.unwrap_or(0.0);
+    let affect = crate::affect::decode_affect_trigger_claim(body)
+        .ok()
+        .flatten()
+        .map(|trigger| {
+            let delta = trigger.vad_delta();
+            let valence = (delta.valence().abs() / 2.0).clamp(0.0, 1.0);
+            let arousal = delta.arousal().abs().clamp(0.0, 1.0);
+            let dominance = delta.dominance().abs().clamp(0.0, 1.0);
+            ((valence + arousal + dominance) / 3.0) * trigger.confidence()
+        })
+        .unwrap_or(0.0);
+    salience.max(affect).clamp(0.0, 1.0)
+}
+
 #[cfg(feature = "sync")]
 pub(crate) fn restamp_federated_claim_source(mut body: ClaimBody) -> ClaimBody {
     body.source = Some(ClaimSource::Imported);
@@ -1126,6 +1142,34 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
 mod tests {
     use super::*;
     use core::assert_matches;
+
+    #[test]
+    fn psych_mirror_selection_affect_trigger_contributes_affect_salience() -> Result<()> {
+        let affected_person = EntityId::from_bytes([0x44; 16]).expect("valid id");
+        let trigger_ref = EntityId::from_bytes([0x45; 16]).expect("valid id");
+        let value = crate::affect::AffectTriggerValue::new(
+            affected_person,
+            trigger_ref,
+            crate::affect::VadDelta::new(-1.0, 0.5, -0.5)?,
+            0.8,
+            2,
+            4,
+        )?;
+        let mut body = ClaimBody::new(
+            crate::affect::AFFECT_TRIGGER_PREDICATE,
+            ClaimSubject::Entity(affected_person),
+            crate::affect::affect_trigger_value(&value),
+            value.confidence(),
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        body.salience = Some(0.3);
+
+        let affect_salience = psych_mirror_claim_affect_salience(&body);
+
+        assert!((affect_salience - 0.4).abs() < 1e-6);
+        Ok(())
+    }
 
     #[test]
     fn predicate_grammar_accepts_well_formed_unknown_predicates() {
