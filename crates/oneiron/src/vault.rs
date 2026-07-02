@@ -31,7 +31,7 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
+    claim_consolidatable, encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -1389,10 +1389,20 @@ impl Vault {
     ) -> Result<ClaimVadConsolidation> {
         let mut wtxn = self.store.env.write_txn()?;
         let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
-        if claim_body.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ClaimAlreadyClosed {
-                status: claim_body.lifecycle,
-            });
+        if !claim_consolidatable(&claim_body) {
+            if claim_body.lifecycle != ClaimLifecycleStatus::Active {
+                return Err(Error::ClaimAlreadyClosed {
+                    status: claim_body.lifecycle,
+                });
+            }
+            let message = if claim_body.stale {
+                "claim is stale and not consolidatable"
+            } else {
+                "claim is not consolidatable"
+            };
+            self.clear_claim_vad_outputs_in_txn(&mut wtxn, claim_id, now)?;
+            wtxn.commit()?;
+            return Err(Error::InvalidClaimBody(message));
         }
         if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
             return Err(Error::InvalidClaimBody(
@@ -1537,6 +1547,41 @@ impl Vault {
             structural_edges_skipped,
             reappraisal,
         })
+    }
+
+    fn clear_claim_vad_outputs_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let (semantic_edges, _) = self.claim_vad_incident_edges_in_txn(&*wtxn, claim_id)?;
+        let active_states = self.active_claim_vad_states_in_txn(&*wtxn, claim_id)?;
+        if semantic_edges.is_empty() && active_states.is_empty() {
+            return Ok(());
+        }
+
+        let mut ops = Vec::with_capacity(semantic_edges.len() + active_states.len());
+        for edge in semantic_edges {
+            ops.push(BatchOp::SetEdgeVad {
+                src: edge.source,
+                kind: edge.kind,
+                tgt: edge.target,
+                vad: Vad::NEUTRAL,
+            });
+        }
+        Self::close_claim_vad_states(&mut ops, active_states, now, None)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
     }
 
     fn close_claim_vad_states(
@@ -1827,6 +1872,9 @@ impl Vault {
             return Err(Error::ClaimAlreadyClosed {
                 status: prior_body.lifecycle,
             });
+        }
+        if !claim_consolidatable(&prior_body) {
+            return Err(Error::InvalidClaimBody("claim is not consolidatable"));
         }
         let prior_value = decode_coping_outcome_claim(&prior_body)?
             .ok_or(Error::InvalidClaimBody("claim is not a coping.outcome"))?;
