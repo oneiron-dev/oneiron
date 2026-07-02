@@ -66,13 +66,13 @@ use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
     CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityClassification, EntityId, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
-    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
-    bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
     edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
@@ -133,6 +133,41 @@ const VAD_KEY_AROUSAL: &str = "arousal";
 const VAD_KEY_DOMINANCE: &str = "dominance";
 const VAD_KEY_SOURCE: &str = "source";
 const VAD_KEY_ANNOTATED_AT: &str = "annotated_at";
+
+fn seed_default_policy_manifest(
+    store: &Store,
+    config: &VaultConfig,
+    analyzer: &MultilingualAnalyzer,
+    text_index_trusted: bool,
+) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let ops = vec![BatchOp::Put {
+        id,
+        entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+        occurred: TimeRange {
+            start: timestamp,
+            end: timestamp,
+        },
+        learned_at: timestamp,
+        data: crate::gate::default_policy_manifest(),
+        allow_maintenance: true,
+        allow_reserved_predicate: false,
+    }];
+    let mut wtxn = store.env.write_txn()?;
+    apply_ops(
+        store,
+        config,
+        analyzer,
+        &mut wtxn,
+        ops,
+        text_index_trusted,
+        false,
+        true,
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -700,6 +735,9 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
+        if store.created_new_vault() {
+            seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
+        }
 
         Ok(Self {
             store,
@@ -3167,6 +3205,9 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at);
         };
+        if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
         // the headerful path) but no write lock is held yet. The deterministic
@@ -4632,6 +4673,40 @@ impl Vault {
         Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
             |_| Error::CorruptedIndex("temporal learned key"),
         )?)))
+    }
+
+    /// Returns the greatest `learned_at` timestamp whose entity type is not excluded.
+    pub fn latest_learned_at_excluding_entity_types(
+        &self,
+        excluded_types: &[u8],
+    ) -> Result<Option<u64>> {
+        let rtxn = self.store.env.read_txn()?;
+        for entry in self.store.temporal_learned.rev_iter(&rtxn)? {
+            let (key, _) = entry?;
+            require_key_len(key, 24, "temporal learned key")?;
+            let learned_at = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            );
+            let id = EntityId::from_bytes(
+                key[8..24]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
+            let raw = self
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if !excluded_types.contains(&header.entity_type) {
+                return Ok(Some(learned_at));
+            }
+        }
+        Ok(None)
     }
 
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
@@ -6402,8 +6477,8 @@ mod tests {
         TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
     };
     use crate::types::{
-        ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig, TextAnalyzerConfig, TimeRange,
-        VaultConfig,
+        ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig,
+        TextAnalyzerConfig, TimeRange, VaultConfig,
     };
 
     fn test_config() -> VaultConfig {
@@ -6429,6 +6504,46 @@ mod tests {
 
     fn range(start: u64, end: u64) -> TimeRange {
         TimeRange { start, end }
+    }
+
+    fn resolve_policy_manifest(vault: &Vault) -> Result<crate::gate::PolicyManifestResolution> {
+        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))
+    }
+
+    fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
+        let id = crate::gate::default_policy_manifest_id()?;
+        vault.with_write_txn(|wtxn| {
+            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let id = crate::gate::default_policy_manifest_id()?;
+
+        let err = vault
+            .delete_entity(&id)
+            .expect_err("public hard delete must reject the default policy manifest");
+        assert_matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        );
+        assert!(vault.get_raw(&id)?.is_some());
+
+        let err = vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect_err("batch delete must reject the default policy manifest");
+        assert_matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        );
+        assert!(vault.get_raw(&id)?.is_some());
+        Ok(())
     }
 
     #[test]
@@ -6492,7 +6607,10 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let vault = Vault::open(tmp.path(), test_config())?;
 
-        assert_eq!(vault.latest_learned_at()?, None);
+        assert_eq!(
+            vault.latest_learned_at()?,
+            Some(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP)
+        );
 
         vault
             .batch()
@@ -6502,6 +6620,35 @@ mod tests {
             .commit()?;
 
         assert_eq!(vault.latest_learned_at()?, Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
+            None
+        );
+
+        vault
+            .batch()
+            .put(&entity(0x21), ENTITY_TYPE_TASK, range(1, 1), 10, b"task")
+            .commit()?;
+
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
+            Some(10)
+        );
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[
+                ENTITY_TYPE_POLICY_MANIFEST,
+                ENTITY_TYPE_TASK
+            ])?,
+            None
+        );
         Ok(())
     }
 
@@ -6545,6 +6692,45 @@ mod tests {
                 std::str::from_utf8(key).unwrap(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_vault_resolves_default_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        let policy = resolve_policy_manifest(&vault)?;
+        let first_party_eiri_actor_ref = crate::gate::first_party_eiri_connector_actor_ref();
+
+        assert_eq!(policy.diagnostics().manifest_count, 1);
+        assert!(policy.enforces_write_gate());
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_actor_ref)),
+            crate::gate::PolicyApprovalCeiling::Auto
+        );
+        assert_eq!(policy.signatures().len(), 1);
+        assert_ne!(policy.read_frontier_hash()?, [0; 32]);
+        Ok(())
+    }
+
+    #[test]
+    fn existing_vault_without_policy_manifest_is_not_backfilled() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            remove_default_policy_manifest(&vault)?;
+
+            let policy = resolve_policy_manifest(&vault)?;
+            assert_eq!(policy.diagnostics().manifest_count, 0);
+            assert!(!policy.enforces_write_gate());
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let policy = resolve_policy_manifest(&vault)?;
+        assert_eq!(policy.diagnostics().manifest_count, 0);
+        assert!(!policy.enforces_write_gate());
         Ok(())
     }
 

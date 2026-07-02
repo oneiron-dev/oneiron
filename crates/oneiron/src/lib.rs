@@ -211,6 +211,17 @@ pub(crate) mod test_util {
     pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), cfg).expect("open vault");
+        clear_default_policy_manifest_for_legacy_tests(&vault);
         (dir, vault)
+    }
+
+    fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
+        let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+        vault
+            .with_write_txn(|wtxn| {
+                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+                Ok(())
+            })
+            .expect("clear default policy manifest for legacy test fixture");
     }
 }

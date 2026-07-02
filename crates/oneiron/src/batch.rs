@@ -24,9 +24,10 @@ use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
     EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
     EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
-    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
-    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
+    decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
+    validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -1664,6 +1665,7 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
+                reject_policy_manifest_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
@@ -1918,6 +1920,19 @@ impl ChildOfBatchOverlay {
     }
 }
 
+fn reject_policy_manifest_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Ok(());
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(());
+    };
+    if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+        return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+    }
+    Ok(())
+}
+
 pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -2040,6 +2055,16 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))
+}
+
+#[cfg(test)]
+pub(crate) fn deindex_entity_for_test(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let _ = deindex_entity_without_lexical_query_hint_cascade(store, wtxn, id)?;
+    Ok(())
 }
 
 struct AppliedClaimCandidate {
@@ -3586,10 +3611,10 @@ mod tests {
     use crate::deletion::DeleteReason;
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
-        ENTITY_TYPE_TASK, EdgeActorClass, HnswConfig, VaultConfig,
-        WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-        WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass,
+        HnswConfig, VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
+        WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
+        WriteEnvelope, WriteProvenance,
     };
     use core::assert_matches;
     use rmpv::Value;
@@ -3613,12 +3638,39 @@ mod tests {
         config
     }
 
+    fn open_raw_test_vault() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), test_config()).expect("open vault");
+        (dir, vault)
+    }
+
     fn open_test_vault() -> (tempfile::TempDir, Vault) {
-        crate::test_util::open_test_vault_with(test_config())
+        let (tmp, vault) = open_raw_test_vault();
+        clear_default_policy_manifest_for_test(&vault);
+        (tmp, vault)
+    }
+
+    fn clear_default_policy_manifest_for_test(vault: &Vault) {
+        let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+        vault
+            .with_write_txn(|wtxn| {
+                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+                Ok(())
+            })
+            .expect("clear default policy manifest");
     }
 
     fn test_time_range(start: u64, end: u64) -> TimeRange {
         TimeRange { start, end }
+    }
+
+    fn first_party_eiri_connector_actor_id() -> Result<EntityId> {
+        EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+            .map_err(|_| Error::InvariantViolation("invalid first-party Eiri actor fixture id"))
+    }
+
+    fn first_party_eiri_connector_actor_ref() -> String {
+        crate::gate::first_party_eiri_connector_actor_ref()
     }
 
     fn raw_edge_values(vault: &Vault, edge: &EdgeRef) -> Result<RawEdgeValuePair> {
@@ -3962,64 +4014,78 @@ mod tests {
         Ok(())
     }
 
-    fn seed_policy_manifest_with_critical_defaults(vault: &Vault) -> Result<()> {
-        let manifest = Value::Map(vec![
-            (Value::from("schema_version"), Value::from("1.1")),
-            (Value::from("pack_id"), Value::from("lexical-hint-test")),
-            (Value::from("pack_version"), Value::from("v1")),
-            (
-                Value::from("min_engine_version"),
-                Value::from(env!("CARGO_PKG_VERSION")),
-            ),
-            (
-                Value::from("defaults"),
-                Value::Map(vec![
-                    (Value::from("criticality"), Value::from("critical")),
-                    (Value::from("sensitivity"), Value::from("normal")),
-                ]),
-            ),
-            (
-                Value::from("rules"),
-                Value::Array(vec![Value::Map(vec![
-                    (Value::from("prefix"), Value::from("profile.")),
-                    (
-                        Value::from("axes"),
-                        Value::Map(vec![
-                            (Value::from("criticality"), Value::from("normal")),
-                            (Value::from("sensitivity"), Value::from("normal")),
-                        ]),
-                    ),
-                ])]),
-            ),
-            (
-                Value::from("actor_ceilings"),
-                Value::Array(vec![Value::Map(vec![
-                    (Value::from("actor_class"), Value::from("human")),
-                    (Value::from("ceiling"), Value::from("auto")),
-                ])]),
-            ),
-        ]);
-        let mut data = Vec::new();
-        rmpv::encode::write_value(&mut data, &manifest).expect("encode policy manifest fixture");
+    #[test]
+    fn fresh_default_policy_manifest_grants_first_party_eiri_tool_output_auto() -> Result<()> {
+        let (_dir, vault) = open_raw_test_vault();
 
-        let id = EntityId::from_bytes([0x51; ENTITY_ID_LEN])
-            .map_err(|_| Error::InvariantViolation("invalid policy fixture id"))?;
-        let occurred = test_time_range(32, 32);
-        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-        payload.push(ENTITY_TYPE_POLICY_MANIFEST);
-        payload.extend_from_slice(&occurred.start.to_be_bytes());
-        payload.extend_from_slice(&occurred.end.to_be_bytes());
-        payload.extend_from_slice(&33_u64.to_be_bytes());
-        payload.extend_from_slice(&data);
+        let first_party_eiri_actor = first_party_eiri_connector_actor_id()?;
+        let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
+        let policy = {
+            let wtxn = vault.store.env.write_txn()?;
+            crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?
+        };
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_actor_ref)),
+            crate::gate::PolicyApprovalCeiling::Auto
+        );
+        assert_eq!(policy.signatures().len(), 1);
+        let signed_auto_frontier = policy.read_frontier_hash()?;
 
-        let mut wtxn = vault.store.env.write_txn()?;
+        let subject = EntityId::now();
+        let occurred = test_time_range(1, 1);
+        vault.put_entity(
+            &first_party_eiri_actor,
+            ENTITY_TYPE_PERSON,
+            occurred,
+            1,
+            b"first-party Eiri connector",
+        )?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
+
+        let claim = EntityId::now();
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(first_party_eiri_actor, EdgeActorClass::Agent),
+            ClaimSource::ToolOutput,
+            WriteProvenance::new(Value::from("fixture"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        let candidate = ClaimCandidate::new(
+            "profile.preference",
+            ClaimSubject::Entity(subject),
+            Value::from("sencha"),
+            0.9,
+        );
+
         vault
-            .store
-            .entities
-            .put(&mut wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-        vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
-        wtxn.commit()?;
+            .batch()
+            .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+            .commit()?;
+
+        let stored = vault.get_claim(&claim)?.expect("candidate claim stored");
+        assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(stored.source, Some(ClaimSource::ToolOutput));
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim.as_bytes()))
+            .expect("first-party Eiri write must record a gate decision");
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+        assert_eq!(decision.actor_class, "agent");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(first_party_eiri_actor_ref.as_str())
+        );
+
+        let policy_after_write = {
+            let wtxn = vault.store.env.write_txn()?;
+            crate::gate::resolve_policy_manifest(&vault.store, &wtxn)?
+        };
+        assert_eq!(
+            signed_auto_frontier,
+            policy_after_write.read_frontier_hash()?
+        );
         Ok(())
     }
 
@@ -4430,7 +4496,6 @@ mod tests {
     #[test]
     fn claim_candidate_lexical_hints_bypass_hint_policy_gate() -> Result<()> {
         let (_dir, vault) = open_test_vault();
-        seed_policy_manifest_with_critical_defaults(&vault)?;
         let actor = EntityId::now();
         let subject = EntityId::now();
         let occurred = test_time_range(1, 1);
@@ -4469,8 +4534,7 @@ mod tests {
 
     #[test]
     fn raw_lexical_hint_put_does_not_bypass_policy_gate() -> Result<()> {
-        let (_dir, vault) = open_test_vault();
-        seed_policy_manifest_with_critical_defaults(&vault)?;
+        let (_dir, vault) = open_raw_test_vault();
         let actor = EntityId::now();
         let subject = EntityId::now();
         let occurred = test_time_range(1, 1);

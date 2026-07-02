@@ -23,8 +23,8 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeKind, EdgeProvenanceFlags, TimeRange,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
 };
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
@@ -48,7 +48,19 @@ fn test_config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    clear_policy_manifests(&vault);
     (dir, vault)
+}
+
+fn clear_policy_manifests(vault: &Vault) {
+    // The seeded default policy manifest is local-only engine state for sync
+    // windows; public deletion of it is rejected.
+    assert!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests")
+            <= 1
+    );
 }
 
 fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
@@ -358,29 +370,25 @@ fn remote_hard_tombstone_on_provenance_claim_restamps_subject_edge() {
 
     // Replica-local graph: actors + subject edge + two live Claims.
     let person = EntityId::now();
-    let machine = EntityId::now();
     let a = EntityId::now();
     let b = EntityId::now();
     vault_b
         .put_entity(&person, 4, time_range(1), 1, b"person")
-        .unwrap();
-    vault_b
-        .put_entity(&machine, ENTITY_TYPE_MACHINE, time_range(1), 1, b"machine")
         .unwrap();
     vault_b.put_entity(&a, 4, time_range(1), 1, b"a").unwrap();
     vault_b.put_entity(&b, 4, time_range(1), 1, b"b").unwrap();
     vault_b.put_edge(&a, EdgeKind::Mentions, &b, 0.875).unwrap();
     let subject = EdgeRef::new(a, EdgeKind::Mentions, b);
 
-    // `winner` (conf 0.6, confirmed/system) outranks `runner_up`
-    // (conf 0.4, disputed/agent) under D14.
+    // `winner` (conf 0.6, confirmed) outranks `runner_up`
+    // (conf 0.4, disputed) under D14.
     let winner = EntityId::now();
     vault_b
         .put_edge_provenance(
             &winner,
             &subject,
-            &EdgeProvenanceClaimBody::new(machine, 0.6, SupersessionStatus::Confirmed),
-            EdgeActorClass::System,
+            &EdgeProvenanceClaimBody::new(person, 0.6, SupersessionStatus::Confirmed),
+            EdgeActorClass::Human,
             2_000,
         )
         .unwrap();
@@ -390,7 +398,7 @@ fn remote_hard_tombstone_on_provenance_claim_restamps_subject_edge() {
             &runner_up,
             &subject,
             &EdgeProvenanceClaimBody::new(person, 0.4, SupersessionStatus::Disputed),
-            EdgeActorClass::Agent,
+            EdgeActorClass::Human,
             2_000,
         )
         .unwrap();
@@ -408,7 +416,7 @@ fn remote_hard_tombstone_on_provenance_claim_restamps_subject_edge() {
         stamped(&vault_b),
         Some(EdgeProvenanceFlags {
             confirmation_status: EdgeConfirmationStatus::Confirmed,
-            actor_class: EdgeActorClass::System,
+            actor_class: EdgeActorClass::Human,
         }),
         "winner stamps before the replay"
     );
@@ -437,7 +445,7 @@ fn remote_hard_tombstone_on_provenance_claim_restamps_subject_edge() {
         stamped(&vault_b),
         Some(EdgeProvenanceFlags {
             confirmation_status: EdgeConfirmationStatus::Disputed,
-            actor_class: EdgeActorClass::Agent,
+            actor_class: EdgeActorClass::Human,
         }),
         "subject edge must restamp from the D14 winner among the survivors"
     );
