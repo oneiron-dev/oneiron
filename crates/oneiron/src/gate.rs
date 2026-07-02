@@ -38,6 +38,7 @@ const POLICY_SIGNATURES_KEY: &str = "signatures";
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
 const RULE_PREFIX_KEY: &str = "prefix";
+const RULE_EXACT_KEY: &str = "exact";
 const RULE_AXES_KEY: &str = "axes";
 const ACTOR_CLASS_KEY: &str = "actor_class";
 const ACTOR_REF_KEY: &str = "actor_ref";
@@ -147,7 +148,18 @@ impl PolicyAxes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PolicyRule {
     prefix: String,
+    exact: bool,
     axes: PolicyAxes,
+}
+
+impl PolicyRule {
+    fn matches(&self, predicate: &str) -> bool {
+        if self.exact {
+            predicate == self.prefix
+        } else {
+            predicate.starts_with(&self.prefix)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,7 +178,7 @@ impl PolicyPack {
         let mut resolved = self.defaults;
 
         for rule in &self.rules {
-            if predicate.starts_with(&rule.prefix) {
+            if rule.matches(predicate) {
                 match rule.prefix.len().cmp(&best_len) {
                     Ordering::Greater => {
                         best_len = rule.prefix.len();
@@ -696,6 +708,30 @@ impl PolicyManifestResolution {
         ceiling.unwrap_or(PolicyApprovalCeiling::Proposed)
     }
 
+    fn has_matching_actor_ceiling(&self, actor_class: &str, actor_ref: Option<&str>) -> bool {
+        self.actor_ceilings.iter().any(|row| {
+            row.actor_class == actor_class
+                && match (&row.actor_ref, actor_ref) {
+                    (None, _) => true,
+                    (Some(row_ref), Some(request_ref)) => row_ref == request_ref,
+                    _ => false,
+                }
+        })
+    }
+
+    fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
+        let actor_class = input.actor.actor_class.trim();
+        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+            == PolicyApprovalCeiling::Auto
+        {
+            return true;
+        }
+
+        input.content_kind == GateContentKind::EdgeProvenanceClaim
+            && matches!(actor_class, "agent" | "system")
+            && !self.has_matching_actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+    }
+
     #[must_use]
     pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
@@ -756,9 +792,7 @@ impl PolicyManifestResolution {
 
         let mut pending = Vec::new();
 
-        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
-            == PolicyApprovalCeiling::Proposed
-        {
+        if !self.actor_ceiling_allows_auto_for_content(input) {
             pending.push(GateReasonCode::PendingActorCeiling);
         }
 
@@ -883,6 +917,7 @@ fn hash_policy_frontier_v0(
         hash_len(hasher, pack.rules.len());
         for rule in &pack.rules {
             hash_str(hasher, &rule.prefix);
+            hash_bool(hasher, rule.exact);
             hash_axes(hasher, rule.axes);
         }
     }
@@ -1100,6 +1135,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ]),
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("affect.vad")),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
                         Value::from(RULE_AXES_KEY),
                         Value::Map(vec![
@@ -1687,8 +1723,13 @@ fn parse_rules(value: &Value) -> Option<Vec<PolicyRule>> {
         if prefix.is_empty() {
             return None;
         }
+        let exact = optional_bool(entries, RULE_EXACT_KEY)?;
         let axes = parse_axes(required_value(entries, RULE_AXES_KEY)?)?;
-        rules.push(PolicyRule { prefix, axes });
+        rules.push(PolicyRule {
+            prefix,
+            exact,
+            axes,
+        });
     }
     Some(rules)
 }
@@ -1931,6 +1972,15 @@ fn optional_string(entries: &[(Value, Value)], key: &str) -> Option<Option<Strin
     }
 }
 
+fn optional_bool(entries: &[(Value, Value)], key: &str) -> Option<bool> {
+    match single_map_value(entries, key) {
+        MapValue::Missing => Some(false),
+        MapValue::Duplicate => None,
+        MapValue::Present(Value::Boolean(value)) => Some(*value),
+        MapValue::Present(_) => None,
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 fn restrict_optional<T>(left: Option<T>, right: Option<T>) -> Option<T>
 where
@@ -1999,9 +2049,9 @@ mod tests {
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_PERSON, EdgeActorClass,
-        EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange, WriteActor,
-        WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+        EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
+        WriteActor, WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -3220,6 +3270,75 @@ mod tests {
 
         assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
         assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn default_policy_vad_rule_is_exact() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xC0, &data)?;
+        let policy = resolve(&vault)?;
+
+        assert_eq!(
+            policy.criticality_for_predicate("affect.vad"),
+            PolicyCriticality::Normal
+        );
+        for predicate in ["affect.vad.extra", "affect.vader.note"] {
+            assert_eq!(
+                policy.criticality_for_predicate(predicate),
+                PolicyCriticality::Critical,
+                "{predicate} must not inherit the internal VAD exemption"
+            );
+        }
+
+        let claim_id = test_id(0xC1);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.predicate = "affect.vad.extra".to_owned();
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+        let err = vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("VAD-like predicates must stay subject to the criticality floor");
+        assert_gate_rejected(err, "pending", &["gate.pending.criticality_floor"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
+        for (seed, actor_entity_type, actor_class) in [
+            (0xC2, ENTITY_TYPE_PERSON, EdgeActorClass::Agent),
+            (0xD2, ENTITY_TYPE_MACHINE, EdgeActorClass::System),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            let data = encode_first_party_eiri_default_policy_manifest();
+            put_policy_manifest_bytes(&vault, seed, &data)?;
+
+            let src = test_id(seed + 1);
+            let tgt = test_id(seed + 2);
+            let actor = test_id(seed + 3);
+            let claim_id = test_id(seed + 4);
+            let occurred = test_time(8);
+            vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 8, b"src")?;
+            vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 8, b"tgt")?;
+            vault.put_entity(&actor, actor_entity_type, occurred, 8, b"actor")?;
+            vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.5)?;
+
+            let subject = EdgeRef {
+                source: src,
+                kind: EdgeKind::Mentions,
+                target: tgt,
+            };
+            let body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed);
+            vault.put_edge_provenance(&claim_id, &subject, &body, actor_class, 9)?;
+
+            assert!(
+                vault.get_raw(&claim_id)?.is_some(),
+                "{actor_class:?} edge provenance write should persist under the default policy"
+            );
+        }
         Ok(())
     }
 
