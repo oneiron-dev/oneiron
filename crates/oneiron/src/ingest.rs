@@ -841,11 +841,12 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::SourceNotTrustedForAuto {
-                    claim_source: "imported"
-                }
+                Error::GateWriteRejected {
+                    outcome: "pending",
+                    ref reason_codes,
+                } if reason_codes == &["gate.pending.source_trust"]
             ),
-            "expected imported source-trust denial, got {err:?}"
+            "expected imported write-gate source-trust pending, got {err:?}"
         );
         assert!(vault.get_raw(&claim_id)?.is_none());
         Ok(())

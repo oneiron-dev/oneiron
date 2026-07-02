@@ -194,6 +194,7 @@ pub(crate) mod test_util {
     //! Shared test helpers. Centralized to avoid drift between per-module
     //! copies of `open_test_vault`. Each module keeps its own `test_config()`
     //! because configs diverge (map sizes, dimensions, embedding model).
+    use crate::store::Store;
     use crate::types::VaultConfig;
     use crate::vault::Vault;
 
@@ -202,6 +203,20 @@ pub(crate) mod test_util {
     pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), cfg).expect("open vault");
+        clear_default_policy_manifest_for_legacy_tests(&vault);
         (dir, vault)
+    }
+
+    fn clear_default_policy_manifest_for_legacy_tests(vault: &Vault) {
+        let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+        vault
+            .with_write_txn(|wtxn| {
+                vault.store.entities.delete(wtxn, id.as_bytes())?;
+                let type_key =
+                    Store::encode_type_key(crate::types::ENTITY_TYPE_POLICY_MANIFEST, &id);
+                vault.store.type_index.delete(wtxn, &type_key)?;
+                Ok(())
+            })
+            .expect("clear default policy manifest for legacy test fixture");
     }
 }

@@ -23,8 +23,8 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeKind, EdgeProvenanceFlags, TimeRange,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
 };
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
@@ -48,7 +48,27 @@ fn test_config() -> VaultConfig {
 fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), test_config()).unwrap());
+    clear_policy_manifests(&vault);
     (dir, vault)
+}
+
+fn clear_policy_manifests(vault: &Vault) {
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("list policy manifests")
+    {
+        vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect("clear policy manifest fixture");
+    }
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests"),
+        0
+    );
 }
 
 fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {

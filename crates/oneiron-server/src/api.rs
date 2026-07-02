@@ -20,7 +20,8 @@ use oneiron::{
     EdgeKind, ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
     UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
     types::{
-        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN,
+        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION,
+        ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -1796,6 +1797,10 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
     let mut last_activity = None;
 
     for entity_type in u8::MIN..=u8::MAX {
+        if entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+            continue;
+        }
+
         let ids = server
             .vault
             .entities_by_type(entity_type)
@@ -8685,6 +8690,7 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;
     use serde_json::Map;
     use serde_json::Value;
     use tower::ServiceExt;
@@ -8867,8 +8873,28 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp vault dir");
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        clear_policy_manifests(vault.as_ref());
         let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
         (dir, server)
+    }
+
+    fn clear_policy_manifests(vault: &oneiron::Vault) {
+        let ids = vault
+            .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("scan policy manifests");
+        for id in ids {
+            vault
+                .batch()
+                .delete(&id)
+                .commit()
+                .expect("clear policy manifest");
+        }
+        assert!(
+            vault
+                .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+                .expect("rescan policy manifests")
+                .is_empty()
+        );
     }
 
     fn test_server_with_usage_mode(usage_mode: UsageMode) -> (tempfile::TempDir, Arc<SyncServer>) {

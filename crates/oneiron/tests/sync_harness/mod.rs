@@ -28,7 +28,7 @@ use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{EdgeActorClass, TimeRange, Vad};
+use oneiron::types::{ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, TimeRange, Vad};
 use oneiron::{
     EdgeInfo, EdgeKind, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     Vault, VaultConfig,
@@ -59,6 +59,25 @@ pub(crate) fn test_config_with_embedding() -> VaultConfig {
     let mut cfg = test_config();
     cfg.embedding_model = Some("test-model-v1".to_owned());
     cfg
+}
+
+pub(crate) fn clear_policy_manifests(vault: &Vault) {
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("list policy manifests")
+    {
+        vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect("clear policy manifest fixture");
+    }
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests"),
+        0
+    );
 }
 
 /// Builds the pinned 25-byte entity envelope + body from LITERAL parts
@@ -236,6 +255,7 @@ impl TestNode {
     pub(crate) fn with_config(name: &'static str, peer_id: u64, cfg: VaultConfig) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+        clear_policy_manifests(&vault);
         Self {
             peer_id,
             name,
