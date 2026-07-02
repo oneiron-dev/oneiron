@@ -55,6 +55,94 @@ fn test_config() -> VaultConfig {
     config
 }
 
+fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result<()> {
+    let manifest = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.1"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("generated-auto-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("v1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            rmpv::Value::from("defaults"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("criticality"),
+                    rmpv::Value::from("normal"),
+                ),
+                (
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from("normal"),
+                ),
+            ]),
+        ),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("actor_class"),
+                    rmpv::Value::from("first_party"),
+                ),
+                (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+            ])]),
+        ),
+        (
+            rmpv::Value::from("source_trust"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("generated"),
+                rmpv::Value::Map(vec![
+                    (
+                        rmpv::Value::from("max_auto_sensitivity"),
+                        rmpv::Value::from(0_u64),
+                    ),
+                    (rmpv::Value::from("receipted"), rmpv::Value::Boolean(true)),
+                    (rmpv::Value::from("warned"), rmpv::Value::Boolean(true)),
+                ]),
+            )]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest)
+        .map_err(|_| Error::InvariantViolation("failed to encode policy manifest fixture"))?;
+
+    let id = EntityId::from_bytes([0x6D; ENTITY_ID_LEN])
+        .map_err(|_| Error::InvariantViolation("invalid policy fixture id"))?;
+    let learned_at = 2_u64;
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&data);
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)?;
+    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+    vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+    let temporal_key = Store::encode_temporal_key(learned_at, &id);
+    vault
+        .store
+        .temporal_occurred_start
+        .put(&mut wtxn, &temporal_key, &[])?;
+    vault
+        .store
+        .temporal_learned
+        .put(&mut wtxn, &temporal_key, &[])?;
+    wtxn.commit()?;
+    Ok(())
+}
+
 const EXPECTED_HNSW_COMPATIBILITY_VERSION: u8 = 2;
 const EXPECTED_HNSW_COMPATIBILITY_LEN: usize = 27;
 const EXPECTED_HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
@@ -7745,6 +7833,7 @@ fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result
             dominance: 0.6,
         },
     )?;
+    seed_generated_auto_source_trust_manifest(&vault)?;
 
     let mut body = claim_vad_fixture_body(subject, &[turn]);
     body.source = Some(ClaimSource::Generated);
@@ -7846,6 +7935,7 @@ fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating()
         first.vad.expect("initial claim VAD"),
     );
 
+    seed_generated_auto_source_trust_manifest(&vault)?;
     body.source = Some(ClaimSource::Generated);
     vault.put_claim(&claim, &body, test_time_range(40, 40), 40)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&claim, 200))
@@ -8278,6 +8368,7 @@ fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Re
         50,
     )?;
     body.source = Some(ClaimSource::Generated);
+    seed_generated_auto_source_trust_manifest(&vault)?;
     vault.put_claim(&outcome, &body, test_time_range(50, 50), 50)?;
 
     let err = vault
@@ -12208,15 +12299,47 @@ fn put_active_claim(
     val: &str,
     learned_at: u64,
 ) -> Result<EntityId> {
+    put_active_claim_with_source(vault, subject, pred, val, None, learned_at)
+}
+
+fn put_active_claim_with_source(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    source: Option<ClaimSource>,
+    learned_at: u64,
+) -> Result<EntityId> {
+    put_active_claim_with_source_and_approval(
+        vault,
+        subject,
+        pred,
+        val,
+        source,
+        ClaimApprovalStatus::Auto,
+        learned_at,
+    )
+}
+
+fn put_active_claim_with_source_and_approval(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    source: Option<ClaimSource>,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> Result<EntityId> {
     let id = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         pred,
         ClaimSubject::Entity(*subject),
         rmpv::Value::from(val),
         0.9,
-        ClaimApprovalStatus::Auto,
+        approval,
         ClaimLifecycleStatus::Active,
     );
+    body.source = source;
     vault.put_claim(
         &id,
         &body,
@@ -12633,6 +12756,150 @@ fn supersede_claim_rejects_self_supersession() -> Result<()> {
             .targets(&claim, EdgeKind::Supersedes, None)?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn generated_claim_cannot_supersede_user_stated_non_code_truth() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim_with_source(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        Some(ClaimSource::UserStated),
+        11,
+    )?;
+    let new = put_active_claim_with_source_and_approval(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "tokyo",
+        Some(ClaimSource::Generated),
+        ClaimApprovalStatus::Proposed,
+        22,
+    )?;
+    let old_before = vault.get_raw(&old)?.expect("old claim stored");
+
+    let err = vault
+        .supersede_claim(&new, &old, 777)
+        .expect_err("generated non-code truth must not supersede user-stated truth");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert!(
+        err.to_string()
+            .contains("generated claim cannot supersede user-stated truth")
+    );
+    assert_eq!(
+        vault.get_raw(&old)?.expect("old claim still stored"),
+        old_before
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim_with_source(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        Some(ClaimSource::UserStated),
+        11,
+    )?;
+
+    let new = EntityId::now();
+    let mut new_body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("tokyo"),
+        0.9,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    new_body.source = Some(ClaimSource::Imported);
+    new_body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("federated_original_source"),
+        rmpv::Value::from(ClaimSource::Generated.as_str()),
+    )]));
+    vault.put_claim(&new, &new_body, test_time_range(22, 22), 22)?;
+    let old_before = vault.get_raw(&old)?.expect("old claim stored");
+
+    let err = vault
+        .supersede_claim(&new, &old, 777)
+        .expect_err("restamped generated-origin claim must not supersede user-stated truth");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert!(
+        err.to_string()
+            .contains("generated claim cannot supersede user-stated truth")
+    );
+    assert_eq!(
+        vault.get_raw(&old)?.expect("old claim still stored"),
+        old_before
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").source,
+        None,
+        "fixture must preserve the legacy missing-src shape"
+    );
+
+    let new = EntityId::now();
+    let mut new_body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("tokyo"),
+        0.9,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    new_body.source = Some(ClaimSource::Imported);
+    new_body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("federated_original_source"),
+        rmpv::Value::from(ClaimSource::Generated.as_str()),
+    )]));
+    vault.put_claim(&new, &new_body, test_time_range(22, 22), 22)?;
+    let old_before = vault.get_raw(&old)?.expect("old claim stored");
+
+    let err = vault
+        .supersede_claim(&new, &old, 777)
+        .expect_err("restamped generated-origin claim must not supersede legacy missing-src truth");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert!(
+        err.to_string()
+            .contains("generated claim cannot supersede user-stated truth")
+    );
+    assert_eq!(
+        vault.get_raw(&old)?.expect("old claim still stored"),
+        old_before
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
     Ok(())
 }
 
