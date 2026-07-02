@@ -6356,6 +6356,10 @@ fn type_byte_band_allocation_matches_contract() {
         "ACCESS_GRANT is NOT a StructuralKind (EIRI-004: companion control plane)"
     );
     assert!(
+        !is_structural_kind(129),
+        "PSYCH_PROFILE is NOT a StructuralKind (AEI-006: derived profile mirror)"
+    );
+    assert!(
         !is_structural_kind(130),
         "SUSPICIOUS_WAKE byte 130 is reserved but not a StructuralKind"
     );
