@@ -338,7 +338,7 @@ fn serialize_yaml(config: &SerializeConfig, prepared: PreparedPack) -> String {
 }
 
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
-    let skip_budget = config.format == PackFormat::Json || config.budget == 0;
+    let skip_budget = config.budget == 0;
     let value_depth_limit = value_depth_limit_for_format(config.format);
     let mut stats = pack.stats.clone();
     let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
@@ -432,10 +432,13 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
         }
     };
 
-    if !skip_budget {
-        enforce_serialized_token_budget(pack, config, &mut prepared, config.budget, tokenizer);
-    }
-    stamp_pack_token_stats(pack, config, &mut prepared, tokenizer);
+    finalize_pack_token_stats(
+        pack,
+        config,
+        &mut prepared,
+        tokenizer,
+        (!skip_budget).then_some(config.budget),
+    );
     prepared
 }
 
@@ -1342,14 +1345,45 @@ fn serialized_prepared_token_count(
     tokenizer.count(text)
 }
 
+fn finalize_pack_token_stats(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: &mut PreparedPack,
+    tokenizer: PackTokenizer,
+    token_budget: Option<usize>,
+) {
+    for _ in 0..16 {
+        let changed = stamp_pack_token_stats(pack, config, prepared, tokenizer);
+        if let Some(budget) = token_budget {
+            enforce_serialized_token_budget(pack, config, prepared, budget, tokenizer);
+        }
+
+        let total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
+        let next = collect_pack_token_stats(prepared, total_tokens, tokenizer);
+        let within_budget = token_budget.is_none_or(|budget| total_tokens <= budget);
+        if prepared.stats.tokens == next && within_budget && !changed {
+            return;
+        }
+        prepared.stats.tokens = next;
+    }
+
+    if let Some(budget) = token_budget {
+        enforce_serialized_token_budget(pack, config, prepared, budget, tokenizer);
+    }
+    let _ = stamp_pack_token_stats(pack, config, prepared, tokenizer);
+}
+
 fn stamp_pack_token_stats(
     pack: &ContextPack,
     config: &SerializeConfig,
     prepared: &mut PreparedPack,
     tokenizer: PackTokenizer,
-) {
+) -> bool {
     let total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
-    prepared.stats.tokens = collect_pack_token_stats(prepared, total_tokens, tokenizer);
+    let tokens = collect_pack_token_stats(prepared, total_tokens, tokenizer);
+    let changed = prepared.stats.tokens != tokens;
+    prepared.stats.tokens = tokens;
+    changed
 }
 
 fn collect_pack_token_stats(
@@ -3390,6 +3424,7 @@ mod tests {
     fn serialized_fixture_output_respects_real_token_budget() {
         let pack = token_savings_regression_pack();
         for format in [
+            PackFormat::Json,
             PackFormat::Yaml,
             PackFormat::Toon,
             PackFormat::Markdown,
