@@ -7742,6 +7742,44 @@ fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result
 }
 
 #[test]
+fn claim_vad_consolidation_rejects_stale_active_claim_with_specific_error() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+
+    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    body.stale = true;
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+
+    let err = block_on_ready(vault.consolidate_claim_vad(&claim, 100))
+        .expect_err("stale Active claims are not consolidatable");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("claim is stale and not consolidatable")
+    );
+    Ok(())
+}
+
+#[test]
 fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();

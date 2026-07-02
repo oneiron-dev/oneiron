@@ -1098,10 +1098,12 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
 ///
 /// This is intentionally stricter than [`claim_surfaceable`]: first-party or
 /// replicated `Auto` claims stamped `src = generated` may surface immediately
-/// for review/retrieval, but Dreamer consolidation, corroboration counting,
-/// and effector fan-out must call this predicate and decline them until they
-/// are vetted into `appr = approved`. This is a read gate only; replication
-/// and replay paths must not re-run policy source-trust checks.
+/// on retrieval/review read paths, but authority-consuming paths must call
+/// this predicate at their consolidation/corroboration/effector admission
+/// boundary and decline them until they are vetted into `appr = approved`.
+/// Existing retrieval and context-pack surfacing paths intentionally remain on
+/// [`claim_surfaceable`]. This is a read gate only; replication and replay
+/// paths must not re-run policy source-trust checks.
 pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
     claim_surfaceable(body)
         && !(body.approval == ClaimApprovalStatus::Auto
