@@ -1872,6 +1872,8 @@ mod tests {
         WriteProvenance,
     };
 
+    const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];
+
     fn test_id(seed: u8) -> EntityId {
         EntityId::from_bytes([seed; 16]).expect("valid test id")
     }
@@ -1999,6 +2001,11 @@ mod tests {
                         (Value::from(ACTOR_REF_KEY), Value::from("probation")),
                         (Value::from(ACTOR_CEILING_KEY), Value::from("proposed")),
                     ]),
+                    actor_ceiling_row_for_ref(
+                        "agent",
+                        &first_party_eiri_connector_actor_ref(),
+                        "auto",
+                    ),
                 ]),
             ),
         ];
@@ -2006,6 +2013,13 @@ mod tests {
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("manifest encode");
         out
+    }
+
+    fn encode_first_party_eiri_default_policy_manifest() -> Vec<u8> {
+        encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::ToolOutput, 0),
+            signatures_entry(),
+        ])
     }
 
     fn rewrite_policy_manifest_entries(
@@ -2055,6 +2069,14 @@ mod tests {
     fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
         Value::Map(vec![
             (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+            (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
+        ])
+    }
+
+    fn actor_ceiling_row_for_ref(actor_class: &str, actor_ref: &str, ceiling: &str) -> Value {
+        Value::Map(vec![
+            (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
             (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
         ])
     }
@@ -2112,7 +2134,10 @@ mod tests {
             Value::Array(vec![Value::Map(vec![
                 (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),
                 (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
-                (Value::from(SIGNATURE_SIG_KEY), Value::from("00")),
+                (
+                    Value::from(SIGNATURE_SIG_KEY),
+                    Value::from("first-party-eiri-auto"),
+                ),
             ])]),
         )
     }
@@ -2166,6 +2191,15 @@ mod tests {
 
     fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
         vault.with_write_txn(|wtxn| resolve_policy_manifest(&vault.store, wtxn))
+    }
+
+    fn first_party_eiri_connector_actor_id() -> EntityId {
+        EntityId::from_bytes(FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+            .expect("first-party Eiri actor fixture id")
+    }
+
+    fn first_party_eiri_connector_actor_ref() -> String {
+        first_party_eiri_connector_actor_id().to_hex()
     }
 
     fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {
@@ -2245,6 +2279,15 @@ mod tests {
         body: &ClaimBody,
     ) -> Result<(ClaimCandidate, WriteEnvelope)> {
         let actor = test_id(0x20);
+        claim_candidate_write_parts_for_actor(vault, body, actor, EdgeActorClass::Human)
+    }
+
+    fn claim_candidate_write_parts_for_actor(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"gate actor")?;
         if let ClaimSubject::Entity(subject) = body.subject {
             vault.put_entity(
@@ -2257,7 +2300,7 @@ mod tests {
         }
         let source = body.source.unwrap_or(ClaimSource::UserStated);
         let envelope = WriteEnvelope::new(
-            WriteActor::new(actor, EdgeActorClass::Human),
+            WriteActor::new(actor, actor_class),
             source,
             WriteProvenance::new(Value::from("gate-test"))?,
             body.approval,
@@ -2927,6 +2970,10 @@ mod tests {
             PolicyApprovalCeiling::Proposed
         );
         assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Auto
+        );
+        assert_eq!(
             policy.criticality_for_predicate("health.allergy"),
             PolicyCriticality::Critical
         );
@@ -2951,6 +2998,150 @@ mod tests {
             1,
             "policy gate must reuse the write-door decode"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xB4, &data)?;
+
+        let claim_id = test_id(0xB5);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            EdgeActorClass::Agent,
+        )?;
+
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        let stored = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(stored.source, Some(ClaimSource::ToolOutput));
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+            .expect("first-party Eiri write must record a gate decision");
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+        assert_eq!(decision.actor_class, "agent");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(first_party_eiri_connector_actor_ref().as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xB6, &data)?;
+
+        let claim_id = test_id(0xB7);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &vault,
+            &body,
+            test_id(0xB8),
+            EdgeActorClass::Agent,
+        )?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("foreign connector must not inherit first-party Auto");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
+        let (_unknown_tmp, unknown_vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&unknown_vault, 0xB9, &data)?;
+
+        let unknown_claim = test_id(0xBA);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &unknown_vault,
+            &body,
+            test_id(0xBB),
+            EdgeActorClass::Agent,
+        )?;
+        let err = unknown_vault
+            .batch()
+            .claim_candidate(&unknown_claim, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("unknown connector key must remain pending");
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(unknown_vault.get_raw(&unknown_claim)?.is_none());
+
+        let (_revoked_tmp, revoked_vault) = temp_vault();
+        let mut revoked_policy = encode_first_party_eiri_default_policy_manifest();
+        append_actor_ceiling(
+            &mut revoked_policy,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        );
+        put_policy_manifest_bytes(&revoked_vault, 0xBC, &revoked_policy)?;
+
+        let revoked_claim = test_id(0xBD);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &revoked_vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            EdgeActorClass::Agent,
+        )?;
+        let err = revoked_vault
+            .batch()
+            .claim_candidate(&revoked_claim, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("revoked connector key must remain pending");
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(revoked_vault.get_raw(&revoked_claim)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xBE, &data)?;
+        let policy = resolve(&vault)?;
+        let signed_auto_frontier = policy.read_frontier_hash()?;
+
+        assert_eq!(policy.signatures().len(), 1);
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Auto
+        );
+
+        let (_revoked_tmp, revoked_vault) = temp_vault();
+        let mut revoked_data = encode_first_party_eiri_default_policy_manifest();
+        append_actor_ceiling(
+            &mut revoked_data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        );
+        put_policy_manifest_bytes(&revoked_vault, 0xBF, &revoked_data)?;
+        let revoked_policy = resolve(&revoked_vault)?;
+
+        assert_eq!(revoked_policy.signatures().len(), 1);
+        assert_eq!(
+            revoked_policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Proposed
+        );
+        assert_ne!(signed_auto_frontier, revoked_policy.read_frontier_hash()?);
         Ok(())
     }
 
