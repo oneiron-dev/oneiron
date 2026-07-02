@@ -5118,13 +5118,19 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
     Ok(())
 }
 
-/// Consolidated from three name-only clones (ONE-1145): one core DB plus the
-/// two sync-era DBs (manifest rows 24/25). Removing ANY required manifest
-/// name must fail closed with the exact missing-name payload — including the
-/// sync DBs, which are part of the 28-name set regardless of features.
+/// Consolidated from name-only clones (ONE-1145/ONE-1206): one core DB plus
+/// sync-era and job-queue DBs. Removing ANY required manifest name must fail
+/// closed with the exact missing-name payload.
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
-    for missing_name in ["hnsw_meta", "sync_state", "sync_queue"] {
+    for missing_name in [
+        "hnsw_meta",
+        "sync_state",
+        "sync_queue",
+        "job_records",
+        "job_ready",
+        "job_dedupe",
+    ] {
         let temp_dir = tempfile::tempdir()?;
         create_raw_vault_missing_manifest_name(temp_dir.path(), missing_name)?;
 
