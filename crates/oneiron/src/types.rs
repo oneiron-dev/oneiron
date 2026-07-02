@@ -74,23 +74,31 @@ pub const ENTITY_TYPE_POLICY_MANIFEST: u8 = 123;
 /// FED-001 FederationGrant entity. Engine-authored maintenance kind for
 /// shared-vault membership records.
 pub const ENTITY_TYPE_FEDERATION_GRANT: u8 = 124;
-// Bytes 125..=127 are reserved for future maintenance substrates:
-// CONNECTION_RECORD, DIAGNOSTIC, and FEDERATION_KEY_ENVELOPE. They are
-// intentionally unregistered until those substrates land.
+// Byte 125 is reserved for future CONNECTION_RECORD maintenance records.
+// Byte 126 is reserved for future DIAGNOSTIC maintenance records.
+// Byte 127 is reserved for future FEDERATION_KEY_ENVELOPE maintenance records.
+// These bytes are intentionally unregistered until those substrates land, so
+// they remain rejected with `InvalidEntityType` on write paths.
 /// EIRI-004 AccessGrant entity. Engine-authored maintenance kind for scoped
 /// companion control-plane access records.
 pub const ENTITY_TYPE_ACCESS_GRANT: u8 = 128;
 /// AEI-006 PsychProfile snapshot entity. Engine-authored maintenance kind for
 /// derived profile mirror snapshots keyed by source revision ids.
 pub const ENTITY_TYPE_PSYCH_PROFILE: u8 = 129;
+// Byte 130 is reserved for future SUSPICIOUS_WAKE maintenance records.
+// It is intentionally unregistered until that substrate lands, so it remains
+// rejected with `InvalidEntityType` on write paths.
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
 ///
 /// CLAIM (byte 0) is the single SEMANTIC type (ARCH-0003) and deliberately
 /// NOT a StructuralKind; core and pack kinds ARE StructuralKinds; maintenance
-/// records (REDACTION_AUDIT, MODEL, POLICY_MANIFEST, FEDERATION_GRANT,
-/// ACCESS_GRANT, PSYCH_PROFILE) are engine-authored records, also not
+/// records (REDACTION_AUDIT=120, MODEL=121, AUTHORITY_LOG=122 reserved,
+/// POLICY_MANIFEST=123, FEDERATION_GRANT=124, CONNECTION_RECORD=125 reserved,
+/// DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127 reserved,
+/// ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130 reserved) are
+/// engine-authored records or reserved maintenance substrates, also not
 /// StructuralKinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
@@ -128,9 +136,10 @@ pub enum TypeByteBand {
     Crm,
     /// Bytes `120–255` — "Induced / dynamic / maintenance"
     /// (REDACTION_AUDIT=120, MODEL=121, AUTHORITY_LOG=122 reserved,
-    /// POLICY_MANIFEST=123, FEDERATION_GRANT=124, 125..=127 reserved,
-    /// ACCESS_GRANT=128, PSYCH_PROFILE=129, runtime-induced and tenant-custom
-    /// kinds).
+    /// POLICY_MANIFEST=123, FEDERATION_GRANT=124, CONNECTION_RECORD=125
+    /// reserved, DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127
+    /// reserved, ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130
+    /// reserved, runtime-induced and tenant-custom kinds).
     InducedDynamicMaintenance,
 }
 
@@ -178,9 +187,11 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 ///
 /// Per contracts.ts §1: byte 0 (CLAIM) is the semantic type and deliberately
 /// NOT a StructuralKind; maintenance records (REDACTION_AUDIT = 120,
-/// MODEL = 121, POLICY_MANIFEST = 123, FEDERATION_GRANT = 124,
-/// ACCESS_GRANT = 128, PSYCH_PROFILE = 129) are not StructuralKinds either.
-/// AUTHORITY_LOG byte 122 and bytes 125..=127 are reserved but unregistered.
+/// MODEL = 121, AUTHORITY_LOG = 122 reserved, POLICY_MANIFEST = 123,
+/// FEDERATION_GRANT = 124, CONNECTION_RECORD = 125 reserved,
+/// DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127 reserved,
+/// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved)
+/// are not StructuralKinds either. The reserved bytes are unregistered.
 /// Only registered `core` and `pack` kinds qualify. Unregistered bytes return
 /// `false` here AND remain rejected by `validate_entity_type` on every write
 /// path (unchanged behavior).
@@ -396,8 +407,8 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
-    // Bytes 125..=127 are reserved for CONNECTION_RECORD, DIAGNOSTIC, and
-    // FEDERATION_KEY_ENVELOPE and intentionally unregistered.
+    // Byte 125 CONNECTION_RECORD, byte 126 DIAGNOSTIC, and byte 127
+    // FEDERATION_KEY_ENVELOPE are reserved and intentionally unregistered.
     EntityTypeRegistryEntry {
         kind: "ACCESS_GRANT",
         type_byte: ENTITY_TYPE_ACCESS_GRANT,
@@ -412,6 +423,7 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
+    // Byte 130 SUSPICIOUS_WAKE is reserved and intentionally unregistered.
 ];
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
@@ -840,11 +852,12 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 
 /// First byte of the induced / dynamic / maintenance type-byte band
 /// (contracts.ts `typeByteBands` row `120+`). Registered kinds in this band
-/// (REDACTION_AUDIT = 120, MODEL = 121, POLICY_MANIFEST = 123,
-/// FEDERATION_GRANT = 124, ACCESS_GRANT = 128, PSYCH_PROFILE = 129) are
-/// engine-authored maintenance records; byte 122 is reserved for AUTHORITY_LOG
-/// and bytes 125..=127 are reserved for future maintenance substrates, but
-/// none are registered yet.
+/// (REDACTION_AUDIT = 120, MODEL = 121, AUTHORITY_LOG = 122 reserved,
+/// POLICY_MANIFEST = 123, FEDERATION_GRANT = 124, CONNECTION_RECORD = 125
+/// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
+/// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
+/// reserved) are engine-authored maintenance records or reserved maintenance
+/// substrates. Reserved bytes are not registered yet.
 pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 
 /// Validates an entity type byte for PUBLIC write paths (D5).
@@ -852,8 +865,11 @@ pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 /// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
 /// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL,
 /// POLICY_MANIFEST, FEDERATION_GRANT, ACCESS_GRANT, PSYCH_PROFILE) fail with
-/// the distinct [`Error::MaintenanceKindNotWritable`] so API-boundary error
-/// codes never conflate "unknown byte" with "reserved maintenance kind".
+/// the distinct [`Error::MaintenanceKindNotWritable`]. Reserved-unregistered
+/// maintenance bytes (AUTHORITY_LOG = 122, CONNECTION_RECORD = 125,
+/// DIAGNOSTIC = 126, FEDERATION_KEY_ENVELOPE = 127, SUSPICIOUS_WAKE = 130)
+/// still fail with [`Error::InvalidEntityType`] so API-boundary error codes
+/// never conflate "unknown byte" with "reserved maintenance kind".
 /// Engine-internal writers (the REDACTION_AUDIT receipt writer, the MODEL
 /// get-or-create door in `vault.rs`, policy-manifest resolver fixtures,
 /// federation-grant substrate writers, and PsychProfile snapshot writer)
