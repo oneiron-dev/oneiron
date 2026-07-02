@@ -240,7 +240,7 @@ impl ClaimSource {
     }
 
     pub(crate) const fn requires_explicit_auto_permit(self) -> bool {
-        matches!(self, Self::Imported | Self::ToolOutput)
+        matches!(self, Self::Imported | Self::ToolOutput | Self::Generated)
     }
 }
 
@@ -295,7 +295,7 @@ fn claim_federated_original_source(body: &ClaimBody) -> Option<ClaimSource> {
     }
 }
 
-fn claim_generated_origin(body: &ClaimBody) -> bool {
+pub(crate) fn claim_generated_origin(body: &ClaimBody) -> bool {
     body.source == Some(ClaimSource::Generated)
         || claim_federated_original_source(body) == Some(ClaimSource::Generated)
 }
@@ -2159,6 +2159,33 @@ mod tests {
             ClaimSource::Generated,
         ] {
             assert_eq!(ClaimSource::parse(source.as_str()), Some(source));
+        }
+    }
+
+    #[test]
+    fn claim_source_explicit_auto_permit_set_includes_generated() {
+        for source in [
+            ClaimSource::Imported,
+            ClaimSource::ToolOutput,
+            ClaimSource::Generated,
+        ] {
+            assert!(
+                source.requires_explicit_auto_permit(),
+                "{} must require explicit auto permit",
+                source.as_str()
+            );
+        }
+
+        for source in [
+            ClaimSource::UserStated,
+            ClaimSource::Observed,
+            ClaimSource::Inferred,
+        ] {
+            assert!(
+                !source.requires_explicit_auto_permit(),
+                "{} must not require explicit auto permit",
+                source.as_str()
+            );
         }
     }
 }
