@@ -31,7 +31,8 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_consolidatable, encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
+    claim_consolidatable, claim_generated_origin, encode_claim_body, is_reserved_predicate,
+    validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -2827,9 +2828,7 @@ impl Vault {
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
-        if new_body.source != Some(ClaimSource::Generated)
-            || old_body.source != Some(ClaimSource::UserStated)
-        {
+        if !claim_generated_origin(new_body) || old_body.source != Some(ClaimSource::UserStated) {
             return Ok(());
         }
         if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {

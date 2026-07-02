@@ -295,7 +295,7 @@ fn claim_federated_original_source(body: &ClaimBody) -> Option<ClaimSource> {
     }
 }
 
-fn claim_generated_origin(body: &ClaimBody) -> bool {
+pub(crate) fn claim_generated_origin(body: &ClaimBody) -> bool {
     body.source == Some(ClaimSource::Generated)
         || claim_federated_original_source(body) == Some(ClaimSource::Generated)
 }
