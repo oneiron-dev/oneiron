@@ -12855,6 +12855,55 @@ fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Resu
 }
 
 #[test]
+fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim(&vault, &subject, "profile.lives_in", "osaka", 11)?;
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").source,
+        None,
+        "fixture must preserve the legacy missing-src shape"
+    );
+
+    let new = EntityId::now();
+    let mut new_body = ClaimBody::new(
+        "profile.lives_in",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("tokyo"),
+        0.9,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    new_body.source = Some(ClaimSource::Imported);
+    new_body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("federated_original_source"),
+        rmpv::Value::from(ClaimSource::Generated.as_str()),
+    )]));
+    vault.put_claim(&new, &new_body, test_time_range(22, 22), 22)?;
+    let old_before = vault.get_raw(&old)?.expect("old claim stored");
+
+    let err = vault
+        .supersede_claim(&new, &old, 777)
+        .expect_err("restamped generated-origin claim must not supersede legacy missing-src truth");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert!(
+        err.to_string()
+            .contains("generated claim cannot supersede user-stated truth")
+    );
+    assert_eq!(
+        vault.get_raw(&old)?.expect("old claim still stored"),
+        old_before
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn claim_lifecycle_ops_reject_non_claims_and_missing_ids() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();

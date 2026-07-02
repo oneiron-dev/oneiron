@@ -2828,7 +2828,9 @@ impl Vault {
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
-        if !claim_generated_origin(new_body) || old_body.source != Some(ClaimSource::UserStated) {
+        let old_is_protected_user_truth =
+            matches!(old_body.source, None | Some(ClaimSource::UserStated));
+        if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
             return Ok(());
         }
         if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
