@@ -7064,6 +7064,58 @@ fn message_vad_annotation_round_trip() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn fresh_default_policy_allows_internal_vad_annotations() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let turn = EntityId::now();
+    let message = EntityId::now();
+
+    vault.put_entity(
+        &turn,
+        ENTITY_TYPE_TURN,
+        test_time_range(120, 120),
+        120,
+        b"turn",
+    )?;
+    vault.put_entity(
+        &message,
+        ENTITY_TYPE_MESSAGE,
+        test_time_range(121, 121),
+        121,
+        b"message",
+    )?;
+
+    let turn_annotation = VadAnnotation::new(
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+        VadAnnotationSource::ModelInference,
+        220,
+    )?;
+    assert_eq!(
+        vault.annotate_turn_vad(&turn, turn_annotation)?,
+        turn_annotation
+    );
+
+    let message_annotation = VadAnnotation::new(
+        Vad {
+            valence: -0.2,
+            arousal: 0.3,
+            dominance: 0.5,
+        },
+        VadAnnotationSource::UserSelfReport,
+        221,
+    )?;
+    assert_eq!(
+        vault.annotate_message_vad(&message, message_annotation)?,
+        message_annotation
+    );
+    Ok(())
+}
+
 fn assert_vad_annotation_claim_present(
     vault: &Vault,
     claim_id: &EntityId,

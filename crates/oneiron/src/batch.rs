@@ -24,9 +24,10 @@ use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
     EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
     EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
-    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
-    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
+    decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
+    validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -1664,6 +1665,7 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
+                reject_policy_manifest_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
@@ -1918,6 +1920,19 @@ impl ChildOfBatchOverlay {
     }
 }
 
+fn reject_policy_manifest_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Ok(());
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(());
+    };
+    if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+        return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+    }
+    Ok(())
+}
+
 pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -2040,6 +2055,16 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     neighbors.sort_unstable();
     neighbors.dedup();
     Ok((true, had_vector, had_graph_mutation, neighbors))
+}
+
+#[cfg(test)]
+pub(crate) fn deindex_entity_for_test(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let _ = deindex_entity_without_lexical_query_hint_cascade(store, wtxn, id)?;
+    Ok(())
 }
 
 struct AppliedClaimCandidate {
@@ -3629,10 +3654,7 @@ mod tests {
         let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
         vault
             .with_write_txn(|wtxn| {
-                vault.store.entities.delete(wtxn, id.as_bytes())?;
-                let type_key =
-                    Store::encode_type_key(crate::types::ENTITY_TYPE_POLICY_MANIFEST, &id);
-                vault.store.type_index.delete(wtxn, &type_key)?;
+                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
                 Ok(())
             })
             .expect("clear default policy manifest");

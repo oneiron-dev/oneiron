@@ -48,21 +48,13 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
 }
 
 fn clear_policy_manifests(vault: &Vault) {
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .expect("list policy manifests")
-    {
-        vault
-            .batch()
-            .delete(&id)
-            .commit()
-            .expect("clear policy manifest fixture");
-    }
-    assert_eq!(
+    // The seeded default policy manifest is local-only engine state for sync
+    // windows; public deletion of it is rejected.
+    assert!(
         vault
             .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests"),
-        0
+            .expect("count policy manifests")
+            <= 1
     );
 }
 

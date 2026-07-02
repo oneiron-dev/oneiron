@@ -62,21 +62,14 @@ pub(crate) fn test_config_with_embedding() -> VaultConfig {
 }
 
 pub(crate) fn clear_policy_manifests(vault: &Vault) {
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .expect("list policy manifests")
-    {
-        vault
-            .batch()
-            .delete(&id)
-            .commit()
-            .expect("clear policy manifest fixture");
-    }
-    assert_eq!(
+    // The seeded default manifest is local engine state. Public deletion is
+    // rejected, and sync mirroring skips it, so legacy sync fixtures no longer
+    // remove it during setup.
+    assert!(
         vault
             .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests"),
-        0
+            .expect("count policy manifests")
+            <= 1
     );
 }
 

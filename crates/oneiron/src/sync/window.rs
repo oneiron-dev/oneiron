@@ -27,8 +27,8 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, EntityId,
-    decode_companion_record_body, decode_edge_value_for_kind,
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST,
+    EntityId, decode_companion_record_body, decode_edge_value_for_kind,
 };
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
@@ -1599,6 +1599,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
+        if reverse_remat_skip_policy_manifest_mirror(&raw) {
+            continue;
+        }
+
         if skip_companion_register_sync_mirror(&raw)? {
             let mut removed = false;
             if map_contains_binary(&entities_map, &hex_id) {
@@ -1707,6 +1711,11 @@ fn delete_edges_touching_entities(
             .map_err(|err| Error::SyncProtocolError(format!("{context}: {err}")))?;
     }
     Ok(!edge_keys.is_empty())
+}
+
+fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
+    EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
@@ -2492,6 +2501,22 @@ mod tests {
             .unwrap()
             .expect("tombstone commit must export a delete-bearing update");
         assert!(!delta.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn default_policy_manifest_not_mirrored_to_crdt() {
+        let (_dir, vault) = test_vault();
+        let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+        let window_key = WindowKey::from_timestamp(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP);
+        let doc = create_window_doc("local", &window_key);
+
+        let mirrored = reverse_rematerialize(&vault, &doc, &window_key).unwrap();
+
+        assert_eq!(mirrored, 0);
+        assert!(
+            map_get_bytes(&doc.get_map("entities"), &manifest_id.to_hex()).is_none(),
+            "the engine-seeded policy manifest must stay out of ordinary sync windows"
+        );
     }
 
     #[test]
