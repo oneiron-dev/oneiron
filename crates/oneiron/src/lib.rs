@@ -20,6 +20,7 @@ pub(crate) mod gate;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod ingest;
+pub mod job_queue;
 pub(crate) mod limits;
 pub mod llm;
 pub mod maintain;
@@ -104,6 +105,9 @@ pub use crate::ingest::{
     IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
     KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
     NormalizedIngestRecord,
+};
+pub use crate::job_queue::{
+    ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobId, JobQueue, JobRecord, JobState,
 };
 pub use crate::llm::{
     BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,

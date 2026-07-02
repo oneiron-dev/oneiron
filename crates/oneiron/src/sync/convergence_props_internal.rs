@@ -53,7 +53,7 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 /// Named-DB byte dump: db name → ordered `(key, value)` rows.
 type DbDump = BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>>;
 
-/// Full byte dump of every named LMDB database (25-DB manifest,
+/// Full byte dump of every named LMDB database (DB manifest,
 /// contracts.ts `dbManifest`) — the strongest possible "nothing changed"
 /// comparison form. DUP_SORT duplicates (text_postings) appear as repeated
 /// keys in iteration order.
@@ -119,7 +119,7 @@ fn read_u64_meta(vault: &Vault, key: &[u8]) -> Option<u64> {
 }
 
 /// Spec 2(c), internal half: importing the SAME update bytes twice leaves
-/// the replica's LMDB byte-identical across ALL 25 named databases, with
+/// the replica's LMDB byte-identical across ALL named databases, with
 /// `hnsw_meta` `graph_version` / `vector_version` unchanged and no
 /// duplicate DUP_SORT posting rows minted.
 #[test]

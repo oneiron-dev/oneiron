@@ -1,4 +1,4 @@
-//! LMDB store: one environment per vault plus the 25 named databases pinned
+//! LMDB store: one environment per vault plus the 28 named databases pinned
 //! by the ARCH-0019 manifest, and the fail-closed open-time gates.
 //!
 //! # Canonical open-gate sequence (`Store::open` → `Vault::open`)
@@ -23,7 +23,7 @@
 //!    so an existing vault with a missing/blank `vault_meta` is caught by the
 //!    ABI gate as [`StorageAbiVersionChanged`]`{ stored: None, .. }` — not by
 //!    the manifest gate. Creating it first cannot mask a genuinely missing
-//!    database: the manifest-set gate (step 3) runs BEFORE the other 24
+//!    database: the manifest-set gate (step 3) runs BEFORE the other 27
 //!    manifest DBs are (re)created in this transaction, so any of those
 //!    missing is still detected.
 //! 2. **`gate_storage_versions`** — storage ABI gate, then schema gate.
@@ -34,10 +34,10 @@
 //!      or absent on an existing vault → [`StorageSchemaVersionChanged`].
 //!    * New vaults stamp both current versions instead of gating.
 //! 3. **`validate_db_manifest_set`** (existing vaults) — the named-database
-//!    set in the environment must equal the 25-entry [`DB_MANIFEST`] exactly;
+//!    set in the environment must equal the 28-entry [`DB_MANIFEST`] exactly;
 //!    any missing or unexpected name → [`DbManifestMismatch`]. New vaults run
 //!    this validation after step 4 instead (nothing pre-exists to validate).
-//! 4. The remaining 24 manifest DBs are created/opened, the transaction
+//! 4. The remaining 27 manifest DBs are created/opened, the transaction
 //!    commits, and the DBI-open guard is released.
 //! 5. **`preflight_hnsw_config`** — `hnsw_meta["hnsw_config"]` (27-byte v2
 //!    record: dimensions, m_max_0, ef_construction, distance_metric,
@@ -119,8 +119,12 @@ use crate::types::{
     validate_public_entity_type as validate_static_public_entity_type,
 };
 
-// Contract-pinned at 32 by ARCH-0019/ARCH-0031: 25 named DBs plus headroom.
+// Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v7 (ONE-1206): generic LMDB-backed job queue landed as three named DBs:
+/// `job_records`, `job_ready`, and `job_dedupe`. v6 vaults fail closed at
+/// the ABI gate — there is no silent migration; rebuild the vault.
+///
 /// v6 (ONE-1204): PSYCH_PROFILE was registered as persistent maintenance
 /// entity type byte 129. v5 vaults fail closed at the ABI gate — there is no
 /// silent migration; rebuild the vault.
@@ -133,12 +137,12 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 6;
+pub const STORAGE_ABI_VERSION: u16 = 7;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
 /// Version of the pinned DB-manifest shape surfaced in whole-vault exports.
-pub const DB_MANIFEST_VERSION: u16 = 1;
+pub const DB_MANIFEST_VERSION: u16 = 2;
 pub(crate) const MODEL_ID_KEY: &[u8] = b"model_id";
 pub(crate) const GRAPH_VERSION_KEY: &[u8] = b"graph_version";
 pub(crate) const HNSW_CONFIG_KEY: &[u8] = b"hnsw_config";
@@ -471,7 +475,7 @@ pub struct DbManifestEntry {
     pub group: &'static str,
 }
 
-pub const DB_MANIFEST: [DbManifestEntry; 25] = [
+pub const DB_MANIFEST: [DbManifestEntry; 28] = [
     DbManifestEntry {
         n: 1,
         name: "entities",
@@ -597,6 +601,21 @@ pub const DB_MANIFEST: [DbManifestEntry; 25] = [
         name: "sync_queue",
         group: "Sync",
     },
+    DbManifestEntry {
+        n: 26,
+        name: "job_records",
+        group: "Jobs",
+    },
+    DbManifestEntry {
+        n: 27,
+        name: "job_ready",
+        group: "Jobs",
+    },
+    DbManifestEntry {
+        n: 28,
+        name: "job_dedupe",
+        group: "Jobs",
+    },
 ];
 
 /// Scaffold for a future storage-schema migration runner.
@@ -716,6 +735,12 @@ pub struct Store {
     pub(crate) sync_state: Database<Str, Bytes>,
     /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
+    /// Generic background job records keyed by job id.
+    pub(crate) job_records: Database<Bytes, Bytes>,
+    /// Ready-job ordering index keyed by creation time then job id.
+    pub(crate) job_ready: Database<Bytes, Bytes>,
+    /// Caller-provided dedupe keys mapped to job ids.
+    pub(crate) job_dedupe: Database<Bytes, Bytes>,
     /// True only for the open call that created a previously absent LMDB root.
     created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
@@ -803,6 +828,9 @@ impl Store {
         let phonetic_forward = create_manifest_db(&env, &mut wtxn, 22)?;
         let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
         let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
+        let job_records = create_manifest_db(&env, &mut wtxn, 25)?;
+        let job_ready = create_manifest_db(&env, &mut wtxn, 26)?;
+        let job_dedupe = create_manifest_db(&env, &mut wtxn, 27)?;
         if is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -862,6 +890,9 @@ impl Store {
             short_ids_reverse,
             sync_state,
             sync_queue,
+            job_records,
+            job_ready,
+            job_dedupe,
             created_new_vault: is_new_vault,
             _registered_path: registered_path,
         })
