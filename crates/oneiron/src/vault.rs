@@ -31,7 +31,8 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_consolidatable, encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
+    claim_consolidatable, claim_generated_origin, encode_claim_body, is_reserved_predicate,
+    validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -64,14 +65,14 @@ use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
     CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
-    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
-    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
-    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
+    EdgeValueLayout, EntityClassification, EntityId, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
+    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
+    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
+    bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
     edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
@@ -2823,52 +2824,34 @@ impl Vault {
         Ok(())
     }
 
-    fn require_code_revision_supersession_rights(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
+    /// Blocks generated-origin claims from superseding protected user truth.
+    /// New generated code-revision claims are rejected first so they keep the
+    /// fail-closed code-revision diagnostic; otherwise old code-revision truth
+    /// gets its own diagnostic, and non-code user/legacy truth uses the
+    /// general claim-body error. Missing old `src` is protected as legacy
+    /// user truth for this guard.
+    fn require_source_trust_supersession_rights(
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
-        if new_body.source != Some(ClaimSource::Generated)
-            || old_body.source != Some(ClaimSource::UserStated)
-        {
+        let old_is_protected_user_truth =
+            matches!(old_body.source, None | Some(ClaimSource::UserStated));
+        if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
             return Ok(());
         }
-        let Some(_new_subject) = self.code_revision_claim_subject_in_txn(rtxn, new_body)? else {
-            return Ok(());
-        };
-        let Some(_old_subject) = self.code_revision_claim_subject_in_txn(rtxn, old_body)? else {
-            return Ok(());
-        };
-        Err(Error::InvalidCodeArtifactBody(
-            "generated code revision claim cannot supersede user-stated truth",
+        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated code revision claim cannot supersede user-stated truth",
+            ));
+        }
+        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated claim cannot supersede user-stated code revision truth",
+            ));
+        }
+        Err(Error::InvalidClaimBody(
+            "generated claim cannot supersede user-stated truth",
         ))
-    }
-
-    fn code_revision_claim_subject_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        body: &ClaimBody,
-    ) -> Result<Option<EntityId>> {
-        if body.predicate != crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
-            return Ok(None);
-        }
-        let ClaimSubject::Entity(subject) = body.subject else {
-            return Ok(None);
-        };
-        let Some(raw) = self.store.entities.get(rtxn, subject.as_bytes())? else {
-            return Ok(None);
-        };
-        if raw.len() == ENTITY_METADATA_HEADER_LEN {
-            return Ok(None);
-        }
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == ENTITY_TYPE_CODE_ARTIFACT {
-            Ok(Some(subject))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Supersedes the active claim `old_id` with the claim `new_id` — the
@@ -2909,7 +2892,7 @@ impl Vault {
         Self::require_active_claim(&new_body)?;
         let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
         Self::require_active_claim(&old_body)?;
-        self.require_code_revision_supersession_rights(&wtxn, &new_body, &old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
