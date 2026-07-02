@@ -32,6 +32,7 @@ pub mod store;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod tokenizer;
 pub mod types;
 mod vault;
 
@@ -85,7 +86,7 @@ pub use crate::codebase::{
     CODEBASE_SNAPSHOT_BODY_KEYS, CODEBASE_SNAPSHOT_MAX_FILES, CodebaseFileEntry, CodebaseSnapshot,
     RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
 };
-pub use crate::context_pack::ContextPackBuilder;
+pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
 pub use crate::deletion::{
     DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
@@ -128,6 +129,10 @@ pub use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
     RetrievalScoreComponent, RetrievalSignal,
 };
+pub use crate::tokenizer::{
+    ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
+    PackTokenizer, count_context_pack_tokens,
+};
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, CompanionExportClassification, CompanionExpression,
     CompanionExpressionRegister, CompanionProvenance, CompanionRecord, CompanionRecordKey,
@@ -141,13 +146,13 @@ pub use crate::types::{
     EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
     EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackStats,
-    ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal, StructuralKindRegistration,
-    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
-    VadComponent, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
-    encode_companion_record_body,
+    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
+    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity,
+    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
+    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
+    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
+    WriteActor, WriteEnvelope, WriteProvenance, companion_value_from_json, companion_value_to_json,
+    decode_companion_record_body, encode_companion_record_body,
 };
 pub use crate::types::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,

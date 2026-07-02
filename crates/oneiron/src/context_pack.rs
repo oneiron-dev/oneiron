@@ -61,6 +61,12 @@ struct EdgeWalkResult {
     scanned_edges: HashMap<EntityId, Vec<EdgeInfo>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SerializedContextPack {
+    pub bytes: Vec<u8>,
+    pub stats: PackStats,
+}
+
 #[derive(Clone, Copy)]
 struct HydrateOptions<'a> {
     hydrate_fields: bool,
@@ -663,6 +669,7 @@ impl<'a> ContextPackBuilder<'a> {
                 neighbors_hydrated: neighbors.len(),
                 cosine_ghosts_dampened,
                 claims_suppressed,
+                tokens: crate::types::PackTokenStats::default(),
                 items_truncated: crate::types::PackItemAccounting::item_budget(),
                 items_dropped: crate::types::PackItemAccounting::token_budget(),
             };
@@ -691,6 +698,16 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     pub fn run_serialized_with_telemetry(self) -> Result<RetrievalWithTelemetry<Vec<u8>>> {
+        let serialized = self.run_serialized_with_stats()?;
+        Ok(RetrievalWithTelemetry {
+            value: serialized.value.bytes,
+            run_id: serialized.run_id,
+        })
+    }
+
+    pub fn run_serialized_with_stats(
+        self,
+    ) -> Result<RetrievalWithTelemetry<SerializedContextPack>> {
         let config = SerializeConfig {
             format: self.format,
             profile: self.field_profile,
@@ -712,7 +729,10 @@ impl<'a> ContextPackBuilder<'a> {
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
         );
         Ok(RetrievalWithTelemetry {
-            value: bytes,
+            value: SerializedContextPack {
+                bytes,
+                stats: telemetry.stats,
+            },
             run_id: telemetry_run_id,
         })
     }
@@ -1971,6 +1991,7 @@ mod tests {
             neighbors_hydrated: 0,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
+            tokens: crate::types::PackTokenStats::default(),
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),
         }
@@ -4800,7 +4821,7 @@ mod tests {
             .context_pack()
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
             .format(PackFormat::Plaintext)
-            .token_budget(1)
+            .token_budget(24)
             .run_serialized_with_telemetry()?;
         assert!(!serialized.value.is_empty());
         let run_id = serialized.run_id.expect("serialized telemetry run id");
@@ -4914,6 +4935,56 @@ mod tests {
         assert!(!runs[0].result_ids.contains(neighbor.as_bytes()));
         assert_eq!(runs[0].score_breakdown.len(), 1);
         assert_eq!(runs[0].score_breakdown[0].result_id, *result.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_serialized_stats_populate_token_accounting() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let first = EntityId::from_bytes_unchecked([0x7C; 16]);
+        let second = EntityId::from_bytes_unchecked([0x7D; 16]);
+        let put_turn = |id: EntityId, vector: [f32; 4], text: &str| -> Result<()> {
+            let payload = msgpack_entity(serde_json::json!({
+                "txt": text,
+                "spkr": "user",
+                "at": 1_u64,
+            }));
+            vault
+                .batch()
+                .put(
+                    &id,
+                    crate::types::ENTITY_TYPE_TURN,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &payload,
+                )
+                .vector(&id, &vector)
+                .commit()
+        };
+        put_turn(first, [1.0, 0.0, 0.0, 0.0], "token stats first")?;
+        put_turn(second, [0.0, 1.0, 0.0, 0.0], "token stats second")?;
+
+        let serialized = vault
+            .context_pack()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .format(PackFormat::Plaintext)
+            .token_budget(512)
+            .run_serialized_with_stats()?;
+        let text = std::str::from_utf8(&serialized.value.bytes).expect("plaintext context pack");
+
+        assert_eq!(
+            serialized.value.stats.tokens.tokenizer_id,
+            crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER_ID
+        );
+        assert_eq!(
+            serialized.value.stats.tokens.total_tokens,
+            crate::tokenizer::count_context_pack_tokens(text)
+        );
+        assert!(serialized.value.stats.tokens.total_tokens <= 512);
+        assert!(!serialized.value.stats.tokens.sections.is_empty());
+        assert!(!serialized.value.stats.tokens.items.is_empty());
+        assert!(serialized.run_id.is_some());
         Ok(())
     }
 }

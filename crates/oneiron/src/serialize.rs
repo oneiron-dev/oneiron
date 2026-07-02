@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Number, Value};
 
+use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
@@ -10,7 +11,8 @@ use crate::types::{
     ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP,
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat,
-    PackStats, ResumeBundle, Signal, TokenAllocation,
+    PackItemTokenStats, PackSectionTokenStats, PackStats, PackTokenStats, ResumeBundle, Signal,
+    TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -337,11 +339,11 @@ fn serialize_yaml(config: &SerializeConfig, prepared: PreparedPack) -> String {
 
 fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -> PreparedPack {
     let skip_budget = config.format == PackFormat::Json || config.budget == 0;
-    let char_budget = config.budget.saturating_mul(4);
     let value_depth_limit = value_depth_limit_for_format(config.format);
     let mut stats = pack.stats.clone();
+    let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
-    if config.merge_neighbors {
+    let mut prepared = if config.merge_neighbors {
         let mut merged = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
         merged.extend(prepare_entities(
             &pack.results,
@@ -366,7 +368,8 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             enforce_token_budget_with_depth_limit(
                 &mut groups,
                 &config.allocation,
-                char_budget,
+                config.budget,
+                tokenizer,
                 value_depth_limit,
             );
             let after = token_budget_droppable_count(&groups);
@@ -408,7 +411,8 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
                 &results_source,
                 &neighbors_source,
                 &config.allocation,
-                char_budget,
+                config.budget,
+                tokenizer,
                 value_depth_limit,
             );
             let after = token_budget_droppable_count(&sections.0)
@@ -426,7 +430,13 @@ fn prepare_pack(pack: &ContextPack, config: &SerializeConfig, json_mode: bool) -
             neighbors,
             stats,
         }
+    };
+
+    if !skip_budget {
+        enforce_serialized_token_budget(pack, config, &mut prepared, config.budget, tokenizer);
     }
+    stamp_pack_token_stats(pack, config, &mut prepared, tokenizer);
+    prepared
 }
 
 #[cfg(test)]
@@ -434,13 +444,14 @@ fn budget_split_sections(
     results_source: &PreparedGroups,
     neighbors_source: &PreparedGroups,
     allocation: &TokenAllocation,
-    char_budget: usize,
+    token_budget: usize,
 ) -> (PreparedGroups, PreparedGroups) {
     budget_split_sections_with_depth_limit(
         results_source,
         neighbors_source,
         allocation,
-        char_budget,
+        token_budget,
+        DEFAULT_CONTEXT_PACK_TOKENIZER,
         None,
     )
 }
@@ -449,28 +460,32 @@ fn budget_split_sections_with_depth_limit(
     results_source: &PreparedGroups,
     neighbors_source: &PreparedGroups,
     allocation: &TokenAllocation,
-    char_budget: usize,
+    token_budget: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> (PreparedGroups, PreparedGroups) {
-    let results_need = estimate_groups_chars_with_depth_limit(results_source, value_depth_limit);
+    let results_need =
+        estimate_groups_tokens_with_depth_limit(results_source, tokenizer, value_depth_limit);
     let neighbors_need =
-        estimate_groups_chars_with_depth_limit(neighbors_source, value_depth_limit);
+        estimate_groups_tokens_with_depth_limit(neighbors_source, tokenizer, value_depth_limit);
 
-    let section_budgets = allocate_section_budgets([results_need, neighbors_need], char_budget);
+    let section_budgets = allocate_section_budgets([results_need, neighbors_need], token_budget);
     let (mut results, results_used) = budget_groups_with_depth_limit(
         results_source,
         allocation,
         section_budgets[0],
+        tokenizer,
         value_depth_limit,
     );
     let (mut neighbors, neighbors_used) = budget_groups_with_depth_limit(
         neighbors_source,
         allocation,
         section_budgets[1],
+        tokenizer,
         value_depth_limit,
     );
 
-    let leftover = char_budget.saturating_sub(results_used.saturating_add(neighbors_used));
+    let leftover = token_budget.saturating_sub(results_used.saturating_add(neighbors_used));
     if leftover == 0 {
         return (results, neighbors);
     }
@@ -488,13 +503,14 @@ fn budget_split_sections_with_depth_limit(
         results_used.saturating_add(extra[0]),
         neighbors_used.saturating_add(extra[1]),
     ];
-    debug_assert!(final_budgets[0].saturating_add(final_budgets[1]) <= char_budget);
+    debug_assert!(final_budgets[0].saturating_add(final_budgets[1]) <= token_budget);
 
     if final_budgets[0] > section_budgets[0] {
         results = budget_groups_with_depth_limit(
             results_source,
             allocation,
             final_budgets[0],
+            tokenizer,
             value_depth_limit,
         )
         .0;
@@ -504,6 +520,7 @@ fn budget_split_sections_with_depth_limit(
             neighbors_source,
             allocation,
             final_budgets[1],
+            tokenizer,
             value_depth_limit,
         )
         .0;
@@ -597,20 +614,22 @@ fn apply_item_budget_with_depth_limit(
         return true;
     }
 
-    let max_item_chars = max_item_tokens.saturating_mul(4);
-    if max_item_chars == 0
-        || estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars
+    let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
+    if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        <= max_item_tokens
     {
         return true;
     }
 
     let truncated = if entity.entity_type == ENTITY_TYPE_CLAIM {
-        truncate_claim_value_for_item_budget(entity, max_item_chars, value_depth_limit)
+        truncate_claim_value_for_item_budget(entity, max_item_tokens, tokenizer, value_depth_limit)
     } else {
-        truncate_non_claim_for_item_budget(entity, max_item_chars, value_depth_limit)
+        truncate_non_claim_for_item_budget(entity, max_item_tokens, tokenizer, value_depth_limit)
     };
 
-    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
+    if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        <= max_item_tokens
+    {
         if truncated {
             stats.items_truncated.count = stats.items_truncated.count.saturating_add(1);
         }
@@ -624,13 +643,16 @@ fn apply_item_budget_with_depth_limit(
 
 fn truncate_non_claim_for_item_budget(
     entity: &mut PreparedEntity,
-    max_item_chars: usize,
+    max_item_tokens: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let mut truncated = false;
     let mut tried_fields = Vec::new();
 
-    while estimate_entity_chars_with_depth_limit(entity, value_depth_limit) > max_item_chars {
+    while estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        > max_item_tokens
+    {
         let Some(field_index) =
             largest_truncatable_top_level_string_field(entity, tried_fields.as_slice())
         else {
@@ -641,12 +663,15 @@ fn truncate_non_claim_for_item_budget(
         truncated |= truncate_string_field_to_item_budget(
             entity,
             field_index,
-            max_item_chars,
+            max_item_tokens,
+            tokenizer,
             value_depth_limit,
         );
     }
 
-    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
+    if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        <= max_item_tokens
+    {
         return truncated;
     }
 
@@ -655,7 +680,8 @@ fn truncate_non_claim_for_item_budget(
 
 fn truncate_claim_value_for_item_budget(
     entity: &mut PreparedEntity,
-    max_item_chars: usize,
+    max_item_tokens: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let Some(value_index) = field_index(entity, "val") else {
@@ -666,16 +692,21 @@ fn truncate_claim_value_for_item_budget(
     let mut truncated = truncate_claim_value_field_for_item_budget(
         entity,
         value_index,
-        max_item_chars,
+        max_item_tokens,
+        tokenizer,
         value_depth_limit,
     );
 
-    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
+    if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        <= max_item_tokens
+    {
         return truncated;
     }
 
     truncated |= retain_minimal_claim_item_budget_fields(entity, Some(original_value));
-    if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
+    if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+        <= max_item_tokens
+    {
         return truncated;
     }
 
@@ -686,7 +717,8 @@ fn truncate_claim_value_for_item_budget(
         | truncate_claim_value_field_for_item_budget(
             entity,
             value_index,
-            max_item_chars,
+            max_item_tokens,
+            tokenizer,
             value_depth_limit,
         )
 }
@@ -694,7 +726,8 @@ fn truncate_claim_value_for_item_budget(
 fn truncate_claim_value_field_for_item_budget(
     entity: &mut PreparedEntity,
     field_index: usize,
-    max_item_chars: usize,
+    max_item_tokens: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let original_value_chars =
@@ -704,7 +737,8 @@ fn truncate_claim_value_field_for_item_budget(
         Value::String(_) => truncate_string_field_to_item_budget(
             entity,
             field_index,
-            max_item_chars,
+            max_item_tokens,
+            tokenizer,
             value_depth_limit,
         ),
         value => {
@@ -717,7 +751,8 @@ fn truncate_claim_value_field_for_item_budget(
 fn truncate_string_field_to_item_budget(
     entity: &mut PreparedEntity,
     field_index: usize,
-    max_item_chars: usize,
+    max_item_tokens: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> bool {
     let Value::String(original) = entity.fields[field_index].1.clone() else {
@@ -734,12 +769,17 @@ fn truncate_string_field_to_item_budget(
     let mut high = original_chars.saturating_sub(1);
     let mut best_prefix = None;
 
+    // Character positions are only candidate cut points for preserving UTF-8
+    // and human-readable suffixes. Every accepted candidate is checked with
+    // the real context-pack tokenizer.
     while low <= high {
         let mid = low + ((high - low) / 2);
         entity.fields[field_index].1 =
             Value::String(truncate_with_suffix_prefix(&original, mid, &suffix));
 
-        if estimate_entity_chars_with_depth_limit(entity, value_depth_limit) <= max_item_chars {
+        if estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit)
+            <= max_item_tokens
+        {
             best_prefix = Some(mid);
             low = mid.saturating_add(1);
         } else if mid == 0 {
@@ -1046,18 +1086,20 @@ fn type_fraction(entity_type: u8, allocation: &TokenAllocation) -> f32 {
 fn enforce_token_budget_with_depth_limit(
     groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
     allocation: &TokenAllocation,
-    char_budget: usize,
+    token_budget: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> usize {
-    if char_budget == 0 {
+    if token_budget == 0 {
         let mut total_used = 0_usize;
         for (_, rows) in groups.iter_mut() {
             let mut used = 0_usize;
             rows.retain(|row| {
                 let keep = is_critical_predicate_claim(row);
                 if keep {
-                    used = used.saturating_add(estimate_entity_chars_with_depth_limit(
+                    used = used.saturating_add(estimate_entity_tokens_with_depth_limit(
                         row,
+                        tokenizer,
                         value_depth_limit,
                     ));
                 }
@@ -1086,10 +1128,10 @@ fn enforce_token_budget_with_depth_limit(
 
     for (i, (_, rows)) in groups.iter().enumerate() {
         let frac = raw[i] * norm;
-        let budget = (char_budget as f32 * frac) as usize;
+        let budget = (token_budget as f32 * frac) as usize;
         let needed: usize = rows
             .iter()
-            .map(|row| estimate_entity_chars_with_depth_limit(row, value_depth_limit))
+            .map(|row| estimate_entity_tokens_with_depth_limit(row, tokenizer, value_depth_limit))
             .sum();
         if needed <= budget {
             surplus += budget - needed;
@@ -1119,21 +1161,22 @@ fn enforce_token_budget_with_depth_limit(
         let mut kept_noncritical = 0_usize;
         let mut noncritical_closed = final_budget == 0;
         for row in rows.drain(..) {
-            let chars = estimate_entity_chars_with_depth_limit(&row, value_depth_limit);
+            let tokens =
+                estimate_entity_tokens_with_depth_limit(&row, tokenizer, value_depth_limit);
             if is_critical_predicate_claim(&row) {
-                used = used.saturating_add(chars);
+                used = used.saturating_add(tokens);
                 kept.push(row);
                 continue;
             }
             if noncritical_closed {
                 continue;
             }
-            if used.saturating_add(chars) > final_budget && kept_noncritical > 0 {
+            if used.saturating_add(tokens) > final_budget && kept_noncritical > 0 {
                 noncritical_closed = true;
                 continue;
             }
             kept_noncritical += 1;
-            used = used.saturating_add(chars);
+            used = used.saturating_add(tokens);
             kept.push(row);
         }
         *rows = kept;
@@ -1144,11 +1187,51 @@ fn enforce_token_budget_with_depth_limit(
     total_used
 }
 
+fn estimate_entity_tokens_with_depth_limit(
+    entity: &PreparedEntity,
+    tokenizer: PackTokenizer,
+    value_depth_limit: ValueDepthLimit,
+) -> usize {
+    tokenizer.count(&entity_token_accounting_text(entity, value_depth_limit))
+}
+
+fn estimate_groups_tokens_with_depth_limit(
+    groups: &[(u8, Vec<PreparedEntity>)],
+    tokenizer: PackTokenizer,
+    value_depth_limit: ValueDepthLimit,
+) -> usize {
+    groups
+        .iter()
+        .flat_map(|(_, rows)| rows.iter())
+        .map(|entity| estimate_entity_tokens_with_depth_limit(entity, tokenizer, value_depth_limit))
+        .sum()
+}
+
+fn entity_token_accounting_text(
+    entity: &PreparedEntity,
+    value_depth_limit: ValueDepthLimit,
+) -> String {
+    let mut row = Map::new();
+    row.insert("id".to_owned(), Value::String(entity.id.clone()));
+    for (key, value) in &entity.fields {
+        row.insert(
+            key.clone(),
+            clone_value_with_depth_limit(value, value_depth_limit),
+        );
+    }
+    serde_json::to_string(&Value::Object(row))
+        .expect("prepared entity token-accounting JSON should serialize")
+}
+
 #[cfg(test)]
 fn estimate_entity_chars(entity: &PreparedEntity) -> usize {
     estimate_entity_chars_with_depth_limit(entity, None)
 }
 
+// Character estimates below are retained for non-budget tests and truncation
+// suffix display only. All pack budget decisions use the tokenizer helpers
+// above.
+#[cfg(test)]
 fn estimate_entity_chars_with_depth_limit(
     entity: &PreparedEntity,
     value_depth_limit: ValueDepthLimit,
@@ -1163,44 +1246,179 @@ fn estimate_entity_chars_with_depth_limit(
 }
 
 #[cfg(test)]
-fn estimate_groups_chars(groups: &[(u8, Vec<PreparedEntity>)]) -> usize {
-    estimate_groups_chars_with_depth_limit(groups, None)
-}
-
-fn estimate_groups_chars_with_depth_limit(
-    groups: &[(u8, Vec<PreparedEntity>)],
-    value_depth_limit: ValueDepthLimit,
-) -> usize {
-    groups
-        .iter()
-        .flat_map(|(_, rows)| rows.iter())
-        .map(|entity| estimate_entity_chars_with_depth_limit(entity, value_depth_limit))
-        .sum()
-}
-
-#[cfg(test)]
 fn budget_groups(
     source: &[(u8, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
-    char_budget: usize,
+    token_budget: usize,
 ) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
-    budget_groups_with_depth_limit(source, allocation, char_budget, None)
+    budget_groups_with_depth_limit(
+        source,
+        allocation,
+        token_budget,
+        DEFAULT_CONTEXT_PACK_TOKENIZER,
+        None,
+    )
 }
 
 fn budget_groups_with_depth_limit(
     source: &[(u8, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
-    char_budget: usize,
+    token_budget: usize,
+    tokenizer: PackTokenizer,
     value_depth_limit: ValueDepthLimit,
 ) -> (Vec<(u8, Vec<PreparedEntity>)>, usize) {
     let mut groups = source.to_vec();
     let used = enforce_token_budget_with_depth_limit(
         &mut groups,
         allocation,
-        char_budget,
+        token_budget,
+        tokenizer,
         value_depth_limit,
     );
     (groups, used)
+}
+
+fn enforce_serialized_token_budget(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: &mut PreparedPack,
+    token_budget: usize,
+    tokenizer: PackTokenizer,
+) {
+    let mut may_drop_critical = false;
+    while serialized_prepared_token_count(pack, config, prepared, tokenizer) > token_budget {
+        if !drop_last_token_budget_item(prepared, may_drop_critical) {
+            if may_drop_critical {
+                break;
+            }
+            may_drop_critical = true;
+            continue;
+        }
+        prepared.stats.items_dropped.reason = crate::types::PackItemAccountingReason::TokenBudget;
+        prepared.stats.items_dropped.count = prepared.stats.items_dropped.count.saturating_add(1);
+    }
+}
+
+fn drop_last_token_budget_item(prepared: &mut PreparedPack, include_critical: bool) -> bool {
+    if !prepared.merged
+        && drop_last_token_budget_item_from_groups(&mut prepared.neighbors, include_critical)
+    {
+        return true;
+    }
+
+    drop_last_token_budget_item_from_groups(&mut prepared.results, include_critical)
+}
+
+fn drop_last_token_budget_item_from_groups(
+    groups: &mut Vec<(u8, Vec<PreparedEntity>)>,
+    include_critical: bool,
+) -> bool {
+    for group_index in (0..groups.len()).rev() {
+        let rows = &mut groups[group_index].1;
+        let Some(row_index) = rows
+            .iter()
+            .rposition(|row| include_critical || !is_critical_predicate_claim(row))
+        else {
+            continue;
+        };
+
+        rows.remove(row_index);
+        if rows.is_empty() {
+            groups.remove(group_index);
+        }
+        return true;
+    }
+    false
+}
+
+fn serialized_prepared_token_count(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: &PreparedPack,
+    tokenizer: PackTokenizer,
+) -> usize {
+    let bytes = serialize_prepared_pack(pack, config, prepared.clone());
+    let text = std::str::from_utf8(&bytes).expect("context-pack serialization should be UTF-8");
+    tokenizer.count(text)
+}
+
+fn stamp_pack_token_stats(
+    pack: &ContextPack,
+    config: &SerializeConfig,
+    prepared: &mut PreparedPack,
+    tokenizer: PackTokenizer,
+) {
+    let total_tokens = serialized_prepared_token_count(pack, config, prepared, tokenizer);
+    prepared.stats.tokens = collect_pack_token_stats(prepared, total_tokens, tokenizer);
+}
+
+fn collect_pack_token_stats(
+    prepared: &PreparedPack,
+    total_tokens: usize,
+    tokenizer: PackTokenizer,
+) -> PackTokenStats {
+    let mut sections = Vec::new();
+    let mut items = Vec::new();
+    if prepared.merged {
+        collect_section_token_stats(
+            "merged",
+            &prepared.results,
+            tokenizer,
+            &mut sections,
+            &mut items,
+        );
+    } else {
+        collect_section_token_stats(
+            "results",
+            &prepared.results,
+            tokenizer,
+            &mut sections,
+            &mut items,
+        );
+        collect_section_token_stats(
+            "neighbors",
+            &prepared.neighbors,
+            tokenizer,
+            &mut sections,
+            &mut items,
+        );
+    }
+
+    PackTokenStats {
+        tokenizer_id: tokenizer.id().to_owned(),
+        total_tokens,
+        sections,
+        items,
+    }
+}
+
+fn collect_section_token_stats(
+    section: &str,
+    groups: &[(u8, Vec<PreparedEntity>)],
+    tokenizer: PackTokenizer,
+    sections: &mut Vec<PackSectionTokenStats>,
+    items: &mut Vec<PackItemTokenStats>,
+) {
+    let mut section_tokens = 0_usize;
+    for (entity_type, rows) in groups {
+        for row in rows {
+            let tokens = estimate_entity_tokens_with_depth_limit(row, tokenizer, None);
+            section_tokens = section_tokens.saturating_add(tokens);
+            items.push(PackItemTokenStats {
+                section: section.to_owned(),
+                id: row.id.clone(),
+                entity_type: *entity_type,
+                tokens,
+            });
+        }
+    }
+
+    if section_tokens > 0 || !groups.is_empty() {
+        sections.push(PackSectionTokenStats {
+            section: section.to_owned(),
+            tokens: section_tokens,
+        });
+    }
 }
 
 fn allocate_section_budgets(needs: [usize; 2], total_budget: usize) -> [usize; 2] {
@@ -2669,6 +2887,7 @@ mod tests {
                 neighbors_hydrated: 1,
                 cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
+                tokens: crate::types::PackTokenStats::default(),
                 items_truncated: crate::types::PackItemAccounting::item_budget(),
                 items_dropped: crate::types::PackItemAccounting::token_budget(),
             },
@@ -2711,6 +2930,13 @@ mod tests {
             id: "x".repeat(id_len),
             fields,
         }
+    }
+
+    fn token_dense_text(prefix: &str, count: usize) -> String {
+        (0..count)
+            .map(|index| format!("{prefix}_{index:03}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn nested_child_value(depth: usize, leaf: Value) -> Value {
@@ -2781,6 +3007,7 @@ mod tests {
                 neighbors_hydrated: 0,
                 cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
+                tokens: crate::types::PackTokenStats::default(),
                 items_truncated: crate::types::PackItemAccounting::item_budget(),
                 items_dropped: crate::types::PackItemAccounting::token_budget(),
             },
@@ -3160,6 +3387,59 @@ mod tests {
     }
 
     #[test]
+    fn serialized_fixture_output_respects_real_token_budget() {
+        let pack = token_savings_regression_pack();
+        for format in [
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            for budget in [64_usize, 128, 256] {
+                let mut cfg = config(format);
+                cfg.budget = budget;
+
+                let bytes = serialize_pack(&pack, &cfg);
+                let text = String::from_utf8(bytes).expect("utf8");
+                let tokens = DEFAULT_CONTEXT_PACK_TOKENIZER.count(&text);
+                assert!(
+                    tokens <= budget,
+                    "{format:?} emitted {tokens} tokens above budget {budget}:\n{text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn serialized_pack_stats_stamp_tokenizer_and_row_tokens() {
+        let pack = sample_pack();
+        let mut cfg = config(PackFormat::Plaintext);
+        cfg.budget = 256;
+
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+        let text = String::from_utf8(bytes).expect("utf8");
+
+        assert_eq!(
+            telemetry.stats.tokens.tokenizer_id,
+            DEFAULT_CONTEXT_PACK_TOKENIZER.id()
+        );
+        assert_eq!(
+            telemetry.stats.tokens.total_tokens,
+            DEFAULT_CONTEXT_PACK_TOKENIZER.count(&text)
+        );
+        assert!(!telemetry.stats.tokens.sections.is_empty());
+        assert!(!telemetry.stats.tokens.items.is_empty());
+        assert!(
+            telemetry
+                .stats
+                .tokens
+                .items
+                .iter()
+                .all(|item| item.tokens > 0)
+        );
+    }
+
+    #[test]
     fn split_mode_uses_shared_budget_pool() {
         let mut pack = ContextPack {
             results: Vec::new(),
@@ -3199,15 +3479,23 @@ mod tests {
 
         let mut cfg = config(PackFormat::Toon);
         cfg.merge_neighbors = false;
-        cfg.budget = 30;
+        cfg.budget = 120;
 
         let prepared = prepare_pack(&pack, &cfg, false);
-        let total_chars =
-            estimate_groups_chars(&prepared.results) + estimate_groups_chars(&prepared.neighbors);
+        let total_tokens = estimate_groups_tokens_with_depth_limit(
+            &prepared.results,
+            DEFAULT_CONTEXT_PACK_TOKENIZER,
+            None,
+        )
+        .saturating_add(estimate_groups_tokens_with_depth_limit(
+            &prepared.neighbors,
+            DEFAULT_CONTEXT_PACK_TOKENIZER,
+            None,
+        ));
 
         assert!(
-            total_chars <= cfg.budget * 4,
-            "shared split-mode budget should cap total chars: {total_chars}"
+            total_tokens <= cfg.budget,
+            "shared split-mode budget should cap total tokens: {total_tokens}"
         );
         assert!(!prepared.results.is_empty());
         assert!(!prepared.neighbors.is_empty());
@@ -3231,15 +3519,26 @@ mod tests {
             ],
         )];
 
-        let (results, neighbors) =
-            budget_split_sections(&results_source, &neighbors_source, &allocation, 80);
-        let total_chars = estimate_groups_chars(&results) + estimate_groups_chars(&neighbors);
+        let token_budget = 20;
+        let (results, neighbors) = budget_split_sections(
+            &results_source,
+            &neighbors_source,
+            &allocation,
+            token_budget,
+        );
+        let total_tokens =
+            estimate_groups_tokens_with_depth_limit(&results, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
+                .saturating_add(estimate_groups_tokens_with_depth_limit(
+                    &neighbors,
+                    DEFAULT_CONTEXT_PACK_TOKENIZER,
+                    None,
+                ));
 
         assert_eq!(results[0].1.len(), 1);
         assert_eq!(neighbors[0].1.len(), 1);
         assert!(
-            total_chars <= 80,
-            "rebudgeted sections should stay within the shared cap: {total_chars}"
+            total_tokens <= token_budget,
+            "rebudgeted sections should stay within the shared cap: {total_tokens}"
         );
     }
 
@@ -3385,7 +3684,7 @@ mod tests {
             .find(|part| part.starts_with("cl42"))
             .expect("cl42 reference in serialized output");
         let short_id = rendered_ref.split(':').next().expect("short id segment");
-        let estimated_bpe_tokens = rendered_ref.len().div_ceil(4);
+        let rendered_ref_tokens = DEFAULT_CONTEXT_PACK_TOKENIZER.count(rendered_ref);
 
         assert!(
             short_id.is_ascii() && short_id.len() <= 6,
@@ -3393,8 +3692,8 @@ mod tests {
             short_id.len()
         );
         assert!(
-            rendered_ref.is_ascii() && estimated_bpe_tokens <= 2,
-            "rendered short id reference should fit <= 2 estimated BPE tokens: rendered_ref={rendered_ref:?}, bytes={}, estimated_bpe_tokens={estimated_bpe_tokens}",
+            rendered_ref.is_ascii() && rendered_ref_tokens <= 6,
+            "rendered short id reference should stay compact under o200k_base: rendered_ref={rendered_ref:?}, bytes={}, tokens={rendered_ref_tokens}",
             rendered_ref.len()
         );
         assert!(
@@ -3461,7 +3760,7 @@ mod tests {
     #[test]
     fn max_item_tokens_preserves_claim_predicate_when_value_is_shorter() {
         let predicate = format!("note.{}", "predicate".repeat(15));
-        let value = "v".repeat(120);
+        let value = token_dense_text("v", 120);
         let pack = pack_with_results(vec![claim_entity(1, &predicate, &value, 1.0)]);
 
         let mut cfg = config(PackFormat::Json);
@@ -3478,7 +3777,10 @@ mod tests {
             parsed["claims"][0]["pred"].as_str(),
             Some(predicate.as_str())
         );
-        assert!(rendered_value.ends_with("...(truncated, 120 chars total)"));
+        assert!(rendered_value.ends_with(&format!(
+            "...(truncated, {} chars total)",
+            value.chars().count()
+        )));
         assert_ne!(rendered_value, value);
     }
 
@@ -3537,7 +3839,10 @@ mod tests {
 
         assert!(apply_item_budget(&mut entity, 32, &mut stats));
 
-        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert!(
+            estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
+                <= 32
+        );
         assert_eq!(
             entity
                 .fields
@@ -3572,7 +3877,10 @@ mod tests {
 
         assert!(apply_item_budget(&mut entity, 32, &mut stats));
 
-        assert!(estimate_entity_chars(&entity) <= 32 * 4);
+        assert!(
+            estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
+                <= 32
+        );
         assert_eq!(
             entity
                 .fields
@@ -3610,7 +3918,10 @@ mod tests {
 
         assert!(apply_item_budget(&mut entity, 40, &mut stats));
 
-        assert!(estimate_entity_chars(&entity) <= 40 * 4);
+        assert!(
+            estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
+                <= 40
+        );
         assert_eq!(stats.items_truncated.count, 1);
         assert_eq!(stats.items_dropped.count, 0);
         for (_, value) in &entity.fields {
@@ -3640,7 +3951,10 @@ mod tests {
         assert!(apply_item_budget(&mut entity, 8, &mut stats));
 
         assert!(entity.fields.is_empty());
-        assert!(estimate_entity_chars(&entity) <= 8 * 4);
+        assert!(
+            estimate_entity_tokens_with_depth_limit(&entity, DEFAULT_CONTEXT_PACK_TOKENIZER, None)
+                <= 8
+        );
         assert_eq!(stats.items_truncated.count, 1);
         assert_eq!(stats.items_dropped.count, 0);
     }
@@ -3664,7 +3978,7 @@ mod tests {
 
     #[test]
     fn item_and_token_budget_reasons_are_discriminated() {
-        let over_item = "a".repeat(400);
+        let over_item = token_dense_text("over", 120);
         let budget_drop = "fits item cap but not total budget";
         let pack = pack_with_results(vec![
             claim_entity(1, "note.over_item", &over_item, 1.0),
@@ -3673,8 +3987,8 @@ mod tests {
 
         let mut cfg = config(PackFormat::Toon);
         cfg.max_field_chars = 0;
-        cfg.max_item_tokens = 24;
-        cfg.budget = 30;
+        cfg.max_item_tokens = 64;
+        cfg.budget = 80;
 
         let prepared = prepare_pack(&pack, &cfg, false);
         let kept_rows: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
@@ -3702,7 +4016,7 @@ mod tests {
         let mut cfg = config(PackFormat::Toon);
         cfg.max_field_chars = 0;
         cfg.max_item_tokens = 8;
-        cfg.budget = 1;
+        cfg.budget = 0;
 
         let prepared = prepare_pack(&pack, &cfg, false);
         let kept = prepared
@@ -3749,13 +4063,13 @@ mod tests {
     #[test]
     fn over_cap_items_increment_truncated_once_each() {
         let pack = pack_with_results(vec![
-            claim_entity(1, "note.first", &"a".repeat(300), 1.0),
-            claim_entity(2, "note.second", &"b".repeat(300), 0.9),
+            claim_entity(1, "note.first", &token_dense_text("first", 90), 1.0),
+            claim_entity(2, "note.second", &token_dense_text("second", 90), 0.9),
         ]);
 
         let mut cfg = config(PackFormat::Json);
         cfg.max_field_chars = 0;
-        cfg.max_item_tokens = 24;
+        cfg.max_item_tokens = 64;
 
         let prepared = prepare_pack(&pack, &cfg, true);
 
@@ -4189,13 +4503,6 @@ mod tests {
             });
         }
 
-        // Budget = 200 tokens = 800 chars.
-        // Raw claims fraction = 0.45, so without redistribution claims
-        // would get at most floor(0.45 * 800) = 360 chars.
-        // Each claim ≈ 76 chars → ~4 claims from raw fraction alone.
-        // With normalization (0.45/0.55 = 0.818) → 654 chars → ~8 claims.
-        // With redistribution of unused turn budget → ~770 chars → ~10 claims.
-        // So claims_count should exceed the raw-fraction baseline of ~4.
         let mut cfg = config(PackFormat::Toon);
         cfg.budget = 200;
         let prepared = prepare_pack(&pack, &cfg, false);
@@ -4206,10 +4513,19 @@ mod tests {
             .find_map(|(et, rows)| (*et == 0).then_some(rows.len()))
             .unwrap_or(0);
 
-        // Raw fraction baseline: 0.45 * 800 = 360 chars.
-        let raw_char_budget = (800.0 * 0.45) as usize;
-        let avg_entity_chars = 76_usize; // approximate per claim
-        let raw_baseline = raw_char_budget / avg_entity_chars;
+        let raw_claim_token_budget = (cfg.budget as f32 * 0.45) as usize;
+        let avg_claim_tokens = estimate_entity_tokens_with_depth_limit(
+            &prepared_entity_for_test(
+                5,
+                vec![
+                    ("pred".to_owned(), Value::String("p".to_owned())),
+                    ("val".to_owned(), Value::String("v".repeat(40))),
+                ],
+            ),
+            DEFAULT_CONTEXT_PACK_TOKENIZER,
+            None,
+        );
+        let raw_baseline = raw_claim_token_budget / avg_claim_tokens.max(1);
 
         assert!(
             claims_count > raw_baseline,
@@ -4235,6 +4551,7 @@ mod tests {
             neighbors_hydrated: 0,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
+            tokens: crate::types::PackTokenStats::default(),
             items_truncated: crate::types::PackItemAccounting::item_budget(),
             items_dropped: crate::types::PackItemAccounting::token_budget(),
         }
@@ -4725,7 +5042,8 @@ mod tests {
                 ),
             ],
         }]);
-        let needed = estimate_groups_chars(&groups);
+        let needed =
+            estimate_groups_tokens_with_depth_limit(&groups, DEFAULT_CONTEXT_PACK_TOKENIZER, None);
         let zero_other_allocation = TokenAllocation {
             claims: 1.0,
             turns: 0.0,
