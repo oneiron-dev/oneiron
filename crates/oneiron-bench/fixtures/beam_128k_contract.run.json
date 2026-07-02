@@ -4,6 +4,7 @@
   "dataset": {
     "kind": "jsonl",
     "path": "beam_128k_contract.run.jsonl",
+    "armId": "oneiron",
     "limit": 5,
     "expectedMinResults": 1
   },
