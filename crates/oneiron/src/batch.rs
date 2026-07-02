@@ -3993,10 +3993,16 @@ mod tests {
             ),
             (
                 Value::from("actor_ceilings"),
-                Value::Array(vec![Value::Map(vec![
-                    (Value::from("actor_class"), Value::from("human")),
-                    (Value::from("ceiling"), Value::from("auto")),
-                ])]),
+                Value::Array(vec![
+                    Value::Map(vec![
+                        (Value::from("actor_class"), Value::from("human")),
+                        (Value::from("ceiling"), Value::from("auto")),
+                    ]),
+                    Value::Map(vec![
+                        (Value::from("actor_class"), Value::from("first_party")),
+                        (Value::from("ceiling"), Value::from("auto")),
+                    ]),
+                ]),
             ),
         ]);
         let mut data = Vec::new();
@@ -6109,7 +6115,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_public_put_allows_legacy_code_revision_claim_compatibility() -> Result<()> {
+    fn raw_public_put_rejects_legacy_generated_code_revision_without_auto_permit() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let subject = EntityId::now();
         let mut body = ClaimBody::new(
@@ -6124,11 +6130,16 @@ mod tests {
         let data = crate::claim::encode_claim_body(&body)?;
 
         let claim = EntityId::now();
-        vault.put_entity(&claim, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 2, &data)?;
-
-        let stored = vault.get_claim(&claim)?.expect("legacy claim stored");
-        assert_eq!(stored.predicate, "code.revision");
-        assert_eq!(stored.source, Some(ClaimSource::Generated));
+        let err = vault
+            .put_entity(&claim, ENTITY_TYPE_CLAIM, test_time_range(1, 1), 2, &data)
+            .expect_err("generated source requires explicit auto permit");
+        assert!(matches!(
+            err,
+            Error::SourceNotTrustedForAuto {
+                claim_source: "generated"
+            }
+        ));
+        assert!(vault.get_claim(&claim)?.is_none());
         Ok(())
     }
 

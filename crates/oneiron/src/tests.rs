@@ -11981,15 +11981,47 @@ fn put_active_claim(
     val: &str,
     learned_at: u64,
 ) -> Result<EntityId> {
+    put_active_claim_with_source(vault, subject, pred, val, None, learned_at)
+}
+
+fn put_active_claim_with_source(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    source: Option<ClaimSource>,
+    learned_at: u64,
+) -> Result<EntityId> {
+    put_active_claim_with_source_and_approval(
+        vault,
+        subject,
+        pred,
+        val,
+        source,
+        ClaimApprovalStatus::Auto,
+        learned_at,
+    )
+}
+
+fn put_active_claim_with_source_and_approval(
+    vault: &Vault,
+    subject: &EntityId,
+    pred: &str,
+    val: &str,
+    source: Option<ClaimSource>,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> Result<EntityId> {
     let id = EntityId::now();
-    let body = ClaimBody::new(
+    let mut body = ClaimBody::new(
         pred,
         ClaimSubject::Entity(*subject),
         rmpv::Value::from(val),
         0.9,
-        ClaimApprovalStatus::Auto,
+        approval,
         ClaimLifecycleStatus::Active,
     );
+    body.source = source;
     vault.put_claim(
         &id,
         &body,
@@ -12406,6 +12438,50 @@ fn supersede_claim_rejects_self_supersession() -> Result<()> {
             .targets(&claim, EdgeKind::Supersedes, None)?
             .is_empty()
     );
+    Ok(())
+}
+
+#[test]
+fn generated_claim_cannot_supersede_user_stated_non_code_truth() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    vault.put_entity(&subject, 4, test_time_range(1, 1), 1, b"person")?;
+    let old = put_active_claim_with_source(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "osaka",
+        Some(ClaimSource::UserStated),
+        11,
+    )?;
+    let new = put_active_claim_with_source_and_approval(
+        &vault,
+        &subject,
+        "profile.lives_in",
+        "tokyo",
+        Some(ClaimSource::Generated),
+        ClaimApprovalStatus::Proposed,
+        22,
+    )?;
+    let old_before = vault.get_raw(&old)?.expect("old claim stored");
+
+    let err = vault
+        .supersede_claim(&new, &old, 777)
+        .expect_err("generated non-code truth must not supersede user-stated truth");
+    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
+    assert!(
+        err.to_string()
+            .contains("generated claim cannot supersede user-stated truth")
+    );
+    assert_eq!(
+        vault.get_raw(&old)?.expect("old claim still stored"),
+        old_before
+    );
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
     Ok(())
 }
 
