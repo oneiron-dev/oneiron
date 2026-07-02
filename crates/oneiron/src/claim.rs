@@ -245,6 +245,9 @@ impl ClaimSource {
 }
 
 const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
+const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_source";
+#[cfg(feature = "sync")]
+const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
 const DEFAULT_CLAIM_SENSITIVITY_BAND: u8 = 0;
 
 enum MapValue<'a> {
@@ -276,6 +279,25 @@ pub(crate) fn claim_sensitivity_band(body: &ClaimBody) -> Option<u8> {
         MapValue::Present(value) => sensitivity_band_from_value(value),
         MapValue::Duplicate => None,
     }
+}
+
+fn claim_federated_original_source(body: &ClaimBody) -> Option<ClaimSource> {
+    let Some(Value::Map(entries)) = &body.scope else {
+        return None;
+    };
+
+    match single_map_value(entries, CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Present(value) => value.as_str().and_then(ClaimSource::parse),
+        // A duplicated internal origin marker is ambiguous; read admission
+        // treats it as generated-origin so authority consumers fail closed.
+        MapValue::Duplicate => Some(ClaimSource::Generated),
+    }
+}
+
+fn claim_generated_origin(body: &ClaimBody) -> bool {
+    body.source == Some(ClaimSource::Generated)
+        || claim_federated_original_source(body) == Some(ClaimSource::Generated)
 }
 
 pub(crate) fn sensitivity_band_from_value(value: &Value) -> Option<u8> {
@@ -1094,6 +1116,23 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+/// Read-admission predicate for authority-consuming consolidation paths.
+///
+/// This is intentionally stricter than [`claim_surfaceable`]: first-party or
+/// replicated `Auto` claims stamped `src = generated` may surface immediately
+/// on retrieval/review read paths, but authority-consuming paths must call this
+/// predicate at their consolidation/corroboration/effector admission boundary
+/// and decline them until they are vetted into `appr = approved`. Federated
+/// claims restamped to `src = imported` preserve a generated pre-restamp source
+/// in `scope.federated_original_source` for this read-admission check. Existing
+/// retrieval and context-pack surfacing paths intentionally remain on
+/// [`claim_surfaceable`]. This is a read gate only; replication and replay
+/// paths must not re-run policy source-trust checks.
+pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
+    claim_surfaceable(body)
+        && !(body.approval == ClaimApprovalStatus::Auto && claim_generated_origin(body))
+}
+
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
     let affect = crate::affect::decode_affect_trigger_claim(body)?
@@ -1110,6 +1149,31 @@ pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32
 
 #[cfg(feature = "sync")]
 pub(crate) fn restamp_federated_claim_source(mut body: ClaimBody) -> ClaimBody {
+    if body.source == Some(ClaimSource::Generated) {
+        body.scope = Some(match body.scope.take() {
+            Some(Value::Map(mut entries)) => {
+                entries.retain(|(key, _)| {
+                    key.as_str() != Some(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY)
+                });
+                entries.push((
+                    Value::from(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+                    Value::from(ClaimSource::Generated.as_str()),
+                ));
+                Value::Map(entries)
+            }
+            Some(scope) => Value::Map(vec![
+                (
+                    Value::from(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+                    Value::from(ClaimSource::Generated.as_str()),
+                ),
+                (Value::from(CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY), scope),
+            ]),
+            None => Value::Map(vec![(
+                Value::from(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+                Value::from(ClaimSource::Generated.as_str()),
+            )]),
+        });
+    }
     body.source = Some(ClaimSource::Imported);
     body
 }
@@ -1989,6 +2053,58 @@ mod tests {
             A::Auto,
             L::Active,
         )));
+    }
+
+    #[test]
+    fn claim_consolidatable_excludes_auto_generated_until_vetted() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x12; 16]).expect("valid id"));
+        let mut body = ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+
+        body.source = Some(ClaimSource::Generated);
+        assert!(
+            claim_surfaceable(&body),
+            "Auto/Generated claims still surface for read/review"
+        );
+        assert!(
+            !claim_consolidatable(&body),
+            "Auto/Generated claims are not authority-admissible"
+        );
+
+        body.approval = ClaimApprovalStatus::Approved;
+        assert!(
+            claim_consolidatable(&body),
+            "vetted Generated claims are consolidatable"
+        );
+
+        body.approval = ClaimApprovalStatus::Auto;
+        body.source = Some(ClaimSource::Inferred);
+        assert!(
+            claim_consolidatable(&body),
+            "non-Generated surfaceable claims keep existing admission"
+        );
+
+        body.source = Some(ClaimSource::Imported);
+        body.scope = Some(Value::Map(vec![(
+            Value::from(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+            Value::from(ClaimSource::Generated.as_str()),
+        )]));
+        assert!(
+            !claim_consolidatable(&body),
+            "federated Generated origin remains authority-inadmissible after import restamp"
+        );
+
+        body.stale = true;
+        assert!(
+            !claim_consolidatable(&body),
+            "consolidation preserves surfaceability's stale exclusion"
+        );
     }
 
     /// ONE-1159 fix-wave — the WRITE door's surfaceability guard reuses the

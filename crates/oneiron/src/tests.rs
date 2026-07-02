@@ -6274,7 +6274,7 @@ fn type_byte_band_allocation_matches_contract() {
         TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
         TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
         TYPE_BYTE_BAND_PRODUCTIVITY_START, TYPE_BYTE_SEMANTIC, TypeByteBand, band_of,
-        is_structural_kind, validate_entity_type,
+        entity_type_registry_entry, is_structural_kind, validate_entity_type,
     };
 
     // contracts.ts §1 typeByteBands — the LOCKED 6-band allocation:
@@ -6311,11 +6311,13 @@ fn type_byte_band_allocation_matches_contract() {
         assert_eq!(band_of(byte), expected, "band_of({byte})");
     }
 
-    // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121/123/124/128; true for every REGISTERED core
-    // (1..=16) and pack (64/80/81/82/83) kind. Byte 122 is reserved for
-    // AUTHORITY_LOG, and 125..=127 are reserved for future maintenance
-    // substrates, but none are registered yet.
+    // is_structural_kind: false for the semantic byte 0 and for every
+    // maintenance-band allocation; true for every REGISTERED core (1..=16)
+    // and pack (64/80/81/82/83) kind. The pinned maintenance allocation is:
+    // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG reserved;
+    // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
+    // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
+    // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6353,6 +6355,14 @@ fn type_byte_band_allocation_matches_contract() {
         !is_structural_kind(128),
         "ACCESS_GRANT is NOT a StructuralKind (EIRI-004: companion control plane)"
     );
+    assert!(
+        !is_structural_kind(129),
+        "PSYCH_PROFILE is NOT a StructuralKind (AEI-006: derived profile mirror)"
+    );
+    assert!(
+        !is_structural_kind(130),
+        "SUSPICIOUS_WAKE byte 130 is reserved but not a StructuralKind"
+    );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
@@ -6362,10 +6372,10 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (122 is reserved for AUTHORITY_LOG, while
-    // 125..=127 are reserved for future maintenance substrates, but all
-    // remain unregistered.)
-    for byte in [17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 255] {
+    // with the same typed error.
+    for byte in [
+        17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 130, 255,
+    ] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6373,6 +6383,19 @@ fn type_byte_band_allocation_matches_contract() {
                 Err(Error::InvalidEntityType(rejected)) if rejected == byte
             ),
             "unregistered byte {byte} must stay rejected by validate_entity_type"
+        );
+    }
+
+    for (byte, name) in [
+        (122_u8, "AUTHORITY_LOG"),
+        (125, "CONNECTION_RECORD"),
+        (126, "DIAGNOSTIC"),
+        (127, "FEDERATION_KEY_ENVELOPE"),
+        (130, "SUSPICIOUS_WAKE"),
+    ] {
+        assert!(
+            entity_type_registry_entry(byte).is_none(),
+            "{name} byte {byte} must stay reserved-unregistered"
         );
     }
 }
@@ -7698,6 +7721,169 @@ fn claim_vad_consolidation_rejects_turn_vad_annotation_claims() -> Result<()> {
 }
 
 #[test]
+fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let auto_generated = EntityId::now();
+    let vetted_generated = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+
+    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    body.source = Some(ClaimSource::Generated);
+    vault.put_claim(&auto_generated, &body, test_time_range(30, 30), 30)?;
+    let err = block_on_ready(vault.consolidate_claim_vad(&auto_generated, 100))
+        .expect_err("Auto/Generated claims are not consolidatable until vetted");
+    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+
+    body.approval = ClaimApprovalStatus::Approved;
+    vault.put_claim(&vetted_generated, &body, test_time_range(40, 40), 40)?;
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&vetted_generated, 110))?;
+    assert_eq!(outcome.evidence_turns.len(), 1);
+    assert!(
+        outcome.vad.is_some(),
+        "vetted Generated claims remain valid consolidation inputs"
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_rejects_stale_active_claim_with_specific_error() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+
+    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    body.stale = true;
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+
+    let err = block_on_ready(vault.consolidate_claim_vad(&claim, 100))
+        .expect_err("stale Active claims are not consolidatable");
+    assert_matches!(
+        err,
+        Error::InvalidClaimBody("claim is stale and not consolidatable")
+    );
+    Ok(())
+}
+
+#[test]
+fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let claim = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+
+    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    vault.put_claim(&claim, &body, test_time_range(30, 30), 30)?;
+    vault.put_edge(&claim, EdgeKind::Mentions, &subject, 0.6)?;
+
+    let first = block_on_ready(vault.consolidate_claim_vad(&claim, 100))?;
+    let state_id = first
+        .reappraisal
+        .created_claim_id
+        .expect("initial state claim");
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(
+        mentions.vad.expect("initial edge VAD"),
+        first.vad.expect("initial claim VAD"),
+    );
+
+    body.source = Some(ClaimSource::Generated);
+    vault.put_claim(&claim, &body, test_time_range(40, 40), 40)?;
+    let err = block_on_ready(vault.consolidate_claim_vad(&claim, 200))
+        .expect_err("Auto/Generated claims are not consolidatable");
+    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+
+    let mentions = vault
+        .edges_out(&claim)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == subject)
+        .expect("semantic edge survives");
+    assert_vad_close(mentions.vad.expect("cleared VAD"), Vad::NEUTRAL);
+
+    let state = vault
+        .get_claim(&state_id)?
+        .expect("prior claim-VAD state stays readable");
+    assert_eq!(state.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(state.valid_to, Some(200));
+
+    let mut active_claim_vad_states = Vec::new();
+    for state_id in vault.claims_for_subject(&claim)? {
+        let Some(state) = vault.get_claim(&state_id)? else {
+            continue;
+        };
+        if state.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
+            && state.lifecycle == ClaimLifecycleStatus::Active
+        {
+            active_claim_vad_states.push(state_id);
+        }
+    }
+    assert!(
+        active_claim_vad_states.is_empty(),
+        "non-consolidatable admission must not leave active claim-VAD state"
+    );
+    Ok(())
+}
+
+#[test]
 fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
@@ -8070,6 +8256,46 @@ fn coping_outcome_update_from_later_turn_vad_delta_supersedes_previous_claim() -
     );
     assert!(vault.edge_exists(&update.active_claim_id, EdgeKind::ClaimOf, &person)?);
     assert!(vault.edge_exists(&update.active_claim_id, EdgeKind::Supersedes, &outcome)?);
+    Ok(())
+}
+
+#[test]
+fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let person = EntityId::now();
+    let strategy_ref = EntityId::now();
+    let later_turn = EntityId::now();
+    let outcome = EntityId::now();
+
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"p")?;
+    let mut body = coping_outcome_fixture_body(
+        person,
+        strategy_ref,
+        CopingStrategy::SitSel,
+        VadDelta::new(0.1, 0.1, 0.1)?,
+        0.6,
+        ClaimLifecycleStatus::Active,
+        50,
+    )?;
+    body.source = Some(ClaimSource::Generated);
+    vault.put_claim(&outcome, &body, test_time_range(50, 50), 50)?;
+
+    let err = vault
+        .update_coping_outcome_from_turn_vad_delta(
+            &outcome,
+            later_turn,
+            VadDelta::new(0.3, 0.2, 0.1)?,
+            0.8,
+            100,
+        )
+        .expect_err("Auto/Generated coping outcome must not consolidate until vetted");
+    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+
+    let prior = vault
+        .get_claim(&outcome)?
+        .expect("rejected update must leave prior claim readable");
+    assert_eq!(prior.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(vault.claims_for_subject(&person)?.len(), 1);
     Ok(())
 }
 
@@ -8529,10 +8755,11 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // GATE-001 registered POLICY_MANIFEST; 124 left it when FED-001
     // registered FEDERATION_GRANT; 128 left it when EIRI-004 registered
     // ACCESS_GRANT. Public puts of those bytes now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test. Byte 122 is
-    // reserved for AUTHORITY_LOG, and 125..=127 are reserved for future
-    // maintenance substrates, but all remain unregistered.
-    for unknown in [99_u8, 122, 125, 126, 127, 200] {
+    // MaintenanceKindNotWritable — covered by the D5 gate test. Reserved
+    // unregistered maintenance bytes stay InvalidEntityType:
+    // 122 AUTHORITY_LOG; 125 CONNECTION_RECORD; 126 DIAGNOSTIC;
+    // 127 FEDERATION_KEY_ENVELOPE; 130 SUSPICIOUS_WAKE.
+    for unknown in [99_u8, 122, 125, 126, 127, 130, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
