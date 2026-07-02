@@ -51,21 +51,13 @@ fn window_key() -> WindowKey {
 }
 
 fn clear_policy_manifests(vault: &Vault) {
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .expect("list policy manifests")
-    {
-        vault
-            .batch()
-            .delete(&id)
-            .commit()
-            .expect("clear policy manifest fixture");
-    }
-    assert_eq!(
+    // The default policy manifest is local engine state and is skipped by
+    // reverse rematerialization, so fixtures must not delete it publicly.
+    assert!(
         vault
             .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests"),
-        0
+            .expect("count policy manifests")
+            <= 1
     );
 }
 

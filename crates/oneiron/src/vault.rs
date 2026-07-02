@@ -3205,6 +3205,9 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at);
         };
+        if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
         // lock-free `read_entity_header` read_txn has completed and committed
         // the headerful path) but no write lock is held yet. The deterministic
@@ -4670,6 +4673,40 @@ impl Vault {
         Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
             |_| Error::CorruptedIndex("temporal learned key"),
         )?)))
+    }
+
+    /// Returns the greatest `learned_at` timestamp whose entity type is not excluded.
+    pub fn latest_learned_at_excluding_entity_types(
+        &self,
+        excluded_types: &[u8],
+    ) -> Result<Option<u64>> {
+        let rtxn = self.store.env.read_txn()?;
+        for entry in self.store.temporal_learned.rev_iter(&rtxn)? {
+            let (key, _) = entry?;
+            require_key_len(key, 24, "temporal learned key")?;
+            let learned_at = u64::from_be_bytes(
+                key[..8]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            );
+            let id = EntityId::from_bytes(
+                key[8..24]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
+            let raw = self
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if !excluded_types.contains(&header.entity_type) {
+                return Ok(Some(learned_at));
+            }
+        }
+        Ok(None)
     }
 
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
@@ -6440,8 +6477,8 @@ mod tests {
         TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
     };
     use crate::types::{
-        ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig, TextAnalyzerConfig, TimeRange,
-        VaultConfig,
+        ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig,
+        TextAnalyzerConfig, TimeRange, VaultConfig,
     };
 
     fn test_config() -> VaultConfig {
@@ -6476,11 +6513,37 @@ mod tests {
     fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
         let id = crate::gate::default_policy_manifest_id()?;
         vault.with_write_txn(|wtxn| {
-            vault.store.entities.delete(wtxn, id.as_bytes())?;
-            let type_key = Store::encode_type_key(crate::types::ENTITY_TYPE_POLICY_MANIFEST, &id);
-            vault.store.type_index.delete(wtxn, &type_key)?;
+            crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
             Ok(())
         })
+    }
+
+    #[test]
+    fn public_deletes_reject_fresh_default_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let id = crate::gate::default_policy_manifest_id()?;
+
+        let err = vault
+            .delete_entity(&id)
+            .expect_err("public hard delete must reject the default policy manifest");
+        assert_matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        );
+        assert!(vault.get_raw(&id)?.is_some());
+
+        let err = vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect_err("batch delete must reject the default policy manifest");
+        assert_matches!(
+            err,
+            Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        );
+        assert!(vault.get_raw(&id)?.is_some());
+        Ok(())
     }
 
     #[test]
@@ -6557,6 +6620,35 @@ mod tests {
             .commit()?;
 
         assert_eq!(vault.latest_learned_at()?, Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
+            None
+        );
+
+        vault
+            .batch()
+            .put(&entity(0x21), ENTITY_TYPE_TASK, range(1, 1), 10, b"task")
+            .commit()?;
+
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
+            Some(10)
+        );
+        assert_eq!(
+            vault.latest_learned_at_excluding_entity_types(&[
+                ENTITY_TYPE_POLICY_MANIFEST,
+                ENTITY_TYPE_TASK
+            ])?,
+            None
+        );
         Ok(())
     }
 

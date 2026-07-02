@@ -41,21 +41,14 @@ const TEST_USER: &str = "test-user";
 const TEST_LEASE_VAULT_ID: u64 = 0;
 
 fn clear_policy_manifests(vault: &Vault) {
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .expect("list policy manifests")
-    {
-        vault
-            .batch()
-            .delete(&id)
-            .commit()
-            .expect("clear policy manifest fixture");
-    }
-    assert_eq!(
+    // Legacy sync fixtures used to delete policy manifests to keep mirrored
+    // entity counts exact. Public deletes are intentionally rejected now, and
+    // reverse rematerialization skips the seeded manifest.
+    assert!(
         vault
             .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests"),
-        0
+            .expect("count policy manifests")
+            <= 1
     );
 }
 

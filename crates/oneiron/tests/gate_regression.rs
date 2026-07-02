@@ -17,27 +17,7 @@ fn test_time(ts: u64) -> TimeRange {
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
-    clear_policy_manifests(&vault);
     (tmp, vault)
-}
-
-fn clear_policy_manifests(vault: &Vault) {
-    for id in vault
-        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-        .expect("list policy manifests")
-    {
-        vault
-            .batch()
-            .delete(&id)
-            .commit()
-            .expect("clear policy manifest fixture");
-    }
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
-            .expect("count policy manifests"),
-        0
-    );
 }
 
 fn put_person(vault: &Vault, id: &EntityId) -> Result<()> {
@@ -81,7 +61,7 @@ enum Presence {
 #[derive(Clone, Copy)]
 enum ExpectedError {
     EntityNotFound,
-    SourceNotTrusted(ClaimSource),
+    GateWriteRejected(&'static [&'static str]),
     MaintenanceKindNotWritable(u8),
 }
 
@@ -101,11 +81,16 @@ fn assert_expected_error(err: Error, expected: ExpectedError) {
         ExpectedError::EntityNotFound => {
             assert!(matches!(err, Error::EntityNotFound), "got {err:?}");
         }
-        ExpectedError::SourceNotTrusted(source) => {
+        ExpectedError::GateWriteRejected(reason_codes) => {
             assert!(
-                matches!(err, Error::SourceNotTrustedForAuto { claim_source } if claim_source == source.as_str()),
-                "expected SourceNotTrustedForAuto({}), got {err:?}",
-                source.as_str()
+                matches!(
+                    err,
+                    Error::GateWriteRejected {
+                        outcome: "pending",
+                        reason_codes: ref got
+                    } if got == reason_codes
+                ),
+                "expected GateWriteRejected({reason_codes:?}), got {err:?}",
             );
         }
         ExpectedError::MaintenanceKindNotWritable(kind) => {
@@ -260,14 +245,14 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             expected: ExpectedError::EntityNotFound,
         },
         DeniedClaimCase {
-            name: "tool output default source trust denial",
+            name: "tool output criticality floor denial",
             seed: 0xC8,
             actor: Presence::Present,
             subject: Presence::Present,
             source: ClaimSource::ToolOutput,
             approval: ClaimApprovalStatus::Auto,
-            predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::ToolOutput),
+            predicate: "health.allergy",
+            expected: ExpectedError::GateWriteRejected(&["gate.pending.criticality_floor"]),
         },
         DeniedClaimCase {
             name: "imported default source trust denial",
@@ -277,7 +262,7 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             source: ClaimSource::Imported,
             approval: ClaimApprovalStatus::Auto,
             predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::Imported),
+            expected: ExpectedError::GateWriteRejected(&["gate.pending.source_trust"]),
         },
         DeniedClaimCase {
             name: "generated default source trust denial",
@@ -287,7 +272,7 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             source: ClaimSource::Generated,
             approval: ClaimApprovalStatus::Auto,
             predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::Generated),
+            expected: ExpectedError::GateWriteRejected(&["gate.pending.source_trust"]),
         },
     ];
 

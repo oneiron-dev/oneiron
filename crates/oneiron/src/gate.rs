@@ -15,6 +15,7 @@ use crate::claim::{
     sensitivity_band_from_value,
 };
 use crate::error::{Error, Result};
+use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
@@ -1086,16 +1087,41 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
         (
             Value::from(POLICY_RULES_KEY),
-            Value::Array(vec![Value::Map(vec![
-                (Value::from(RULE_PREFIX_KEY), Value::from("profile.")),
-                (
-                    Value::from(RULE_AXES_KEY),
-                    Value::Map(vec![
-                        (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
-                        (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
-                    ]),
-                ),
-            ])]),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("profile.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("affect.vad")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(PREDICATE_EDGE_PROVENANCE),
+                    ),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+            ]),
         ),
         (
             Value::from(POLICY_ACTOR_CEILINGS_KEY),
@@ -2013,9 +2039,7 @@ mod tests {
                     ids.push(id);
                 }
                 for id in ids {
-                    vault.store.entities.delete(wtxn, id.as_bytes())?;
-                    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
-                    vault.store.type_index.delete(wtxn, &type_key)?;
+                    crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
                 }
                 Ok(())
             })
