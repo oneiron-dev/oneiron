@@ -1094,6 +1094,20 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
         && !body.stale
 }
 
+/// Read-admission predicate for authority-consuming consolidation paths.
+///
+/// This is intentionally stricter than [`claim_surfaceable`]: first-party or
+/// replicated `Auto` claims stamped `src = generated` may surface immediately
+/// for review/retrieval, but Dreamer consolidation, corroboration counting,
+/// and effector fan-out must call this predicate and decline them until they
+/// are vetted into `appr = approved`. This is a read gate only; replication
+/// and replay paths must not re-run policy source-trust checks.
+pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
+    claim_surfaceable(body)
+        && !(body.approval == ClaimApprovalStatus::Auto
+            && body.source == Some(ClaimSource::Generated))
+}
+
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
     let affect = crate::affect::decode_affect_trigger_claim(body)?
@@ -1989,6 +2003,48 @@ mod tests {
             A::Auto,
             L::Active,
         )));
+    }
+
+    #[test]
+    fn claim_consolidatable_excludes_auto_generated_until_vetted() {
+        let subject = ClaimSubject::Entity(EntityId::from_bytes([0x12; 16]).expect("valid id"));
+        let mut body = ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+
+        body.source = Some(ClaimSource::Generated);
+        assert!(
+            claim_surfaceable(&body),
+            "Auto/Generated claims still surface for read/review"
+        );
+        assert!(
+            !claim_consolidatable(&body),
+            "Auto/Generated claims are not authority-admissible"
+        );
+
+        body.approval = ClaimApprovalStatus::Approved;
+        assert!(
+            claim_consolidatable(&body),
+            "vetted Generated claims are consolidatable"
+        );
+
+        body.approval = ClaimApprovalStatus::Auto;
+        body.source = Some(ClaimSource::Inferred);
+        assert!(
+            claim_consolidatable(&body),
+            "non-Generated surfaceable claims keep existing admission"
+        );
+
+        body.stale = true;
+        assert!(
+            !claim_consolidatable(&body),
+            "consolidation preserves surfaceability's stale exclusion"
+        );
     }
 
     /// ONE-1159 fix-wave — the WRITE door's surfaceability guard reuses the

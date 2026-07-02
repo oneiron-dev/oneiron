@@ -31,7 +31,7 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
+    claim_consolidatable, encode_claim_body, is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -1389,10 +1389,13 @@ impl Vault {
     ) -> Result<ClaimVadConsolidation> {
         let mut wtxn = self.store.env.write_txn()?;
         let claim_body = self.claim_body_for_claim_vad_in_txn(&wtxn, claim_id)?;
-        if claim_body.lifecycle != ClaimLifecycleStatus::Active {
-            return Err(Error::ClaimAlreadyClosed {
-                status: claim_body.lifecycle,
-            });
+        if !claim_consolidatable(&claim_body) {
+            if claim_body.lifecycle != ClaimLifecycleStatus::Active {
+                return Err(Error::ClaimAlreadyClosed {
+                    status: claim_body.lifecycle,
+                });
+            }
+            return Err(Error::InvalidClaimBody("claim is not consolidatable"));
         }
         if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
             return Err(Error::InvalidClaimBody(

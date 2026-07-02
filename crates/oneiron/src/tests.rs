@@ -7698,6 +7698,50 @@ fn claim_vad_consolidation_rejects_turn_vad_annotation_claims() -> Result<()> {
 }
 
 #[test]
+fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let subject = EntityId::now();
+    let turn = EntityId::now();
+    let auto_generated = EntityId::now();
+    let vetted_generated = EntityId::now();
+
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"subject",
+    )?;
+    put_claim_vad_turn(
+        &vault,
+        &turn,
+        10,
+        Vad {
+            valence: 0.2,
+            arousal: 0.4,
+            dominance: 0.6,
+        },
+    )?;
+
+    let mut body = claim_vad_fixture_body(subject, &[turn]);
+    body.source = Some(ClaimSource::Generated);
+    vault.put_claim(&auto_generated, &body, test_time_range(30, 30), 30)?;
+    let err = block_on_ready(vault.consolidate_claim_vad(&auto_generated, 100))
+        .expect_err("Auto/Generated claims are not consolidatable until vetted");
+    assert_matches!(err, Error::InvalidClaimBody("claim is not consolidatable"));
+
+    body.approval = ClaimApprovalStatus::Approved;
+    vault.put_claim(&vetted_generated, &body, test_time_range(40, 40), 40)?;
+    let outcome = block_on_ready(vault.consolidate_claim_vad(&vetted_generated, 110))?;
+    assert_eq!(outcome.evidence_turns.len(), 1);
+    assert!(
+        outcome.vad.is_some(),
+        "vetted Generated claims remain valid consolidation inputs"
+    );
+    Ok(())
+}
+
+#[test]
 fn claim_vad_consolidation_averages_boundary_vad_without_drift() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let subject = EntityId::now();
