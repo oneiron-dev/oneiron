@@ -31,7 +31,9 @@ const CONTRACT_MANIFEST_JSON: &str = include_str!("../fixtures/beam_128k_contrac
 const CONTRACT_RUN_JSONL: &str = include_str!("../fixtures/beam_128k_contract.run.jsonl");
 const EVAL_CONTRACT_VERSION: &str = "oneiron-eval.contract.v1";
 const JSONL_CONTRACT_SOURCE_KIND: &str = "jsonl";
+const ONEIRON_CONTEXT_PACK_ARM_KIND: &str = "context_pack_http";
 const DEFAULT_JSONL_RETRIEVAL_LIMIT: usize = 8;
+const BEAM_CONTRACT_EMBEDDING_DIMENSIONS: usize = 4;
 const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::types::ENTITY_TYPE_SUMMARY;
 
 type BeamResult<T> = Result<T, BeamError>;
@@ -215,6 +217,8 @@ enum DatasetSource {
     },
     Jsonl {
         path: PathBuf,
+        #[serde(default)]
+        arm_id: Option<String>,
         #[serde(default = "default_jsonl_retrieval_limit")]
         limit: usize,
         #[serde(default)]
@@ -409,7 +413,6 @@ struct LoadedDataset {
     cases: Vec<FixtureCase>,
     contract_records: BTreeMap<String, RunContractRecord>,
     source_id_by_entity_id: BTreeMap<String, String>,
-    source_text_by_entity_id: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -577,6 +580,8 @@ struct ContextPackReport {
     empty: Option<EmptyContextReport>,
     #[serde(skip)]
     temporal_result_ids: BTreeSet<String>,
+    #[serde(skip)]
+    budgeted_text_by_entity_id: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -944,17 +949,104 @@ fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamRe
     if let (DatasetSource::Fixture { .. }, Some(fixture)) = (&manifest.dataset, fixture) {
         validate_manifest_fixture_cases(manifest, fixture)?;
     }
+    validate_manifest_paths(manifest)?;
+
+    if matches!(manifest.dataset, DatasetSource::Jsonl { .. }) {
+        return run_jsonl_manifest_isolated(manifest);
+    }
 
     let tempdir = tempfile::tempdir()?;
     let vault = Vault::open(tempdir.path(), beam_vault_config())?;
     let loaded = load_dataset(&vault, manifest, fixture)?;
+    let (cases, pack_rows) = run_loaded_cases(&vault, manifest, &loaded)?;
+    let scorer = FixedBeamScorer;
+    let report_format = report_format_label(manifest.report.format).to_owned();
+
+    if let Some(outputs) = &manifest.outputs {
+        write_contract_pack_rows(&outputs.packs_jsonl, &pack_rows)?;
+    }
+
+    Ok(BeamReport {
+        schema_version: SCHEMA_VERSION,
+        run_id: manifest.run_id.clone(),
+        fixture_id: loaded.fixture_id,
+        fixture_description: loaded.fixture_description,
+        dataset: loaded.report,
+        scorer: scorer.metadata(),
+        report_format,
+        cases,
+    })
+}
+
+fn run_jsonl_manifest_isolated(manifest: &RunManifest) -> BeamResult<BeamReport> {
+    let scorer = FixedBeamScorer;
+    let report_format = report_format_label(manifest.report.format).to_owned();
+    let mut dataset_report: Option<DatasetLoadReport> = None;
+    let mut fixture_id: Option<String> = None;
+    let mut fixture_description: Option<String> = None;
+    let mut cases = Vec::with_capacity(manifest.case_ids.len());
+    let mut pack_rows = Vec::new();
+
+    for case_id in &manifest.case_ids {
+        let tempdir = tempfile::tempdir()?;
+        let vault = Vault::open(tempdir.path(), beam_vault_config())?;
+        let mut single_case_manifest = manifest.clone();
+        single_case_manifest.case_ids = vec![case_id.clone()];
+        let loaded = load_dataset(&vault, &single_case_manifest, None)?;
+
+        match &mut dataset_report {
+            Some(report) => {
+                if report.dataset_id != loaded.report.dataset_id {
+                    return Err(invalid_manifest(
+                        manifest,
+                        "jsonl selected cases must resolve to one dataset id",
+                    ));
+                }
+                report.records_loaded += loaded.report.records_loaded;
+                report.text_fields_indexed += loaded.report.text_fields_indexed;
+                report.pending_vectors += loaded.report.pending_vectors;
+            }
+            None => {
+                dataset_report = Some(loaded.report.clone());
+                fixture_id = Some(loaded.fixture_id.clone());
+                fixture_description = Some(loaded.fixture_description.clone());
+            }
+        }
+
+        let (mut case_reports, mut rows) =
+            run_loaded_cases(&vault, &single_case_manifest, &loaded)?;
+        cases.append(&mut case_reports);
+        pack_rows.append(&mut rows);
+    }
+
+    if let Some(outputs) = &manifest.outputs {
+        write_contract_pack_rows(&outputs.packs_jsonl, &pack_rows)?;
+    }
+
+    Ok(BeamReport {
+        schema_version: SCHEMA_VERSION,
+        run_id: manifest.run_id.clone(),
+        fixture_id: fixture_id.unwrap_or_else(|| "jsonl".to_owned()),
+        fixture_description: fixture_description
+            .unwrap_or_else(|| "oneiron-eval run.jsonl".to_owned()),
+        dataset: dataset_report.expect("validated manifest has at least one case"),
+        scorer: scorer.metadata(),
+        report_format,
+        cases,
+    })
+}
+
+fn run_loaded_cases(
+    vault: &Vault,
+    manifest: &RunManifest,
+    loaded: &LoadedDataset,
+) -> BeamResult<(Vec<CaseReport>, Vec<ContextPackContractRecord>)> {
     let scorer = FixedBeamScorer;
     let cases_by_id: BTreeMap<&str, &FixtureCase> = loaded
         .cases
         .iter()
         .map(|case| (case.case_id.as_str(), case))
         .collect();
-    let report_format = report_format_label(manifest.report.format).to_owned();
 
     let mut cases = Vec::with_capacity(manifest.case_ids.len());
     let mut pack_rows = Vec::new();
@@ -975,9 +1067,9 @@ fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamRe
                     run_id: manifest.run_id.clone(),
                     competitor_id: competitor.competitor_id.clone(),
                 })?;
-            let arm_report = adapter_for(competitor.arm).run(&vault, case)?;
+            let arm_report = adapter_for(competitor.arm).run(vault, case)?;
             if let Some(row) =
-                contract_context_pack_record(manifest, &loaded, case, competitor, &arm_report)
+                contract_context_pack_record(manifest, loaded, case, competitor, &arm_report)?
             {
                 pack_rows.push(row);
             }
@@ -1005,20 +1097,7 @@ fn run_manifest(manifest: &RunManifest, fixture: Option<&BeamFixture>) -> BeamRe
         });
     }
 
-    if let Some(outputs) = &manifest.outputs {
-        write_contract_pack_rows(&outputs.packs_jsonl, &pack_rows)?;
-    }
-
-    Ok(BeamReport {
-        schema_version: SCHEMA_VERSION,
-        run_id: manifest.run_id.clone(),
-        fixture_id: loaded.fixture_id,
-        fixture_description: loaded.fixture_description,
-        dataset: loaded.report,
-        scorer: scorer.metadata(),
-        report_format,
-        cases,
-    })
+    Ok((cases, pack_rows))
 }
 
 fn validate_fixture(fixture: &BeamFixture) -> BeamResult<()> {
@@ -1319,6 +1398,7 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
             "manifest must declare at least one competitor row",
         ));
     }
+    validate_manifest_dataset(manifest)?;
 
     let mut case_ids = BTreeSet::new();
     for case_id in &manifest.case_ids {
@@ -1381,6 +1461,67 @@ fn validate_manifest(manifest: &RunManifest) -> BeamResult<()> {
     }
 
     Ok(())
+}
+
+fn validate_manifest_dataset(manifest: &RunManifest) -> BeamResult<()> {
+    if let DatasetSource::Jsonl {
+        limit,
+        expected_min_results,
+        ..
+    } = &manifest.dataset
+    {
+        if *limit == 0 {
+            return Err(invalid_manifest(
+                manifest,
+                "jsonl dataset sources must set limit > 0",
+            ));
+        }
+        if expected_min_results > limit {
+            return Err(invalid_manifest(
+                manifest,
+                "jsonl dataset expectedMinResults must be <= limit",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_manifest_paths(manifest: &RunManifest) -> BeamResult<()> {
+    let DatasetSource::Jsonl { path, .. } = &manifest.dataset else {
+        return Ok(());
+    };
+    let Some(outputs) = &manifest.outputs else {
+        return Ok(());
+    };
+
+    let input = canonical_path_for_overlap(path)?;
+    let output = canonical_path_for_overlap(&outputs.packs_jsonl)?;
+    if input == output {
+        return Err(invalid_manifest(
+            manifest,
+            "outputs.packsJsonl must not resolve to the input run.jsonl path",
+        ));
+    }
+
+    Ok(())
+}
+
+fn canonical_path_for_overlap(path: &Path) -> std::io::Result<PathBuf> {
+    match path.canonicalize() {
+        Ok(path) => Ok(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let parent = parent.canonicalize()?;
+            Ok(path
+                .file_name()
+                .map_or(parent.clone(), |file_name| parent.join(file_name)))
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn validate_manifest_fixture_cases(
@@ -1507,17 +1648,17 @@ fn load_dataset(
         }
         DatasetSource::Jsonl {
             path,
+            arm_id,
             limit,
             expected_min_results,
-        } => {
-            if *limit == 0 {
-                return Err(invalid_manifest(
-                    manifest,
-                    "jsonl dataset sources must set limit > 0",
-                ));
-            }
-            load_run_jsonl_dataset(vault, manifest, path, *limit, *expected_min_results)
-        }
+        } => load_run_jsonl_dataset(
+            vault,
+            manifest,
+            path,
+            arm_id.as_deref(),
+            *limit,
+            *expected_min_results,
+        ),
         source => Err(BeamError::DatasetNotReady(dataset_not_ready(source))),
     }
 }
@@ -1566,7 +1707,6 @@ fn load_fixture_dataset(vault: &Vault, fixture: &BeamFixture) -> BeamResult<Load
         cases: fixture.cases.clone(),
         contract_records: BTreeMap::new(),
         source_id_by_entity_id: BTreeMap::new(),
-        source_text_by_entity_id: BTreeMap::new(),
     })
 }
 
@@ -1574,6 +1714,7 @@ fn load_run_jsonl_dataset(
     vault: &Vault,
     manifest: &RunManifest,
     path: &Path,
+    arm_id: Option<&str>,
     limit: usize,
     expected_min_results: usize,
 ) -> BeamResult<LoadedDataset> {
@@ -1581,7 +1722,6 @@ fn load_run_jsonl_dataset(
     let selected: BTreeSet<&str> = manifest.case_ids.iter().map(String::as_str).collect();
     let mut contract_records = BTreeMap::new();
     let mut source_id_by_entity_id = BTreeMap::new();
-    let mut source_text_by_entity_id = BTreeMap::new();
     let mut seen_corpus = BTreeSet::new();
     let mut cases = Vec::with_capacity(manifest.case_ids.len());
     let mut case_seen = BTreeSet::new();
@@ -1592,18 +1732,44 @@ fn load_run_jsonl_dataset(
     let mut text_fields_indexed = 0;
     let mut pending_vectors_total = 0;
 
-    for record in records {
+    for entry in records {
+        let line = entry.line;
+        let record = entry.record;
         if !selected.contains(record.question_id.as_str()) {
             continue;
         }
-        validate_run_contract_record(path, &record)?;
+        if let Some(arm_id) = arm_id
+            && record.arm.id != arm_id
+        {
+            continue;
+        }
         if record.run_id != manifest.run_id {
             return Err(invalid_run_jsonl(
                 path,
-                0,
+                line,
                 format!(
                     "selected record run_id `{}` does not match manifest runId `{}`",
                     record.run_id, manifest.run_id
+                ),
+            ));
+        }
+        if record.arm.kind != ONEIRON_CONTEXT_PACK_ARM_KIND {
+            return Err(invalid_run_jsonl(
+                path,
+                line,
+                format!(
+                    "selected record arm.kind `{}` is not supported by this engine path; expected `{ONEIRON_CONTEXT_PACK_ARM_KIND}`",
+                    record.arm.kind
+                ),
+            ));
+        }
+        if record.budget.currency != "tokens" {
+            return Err(invalid_run_jsonl(
+                path,
+                line,
+                format!(
+                    "selected record budget.currency `{}` is not supported by this engine path; expected `tokens`",
+                    record.budget.currency
                 ),
             ));
         }
@@ -1617,10 +1783,23 @@ fn load_run_jsonl_dataset(
             _ => {
                 return Err(invalid_run_jsonl(
                     path,
-                    0,
+                    line,
                     "selected records must share one dataset id and revision",
                 ));
             }
+        }
+        if contract_records.contains_key(record.question_id.as_str()) {
+            let arm_detail = arm_id
+                .map(|id| format!(" for armId `{id}`"))
+                .unwrap_or_else(|| " without dataset.armId".to_owned());
+            return Err(invalid_run_jsonl(
+                path,
+                line,
+                format!(
+                    "multiple selected run records found for question_id `{}`{arm_detail}; set dataset.armId to disambiguate",
+                    record.question_id
+                ),
+            ));
         }
 
         let mut pending_for_case = 0;
@@ -1628,7 +1807,6 @@ fn load_run_jsonl_dataset(
             let entity_id = contract_corpus_entity_id(&record, item)?;
             let entity_hex = entity_id.to_hex();
             source_id_by_entity_id.insert(entity_hex.clone(), item.id.clone());
-            source_text_by_entity_id.insert(entity_hex, item.text.clone());
             if !seen_corpus.insert((record.question_id.clone(), item.id.clone())) {
                 continue;
             }
@@ -1648,7 +1826,7 @@ fn load_run_jsonl_dataset(
 
             match &item.embedding {
                 Some(ContractEmbeddingState::Ready(vector)) => {
-                    let vector = decode_contract_vector(path, vector)?;
+                    let vector = decode_contract_vector(path, line, vector)?;
                     batch = batch.vector(&entity_id, &vector);
                 }
                 Some(ContractEmbeddingState::Pending { .. }) => {
@@ -1705,7 +1883,6 @@ fn load_run_jsonl_dataset(
         cases,
         contract_records,
         source_id_by_entity_id,
-        source_text_by_entity_id,
     })
 }
 
@@ -1725,7 +1902,13 @@ fn resolve_manifest_paths(manifest: &mut RunManifest, manifest_path: &Path) {
     }
 }
 
-fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunContractRecord>> {
+#[derive(Debug)]
+struct RunJsonlEntry {
+    line: usize,
+    record: RunContractRecord,
+}
+
+fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunJsonlEntry>> {
     let file = File::open(path)?;
     let mut records = Vec::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
@@ -1737,7 +1920,10 @@ fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunContractRecord>> {
         let record: RunContractRecord = serde_json::from_str(&line)
             .map_err(|source| invalid_run_jsonl(path, line_number, source.to_string()))?;
         validate_run_contract_record_at(path, line_number, &record)?;
-        records.push(record);
+        records.push(RunJsonlEntry {
+            line: line_number,
+            record,
+        });
     }
     if records.is_empty() {
         return Err(invalid_run_jsonl(
@@ -1747,10 +1933,6 @@ fn read_run_jsonl_records(path: &Path) -> BeamResult<Vec<RunContractRecord>> {
         ));
     }
     Ok(records)
-}
-
-fn validate_run_contract_record(path: &Path, record: &RunContractRecord) -> BeamResult<()> {
-    validate_run_contract_record_at(path, 0, record)
 }
 
 fn validate_run_contract_record_at(
@@ -1862,26 +2044,44 @@ fn contract_corpus_fields(item: &ContractCorpusRecord) -> serde_json::Value {
     serde_json::Value::Object(fields)
 }
 
-fn decode_contract_vector(path: &Path, vector: &ContractVector) -> BeamResult<Vec<f32>> {
+fn decode_contract_vector(
+    path: &Path,
+    line: usize,
+    vector: &ContractVector,
+) -> BeamResult<Vec<f32>> {
     if vector.encoding != "f32-le-base64" {
         return Err(invalid_run_jsonl(
             path,
-            0,
+            line,
             format!(
                 "vector encoding must be f32-le-base64, got `{}`",
                 vector.encoding
             ),
         ));
     }
+    if vector.dimensions != BEAM_CONTRACT_EMBEDDING_DIMENSIONS {
+        return Err(invalid_run_jsonl(
+            path,
+            line,
+            format!(
+                "vector dimensions must be {BEAM_CONTRACT_EMBEDDING_DIMENSIONS} for this engine path, got {}",
+                vector.dimensions
+            ),
+        ));
+    }
     let bytes = decode_base64_standard(&vector.data)
-        .map_err(|reason| invalid_run_jsonl(path, 0, reason))?;
+        .map_err(|reason| invalid_run_jsonl(path, line, reason))?;
     let expected_bytes = vector.dimensions.checked_mul(4).ok_or_else(|| {
-        invalid_run_jsonl(path, 0, "vector dimensions overflow byte-size calculation")
+        invalid_run_jsonl(
+            path,
+            line,
+            "vector dimensions overflow byte-size calculation",
+        )
     })?;
     if bytes.len() != expected_bytes {
         return Err(invalid_run_jsonl(
             path,
-            0,
+            line,
             format!(
                 "vector data decoded to {} bytes, expected {expected_bytes}",
                 bytes.len()
@@ -1900,14 +2100,16 @@ fn contract_context_pack_record(
     case: &FixtureCase,
     competitor: &CompetitorConfig,
     arm_report: &ArmReport,
-) -> Option<ContextPackContractRecord> {
+) -> BeamResult<Option<ContextPackContractRecord>> {
     if manifest.outputs.is_none() || competitor.arm != ArmKind::Deterministic {
-        return None;
+        return Ok(None);
     }
     let ArmOutcome::Completed { context_pack } = &arm_report.outcome else {
-        return None;
+        return Ok(None);
     };
-    let record = loaded.contract_records.get(case.case_id.as_str())?;
+    let Some(record) = loaded.contract_records.get(case.case_id.as_str()) else {
+        return Ok(None);
+    };
 
     let mut contexts =
         Vec::with_capacity(context_pack.results.len() + context_pack.neighbors.len());
@@ -1921,11 +2123,19 @@ fn contract_context_pack_record(
             .get(entity.id.as_str())
             .cloned()
             .unwrap_or_else(|| entity.id.clone());
-        let text = loaded
-            .source_text_by_entity_id
+        let Some(text) = context_pack
+            .budgeted_text_by_entity_id
             .get(entity.id.as_str())
             .cloned()
-            .unwrap_or_default();
+        else {
+            return Err(invalid_manifest(
+                manifest,
+                format!(
+                    "serialized context-pack output did not include budgeted txt for entity `{}`",
+                    entity.id
+                ),
+            ));
+        };
         contexts.push(ContractPackContext {
             id: source_id.clone(),
             text,
@@ -1934,7 +2144,7 @@ fn contract_context_pack_record(
         });
     }
 
-    Some(ContextPackContractRecord {
+    Ok(Some(ContextPackContractRecord {
         contract_version: EVAL_CONTRACT_VERSION,
         record_type: ContractRecordType::ContextPack,
         run_id: record.run_id.clone(),
@@ -1949,7 +2159,7 @@ fn contract_context_pack_record(
             contexts,
         },
         gold: record.gold.clone(),
-    })
+    }))
 }
 
 fn write_contract_pack_rows(path: &Path, rows: &[ContextPackContractRecord]) -> BeamResult<()> {
@@ -1975,7 +2185,7 @@ fn contract_corpus_digest(record: &RunContractRecord) -> String {
 }
 
 fn hash_str(hasher: &mut Sha256, value: &str) {
-    hasher.update(value.len().to_le_bytes());
+    hasher.update((value.len() as u64).to_le_bytes());
     hasher.update(value.as_bytes());
 }
 
@@ -2087,6 +2297,7 @@ struct BudgetedContextPack {
 struct SerializedContextPackIds {
     results: HashSet<String>,
     neighbors: HashSet<String>,
+    text_by_id: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy)]
@@ -2099,6 +2310,8 @@ struct ActiveSerializedContextPackSection {
     section: SerializedContextPackSection,
     section_indent: usize,
     group_indent: Option<usize>,
+    row_indent: Option<usize>,
+    row_id: Option<String>,
 }
 
 fn run_deterministic_context_pack(
@@ -2151,6 +2364,8 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
     let results = context_entity_reports_for_ids(&pack.raw.results, &pack.serialized_ids.results);
     let neighbors =
         context_entity_reports_for_ids(&pack.raw.neighbors, &pack.serialized_ids.neighbors);
+    let budgeted_text_by_entity_id =
+        budgeted_text_by_entity_id(&pack.raw, &pack.serialized_ids.text_by_id);
     let result_count = results.len();
     let neighbor_count = neighbors.len();
     let stats = &pack.serialized_stats;
@@ -2220,6 +2435,7 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
             hint: empty.hint.clone(),
         }),
         temporal_result_ids: pack.temporal_result_ids.clone(),
+        budgeted_text_by_entity_id,
     }
 }
 
@@ -2613,11 +2829,15 @@ fn serialized_context_pack_ids(serialized: &str) -> SerializedContextPackIds {
                     section: SerializedContextPackSection::Results,
                     section_indent: indent,
                     group_indent: None,
+                    row_indent: None,
+                    row_id: None,
                 }),
                 "neighbors:" => Some(ActiveSerializedContextPackSection {
                     section: SerializedContextPackSection::Neighbors,
                     section_indent: indent,
                     group_indent: None,
+                    row_indent: None,
+                    row_id: None,
                 }),
                 _ => None,
             };
@@ -2636,6 +2856,8 @@ fn serialized_context_pack_ids(serialized: &str) -> SerializedContextPackIds {
             .is_some_and(|group_indent| indent <= group_indent)
         {
             section.group_indent = None;
+            section.row_indent = None;
+            section.row_id = None;
         }
 
         if indent == section.section_indent + 2
@@ -2643,30 +2865,58 @@ fn serialized_context_pack_ids(serialized: &str) -> SerializedContextPackIds {
             && !trimmed.starts_with("- ")
         {
             section.group_indent = Some(indent);
+            section.row_indent = None;
+            section.row_id = None;
             continue;
         }
 
         let expected_row_indent = section
             .group_indent
             .map_or(section.section_indent + 2, |group_indent| group_indent + 2);
-        if indent != expected_row_indent {
-            continue;
-        }
 
-        if let Some(raw_id) = trimmed.strip_prefix("- id: ") {
+        if indent == expected_row_indent
+            && let Some(raw_id) = trimmed.strip_prefix("- id: ")
+        {
             let id = generated_yaml_scalar(raw_id);
             match section.section {
                 SerializedContextPackSection::Results => {
-                    ids.results.insert(id);
+                    ids.results.insert(id.clone());
                 }
                 SerializedContextPackSection::Neighbors => {
-                    ids.neighbors.insert(id);
+                    ids.neighbors.insert(id.clone());
                 }
             }
+            section.row_indent = Some(indent);
+            section.row_id = Some(id);
+            continue;
+        }
+
+        if let (Some(row_indent), Some(row_id)) = (section.row_indent, section.row_id.as_ref())
+            && indent > row_indent
+            && let Some(raw_text) = trimmed.strip_prefix("txt: ")
+        {
+            ids.text_by_id
+                .insert(row_id.clone(), generated_yaml_scalar(raw_text));
         }
     }
 
     ids
+}
+
+fn budgeted_text_by_entity_id(
+    pack: &ContextPack,
+    text_by_serialized_id: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    pack.results
+        .iter()
+        .chain(pack.neighbors.iter())
+        .filter_map(|entity| {
+            let serialized_id = serialized_context_entity_id(entity);
+            text_by_serialized_id
+                .get(&serialized_id)
+                .map(|text| (entity.id.to_hex(), text.clone()))
+        })
+        .collect()
 }
 
 fn generated_yaml_scalar(raw: &str) -> String {
@@ -2710,7 +2960,7 @@ fn dataset_not_ready(source: &DatasetSource) -> NotReadyState {
 fn beam_vault_config() -> VaultConfig {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 32 * 1024 * 1024;
-    cfg.dimensions = 4;
+    cfg.dimensions = BEAM_CONTRACT_EMBEDDING_DIMENSIONS;
     cfg.embedding_model = Some("oneiron-eval-contract-v1".to_owned());
     cfg.max_readers = 16;
     cfg
@@ -3008,12 +3258,14 @@ mod tests {
 results:
   memory:
     - id: result:01
+      txt: Budgeted result text
       title: kept
       nested:
         - id: dropped-result:02
 neighbors:
   memory:
     - id: neighbor:03
+      txt: "Budgeted neighbor text"
       nested:
         - id: dropped-neighbor:04
 "#;
@@ -3022,6 +3274,14 @@ neighbors:
 
         assert_eq!(ids.results, HashSet::from(["result:01".to_owned()]));
         assert_eq!(ids.neighbors, HashSet::from(["neighbor:03".to_owned()]));
+        assert_eq!(
+            ids.text_by_id.get("result:01").map(String::as_str),
+            Some("Budgeted result text")
+        );
+        assert_eq!(
+            ids.text_by_id.get("neighbor:03").map(String::as_str),
+            Some("Budgeted neighbor text")
+        );
     }
 
     #[test]
@@ -3102,6 +3362,7 @@ neighbors:
             stats: empty_pack_stats_report(),
             empty: None,
             temporal_result_ids: BTreeSet::new(),
+            budgeted_text_by_entity_id: BTreeMap::new(),
         };
 
         let scores = completed_ability_scores(&case, &context_pack);
@@ -3940,6 +4201,7 @@ neighbors:
                 hint: "fixture confidence was below publication threshold".to_owned(),
             }),
             temporal_result_ids: BTreeSet::new(),
+            budgeted_text_by_entity_id: BTreeMap::new(),
         };
 
         let score = FixedBeamScorer.score(
@@ -4043,6 +4305,8 @@ neighbors:
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["contract_version"], EVAL_CONTRACT_VERSION);
         assert_eq!(rows[0]["record_type"], "context_pack");
+        assert_eq!(rows[0]["arm"]["id"], "oneiron");
+        assert_eq!(rows[0]["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
         assert_eq!(
             rows[0]["gold"]["labels"]["ability"],
             "information_extraction"
@@ -4059,6 +4323,360 @@ neighbors:
                         .expect("context text")
                         .contains("contract launch code is tulip"))
         );
+    }
+
+    #[test]
+    fn jsonl_arm_id_selects_oneiron_row_when_question_has_two_arms() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let packs_jsonl_path = tempdir.path().join("packs.jsonl");
+        let mut ours: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        ours["arm"]["id"] = serde_json::json!("oneiron");
+        ours["arm"]["kind"] = serde_json::json!(ONEIRON_CONTEXT_PACK_ARM_KIND);
+        let mut l0 = ours.clone();
+        l0["arm"]["id"] = serde_json::json!("longmemeval_l0");
+        l0["arm"]["kind"] = serde_json::json!("baseline_jsonl");
+        l0["gold"]["labels"]["wedge_bucket"] = serde_json::json!("wrong_arm_bucket");
+        std::fs::write(&run_jsonl_path, format!("{l0}\n{ours}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        manifest_json["dataset"]["armId"] = serde_json::json!("oneiron");
+        manifest_json["outputs"]["packsJsonl"] = serde_json::json!(packs_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        run_manifest(&manifest, None).expect("contract run succeeds");
+        let packs_jsonl = std::fs::read_to_string(&packs_jsonl_path).expect("packs.jsonl exists");
+        let row: serde_json::Value = serde_json::from_str(
+            packs_jsonl
+                .lines()
+                .next()
+                .expect("one emitted context_pack row"),
+        )
+        .expect("pack row JSON");
+
+        assert_eq!(row["arm"]["id"], "oneiron");
+        assert_eq!(row["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
+        assert_eq!(row["gold"]["labels"]["wedge_bucket"], "needle_short");
+    }
+
+    #[test]
+    fn duplicate_jsonl_question_without_arm_id_fails_typed() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let mut first: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        first["arm"]["id"] = serde_json::json!("oneiron");
+        let mut second = first.clone();
+        second["arm"]["id"] = serde_json::json!("oneiron-shadow");
+        std::fs::write(&run_jsonl_path, format!("{first}\n{second}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        manifest_json["dataset"]
+            .as_object_mut()
+            .expect("dataset object")
+            .remove("armId");
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let err = run_manifest(&manifest, None).expect_err("duplicate question must fail");
+
+        assert!(
+            matches!(
+                &err,
+                BeamError::InvalidRunJsonl {
+                    line: 2,
+                    reason,
+                    ..
+                } if reason.contains("multiple selected run records")
+                    && reason.contains("set dataset.armId")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn non_context_pack_jsonl_arm_kind_fails_typed() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let mut row: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        row["arm"]["id"] = serde_json::json!("longmemeval_l0");
+        row["arm"]["kind"] = serde_json::json!("baseline_jsonl");
+        std::fs::write(&run_jsonl_path, format!("{row}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        manifest_json["dataset"]["armId"] = serde_json::json!("longmemeval_l0");
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let err = run_manifest(&manifest, None).expect_err("non-context-pack arm must fail");
+
+        assert!(
+            matches!(
+                &err,
+                BeamError::InvalidRunJsonl {
+                    line: 1,
+                    reason,
+                    ..
+                } if reason.contains("arm.kind `baseline_jsonl`")
+                    && reason.contains(ONEIRON_CONTEXT_PACK_ARM_KIND)
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn jsonl_expected_min_results_must_not_exceed_limit() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["limit"] = serde_json::json!(1);
+        manifest_json["dataset"]["expectedMinResults"] = serde_json::json!(2);
+
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("expectedMinResults > limit is invalid");
+
+        assert!(matches!(
+            err,
+            BeamError::InvalidManifest { reason, .. }
+                if reason.contains("expectedMinResults must be <= limit")
+        ));
+    }
+
+    #[test]
+    fn jsonl_ready_embedding_dimensions_must_match_engine_config() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let mut row: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        row["corpus"][0]["embedding"] = serde_json::json!({
+            "encoding": "f32-le-base64",
+            "dimensions": 3,
+            "data": "AAAAAAAAAAAAAAAA"
+        });
+        std::fs::write(&run_jsonl_path, format!("{row}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let err = run_manifest(&manifest, None).expect_err("non-4D vector must fail typed");
+
+        assert!(
+            matches!(
+                &err,
+                BeamError::InvalidRunJsonl {
+                    line: 1,
+                    reason,
+                    ..
+                } if reason.contains("vector dimensions must be 4")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn jsonl_budget_currency_must_be_tokens() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let mut row: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        row["budget"]["currency"] = serde_json::json!("usd");
+        std::fs::write(&run_jsonl_path, format!("{row}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let err = run_manifest(&manifest, None).expect_err("non-token budget must fail typed");
+
+        assert!(
+            matches!(
+                &err,
+                BeamError::InvalidRunJsonl {
+                    line: 1,
+                    reason,
+                    ..
+                } if reason.contains("budget.currency `usd`")
+                    && reason.contains("expected `tokens`")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn jsonl_cases_are_loaded_into_isolated_vaults() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let packs_jsonl_path = tempdir.path().join("packs.jsonl");
+        let mut first: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        first["question_id"] = serde_json::json!("case_a");
+        first["question"] = serde_json::json!("shared keyword answer");
+        first["corpus"] = serde_json::json!([
+            {
+                "id": "a-turn",
+                "text": "shared keyword alpha answer only in case A",
+                "metadata": {"case": "a"}
+            }
+        ]);
+        let mut second = first.clone();
+        second["question_id"] = serde_json::json!("case_b");
+        second["corpus"] = serde_json::json!([
+            {
+                "id": "b-turn",
+                "text": "shared keyword beta answer only in case B",
+                "metadata": {"case": "b"}
+            }
+        ]);
+        std::fs::write(&run_jsonl_path, format!("{first}\n{second}\n")).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        manifest_json["dataset"]["limit"] = serde_json::json!(5);
+        manifest_json["caseIds"] = serde_json::json!(["case_a", "case_b"]);
+        manifest_json["outputs"]["packsJsonl"] = serde_json::json!(packs_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let report = run_manifest(&manifest, None).expect("contract run succeeds");
+        let packs_jsonl = std::fs::read_to_string(&packs_jsonl_path).expect("packs.jsonl exists");
+        let rows: Vec<serde_json::Value> = packs_jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("pack row JSON"))
+            .collect();
+
+        assert_eq!(report.dataset.records_loaded, 2);
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            let expected_prefix = if row["question_id"] == "case_a" {
+                "a-"
+            } else {
+                assert_eq!(row["question_id"], "case_b");
+                "b-"
+            };
+            let contexts = row["pack"]["contexts"].as_array().expect("contexts array");
+            assert!(!contexts.is_empty());
+            assert!(contexts.iter().all(|context| {
+                context["id"]
+                    .as_str()
+                    .expect("context id")
+                    .starts_with(expected_prefix)
+            }));
+        }
+    }
+
+    #[test]
+    fn jsonl_outputs_must_not_overwrite_input_run_jsonl() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        std::fs::write(&run_jsonl_path, CONTRACT_RUN_JSONL).expect("write run.jsonl");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(&run_jsonl_path);
+        manifest_json["outputs"]["packsJsonl"] = serde_json::json!(run_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        let err = run_manifest(&manifest, None).expect_err("same output/input path must fail");
+
+        assert!(matches!(
+            err,
+            BeamError::InvalidManifest { reason, .. }
+                if reason.contains("must not resolve to the input run.jsonl path")
+        ));
+    }
+
+    #[test]
+    fn contract_pack_rows_use_budgeted_serialized_text() {
+        let manifest = parse_manifest_json(CONTRACT_MANIFEST_JSON).expect("manifest parses");
+        let record: RunContractRecord =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        let entity_id = "10101010101010101010101010101010";
+        let case = FixtureCase {
+            case_id: record.question_id.clone(),
+            query: record.question.clone(),
+            limit: 1,
+            token_budget: 128,
+            expected_min_results: 1,
+            pending_vector_count: 0,
+            fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
+            offline_amortized_cost: CostComponentInput::default(),
+        };
+        let loaded = LoadedDataset {
+            report: DatasetLoadReport {
+                dataset_id: "dataset".to_owned(),
+                source_kind: JSONL_CONTRACT_SOURCE_KIND.to_owned(),
+                records_loaded: 1,
+                text_fields_indexed: 1,
+                pending_vectors: 0,
+            },
+            fixture_id: "dataset".to_owned(),
+            fixture_description: "dataset".to_owned(),
+            cases: vec![case.clone()],
+            contract_records: BTreeMap::from([(case.case_id.clone(), record)]),
+            source_id_by_entity_id: BTreeMap::from([(entity_id.to_owned(), "turn-1".to_owned())]),
+        };
+        let mut budgeted_text_by_entity_id = BTreeMap::new();
+        budgeted_text_by_entity_id.insert(entity_id.to_owned(), "budgeted emitted txt".to_owned());
+        let context_pack = ContextPackReport {
+            token_budget: case.token_budget,
+            limit: case.limit,
+            serialized_format: "yaml".to_owned(),
+            serialized_bytes: 64,
+            serialized_tokens: 7,
+            tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
+            query_cost: CostComponentReport {
+                token_source: TokenAccountingSource::TokenizerCount,
+                tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned()),
+                input_tokens: 1,
+                output_tokens: 7,
+                target_tokens: case.token_budget as u64,
+                elapsed_us: 1,
+                cost_usd: 0.0,
+            },
+            result_count: 1,
+            neighbor_count: 0,
+            results: vec![ContextEntityReport {
+                id: entity_id.to_owned(),
+                short_id: "sm1".to_owned(),
+                entity_type: BENCH_CONTRACT_ENTITY_TYPE,
+                score: 1.0,
+            }],
+            neighbors: Vec::new(),
+            stats: empty_pack_stats_report(),
+            empty: None,
+            temporal_result_ids: BTreeSet::new(),
+            budgeted_text_by_entity_id,
+        };
+        let arm_report = ArmReport {
+            arm: ArmKind::Deterministic,
+            outcome: ArmOutcome::Completed {
+                context_pack: Box::new(context_pack),
+            },
+        };
+
+        let row = contract_context_pack_record(
+            &manifest,
+            &loaded,
+            &case,
+            &manifest.competitors[0],
+            &arm_report,
+        )
+        .expect("row generation succeeds")
+        .expect("row emitted");
+
+        assert_eq!(row.pack.contexts[0].id, "turn-1");
+        assert_eq!(row.pack.contexts[0].text, "budgeted emitted txt");
     }
 
     #[test]
@@ -4337,6 +4955,7 @@ neighbors:
             stats,
             empty,
             temporal_result_ids: BTreeSet::new(),
+            budgeted_text_by_entity_id: BTreeMap::new(),
         }
     }
 
