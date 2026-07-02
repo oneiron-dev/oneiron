@@ -1393,6 +1393,15 @@ pub fn forward_rematerialize(
             }
         };
 
+        match forward_remat_skip_policy_manifest_tombstone(vault, &id) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(err) => {
+                tombstone_error = Some(err);
+                return;
+            }
+        }
+
         let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
@@ -1716,6 +1725,17 @@ fn delete_edges_touching_entities(
 fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw)
         .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+}
+
+fn forward_remat_skip_policy_manifest_tombstone(vault: &Vault, id: &EntityId) -> Result<bool> {
+    if *id == crate::gate::default_policy_manifest_id()? {
+        return Ok(true);
+    }
+
+    let Some(raw) = vault.get_raw(id)? else {
+        return Ok(false);
+    };
+    Ok(reverse_remat_skip_policy_manifest_mirror(&raw))
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
@@ -2516,6 +2536,26 @@ mod tests {
         assert!(
             map_get_bytes(&doc.get_map("entities"), &manifest_id.to_hex()).is_none(),
             "the engine-seeded policy manifest must stay out of ordinary sync windows"
+        );
+    }
+
+    #[test]
+    fn default_policy_manifest_tombstone_not_replayed_from_crdt() {
+        let (_dir, vault) = test_vault();
+        let materializer = Materializer::new();
+        let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+        let window_key = WindowKey::from_timestamp(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP);
+        let doc = create_window_doc("remote", &window_key);
+        apply_tombstone_to_window_doc(&doc, &manifest_id, &[1, 2, 3]).unwrap();
+        doc.commit();
+
+        let rematerialized =
+            forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+
+        assert_eq!(rematerialized, 0);
+        assert!(
+            vault.get_raw(&manifest_id).unwrap().is_some(),
+            "incoming policy-manifest tombstones must not delete local engine policy"
         );
     }
 
