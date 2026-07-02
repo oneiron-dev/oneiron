@@ -1183,7 +1183,14 @@ fn refresh_projected_empty_context(pack: &mut ContextPack) {
         EmptyReason::FilterMatchedNone
     };
     let hint = if pack.stats.items_dropped.count > 0 {
-        "Raise budget.max_item_tokens or request a less restrictive view to return context-pack results"
+        match pack.stats.items_dropped.reason {
+            crate::types::PackItemAccountingReason::TokenBudget => {
+                "Raise budget.token_budget or request a less restrictive view to return context-pack results"
+            }
+            crate::types::PackItemAccountingReason::ItemBudget => {
+                "Raise budget.max_item_tokens or request a less restrictive view to return context-pack results"
+            }
+        }
     } else {
         empty_hint(reason)
     };

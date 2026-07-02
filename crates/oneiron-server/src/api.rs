@@ -5108,7 +5108,7 @@ struct ContextPackRetrievalBudgetControls {
 /// Token and item budget controls for context-pack assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 struct ContextPackBudgetControls {
-    /// Serialized token budget for callers that request serialized packs downstream.
+    /// Serialized token budget for context-pack responses, including structured JSON projection.
     #[serde(default, rename = "token_budget", alias = "tokenBudget")]
     #[schema(example = 4000)]
     token_budget: Option<usize>,
@@ -7377,7 +7377,7 @@ fn context_pack_json_projection_config(
     oneiron::serialize::SerializeConfig {
         format: oneiron::PackFormat::Json,
         profile: field_profile_for_view(view),
-        budget: 0,
+        budget: budget.and_then(|budget| budget.token_budget).unwrap_or(0),
         allocation: oneiron::TokenAllocation::default(),
         include_stats: false,
         merge_neighbors: false,
@@ -14952,6 +14952,49 @@ mod tests {
         assert_eq!(
             budget_body["evidence"]["result_ids"],
             Value::Array(vec![Value::from(id.clone())])
+        );
+
+        let (token_budget_status, token_budget_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/api/context-pack",
+                json!({
+                    "query": "projection budget needle",
+                    "limit": 5,
+                    "policy": { "view": "full" },
+                    "budget": { "tokenBudget": 16 }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(token_budget_status, StatusCode::OK);
+        assert_eq!(token_budget_body["results"], Value::Array(Vec::new()));
+        assert_eq!(token_budget_body["neighbors"], Value::Array(Vec::new()));
+        assert_eq!(
+            token_budget_body["stats"]["items_dropped"]["count"],
+            Value::from(1)
+        );
+        assert_eq!(
+            token_budget_body["stats"]["items_dropped"]["reason"],
+            Value::from("token_budget")
+        );
+        assert_eq!(
+            token_budget_body["state"]["reason"],
+            Value::from("filter_matched_none")
+        );
+        assert!(
+            token_budget_body["state"]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("budget.token_budget"))
+        );
+        assert_eq!(
+            token_budget_body["evidence"]["result_ids"],
+            Value::Array(Vec::new())
+        );
+        assert_eq!(
+            token_budget_body["evidence"]["scores"],
+            Value::Array(Vec::new())
         );
 
         let (dropped_status, dropped_body) = route_json(
