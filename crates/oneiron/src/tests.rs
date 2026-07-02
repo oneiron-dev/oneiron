@@ -55,6 +55,94 @@ fn test_config() -> VaultConfig {
     config
 }
 
+fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result<()> {
+    let manifest = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.1"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("generated-auto-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("v1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            rmpv::Value::from("defaults"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("criticality"),
+                    rmpv::Value::from("normal"),
+                ),
+                (
+                    rmpv::Value::from("sensitivity"),
+                    rmpv::Value::from("normal"),
+                ),
+            ]),
+        ),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(Vec::new())),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("actor_class"),
+                    rmpv::Value::from("first_party"),
+                ),
+                (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+            ])]),
+        ),
+        (
+            rmpv::Value::from("source_trust"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("generated"),
+                rmpv::Value::Map(vec![
+                    (
+                        rmpv::Value::from("max_auto_sensitivity"),
+                        rmpv::Value::from(0_u64),
+                    ),
+                    (rmpv::Value::from("receipted"), rmpv::Value::Boolean(true)),
+                    (rmpv::Value::from("warned"), rmpv::Value::Boolean(true)),
+                ]),
+            )]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest)
+        .map_err(|_| Error::InvariantViolation("failed to encode policy manifest fixture"))?;
+
+    let id = EntityId::from_bytes([0x6D; ENTITY_ID_LEN])
+        .map_err(|_| Error::InvariantViolation("invalid policy fixture id"))?;
+    let learned_at = 2_u64;
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(&data);
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .entities
+        .put(&mut wtxn, id.as_bytes(), &payload)?;
+    let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+    vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+    let temporal_key = Store::encode_temporal_key(learned_at, &id);
+    vault
+        .store
+        .temporal_occurred_start
+        .put(&mut wtxn, &temporal_key, &[])?;
+    vault
+        .store
+        .temporal_learned
+        .put(&mut wtxn, &temporal_key, &[])?;
+    wtxn.commit()?;
+    Ok(())
+}
+
 const EXPECTED_HNSW_COMPATIBILITY_VERSION: u8 = 2;
 const EXPECTED_HNSW_COMPATIBILITY_LEN: usize = 27;
 const EXPECTED_HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
@@ -7745,6 +7833,7 @@ fn claim_vad_consolidation_rejects_auto_generated_claim_until_vetted() -> Result
             dominance: 0.6,
         },
     )?;
+    seed_generated_auto_source_trust_manifest(&vault)?;
 
     let mut body = claim_vad_fixture_body(subject, &[turn]);
     body.source = Some(ClaimSource::Generated);
@@ -7846,6 +7935,7 @@ fn claim_vad_consolidation_clears_prior_outputs_when_claim_stops_consolidating()
         first.vad.expect("initial claim VAD"),
     );
 
+    seed_generated_auto_source_trust_manifest(&vault)?;
     body.source = Some(ClaimSource::Generated);
     vault.put_claim(&claim, &body, test_time_range(40, 40), 40)?;
     let err = block_on_ready(vault.consolidate_claim_vad(&claim, 200))
@@ -8278,6 +8368,7 @@ fn coping_outcome_update_rejects_auto_generated_prior_claim_until_vetted() -> Re
         50,
     )?;
     body.source = Some(ClaimSource::Generated);
+    seed_generated_auto_source_trust_manifest(&vault)?;
     vault.put_claim(&outcome, &body, test_time_range(50, 50), 50)?;
 
     let err = vault
