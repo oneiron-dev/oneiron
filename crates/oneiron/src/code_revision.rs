@@ -3794,6 +3794,63 @@ mod tests {
     }
 
     #[test]
+    fn code_integrity_generated_non_code_claim_reports_user_stated_code_revision_truth()
+    -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = entity(0x11);
+        let revision_id = entity(0x21);
+        let user_truth = entity(0x31);
+        let generated_non_code = entity(0x33);
+        put_session(&vault, session, 10)?;
+        put_artifact(&vault, revision_id, 0xA1, 20)?;
+        vault.commit_code_revision(&CodeRevision::commit(revision_id, session, 100))?;
+        put_claim_entity_with_source(
+            &vault,
+            user_truth,
+            revision_id,
+            Some(ClaimSource::UserStated),
+            200,
+        )?;
+
+        let mut generated_body = ClaimBody::new(
+            "profile.lives_in",
+            ClaimSubject::Entity(revision_id),
+            Value::from("tokyo"),
+            0.9,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        );
+        generated_body.source = Some(ClaimSource::Generated);
+        let data = encode_claim_body(&generated_body)?;
+        put_claim_entity_unchecked(&vault, generated_non_code, 300, &data)?;
+
+        let err = vault
+            .supersede_claim(&generated_non_code, &user_truth, 400)
+            .expect_err("generated non-code claim must not supersede user-stated revision truth");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        let message = err.to_string();
+        assert!(
+            message.contains("generated claim cannot supersede user-stated code revision truth"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("generated code revision claim cannot supersede user-stated truth"),
+            "{message}"
+        );
+        assert_eq!(
+            vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
+            ClaimLifecycleStatus::Active
+        );
+        assert!(
+            vault
+                .targets(&generated_non_code, EdgeKind::Supersedes, None)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_integrity_generated_apply_cannot_supersede_user_truth_across_revisions() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let session = entity(0x11);

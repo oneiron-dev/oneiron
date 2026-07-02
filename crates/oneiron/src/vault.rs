@@ -2832,11 +2832,14 @@ impl Vault {
         {
             return Ok(());
         }
-        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE
-            || old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE
-        {
+        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
             return Err(Error::InvalidCodeArtifactBody(
                 "generated code revision claim cannot supersede user-stated truth",
+            ));
+        }
+        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated claim cannot supersede user-stated code revision truth",
             ));
         }
         Err(Error::InvalidClaimBody(
