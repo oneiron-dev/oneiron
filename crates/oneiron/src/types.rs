@@ -2164,6 +2164,11 @@ pub struct PackStats {
     /// the pipeline stage and pack hydration (results + neighbors). A claim
     /// suppressed in both stages counts once per stage.
     pub claims_suppressed: usize,
+    /// Token accounting populated by serialization/projection paths.
+    ///
+    /// Raw `ContextPackBuilder::run()` results are not serialized and leave
+    /// this as `PackTokenStats::default()`. Use serialized/projection builder
+    /// paths when exact output-token accounting is required.
     pub tokens: PackTokenStats,
     pub items_truncated: PackItemAccounting,
     pub items_dropped: PackItemAccounting,
@@ -2171,23 +2176,45 @@ pub struct PackStats {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PackTokenStats {
+    /// Stable tokenizer identifier used for every count in this struct.
+    ///
+    /// Empty when stats came from an unserialized raw pack.
     pub tokenizer_id: String,
+    /// Exact token count of the final serialized context-pack bytes.
+    ///
+    /// This includes format envelope, separators, and serialized stats when
+    /// they are emitted.
     pub total_tokens: usize,
+    /// Per-section row-token accounting.
+    ///
+    /// Section counts are computed from the row-level accounting text used by
+    /// budget allocation. They intentionally exclude format envelope and
+    /// separators, so their sum is not expected to equal `total_tokens`.
     pub sections: Vec<PackSectionTokenStats>,
+    /// Per-item row-token accounting.
+    ///
+    /// Item counts use the same row-level basis as `sections`, not exact
+    /// emitted substrings for each output format.
     pub items: Vec<PackItemTokenStats>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSectionTokenStats {
+    /// Logical section name, for example `results`, `neighbors`, or `merged`.
     pub section: String,
+    /// Row-level token count for this section.
     pub tokens: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackItemTokenStats {
+    /// Logical section containing this item.
     pub section: String,
+    /// Serialized short reference for the item, including the content-hash suffix.
     pub id: String,
+    /// Entity type byte used for the serialized row group.
     pub entity_type: u8,
+    /// Row-level token count for this item.
     pub tokens: usize,
 }
 

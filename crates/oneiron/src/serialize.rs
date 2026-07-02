@@ -97,87 +97,63 @@ pub(crate) fn serialize_pack_with_telemetry(
     (bytes, telemetry)
 }
 
-/// Apply JSON context-pack field projection and item-budget controls while
-/// preserving the structured `ContextPack` envelope used by HTTP APIs.
+/// Apply JSON context-pack field projection plus real-token budget controls
+/// while preserving the structured `ContextPack` envelope used by HTTP APIs.
 pub fn project_pack_for_json_response(
     mut pack: ContextPack,
     config: &SerializeConfig,
 ) -> ContextPack {
-    let now = crate::unix_seconds_now();
-    let value_depth_limit = value_depth_limit_for_format(PackFormat::Json);
-    let mut stats = pack.stats.clone();
+    let prepared = prepare_pack(&pack, config, true);
+    let stats = prepared.stats.clone();
+    let mut projected_results = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
+    let mut projected_neighbors = HashMap::<[u8; 16], Vec<(String, Value)>>::new();
+    collect_projected_json_rows(
+        prepared.results,
+        &mut projected_results,
+        &mut projected_neighbors,
+    );
+    collect_projected_json_rows(
+        prepared.neighbors,
+        &mut projected_results,
+        &mut projected_neighbors,
+    );
 
-    pack.results = project_entities_for_json_response(
-        pack.results,
-        PreparedEntitySource::Result,
-        config,
-        now,
-        value_depth_limit,
-        &mut stats,
-    );
-    pack.neighbors = project_entities_for_json_response(
-        pack.neighbors,
-        PreparedEntitySource::Neighbor,
-        config,
-        now,
-        value_depth_limit,
-        &mut stats,
-    );
+    pack.results = apply_projected_json_rows(pack.results, projected_results);
+    pack.neighbors = apply_projected_json_rows(pack.neighbors, projected_neighbors);
     pack.stats = stats;
     pack
 }
 
-fn project_entities_for_json_response(
+fn collect_projected_json_rows(
+    groups: PreparedGroups,
+    results: &mut HashMap<[u8; 16], Vec<(String, Value)>>,
+    neighbors: &mut HashMap<[u8; 16], Vec<(String, Value)>>,
+) {
+    for (_, rows) in groups {
+        for row in rows {
+            match row.source {
+                PreparedEntitySource::Result => {
+                    results.insert(row.source_id, row.fields);
+                }
+                PreparedEntitySource::Neighbor => {
+                    neighbors.insert(row.source_id, row.fields);
+                }
+            }
+        }
+    }
+}
+
+fn apply_projected_json_rows(
     entities: Vec<ContextEntity>,
-    source: PreparedEntitySource,
-    config: &SerializeConfig,
-    now: u64,
-    value_depth_limit: ValueDepthLimit,
-    stats: &mut PackStats,
+    mut projected_rows: HashMap<[u8; 16], Vec<(String, Value)>>,
 ) -> Vec<ContextEntity> {
     entities
         .into_iter()
         .filter_map(|mut entity| {
-            let had_fields = entity.fields.is_some();
-            let fields = entity.fields.take().map_or_else(Vec::new, |map| {
-                let field_keys = field_keys(entity.entity_type, config.profile, &map);
-                field_keys
-                    .into_iter()
-                    .filter_map(|key| {
-                        let value = map.get(&key)?;
-                        should_include_projected_field(entity.entity_type, &key, value).then(|| {
-                            (
-                                key.clone(),
-                                normalize_value(
-                                    &key,
-                                    value,
-                                    true,
-                                    now,
-                                    config.max_field_chars,
-                                    value_depth_limit,
-                                ),
-                            )
-                        })
-                    })
-                    .collect()
-            });
-            let mut prepared = PreparedEntity {
-                entity_type: entity.entity_type,
-                score: entity.score,
-                source,
-                source_id: *entity.id.as_bytes(),
-                id: format_short_id(&entity),
-                fields,
-            };
-            if !apply_item_budget_with_depth_limit(
-                &mut prepared,
-                config.max_item_tokens,
-                stats,
-                value_depth_limit,
-            ) {
-                return None;
+            let fields = projected_rows.remove(entity.id.as_bytes())?;
+            if entity.fields.is_some() {
+                entity.fields = Some(HashMap::from_iter(fields));
             }
-            entity.fields = had_fields.then(|| HashMap::from_iter(prepared.fields));
             Some(entity)
         })
         .collect()
@@ -1288,6 +1264,11 @@ fn enforce_serialized_token_budget(
     token_budget: usize,
     tokenizer: PackTokenizer,
 ) {
+    // Nonzero serialized budgets take precedence over critical-row retention.
+    // If every row has been removed and the fixed format envelope/stats/empty
+    // scaffolding alone still exceeds `token_budget`, the budget is
+    // unsatisfiable; callers get that minimal payload and `total_tokens`
+    // records the actual emitted count.
     let mut may_drop_critical = false;
     while serialized_prepared_token_count(pack, config, prepared, tokenizer) > token_budget {
         if !drop_last_token_budget_item(prepared, may_drop_critical) {
@@ -4039,7 +4020,7 @@ mod tests {
     }
 
     #[test]
-    fn critical_predicate_claims_bypass_item_cap_and_drop_path() {
+    fn critical_predicate_claims_bypass_item_cap_when_serialized_budget_is_disabled() {
         let critical_value = "c".repeat(1200);
         let pack = pack_with_results(vec![claim_entity(
             1,
@@ -4068,6 +4049,31 @@ mod tests {
         assert_eq!(rendered_value, critical_value);
         assert_eq!(prepared.stats.items_truncated.count, 0);
         assert_eq!(prepared.stats.items_dropped.count, 0);
+    }
+
+    #[test]
+    fn hard_serialized_budget_can_drop_critical_predicate_claims() {
+        let critical_value = "c".repeat(1200);
+        let pack = pack_with_results(vec![claim_entity(
+            1,
+            "preference.food",
+            &critical_value,
+            1.0,
+        )]);
+
+        let mut cfg = config(PackFormat::Toon);
+        cfg.max_field_chars = 0;
+        cfg.max_item_tokens = 8;
+        cfg.budget = 8;
+
+        let prepared = prepare_pack(&pack, &cfg, false);
+        let kept_rows: usize = prepared.results.iter().map(|(_, rows)| rows.len()).sum();
+
+        assert_eq!(kept_rows, 0);
+        assert_eq!(prepared.stats.items_truncated.count, 0);
+        assert_eq!(prepared.stats.items_dropped.count, 1);
+        assert_eq!(prepared.stats.items_dropped.reason.as_str(), "token_budget");
+        assert!(prepared.stats.tokens.total_tokens <= cfg.budget);
     }
 
     #[test]
@@ -4148,6 +4154,28 @@ mod tests {
 
         assert_eq!(kept_results, total_results);
         assert_eq!(kept_neighbors, total_neighbors);
+    }
+
+    #[test]
+    fn json_budget_below_mandatory_envelope_emits_minimal_over_budget_payload() {
+        let pack = pack_with_results(vec![claim_entity(1, "note.tiny", "tiny budget row", 1.0)]);
+
+        let mut cfg = config(PackFormat::Json);
+        cfg.merge_neighbors = false;
+        cfg.budget = 1;
+
+        let (bytes, telemetry) = serialize_pack_with_telemetry(&pack, &cfg);
+        let text = String::from_utf8(bytes).expect("utf8");
+        let parsed: Value = serde_json::from_str(&text).expect("json parse");
+
+        assert_eq!(parsed["results"], serde_json::json!({}));
+        assert_eq!(parsed["neighbors"], serde_json::json!({}));
+        assert!(telemetry.stats.tokens.total_tokens > cfg.budget);
+        assert_eq!(telemetry.stats.items_dropped.count, 1);
+        assert_eq!(
+            telemetry.stats.items_dropped.reason.as_str(),
+            "token_budget"
+        );
     }
 
     #[test]
