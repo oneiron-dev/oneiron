@@ -6274,7 +6274,7 @@ fn type_byte_band_allocation_matches_contract() {
         TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
         TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
         TYPE_BYTE_BAND_PRODUCTIVITY_START, TYPE_BYTE_SEMANTIC, TypeByteBand, band_of,
-        is_structural_kind, validate_entity_type,
+        entity_type_registry_entry, is_structural_kind, validate_entity_type,
     };
 
     // contracts.ts §1 typeByteBands — the LOCKED 6-band allocation:
@@ -6311,11 +6311,13 @@ fn type_byte_band_allocation_matches_contract() {
         assert_eq!(band_of(byte), expected, "band_of({byte})");
     }
 
-    // is_structural_kind: false for the semantic byte 0 and the registered
-    // maintenance kinds 120/121/123/124/128; true for every REGISTERED core
-    // (1..=16) and pack (64/80/81/82/83) kind. Byte 122 is reserved for
-    // AUTHORITY_LOG, and 125..=127 are reserved for future maintenance
-    // substrates, but none are registered yet.
+    // is_structural_kind: false for the semantic byte 0 and for every
+    // maintenance-band allocation; true for every REGISTERED core (1..=16)
+    // and pack (64/80/81/82/83) kind. The pinned maintenance allocation is:
+    // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG reserved;
+    // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
+    // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
+    // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6353,6 +6355,10 @@ fn type_byte_band_allocation_matches_contract() {
         !is_structural_kind(128),
         "ACCESS_GRANT is NOT a StructuralKind (EIRI-004: companion control plane)"
     );
+    assert!(
+        !is_structural_kind(130),
+        "SUSPICIOUS_WAKE byte 130 is reserved but not a StructuralKind"
+    );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
@@ -6362,10 +6368,10 @@ fn type_byte_band_allocation_matches_contract() {
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
-    // with the same typed error. (122 is reserved for AUTHORITY_LOG, while
-    // 125..=127 are reserved for future maintenance substrates, but all
-    // remain unregistered.)
-    for byte in [17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 255] {
+    // with the same typed error.
+    for byte in [
+        17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 130, 255,
+    ] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6373,6 +6379,19 @@ fn type_byte_band_allocation_matches_contract() {
                 Err(Error::InvalidEntityType(rejected)) if rejected == byte
             ),
             "unregistered byte {byte} must stay rejected by validate_entity_type"
+        );
+    }
+
+    for (byte, name) in [
+        (122_u8, "AUTHORITY_LOG"),
+        (125, "CONNECTION_RECORD"),
+        (126, "DIAGNOSTIC"),
+        (127, "FEDERATION_KEY_ENVELOPE"),
+        (130, "SUSPICIOUS_WAKE"),
+    ] {
+        assert!(
+            entity_type_registry_entry(byte).is_none(),
+            "{name} byte {byte} must stay reserved-unregistered"
         );
     }
 }
@@ -8529,10 +8548,11 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // GATE-001 registered POLICY_MANIFEST; 124 left it when FED-001
     // registered FEDERATION_GRANT; 128 left it when EIRI-004 registered
     // ACCESS_GRANT. Public puts of those bytes now fail
-    // MaintenanceKindNotWritable — covered by the D5 gate test. Byte 122 is
-    // reserved for AUTHORITY_LOG, and 125..=127 are reserved for future
-    // maintenance substrates, but all remain unregistered.
-    for unknown in [99_u8, 122, 125, 126, 127, 200] {
+    // MaintenanceKindNotWritable — covered by the D5 gate test. Reserved
+    // unregistered maintenance bytes stay InvalidEntityType:
+    // 122 AUTHORITY_LOG; 125 CONNECTION_RECORD; 126 DIAGNOSTIC;
+    // 127 FEDERATION_KEY_ENVELOPE; 130 SUSPICIOUS_WAKE.
+    for unknown in [99_u8, 122, 125, 126, 127, 130, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")
