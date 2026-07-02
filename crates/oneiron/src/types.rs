@@ -1075,6 +1075,16 @@ impl EdgeActorClass {
             _ => None,
         }
     }
+
+    /// Actor-class key used by Gate `actor_ceilings` policy rows.
+    #[must_use]
+    pub const fn gate_actor_class(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Agent => "agent",
+            Self::System => "system",
+        }
+    }
 }
 
 /// Two hot provenance flags derived from the `edge.provenance` Claim.

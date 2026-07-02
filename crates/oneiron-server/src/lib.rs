@@ -18,6 +18,7 @@ pub mod config;
 pub mod error;
 mod handler;
 mod idempotency;
+pub mod mcp;
 pub mod projection;
 mod protocol;
 pub mod runtime;
