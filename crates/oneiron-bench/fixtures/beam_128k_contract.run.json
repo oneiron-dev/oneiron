@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "runId": "beam-128k-contract-smoke",
+  "dataset": {
+    "kind": "jsonl",
+    "path": "beam_128k_contract.run.jsonl",
+    "armId": "oneiron",
+    "limit": 5,
+    "expectedMinResults": 1
+  },
+  "caseIds": [
+    "beam_128k_contract_context_pack_smoke"
+  ],
+  "arms": [
+    "deterministic"
+  ],
+  "competitors": [
+    {
+      "competitorId": "deterministic-context-pack",
+      "arm": "deterministic",
+      "card": {
+        "displayName": "Deterministic context-pack",
+        "publicParityStatus": "public_parity",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Fixture-scale oneiron-eval contract smoke; no external benchmark claims."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "tokenizer_count",
+          "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
+        }
+      }
+    }
+  ],
+  "report": {
+    "format": "json"
+  },
+  "outputs": {
+    "packsJsonl": "packs.jsonl"
+  }
+}
