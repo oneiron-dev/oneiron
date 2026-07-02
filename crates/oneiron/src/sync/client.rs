@@ -1881,6 +1881,43 @@ mod tests {
     }
 
     #[test]
+    fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
+        let manager = test_manager();
+        let vault = Arc::clone(manager.vault());
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        put_policy_manifest_bytes(
+            &vault,
+            0x8C,
+            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
+        );
+
+        let id = test_entity_id(0x8D);
+        let remote_body = source_trust_claim(ClaimSource::Generated);
+        let update = federated_claim_update(&id, &remote_body);
+        client
+            .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+            .expect("federated generated claim should be admitted under imported trust");
+
+        let raw = vault
+            .get_raw(&id)
+            .expect("read materialized claim")
+            .expect("claim must materialize after admitted import");
+        let materialized_body =
+            crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
+                .expect("decode materialized claim");
+        assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
+        assert!(
+            crate::claim::claim_surfaceable(&materialized_body),
+            "federated Auto/Generated-origin claims still surface after import"
+        );
+        assert!(
+            !crate::claim::claim_consolidatable(&materialized_body),
+            "federated Generated origin must survive restamp for read admission"
+        );
+    }
+
+    #[test]
     fn federated_selector_member_response_enters_admission_once() {
         let manager = test_manager();
         let vault = Arc::clone(manager.vault());
