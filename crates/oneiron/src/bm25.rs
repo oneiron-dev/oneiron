@@ -153,16 +153,6 @@ pub(crate) struct Bm25RecencyConfig {
 }
 
 impl Bm25RecencyConfig {
-    pub(crate) const DEFAULT_BOOST: f64 = 0.5;
-
-    pub(crate) fn new(half_life_days: f32, now_secs: u64) -> Self {
-        Self {
-            half_life_days: f64::from(half_life_days),
-            boost: Self::DEFAULT_BOOST,
-            now_secs,
-        }
-    }
-
     fn is_enabled(self) -> bool {
         self.half_life_days.is_finite()
             && self.half_life_days > 0.0
