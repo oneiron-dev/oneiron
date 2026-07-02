@@ -1395,6 +1395,11 @@ impl Vault {
                     status: claim_body.lifecycle,
                 });
             }
+            if claim_body.stale {
+                return Err(Error::InvalidClaimBody(
+                    "claim is stale and not consolidatable",
+                ));
+            }
             return Err(Error::InvalidClaimBody("claim is not consolidatable"));
         }
         if claim_body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE {
