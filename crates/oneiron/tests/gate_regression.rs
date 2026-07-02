@@ -259,6 +259,16 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             predicate: "profile.name",
             expected: ExpectedError::SourceNotTrusted(ClaimSource::Imported),
         },
+        DeniedClaimCase {
+            name: "generated default source trust denial",
+            seed: 0xD0,
+            actor: Presence::Present,
+            subject: Presence::Present,
+            source: ClaimSource::Generated,
+            approval: ClaimApprovalStatus::Auto,
+            predicate: "profile.name",
+            expected: ExpectedError::SourceNotTrusted(ClaimSource::Generated),
+        },
     ];
 
     for case in &cases {
