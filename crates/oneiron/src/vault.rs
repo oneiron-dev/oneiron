@@ -2824,7 +2824,6 @@ impl Vault {
     }
 
     fn require_source_trust_supersession_rights(
-        &self,
         new_body: &ClaimBody,
         old_body: &ClaimBody,
     ) -> Result<()> {
@@ -2883,7 +2882,7 @@ impl Vault {
         Self::require_active_claim(&new_body)?;
         let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
         Self::require_active_claim(&old_body)?;
-        self.require_source_trust_supersession_rights(&new_body, &old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);

@@ -2430,6 +2430,15 @@ mod tests {
             .put(&mut wtxn, id.as_bytes(), &payload)?;
         let type_key = Store::encode_type_key(ENTITY_TYPE_CLAIM, &id);
         vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+        let temporal_key = Store::encode_temporal_key(learned_at, &id);
+        vault
+            .store
+            .temporal_occurred_start
+            .put(&mut wtxn, &temporal_key, &[])?;
+        vault
+            .store
+            .temporal_learned
+            .put(&mut wtxn, &temporal_key, &[])?;
         wtxn.commit()?;
         Ok(())
     }
