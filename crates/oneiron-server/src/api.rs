@@ -8911,6 +8911,7 @@ mod tests {
                 neighbors_hydrated: 0,
                 cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
+                tokens: oneiron::PackTokenStats::default(),
                 items_truncated: oneiron::types::PackItemAccounting::item_budget(),
                 items_dropped: oneiron::types::PackItemAccounting::token_budget(),
             },

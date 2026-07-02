@@ -2148,8 +2148,31 @@ pub struct PackStats {
     /// the pipeline stage and pack hydration (results + neighbors). A claim
     /// suppressed in both stages counts once per stage.
     pub claims_suppressed: usize,
+    pub tokens: PackTokenStats,
     pub items_truncated: PackItemAccounting,
     pub items_dropped: PackItemAccounting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PackTokenStats {
+    pub tokenizer_id: String,
+    pub total_tokens: usize,
+    pub sections: Vec<PackSectionTokenStats>,
+    pub items: Vec<PackItemTokenStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackSectionTokenStats {
+    pub section: String,
+    pub tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackItemTokenStats {
+    pub section: String,
+    pub id: String,
+    pub entity_type: u8,
+    pub tokens: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

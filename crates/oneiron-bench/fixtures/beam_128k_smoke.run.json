@@ -33,7 +33,7 @@
         },
         "tokenAccounting": {
           "source": "tokenizer_count",
-          "notes": "Local deterministic context-pack query and serialized output counted with the Oneiron analyzer tokenizer."
+          "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
         }
       }
     },
