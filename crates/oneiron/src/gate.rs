@@ -2039,6 +2039,19 @@ mod tests {
         )
     }
 
+    fn source_trust_entry_without_auto_permit(
+        source: ClaimSource,
+        max_auto_sensitivity: u8,
+    ) -> (Value, Value) {
+        (
+            Value::from(POLICY_SOURCE_TRUST_KEY),
+            Value::Map(vec![(
+                Value::from(source.as_str()),
+                Value::from(u64::from(max_auto_sensitivity)),
+            )]),
+        )
+    }
+
     fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
         Value::Map(vec![
             (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
@@ -2802,6 +2815,40 @@ mod tests {
     }
 
     #[test]
+    fn gate_evaluator_generated_source_requires_explicit_auto_permit() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry_without_auto_permit(
+            ClaimSource::Generated,
+            0,
+        )]);
+        put_policy_manifest_bytes(&vault, 0x76, &data)?;
+        let policy = resolve(&vault)?;
+
+        let input = gate_evaluator_input(
+            "first_party",
+            None,
+            ClaimSource::Generated,
+            PolicyCriticality::Normal,
+        );
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.source_trust"]
+        );
+
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+        put_policy_manifest_bytes(&vault, 0x77, &data)?;
+        let policy = resolve(&vault)?;
+        let decision = policy.evaluate_gate(&input);
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn gate_evaluator_content_kind_reasons_are_stable() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_policy_manifest(vec![]);
@@ -3338,8 +3385,9 @@ mod tests {
 
         assert_auto_source_rejected(&vault, 0x64, ClaimSource::ToolOutput)?;
         assert_auto_source_rejected(&vault, 0x65, ClaimSource::Imported)?;
+        assert_auto_source_rejected(&vault, 0x66, ClaimSource::Generated)?;
 
-        let id = test_id(0x66);
+        let id = test_id(0x67);
         let body = source_trust_claim(ClaimSource::Observed);
         let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
         vault

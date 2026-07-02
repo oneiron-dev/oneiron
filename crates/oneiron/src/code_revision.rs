@@ -2366,17 +2366,38 @@ mod tests {
         source: Option<ClaimSource>,
         learned_at: u64,
     ) -> Result<()> {
+        put_claim_entity_with_source_and_approval(
+            vault,
+            id,
+            subject,
+            source,
+            ClaimApprovalStatus::Auto,
+            learned_at,
+        )
+    }
+
+    fn put_claim_entity_with_source_and_approval(
+        vault: &Vault,
+        id: EntityId,
+        subject: EntityId,
+        source: Option<ClaimSource>,
+        approval: ClaimApprovalStatus,
+        learned_at: u64,
+    ) -> Result<()> {
         let body = ClaimBody::new(
             CODE_REVISION_CLAIM_PREDICATE,
             ClaimSubject::Entity(subject),
             Value::from("finalized"),
             0.9,
-            ClaimApprovalStatus::Auto,
+            approval,
             ClaimLifecycleStatus::Active,
         );
         let mut body = body;
         body.source = source;
         let data = encode_claim_body(&body)?;
+        if approval != ClaimApprovalStatus::Auto {
+            return put_claim_entity_unchecked(vault, id, learned_at, &data);
+        }
         vault.put_entity(
             &id,
             ENTITY_TYPE_CLAIM,
@@ -2387,6 +2408,30 @@ mod tests {
             learned_at,
             &data,
         )
+    }
+
+    fn put_claim_entity_unchecked(
+        vault: &Vault,
+        id: EntityId,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(ENTITY_TYPE_CLAIM);
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(data);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &payload)?;
+        let type_key = Store::encode_type_key(ENTITY_TYPE_CLAIM, &id);
+        vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     fn replace_entity_with_header_shell(vault: &Vault, id: &EntityId) -> Result<()> {
@@ -3709,11 +3754,12 @@ mod tests {
             Some(ClaimSource::UserStated),
             200,
         )?;
-        put_claim_entity_with_source(
+        put_claim_entity_with_source_and_approval(
             &vault,
             generated_apply,
             revision_id,
             Some(ClaimSource::Generated),
+            ClaimApprovalStatus::Proposed,
             300,
         )?;
 
@@ -3763,11 +3809,12 @@ mod tests {
             Some(ClaimSource::UserStated),
             300,
         )?;
-        put_claim_entity_with_source(
+        put_claim_entity_with_source_and_approval(
             &vault,
             generated_apply,
             second_revision,
             Some(ClaimSource::Generated),
+            ClaimApprovalStatus::Proposed,
             400,
         )?;
 
@@ -3793,7 +3840,8 @@ mod tests {
     }
 
     #[test]
-    fn code_integrity_generated_apply_with_missing_subject_is_not_false_failure() -> Result<()> {
+    fn code_integrity_generated_apply_with_missing_subject_cannot_supersede_user_truth()
+    -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let revision_id = entity(0x21);
         let user_truth = entity(0x31);
@@ -3806,32 +3854,36 @@ mod tests {
             Some(ClaimSource::UserStated),
             200,
         )?;
-        put_claim_entity_with_source(
+        put_claim_entity_with_source_and_approval(
             &vault,
             generated_apply,
             revision_id,
             Some(ClaimSource::Generated),
+            ClaimApprovalStatus::Proposed,
             300,
         )?;
         vault.batch().delete(&revision_id).commit()?;
 
-        vault.supersede_claim(&generated_apply, &user_truth, 400)?;
+        let err = vault
+            .supersede_claim(&generated_apply, &user_truth, 400)
+            .expect_err("generated apply must not supersede user-stated truth");
 
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
         assert_eq!(
             vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
-            ClaimLifecycleStatus::Superseded
+            ClaimLifecycleStatus::Active
         );
         assert!(
             vault
                 .targets(&generated_apply, EdgeKind::Supersedes, None)?
-                .contains(&user_truth)
+                .is_empty()
         );
         Ok(())
     }
 
     #[test]
-    fn code_integrity_generated_apply_with_header_only_subject_is_not_false_failure() -> Result<()>
-    {
+    fn code_integrity_generated_apply_with_header_only_subject_cannot_supersede_user_truth()
+    -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
         let revision_id = entity(0x21);
         let user_truth = entity(0x31);
@@ -3844,25 +3896,29 @@ mod tests {
             Some(ClaimSource::UserStated),
             200,
         )?;
-        put_claim_entity_with_source(
+        put_claim_entity_with_source_and_approval(
             &vault,
             generated_apply,
             revision_id,
             Some(ClaimSource::Generated),
+            ClaimApprovalStatus::Proposed,
             300,
         )?;
         replace_entity_with_header_shell(&vault, &revision_id)?;
 
-        vault.supersede_claim(&generated_apply, &user_truth, 400)?;
+        let err = vault
+            .supersede_claim(&generated_apply, &user_truth, 400)
+            .expect_err("generated apply must not supersede user-stated truth");
 
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
         assert_eq!(
             vault.get_claim(&user_truth)?.expect("user claim").lifecycle,
-            ClaimLifecycleStatus::Superseded
+            ClaimLifecycleStatus::Active
         );
         assert!(
             vault
                 .targets(&generated_apply, EdgeKind::Supersedes, None)?
-                .contains(&user_truth)
+                .is_empty()
         );
         Ok(())
     }
