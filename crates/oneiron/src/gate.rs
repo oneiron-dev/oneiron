@@ -15,10 +15,11 @@ use crate::claim::{
     sensitivity_band_from_value,
 };
 use crate::error::{Error, Result};
+use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
-    WriteEnvelope,
+    WriteEnvelope, bytes_to_hex_lower,
 };
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -37,6 +38,7 @@ const POLICY_SIGNATURES_KEY: &str = "signatures";
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
 const RULE_PREFIX_KEY: &str = "prefix";
+const RULE_EXACT_KEY: &str = "exact";
 const RULE_AXES_KEY: &str = "axes";
 const ACTOR_CLASS_KEY: &str = "actor_class";
 const ACTOR_REF_KEY: &str = "actor_ref";
@@ -58,6 +60,9 @@ const SIGNATURE_SIGNATURE_KEY: &str = "signature";
 // actor-bound generic claim API can supply per-caller Gate inputs.
 const LOCAL_WRITE_ACTOR_CLASS: &str = "first_party";
 const LOCAL_WRITE_ACTOR_ENTITY_REF: [u8; ENTITY_ID_LEN] = [0x47; ENTITY_ID_LEN];
+pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE1; ENTITY_ID_LEN];
+const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
+pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
 const GATE_METRIC_REASON_CLASS_COUNT: usize = 10;
 
@@ -143,7 +148,18 @@ impl PolicyAxes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PolicyRule {
     prefix: String,
+    exact: bool,
     axes: PolicyAxes,
+}
+
+impl PolicyRule {
+    fn matches(&self, predicate: &str) -> bool {
+        if self.exact {
+            predicate == self.prefix
+        } else {
+            predicate.starts_with(&self.prefix)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,7 +178,7 @@ impl PolicyPack {
         let mut resolved = self.defaults;
 
         for rule in &self.rules {
-            if predicate.starts_with(&rule.prefix) {
+            if rule.matches(predicate) {
                 match rule.prefix.len().cmp(&best_len) {
                     Ordering::Greater => {
                         best_len = rule.prefix.len();
@@ -692,6 +708,30 @@ impl PolicyManifestResolution {
         ceiling.unwrap_or(PolicyApprovalCeiling::Proposed)
     }
 
+    fn has_matching_actor_ceiling(&self, actor_class: &str, actor_ref: Option<&str>) -> bool {
+        self.actor_ceilings.iter().any(|row| {
+            row.actor_class == actor_class
+                && match (&row.actor_ref, actor_ref) {
+                    (None, _) => true,
+                    (Some(row_ref), Some(request_ref)) => row_ref == request_ref,
+                    _ => false,
+                }
+        })
+    }
+
+    fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
+        let actor_class = input.actor.actor_class.trim();
+        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+            == PolicyApprovalCeiling::Auto
+        {
+            return true;
+        }
+
+        input.content_kind == GateContentKind::EdgeProvenanceClaim
+            && matches!(actor_class, "agent" | "system")
+            && !self.has_matching_actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+    }
+
     #[must_use]
     pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
@@ -752,9 +792,7 @@ impl PolicyManifestResolution {
 
         let mut pending = Vec::new();
 
-        if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
-            == PolicyApprovalCeiling::Proposed
-        {
+        if !self.actor_ceiling_allows_auto_for_content(input) {
             pending.push(GateReasonCode::PendingActorCeiling);
         }
 
@@ -879,6 +917,7 @@ fn hash_policy_frontier_v0(
         hash_len(hasher, pack.rules.len());
         for rule in &pack.rules {
             hash_str(hasher, &rule.prefix);
+            hash_bool(hasher, rule.exact);
             hash_axes(hasher, rule.axes);
         }
     }
@@ -1047,6 +1086,135 @@ struct DecodedPolicyManifest {
     unsupported_schema: bool,
     engine_version_floor: bool,
     unknown_axis_seen: bool,
+}
+
+pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
+    bytes_to_hex_lower(&FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+}
+
+pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
+    EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
+        .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
+}
+
+pub(crate) fn default_policy_manifest() -> Vec<u8> {
+    let first_party_eiri_actor_ref = first_party_eiri_connector_actor_ref();
+    let manifest = Value::Map(vec![
+        (
+            Value::from(POLICY_SCHEMA_VERSION_KEY),
+            Value::from(POLICY_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(POLICY_PACK_ID_KEY),
+            Value::from("oneiron-default-policy"),
+        ),
+        (Value::from(POLICY_PACK_VERSION_KEY), Value::from("v1")),
+        (
+            Value::from(POLICY_MIN_ENGINE_VERSION_KEY),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            Value::from(POLICY_DEFAULTS_KEY),
+            Value::Map(vec![
+                (Value::from(AXIS_CRITICALITY_KEY), Value::from("critical")),
+                (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+            ]),
+        ),
+        (
+            Value::from(POLICY_RULES_KEY),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("profile.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("affect.vad")),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(PREDICATE_EDGE_PROVENANCE),
+                    ),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+            ]),
+        ),
+        (
+            Value::from(POLICY_ACTOR_CEILINGS_KEY),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (
+                        Value::from(ACTOR_CLASS_KEY),
+                        Value::from(LOCAL_WRITE_ACTOR_CLASS),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("human")),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
+                Value::Map(vec![
+                    (Value::from(ACTOR_CLASS_KEY), Value::from("agent")),
+                    (
+                        Value::from(ACTOR_REF_KEY),
+                        Value::from(first_party_eiri_actor_ref),
+                    ),
+                    (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+                ]),
+            ]),
+        ),
+        (
+            Value::from(POLICY_SOURCE_TRUST_KEY),
+            Value::Map(vec![(
+                Value::from(ClaimSource::ToolOutput.as_str()),
+                Value::Map(vec![
+                    (
+                        Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                        Value::from(0_u64),
+                    ),
+                    (
+                        Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                        Value::Boolean(true),
+                    ),
+                    (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+                ]),
+            )]),
+        ),
+        (
+            Value::from(POLICY_SIGNATURES_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),
+                (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
+                (
+                    Value::from(SIGNATURE_SIG_KEY),
+                    Value::from("first-party-eiri-auto"),
+                ),
+            ])]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
+    data
 }
 
 pub(crate) fn resolve_policy_manifest(
@@ -1555,8 +1723,13 @@ fn parse_rules(value: &Value) -> Option<Vec<PolicyRule>> {
         if prefix.is_empty() {
             return None;
         }
+        let exact = optional_bool(entries, RULE_EXACT_KEY)?;
         let axes = parse_axes(required_value(entries, RULE_AXES_KEY)?)?;
-        rules.push(PolicyRule { prefix, axes });
+        rules.push(PolicyRule {
+            prefix,
+            exact,
+            axes,
+        });
     }
     Some(rules)
 }
@@ -1799,6 +1972,15 @@ fn optional_string(entries: &[(Value, Value)], key: &str) -> Option<Option<Strin
     }
 }
 
+fn optional_bool(entries: &[(Value, Value)], key: &str) -> Option<bool> {
+    match single_map_value(entries, key) {
+        MapValue::Missing => Some(false),
+        MapValue::Duplicate => None,
+        MapValue::Present(Value::Boolean(value)) => Some(*value),
+        MapValue::Present(_) => None,
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 fn restrict_optional<T>(left: Option<T>, right: Option<T>) -> Option<T>
 where
@@ -1867,9 +2049,9 @@ mod tests {
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_PERSON, EdgeActorClass,
-        EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange, WriteActor,
-        WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+        EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
+        WriteActor, WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -1884,7 +2066,34 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir");
         let vault = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())
             .expect("open vault");
+        clear_policy_manifests_for_test(&vault);
         (tmp, vault)
+    }
+
+    fn clear_policy_manifests_for_test(vault: &crate::Vault) {
+        vault
+            .with_write_txn(|wtxn| {
+                let mut ids = Vec::new();
+                for row in vault
+                    .store
+                    .type_index
+                    .prefix_iter(wtxn, &[ENTITY_TYPE_POLICY_MANIFEST])?
+                {
+                    let (key, _) = row?;
+                    let id = EntityId::from_bytes(
+                        key[1..]
+                            .try_into()
+                            .map_err(|_| Error::CorruptedIndex("type index key"))?,
+                    )
+                    .map_err(|_| Error::CorruptedIndex("type index key"))?;
+                    ids.push(id);
+                }
+                for id in ids {
+                    crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+                }
+                Ok(())
+            })
+            .expect("clear default policy manifest");
     }
 
     #[test]
@@ -2008,6 +2217,10 @@ mod tests {
         out
     }
 
+    fn encode_first_party_eiri_default_policy_manifest() -> Vec<u8> {
+        default_policy_manifest()
+    }
+
     fn rewrite_policy_manifest_entries(
         data: &mut Vec<u8>,
         rewrite: impl FnOnce(&mut Vec<(Value, Value)>),
@@ -2055,6 +2268,14 @@ mod tests {
     fn actor_ceiling_row(actor_class: &str, ceiling: &str) -> Value {
         Value::Map(vec![
             (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+            (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
+        ])
+    }
+
+    fn actor_ceiling_row_for_ref(actor_class: &str, actor_ref: &str, ceiling: &str) -> Value {
+        Value::Map(vec![
+            (Value::from(ACTOR_CLASS_KEY), Value::from(actor_class)),
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
             (Value::from(ACTOR_CEILING_KEY), Value::from(ceiling)),
         ])
     }
@@ -2112,7 +2333,10 @@ mod tests {
             Value::Array(vec![Value::Map(vec![
                 (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),
                 (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
-                (Value::from(SIGNATURE_SIG_KEY), Value::from("00")),
+                (
+                    Value::from(SIGNATURE_SIG_KEY),
+                    Value::from("first-party-eiri-auto"),
+                ),
             ])]),
         )
     }
@@ -2166,6 +2390,15 @@ mod tests {
 
     fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
         vault.with_write_txn(|wtxn| resolve_policy_manifest(&vault.store, wtxn))
+    }
+
+    fn first_party_eiri_connector_actor_id() -> EntityId {
+        EntityId::from_bytes(FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+            .expect("first-party Eiri actor fixture id")
+    }
+
+    fn first_party_eiri_connector_actor_ref() -> String {
+        super::first_party_eiri_connector_actor_ref()
     }
 
     fn has_pending_gate_consent(vault: &crate::Vault, id: &EntityId) -> Result<bool> {
@@ -2245,6 +2478,15 @@ mod tests {
         body: &ClaimBody,
     ) -> Result<(ClaimCandidate, WriteEnvelope)> {
         let actor = test_id(0x20);
+        claim_candidate_write_parts_for_actor(vault, body, actor, EdgeActorClass::Human)
+    }
+
+    fn claim_candidate_write_parts_for_actor(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"gate actor")?;
         if let ClaimSubject::Entity(subject) = body.subject {
             vault.put_entity(
@@ -2257,7 +2499,7 @@ mod tests {
         }
         let source = body.source.unwrap_or(ClaimSource::UserStated);
         let envelope = WriteEnvelope::new(
-            WriteActor::new(actor, EdgeActorClass::Human),
+            WriteActor::new(actor, actor_class),
             source,
             WriteProvenance::new(Value::from("gate-test"))?,
             body.approval,
@@ -2912,7 +3154,15 @@ mod tests {
             scoped_grants_entry(),
             signatures_entry(),
         ]);
-        trust_human_candidate_actor(&mut data);
+        replace_actor_ceilings(
+            &mut data,
+            vec![
+                actor_ceiling_row("first_party", "auto"),
+                actor_ceiling_row_for_ref("first_party", "probation", "proposed"),
+                actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+                actor_ceiling_row("human", "auto"),
+            ],
+        );
         put_policy_manifest_bytes(&vault, 0x51, &data)?;
 
         let policy = resolve(&vault)?;
@@ -2925,6 +3175,10 @@ mod tests {
         assert_eq!(
             policy.actor_ceiling("first_party", Some("probation")),
             PolicyApprovalCeiling::Proposed
+        );
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Auto
         );
         assert_eq!(
             policy.criticality_for_predicate("health.allergy"),
@@ -2951,6 +3205,219 @@ mod tests {
             1,
             "policy gate must reuse the write-door decode"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn first_party_eiri_tool_output_auto_write_reaches_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xB4, &data)?;
+
+        let claim_id = test_id(0xB5);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            EdgeActorClass::Agent,
+        )?;
+
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        let stored = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(stored.source, Some(ClaimSource::ToolOutput));
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+            .expect("first-party Eiri write must record a gate decision");
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+        assert_eq!(decision.actor_class, "agent");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(first_party_eiri_connector_actor_ref().as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xB6, &data)?;
+
+        let claim_id = test_id(0xB7);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &vault,
+            &body,
+            test_id(0xB8),
+            EdgeActorClass::Agent,
+        )?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("foreign connector must not inherit first-party Auto");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn default_policy_vad_rule_is_exact() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xC0, &data)?;
+        let policy = resolve(&vault)?;
+
+        assert_eq!(
+            policy.criticality_for_predicate("affect.vad"),
+            PolicyCriticality::Normal
+        );
+        for predicate in ["affect.vad.extra", "affect.vader.note"] {
+            assert_eq!(
+                policy.criticality_for_predicate(predicate),
+                PolicyCriticality::Critical,
+                "{predicate} must not inherit the internal VAD exemption"
+            );
+        }
+
+        let claim_id = test_id(0xC1);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.predicate = "affect.vad.extra".to_owned();
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+        let err = vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("VAD-like predicates must stay subject to the criticality floor");
+        assert_gate_rejected(err, "pending", &["gate.pending.criticality_floor"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn default_policy_preserves_non_eiri_edge_provenance_writers() -> Result<()> {
+        for (seed, actor_entity_type, actor_class) in [
+            (0xC2, ENTITY_TYPE_PERSON, EdgeActorClass::Agent),
+            (0xD2, ENTITY_TYPE_MACHINE, EdgeActorClass::System),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            let data = encode_first_party_eiri_default_policy_manifest();
+            put_policy_manifest_bytes(&vault, seed, &data)?;
+
+            let src = test_id(seed + 1);
+            let tgt = test_id(seed + 2);
+            let actor = test_id(seed + 3);
+            let claim_id = test_id(seed + 4);
+            let occurred = test_time(8);
+            vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 8, b"src")?;
+            vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 8, b"tgt")?;
+            vault.put_entity(&actor, actor_entity_type, occurred, 8, b"actor")?;
+            vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.5)?;
+
+            let subject = EdgeRef {
+                source: src,
+                kind: EdgeKind::Mentions,
+                target: tgt,
+            };
+            let body = EdgeProvenanceClaimBody::new(actor, 0.9, SupersessionStatus::Confirmed);
+            vault.put_edge_provenance(&claim_id, &subject, &body, actor_class, 9)?;
+
+            assert!(
+                vault.get_raw(&claim_id)?.is_some(),
+                "{actor_class:?} edge provenance write should persist under the default policy"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_and_revoked_connector_refs_fail_closed_to_pending() -> Result<()> {
+        let (_unknown_tmp, unknown_vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&unknown_vault, 0xB9, &data)?;
+
+        let unknown_claim = test_id(0xBA);
+        let body = source_trust_claim(ClaimSource::ToolOutput);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &unknown_vault,
+            &body,
+            test_id(0xBB),
+            EdgeActorClass::Agent,
+        )?;
+        let err = unknown_vault
+            .batch()
+            .claim_candidate(&unknown_claim, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("unknown connector key must remain pending");
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(unknown_vault.get_raw(&unknown_claim)?.is_none());
+
+        let (_revoked_tmp, revoked_vault) = temp_vault();
+        let mut revoked_policy = encode_first_party_eiri_default_policy_manifest();
+        append_actor_ceiling(
+            &mut revoked_policy,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        );
+        put_policy_manifest_bytes(&revoked_vault, 0xBC, &revoked_policy)?;
+
+        let revoked_claim = test_id(0xBD);
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &revoked_vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            EdgeActorClass::Agent,
+        )?;
+        let err = revoked_vault
+            .batch()
+            .claim_candidate(&revoked_claim, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("revoked connector key must remain pending");
+        assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+        assert!(revoked_vault.get_raw(&revoked_claim)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn policy_manifest_signature_frontier_covers_first_party_auto_grant() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_first_party_eiri_default_policy_manifest();
+        put_policy_manifest_bytes(&vault, 0xBE, &data)?;
+        let policy = resolve(&vault)?;
+        let signed_auto_frontier = policy.read_frontier_hash()?;
+
+        assert_eq!(policy.signatures().len(), 1);
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Auto
+        );
+
+        let (_revoked_tmp, revoked_vault) = temp_vault();
+        let mut revoked_data = encode_first_party_eiri_default_policy_manifest();
+        append_actor_ceiling(
+            &mut revoked_data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "proposed"),
+        );
+        put_policy_manifest_bytes(&revoked_vault, 0xBF, &revoked_data)?;
+        let revoked_policy = resolve(&revoked_vault)?;
+
+        assert_eq!(revoked_policy.signatures().len(), 1);
+        assert_eq!(
+            revoked_policy.actor_ceiling("agent", Some(&first_party_eiri_connector_actor_ref())),
+            PolicyApprovalCeiling::Proposed
+        );
+        assert_ne!(signed_auto_frontier, revoked_policy.read_frontier_hash()?);
         Ok(())
     }
 
@@ -3003,9 +3470,8 @@ mod tests {
 
     #[test]
     fn pending_gate_consent_survives_reopen() -> Result<()> {
-        let tmp = tempfile::tempdir().expect("temp dir");
+        let (tmp, vault) = temp_vault();
         {
-            let vault = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())?;
             put_policy_manifest_bytes(&vault, 0x92, &encode_policy_manifest(vec![]))?;
 
             let id = test_id(0x93);
@@ -3017,6 +3483,7 @@ mod tests {
                 .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
                 .commit()?;
         }
+        drop(vault);
 
         let reopened = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())?;
         let id = test_id(0x93);

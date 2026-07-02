@@ -933,15 +933,14 @@ enum LoopExit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Vault;
     use crate::sync::bridge::Materializer;
     use crate::types::VaultConfig;
     use core::assert_matches;
 
     fn test_manager() -> Arc<WindowManager> {
-        let dir = tempfile::tempdir().unwrap();
         let config = VaultConfig::device();
-        let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
+        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        let vault = Arc::new(vault);
         Arc::new(WindowManager::new(
             vault,
             Arc::new(Materializer::new()),

@@ -20,7 +20,8 @@ use oneiron::{
     EdgeKind, ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
     UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
     types::{
-        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_TURN,
+        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION,
+        ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -1796,6 +1797,10 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
     let mut last_activity = None;
 
     for entity_type in u8::MIN..=u8::MAX {
+        if !is_agent_visible_entity_type(entity_type) {
+            continue;
+        }
+
         let ids = server
             .vault
             .entities_by_type(entity_type)
@@ -1852,6 +1857,10 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         last_activity,
         runtime: runtime_status_for_config(&server.config),
     })
+}
+
+fn is_agent_visible_entity_type(entity_type: u8) -> bool {
+    entity_type != ENTITY_TYPE_POLICY_MANIFEST
 }
 
 fn runtime_status_for_config(config: &SyncServerConfig) -> RuntimeStatus {
@@ -3466,6 +3475,10 @@ async fn resume_session_context(
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
+        if !is_agent_visible_entity_type(entity_type) {
+            continue;
+        }
+
         let count = server
             .vault
             .count_entities_by_type(entity_type)
@@ -3481,13 +3494,17 @@ async fn resume_session_context(
         counts.insert(entity_type.to_string(), count);
     }
 
-    let last_activity = server
-        .vault
-        .latest_learned_at()
-        .inspect_err(|e| {
-            tracing::error!(error = %e, "resume activity summary failed");
-        })
-        .map_err(|_| ApiError::internal_server_error("resume activity summary failed"))?;
+    let last_activity = if counts.is_empty() {
+        None
+    } else {
+        server
+            .vault
+            .latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])
+            .inspect_err(|e| {
+                tracing::error!(error = %e, "resume activity summary failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("resume activity summary failed"))?
+    };
 
     Ok(SessionContext {
         api_version: API_LEVEL.to_owned(),
@@ -8685,6 +8702,7 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;
     use serde_json::Map;
     use serde_json::Value;
     use tower::ServiceExt;
@@ -8867,8 +8885,61 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp vault dir");
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        assert_default_policy_manifest_fixture(vault.as_ref());
         let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
         (dir, server)
+    }
+
+    fn assert_default_policy_manifest_fixture(vault: &oneiron::Vault) {
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+                .expect("scan policy manifests")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn companion_resume_hides_fresh_default_policy_manifest() {
+        let dir = tempfile::tempdir().expect("temp vault dir");
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        assert_eq!(
+            vault
+                .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+                .expect("scan policy manifests")
+                .len(),
+            1
+        );
+        let server = Arc::new(
+            SyncServer::new(
+                vault,
+                SyncServerConfig {
+                    allow_unauthenticated: true,
+                    ..Default::default()
+                },
+            )
+            .expect("sync server"),
+        );
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/companion/resume")
+            .header(CONTENT_TYPE, "application/json")
+            .header("x-oneiron-caller", "fresh-session")
+            .body(Body::from("{}"))
+            .expect("resume request");
+        let (status, body) = route_json(server, request).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["session"]["counts"]
+                .as_object()
+                .expect("session counts")
+                .is_empty()
+        );
+        assert_eq!(body["session"]["last_activity"], Value::Null);
     }
 
     fn test_server_with_usage_mode(usage_mode: UsageMode) -> (tempfile::TempDir, Arc<SyncServer>) {

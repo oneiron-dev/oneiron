@@ -27,8 +27,8 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, EntityId,
-    decode_companion_record_body, decode_edge_value_for_kind,
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST,
+    EntityId, decode_companion_record_body, decode_edge_value_for_kind,
 };
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
@@ -1393,6 +1393,15 @@ pub fn forward_rematerialize(
             }
         };
 
+        match forward_remat_skip_policy_manifest_tombstone(vault, &id) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(err) => {
+                tombstone_error = Some(err);
+                return;
+            }
+        }
+
         let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
@@ -1599,6 +1608,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
+        if reverse_remat_skip_policy_manifest_mirror(&raw) {
+            continue;
+        }
+
         if skip_companion_register_sync_mirror(&raw)? {
             let mut removed = false;
             if map_contains_binary(&entities_map, &hex_id) {
@@ -1707,6 +1720,22 @@ fn delete_edges_touching_entities(
             .map_err(|err| Error::SyncProtocolError(format!("{context}: {err}")))?;
     }
     Ok(!edge_keys.is_empty())
+}
+
+fn reverse_remat_skip_policy_manifest_mirror(raw: &[u8]) -> bool {
+    EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+}
+
+fn forward_remat_skip_policy_manifest_tombstone(vault: &Vault, id: &EntityId) -> Result<bool> {
+    if *id == crate::gate::default_policy_manifest_id()? {
+        return Ok(true);
+    }
+
+    let Some(raw) = vault.get_raw(id)? else {
+        return Ok(false);
+    };
+    Ok(reverse_remat_skip_policy_manifest_mirror(&raw))
 }
 
 /// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
@@ -2492,6 +2521,42 @@ mod tests {
             .unwrap()
             .expect("tombstone commit must export a delete-bearing update");
         assert!(!delta.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn default_policy_manifest_not_mirrored_to_crdt() {
+        let (_dir, vault) = test_vault();
+        let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+        let window_key = WindowKey::from_timestamp(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP);
+        let doc = create_window_doc("local", &window_key);
+
+        let mirrored = reverse_rematerialize(&vault, &doc, &window_key).unwrap();
+
+        assert_eq!(mirrored, 0);
+        assert!(
+            map_get_bytes(&doc.get_map("entities"), &manifest_id.to_hex()).is_none(),
+            "the engine-seeded policy manifest must stay out of ordinary sync windows"
+        );
+    }
+
+    #[test]
+    fn default_policy_manifest_tombstone_not_replayed_from_crdt() {
+        let (_dir, vault) = test_vault();
+        let materializer = Materializer::new();
+        let manifest_id = crate::gate::default_policy_manifest_id().unwrap();
+        let window_key = WindowKey::from_timestamp(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP);
+        let doc = create_window_doc("remote", &window_key);
+        apply_tombstone_to_window_doc(&doc, &manifest_id, &[1, 2, 3]).unwrap();
+        doc.commit();
+
+        let rematerialized =
+            forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+
+        assert_eq!(rematerialized, 0);
+        assert!(
+            vault.get_raw(&manifest_id).unwrap().is_some(),
+            "incoming policy-manifest tombstones must not delete local engine policy"
+        );
     }
 
     #[test]

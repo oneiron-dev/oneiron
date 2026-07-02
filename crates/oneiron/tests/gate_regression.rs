@@ -61,7 +61,10 @@ enum Presence {
 #[derive(Clone, Copy)]
 enum ExpectedError {
     EntityNotFound,
-    SourceNotTrusted(ClaimSource),
+    GateWriteRejected {
+        outcome: &'static str,
+        reason_codes: &'static [&'static str],
+    },
     MaintenanceKindNotWritable(u8),
 }
 
@@ -81,11 +84,19 @@ fn assert_expected_error(err: Error, expected: ExpectedError) {
         ExpectedError::EntityNotFound => {
             assert!(matches!(err, Error::EntityNotFound), "got {err:?}");
         }
-        ExpectedError::SourceNotTrusted(source) => {
+        ExpectedError::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => {
             assert!(
-                matches!(err, Error::SourceNotTrustedForAuto { claim_source } if claim_source == source.as_str()),
-                "expected SourceNotTrustedForAuto({}), got {err:?}",
-                source.as_str()
+                matches!(
+                    err,
+                    Error::GateWriteRejected {
+                        outcome: got_outcome,
+                        reason_codes: ref got
+                    } if got_outcome == outcome && got == reason_codes
+                ),
+                "expected GateWriteRejected({outcome}, {reason_codes:?}), got {err:?}",
             );
         }
         ExpectedError::MaintenanceKindNotWritable(kind) => {
@@ -240,14 +251,17 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             expected: ExpectedError::EntityNotFound,
         },
         DeniedClaimCase {
-            name: "tool output default source trust denial",
+            name: "tool output criticality floor denial",
             seed: 0xC8,
             actor: Presence::Present,
             subject: Presence::Present,
             source: ClaimSource::ToolOutput,
             approval: ClaimApprovalStatus::Auto,
-            predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::ToolOutput),
+            predicate: "health.allergy",
+            expected: ExpectedError::GateWriteRejected {
+                outcome: "pending",
+                reason_codes: &["gate.pending.criticality_floor"],
+            },
         },
         DeniedClaimCase {
             name: "imported default source trust denial",
@@ -257,7 +271,10 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             source: ClaimSource::Imported,
             approval: ClaimApprovalStatus::Auto,
             predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::Imported),
+            expected: ExpectedError::GateWriteRejected {
+                outcome: "pending",
+                reason_codes: &["gate.pending.source_trust"],
+            },
         },
         DeniedClaimCase {
             name: "generated default source trust denial",
@@ -267,7 +284,10 @@ fn gate_regression_denied_claim_matrix_leaves_no_committed_side_effects() -> Res
             source: ClaimSource::Generated,
             approval: ClaimApprovalStatus::Auto,
             predicate: "profile.name",
-            expected: ExpectedError::SourceNotTrusted(ClaimSource::Generated),
+            expected: ExpectedError::GateWriteRejected {
+                outcome: "pending",
+                reason_codes: &["gate.pending.source_trust"],
+            },
         },
     ];
 

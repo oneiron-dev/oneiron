@@ -25,7 +25,8 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_TURN, EdgeKind, TimeRange, Vad, VadAnnotation, VadAnnotationSource,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN, EdgeKind, TimeRange, Vad, VadAnnotation,
+    VadAnnotationSource,
 };
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
@@ -47,6 +48,17 @@ fn test_config() -> VaultConfig {
 
 fn window_key() -> WindowKey {
     WindowKey::new("2026-03")
+}
+
+fn clear_policy_manifests(vault: &Vault) {
+    // The default policy manifest is local engine state and is skipped by
+    // reverse rematerialization, so fixtures must not delete it publicly.
+    assert!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests")
+            <= 1
+    );
 }
 
 /// Builds the pinned 25 B envelope + body, matching what `apply_put` stores
@@ -97,6 +109,7 @@ fn put_local_entity(vault: &Vault, id: &EntityId, data: &[u8]) {
 fn vad_annotation_claim_survives_reverse_and_forward_remat() {
     let temp_a = tempfile::tempdir().unwrap();
     let vault_a = Vault::open(temp_a.path(), test_config()).unwrap();
+    clear_policy_manifests(&vault_a);
 
     let turn = EntityId::now();
     vault_a

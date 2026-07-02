@@ -22,6 +22,7 @@ use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edg
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
+use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceClaimBody,
     EdgeProvenanceFlags, EdgeRef, EntityId, HnswConfig, SupersessionStatus, TimeRange, Vad, Vault,
@@ -46,6 +47,17 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
         .unwrap_or_else(|| panic!("edge {kind:?} -> {} missing", target.to_hex()))
 }
 
+fn clear_policy_manifests(vault: &Vault) {
+    // The seeded default policy manifest is local-only engine state for sync
+    // windows; public deletion of it is rejected.
+    assert!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests")
+            <= 1
+    );
+}
+
 /// Seam-7 pin (ONE-1122 AC5): an entity with `Mentions` + `ChildOf` +
 /// `AssignedTo` + retracted-provenanced (26 B) edges
 /// 1. `reverse_rematerialize` puts ALL four keys into the CRDT edges map
@@ -61,6 +73,7 @@ fn edge_info(edges: &[EdgeInfo], kind: EdgeKind, target: &EntityId) -> EdgeInfo 
 fn sync_ships_all_edge_kinds_and_context_pack_walk_gates_at_read_time() {
     let temp_a = tempfile::tempdir().unwrap();
     let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+    clear_policy_manifests(&vault_a);
 
     // 2026-03 window; provenance actor + claim stay OUTSIDE the window so the
     // mirrored maps hold exactly the seed, its four targets, and four edges.
