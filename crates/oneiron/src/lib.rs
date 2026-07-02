@@ -21,6 +21,7 @@ pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod ingest;
 pub(crate) mod limits;
+pub mod llm;
 pub mod maintain;
 pub mod pipeline;
 pub(crate) mod ppr;
@@ -103,6 +104,14 @@ pub use crate::ingest::{
     IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
     KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
     NormalizedIngestRecord,
+};
+pub use crate::llm::{
+    BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability,
+    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
+    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
+    ReasoningEffort, ResponseFormat, RetryableLlmError, TierPrecedence, UnsupportedCapability,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{
