@@ -3993,16 +3993,10 @@ mod tests {
             ),
             (
                 Value::from("actor_ceilings"),
-                Value::Array(vec![
-                    Value::Map(vec![
-                        (Value::from("actor_class"), Value::from("human")),
-                        (Value::from("ceiling"), Value::from("auto")),
-                    ]),
-                    Value::Map(vec![
-                        (Value::from("actor_class"), Value::from("first_party")),
-                        (Value::from("ceiling"), Value::from("auto")),
-                    ]),
-                ]),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("human")),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
             ),
         ]);
         let mut data = Vec::new();

@@ -2824,6 +2824,12 @@ impl Vault {
         Ok(())
     }
 
+    /// Blocks generated-origin claims from superseding protected user truth.
+    /// New generated code-revision claims are rejected first so they keep the
+    /// fail-closed code-revision diagnostic; otherwise old code-revision truth
+    /// gets its own diagnostic, and non-code user/legacy truth uses the
+    /// general claim-body error. Missing old `src` is protected as legacy
+    /// user truth for this guard.
     fn require_source_trust_supersession_rights(
         new_body: &ClaimBody,
         old_body: &ClaimBody,
