@@ -1,14 +1,13 @@
 //! BEAM scaffold and fixed scorer for EVAL-001/EVAL-002.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
 use oneiron::{
-    AnalyzerContext, ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile,
-    PackFormat, Signal, TimeRange, Token, Vault, VaultConfig,
+    ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats,
+    Signal, TimeRange, Vault, VaultConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -402,6 +401,7 @@ struct ContextPackReport {
     serialized_format: String,
     serialized_bytes: usize,
     serialized_tokens: u64,
+    tokenizer_id: String,
     query_cost: CostComponentReport,
     result_count: usize,
     neighbor_count: usize,
@@ -467,6 +467,8 @@ struct CostBreakdownReport {
 #[serde(rename_all = "camelCase")]
 struct CostComponentReport {
     token_source: TokenAccountingSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tokenizer_id: Option<String>,
     input_tokens: u64,
     output_tokens: u64,
     target_tokens: u64,
@@ -510,12 +512,32 @@ struct PackStatsReport {
     neighbors_hydrated: usize,
     cosine_ghosts_dampened: usize,
     claims_suppressed: usize,
+    tokenizer_id: String,
+    total_tokens: usize,
+    section_tokens: Vec<PackSectionTokenReport>,
+    item_tokens: Vec<PackItemTokenReport>,
     items_truncated: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     items_truncated_reasons: Vec<String>,
     items_dropped: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     items_dropped_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackSectionTokenReport {
+    section: String,
+    tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackItemTokenReport {
+    section: String,
+    id: String,
+    entity_type: u8,
+    tokens: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1350,6 +1372,7 @@ struct BudgetedContextPack {
     raw: ContextPack,
     serialized: Vec<u8>,
     serialized_tokens: u64,
+    serialized_stats: PackStats,
     serialized_elapsed_us: u64,
     serialized_ids: SerializedContextPackIds,
     temporal_result_ids: BTreeSet<String>,
@@ -1379,10 +1402,13 @@ fn run_deterministic_context_pack(
 ) -> BeamResult<BudgetedContextPack> {
     let pack = configured_context_pack_builder(vault, case).run()?;
     let serialized_start = Instant::now();
-    let serialized = configured_context_pack_builder(vault, case).run_serialized()?;
+    let serialized_with_stats = configured_context_pack_builder(vault, case)
+        .run_serialized_with_stats()?
+        .value;
     let serialized_elapsed_us = serialized_start.elapsed().as_micros() as u64;
+    let serialized = serialized_with_stats.bytes;
     let serialized_text = std::str::from_utf8(&serialized)?;
-    let serialized_tokens = count_analyzer_tokens(serialized_text);
+    let serialized_tokens = serialized_with_stats.stats.tokens.total_tokens as u64;
     let serialized_ids = serialized_context_pack_ids(serialized_text);
     let temporal_result_ids = temporal_result_ids(vault, case)?;
 
@@ -1390,6 +1416,7 @@ fn run_deterministic_context_pack(
         raw: pack,
         serialized,
         serialized_tokens,
+        serialized_stats: serialized_with_stats.stats,
         serialized_elapsed_us,
         serialized_ids,
         temporal_result_ids,
@@ -1421,28 +1448,13 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
         context_entity_reports_for_ids(&pack.raw.neighbors, &pack.serialized_ids.neighbors);
     let result_count = results.len();
     let neighbor_count = neighbors.len();
-    let dropped_by_budget = pack
-        .raw
-        .results
-        .len()
-        .saturating_add(pack.raw.neighbors.len())
-        .saturating_sub(result_count.saturating_add(neighbor_count));
-    let items_truncated = pack.raw.stats.items_truncated.count;
-    let raw_items_dropped = pack.raw.stats.items_dropped.count;
-    let items_dropped = raw_items_dropped.saturating_add(dropped_by_budget);
-    let items_truncated_reasons = accounting_reasons(
-        items_truncated,
-        pack.raw.stats.items_truncated.reason.as_str(),
-    );
-    let mut items_dropped_reasons = accounting_reasons(
-        raw_items_dropped,
-        pack.raw.stats.items_dropped.reason.as_str(),
-    );
-    push_accounting_reason(
-        &mut items_dropped_reasons,
-        dropped_by_budget,
-        "token_budget",
-    );
+    let stats = &pack.serialized_stats;
+    let items_truncated = stats.items_truncated.count;
+    let items_dropped = stats.items_dropped.count;
+    let items_truncated_reasons =
+        accounting_reasons(items_truncated, stats.items_truncated.reason.as_str());
+    let items_dropped_reasons =
+        accounting_reasons(items_dropped, stats.items_dropped.reason.as_str());
 
     ContextPackReport {
         token_budget: case.token_budget,
@@ -1450,27 +1462,48 @@ fn context_pack_report(pack: &BudgetedContextPack, case: &FixtureCase) -> Contex
         serialized_format: pack_format_label(BEAM_CONTEXT_PACK_FORMAT).to_owned(),
         serialized_bytes: pack.serialized.len(),
         serialized_tokens: pack.serialized_tokens,
+        tokenizer_id: stats.tokens.tokenizer_id.clone(),
         query_cost: query_cost_report(case, pack),
         result_count,
         neighbor_count,
         results,
         neighbors,
         stats: PackStatsReport {
-            candidates_considered: pack.raw.stats.candidates_considered,
-            signals_used: pack
-                .raw
-                .stats
+            candidates_considered: stats.candidates_considered,
+            signals_used: stats
                 .signals_used
                 .iter()
                 .copied()
                 .map(signal_label)
                 .map(str::to_owned)
                 .collect(),
-            query_time_us: pack.raw.stats.query_time_us,
+            query_time_us: stats.query_time_us,
             entities_hydrated: result_count,
             neighbors_hydrated: neighbor_count,
-            cosine_ghosts_dampened: pack.raw.stats.cosine_ghosts_dampened,
-            claims_suppressed: pack.raw.stats.claims_suppressed,
+            cosine_ghosts_dampened: stats.cosine_ghosts_dampened,
+            claims_suppressed: stats.claims_suppressed,
+            tokenizer_id: stats.tokens.tokenizer_id.clone(),
+            total_tokens: stats.tokens.total_tokens,
+            section_tokens: stats
+                .tokens
+                .sections
+                .iter()
+                .map(|section| PackSectionTokenReport {
+                    section: section.section.clone(),
+                    tokens: section.tokens,
+                })
+                .collect(),
+            item_tokens: stats
+                .tokens
+                .items
+                .iter()
+                .map(|item| PackItemTokenReport {
+                    section: item.section.clone(),
+                    id: item.id.clone(),
+                    entity_type: item.entity_type,
+                    tokens: item.tokens,
+                })
+                .collect(),
             items_truncated,
             items_truncated_reasons,
             items_dropped,
@@ -1505,7 +1538,8 @@ fn cost_breakdown(case: &FixtureCase, arm: &ArmReport) -> CostBreakdownReport {
 fn query_cost_report(case: &FixtureCase, pack: &BudgetedContextPack) -> CostComponentReport {
     CostComponentReport {
         token_source: TokenAccountingSource::TokenizerCount,
-        input_tokens: count_analyzer_tokens(&case.query),
+        tokenizer_id: Some(pack.serialized_stats.tokens.tokenizer_id.clone()),
+        input_tokens: oneiron::count_context_pack_tokens(&case.query) as u64,
         output_tokens: pack.serialized_tokens,
         target_tokens: case.token_budget as u64,
         elapsed_us: pack.serialized_elapsed_us,
@@ -1516,6 +1550,7 @@ fn query_cost_report(case: &FixtureCase, pack: &BudgetedContextPack) -> CostComp
 fn fixed_scorer_judge_cost() -> CostComponentReport {
     CostComponentReport {
         token_source: TokenAccountingSource::FixtureDeclaredZero,
+        tokenizer_id: None,
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
@@ -1527,6 +1562,7 @@ fn fixed_scorer_judge_cost() -> CostComponentReport {
 fn cost_component_from_input(input: &CostComponentInput) -> CostComponentReport {
     CostComponentReport {
         token_source: input.token_source,
+        tokenizer_id: None,
         input_tokens: input.input_tokens,
         output_tokens: input.output_tokens,
         target_tokens: input.target_tokens,
@@ -1538,6 +1574,7 @@ fn cost_component_from_input(input: &CostComponentInput) -> CostComponentReport 
 fn not_applicable_cost() -> CostComponentReport {
     CostComponentReport {
         token_source: TokenAccountingSource::NotApplicable,
+        tokenizer_id: None,
         input_tokens: 0,
         output_tokens: 0,
         target_tokens: 0,
@@ -1579,25 +1616,6 @@ fn cost_component_metrics_are_zero(input: &CostComponentInput) -> bool {
         && input.cost_usd == 0.0
 }
 
-fn count_analyzer_tokens(text: &str) -> u64 {
-    thread_local! {
-        static ANALYZER: oneiron::analyzer::MultilingualAnalyzer =
-            oneiron::analyzer::MultilingualAnalyzer::portable();
-        static TOKEN_BUFFER: RefCell<Vec<Token>> = const { RefCell::new(Vec::new()) };
-    }
-
-    ANALYZER.with(|analyzer| {
-        TOKEN_BUFFER.with(|buffer| {
-            let mut tokens = buffer.borrow_mut();
-            tokens.clear();
-            analyzer.analyze(text, &AnalyzerContext::for_query(), &mut tokens);
-            let count = tokens.len() as u64;
-            tokens.clear();
-            count
-        })
-    })
-}
-
 fn normalized_cost_usd(cost: f64) -> f64 {
     if cost > MAX_NORMALIZABLE_COST_USD {
         cost
@@ -1615,12 +1633,6 @@ fn accounting_reasons(count: usize, reason: &str) -> Vec<String> {
         Vec::new()
     } else {
         vec![reason.to_owned()]
-    }
-}
-
-fn push_accounting_reason(reasons: &mut Vec<String>, count: usize, reason: &str) {
-    if count > 0 && !reasons.iter().any(|existing| existing == reason) {
-        reasons.push(reason.to_owned());
     }
 }
 
@@ -2354,8 +2366,10 @@ neighbors:
             serialized_format: "yaml".to_owned(),
             serialized_bytes: 24,
             serialized_tokens: 6,
+            tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
             query_cost: CostComponentReport {
                 token_source: TokenAccountingSource::TokenizerCount,
+                tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned()),
                 input_tokens: 2,
                 output_tokens: 6,
                 target_tokens: case.token_budget as u64,
@@ -2431,7 +2445,11 @@ neighbors:
 
         assert_eq!(
             context_pack.query_cost.input_tokens,
-            count_analyzer_tokens("BEAM deterministic context pack")
+            oneiron::count_context_pack_tokens("BEAM deterministic context pack") as u64
+        );
+        assert_eq!(
+            context_pack.query_cost.tokenizer_id.as_deref(),
+            Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID)
         );
         assert_eq!(
             context_pack.query_cost.output_tokens,
@@ -2492,6 +2510,7 @@ neighbors:
                     neighbors_hydrated: 0,
                     cosine_ghosts_dampened: 0,
                     claims_suppressed: 0,
+                    tokens: oneiron::PackTokenStats::default(),
                     items_truncated: PackItemAccounting::item_budget(),
                     items_dropped: PackItemAccounting::token_budget(),
                 },
@@ -2499,6 +2518,23 @@ neighbors:
             },
             serialized: Vec::new(),
             serialized_tokens: 7,
+            serialized_stats: PackStats {
+                candidates_considered: 0,
+                signals_used: Vec::new(),
+                query_time_us: 11,
+                entities_hydrated: 0,
+                neighbors_hydrated: 0,
+                cosine_ghosts_dampened: 0,
+                claims_suppressed: 0,
+                tokens: oneiron::PackTokenStats {
+                    tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
+                    total_tokens: 7,
+                    sections: Vec::new(),
+                    items: Vec::new(),
+                },
+                items_truncated: PackItemAccounting::item_budget(),
+                items_dropped: PackItemAccounting::token_budget(),
+            },
             serialized_elapsed_us: 13,
             serialized_ids: SerializedContextPackIds::default(),
             temporal_result_ids: BTreeSet::new(),
@@ -3162,8 +3198,10 @@ neighbors:
             serialized_format: "yaml".to_owned(),
             serialized_bytes: 0,
             serialized_tokens: 0,
+            tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
             query_cost: CostComponentReport {
                 token_source: TokenAccountingSource::TokenizerCount,
+                tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned()),
                 input_tokens: 4,
                 output_tokens: 0,
                 target_tokens: case.token_budget as u64,
@@ -3474,8 +3512,10 @@ neighbors:
             serialized_format: "yaml".to_owned(),
             serialized_bytes: 0,
             serialized_tokens: 0,
+            tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
             query_cost: CostComponentReport {
                 token_source: TokenAccountingSource::TokenizerCount,
+                tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned()),
                 input_tokens: 0,
                 output_tokens: 0,
                 target_tokens: 128,
@@ -3512,6 +3552,10 @@ neighbors:
             neighbors_hydrated: 0,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
+            tokenizer_id: oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.to_owned(),
+            total_tokens: 0,
+            section_tokens: Vec::new(),
+            item_tokens: Vec::new(),
             items_truncated: 0,
             items_truncated_reasons: Vec::new(),
             items_dropped: 0,
