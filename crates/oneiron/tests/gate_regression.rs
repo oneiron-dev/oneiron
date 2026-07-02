@@ -17,7 +17,27 @@ fn test_time(ts: u64) -> TimeRange {
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    clear_policy_manifests(&vault);
     (tmp, vault)
+}
+
+fn clear_policy_manifests(vault: &Vault) {
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("list policy manifests")
+    {
+        vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect("clear policy manifest fixture");
+    }
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests"),
+        0
+    );
 }
 
 fn put_person(vault: &Vault, id: &EntityId) -> Result<()> {

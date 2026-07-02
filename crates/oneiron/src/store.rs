@@ -716,6 +716,8 @@ pub struct Store {
     pub(crate) sync_state: Database<Str, Bytes>,
     /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
+    /// True only for the open call that created a previously absent LMDB root.
+    created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
     // has closed the LMDB environment — a reopen racing this drop can never
@@ -860,8 +862,13 @@ impl Store {
             short_ids_reverse,
             sync_state,
             sync_queue,
+            created_new_vault: is_new_vault,
             _registered_path: registered_path,
         })
+    }
+
+    pub(crate) fn created_new_vault(&self) -> bool {
+        self.created_new_vault
     }
 
     /// Encodes an edge key as `[src(16) | kind(1) | tgt(16)]`.

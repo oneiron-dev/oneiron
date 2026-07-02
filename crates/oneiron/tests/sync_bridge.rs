@@ -25,8 +25,8 @@ use oneiron::sync::transport::{
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
-    EdgeProvenanceFlags, TimeRange, Vad,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange, Vad,
 };
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
@@ -39,6 +39,25 @@ const ROOT_VV_TAG: u8 = 2;
 /// Window-owner user id shared by every fixture in this file (ONE-1160).
 const TEST_USER: &str = "test-user";
 const TEST_LEASE_VAULT_ID: u64 = 0;
+
+fn clear_policy_manifests(vault: &Vault) {
+    for id in vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("list policy manifests")
+    {
+        vault
+            .batch()
+            .delete(&id)
+            .commit()
+            .expect("clear policy manifest fixture");
+    }
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+            .expect("count policy manifests"),
+        0
+    );
+}
 
 /// SyncClient over a manager-owned window registry (ONE-1126).
 fn make_client(vault: &Arc<Vault>) -> (SyncClient, UnboundedReceiver<SyncEvent>) {
@@ -1098,6 +1117,7 @@ fn edge_provenance_claim_survives_crdt_sync_round_trip() {
     // --- Node A: subject edge + provenance through the real unit ---
     let temp_a = tempfile::tempdir().unwrap();
     let vault_a = Arc::new(Vault::open(temp_a.path(), test_config()).unwrap());
+    clear_policy_manifests(&vault_a);
 
     let person = EntityId::now();
     let src = EntityId::now();

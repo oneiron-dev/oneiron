@@ -66,13 +66,13 @@ use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
     CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EntityClassification, EntityId, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, StructuralKindRegistration,
-    TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource, VaultConfig,
-    bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
+    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
     edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
@@ -133,6 +133,41 @@ const VAD_KEY_AROUSAL: &str = "arousal";
 const VAD_KEY_DOMINANCE: &str = "dominance";
 const VAD_KEY_SOURCE: &str = "source";
 const VAD_KEY_ANNOTATED_AT: &str = "annotated_at";
+
+fn seed_default_policy_manifest(
+    store: &Store,
+    config: &VaultConfig,
+    analyzer: &MultilingualAnalyzer,
+    text_index_trusted: bool,
+) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
+    let ops = vec![BatchOp::Put {
+        id,
+        entity_type: ENTITY_TYPE_POLICY_MANIFEST,
+        occurred: TimeRange {
+            start: timestamp,
+            end: timestamp,
+        },
+        learned_at: timestamp,
+        data: crate::gate::default_policy_manifest(),
+        allow_maintenance: true,
+        allow_reserved_predicate: false,
+    }];
+    let mut wtxn = store.env.write_txn()?;
+    apply_ops(
+        store,
+        config,
+        analyzer,
+        &mut wtxn,
+        ops,
+        text_index_trusted,
+        false,
+        true,
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
@@ -700,6 +735,9 @@ impl Vault {
             handshake_text_index_manifest(&store, &analyzer)?;
             true
         };
+        if store.created_new_vault() {
+            seed_default_policy_manifest(&store, &config, &analyzer, text_index_trusted)?;
+        }
 
         Ok(Self {
             store,
@@ -6431,6 +6469,20 @@ mod tests {
         TimeRange { start, end }
     }
 
+    fn resolve_policy_manifest(vault: &Vault) -> Result<crate::gate::PolicyManifestResolution> {
+        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))
+    }
+
+    fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
+        let id = crate::gate::default_policy_manifest_id()?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.delete(wtxn, id.as_bytes())?;
+            let type_key = Store::encode_type_key(crate::types::ENTITY_TYPE_POLICY_MANIFEST, &id);
+            vault.store.type_index.delete(wtxn, &type_key)?;
+            Ok(())
+        })
+    }
+
     #[test]
     fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
         let tmp = tempfile::tempdir()?;
@@ -6492,7 +6544,10 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let vault = Vault::open(tmp.path(), test_config())?;
 
-        assert_eq!(vault.latest_learned_at()?, None);
+        assert_eq!(
+            vault.latest_learned_at()?,
+            Some(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP)
+        );
 
         vault
             .batch()
@@ -6545,6 +6600,45 @@ mod tests {
                 std::str::from_utf8(key).unwrap(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_vault_resolves_default_policy_manifest() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+
+        let policy = resolve_policy_manifest(&vault)?;
+        let first_party_eiri_actor_ref = crate::gate::first_party_eiri_connector_actor_ref();
+
+        assert_eq!(policy.diagnostics().manifest_count, 1);
+        assert!(policy.enforces_write_gate());
+        assert_eq!(
+            policy.actor_ceiling("agent", Some(&first_party_eiri_actor_ref)),
+            crate::gate::PolicyApprovalCeiling::Auto
+        );
+        assert_eq!(policy.signatures().len(), 1);
+        assert_ne!(policy.read_frontier_hash()?, [0; 32]);
+        Ok(())
+    }
+
+    #[test]
+    fn existing_vault_without_policy_manifest_is_not_backfilled() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+
+        {
+            let vault = Vault::open(tmp.path(), test_config())?;
+            remove_default_policy_manifest(&vault)?;
+
+            let policy = resolve_policy_manifest(&vault)?;
+            assert_eq!(policy.diagnostics().manifest_count, 0);
+            assert!(!policy.enforces_write_gate());
+        }
+
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let policy = resolve_policy_manifest(&vault)?;
+        assert_eq!(policy.diagnostics().manifest_count, 0);
+        assert!(!policy.enforces_write_gate());
         Ok(())
     }
 
