@@ -10979,9 +10979,9 @@ fn claim_body_keys_pin_d11_vocabulary() {
 }
 
 #[test]
-fn stored_claim_body_serves_fusion_boosts_and_context_pack_profiles() -> Result<()> {
-    // ONE body written through put_claim must BOTH fire the fusion boosts
-    // (sal/conf short keys) AND project through the context-pack CLAIM
+fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    // ONE body written through put_claim must BOTH feed the retrieval blend
+    // signals (sal/conf short keys) AND project through the context-pack CLAIM
     // field profiles — the pre-fix engine read "salience"/"confidence" in
     // fusion and "sal"/"conf" in profiles, so no single body could do both.
     let (_dir, vault) = open_test_vault();
@@ -10999,44 +10999,44 @@ fn stored_claim_body_serves_fusion_boosts_and_context_pack_profiles() -> Result<
     );
     body.salience = Some(0.5);
     vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+
+    let other_claim = EntityId::now();
+    let mut other_body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.1,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    other_body.salience = Some(0.0);
+    vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
+        .text(&other_claim, &[("body", "matcha preference")])
         .commit()?;
 
     let baseline = vault.query().search_text("matcha", 10).run()?;
-    assert_eq!(baseline.len(), 1);
-    let base_score = baseline[0].score;
+    assert_eq!(baseline.len(), 2);
 
-    // boost_salience alone: score × (1 + sal) = × 1.5. A key-swapped
-    // implementation (reading conf) would yield × 1.8 and fail.
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_salience()
         .run()?;
-    assert_eq!(sal_boosted.len(), 1);
-    let expected_sal = base_score * 1.5;
-    assert!(
-        (sal_boosted[0].score - expected_sal).abs() < 1e-5,
-        "salience boost drifted: got {}, expected {expected_sal}",
-        sal_boosted[0].score
-    );
+    assert_eq!(sal_boosted.len(), 2);
+    assert_eq!(sal_boosted[0].id, claim);
+    assert!(sal_boosted[0].score > sal_boosted[1].score);
 
-    // boost_confidence alone: score × (0.5 + 0.5 × conf) = × 0.9. A
-    // key-swapped implementation (reading sal) would yield × 0.75 and fail.
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_confidence()
         .run()?;
-    assert_eq!(conf_boosted.len(), 1);
-    let expected_conf = base_score * 0.9;
-    assert!(
-        (conf_boosted[0].score - expected_conf).abs() < 1e-5,
-        "confidence boost drifted: got {}, expected {expected_conf}",
-        conf_boosted[0].score
-    );
+    assert_eq!(conf_boosted.len(), 2);
+    assert_eq!(conf_boosted[0].id, claim);
+    assert!(conf_boosted[0].score > conf_boosted[1].score);
 
     // The SAME stored body projects through the CLAIM Full profile.
     let full = vault

@@ -21,9 +21,15 @@ use crate::store::{
     RetrievalScoreComponent, RetrievalSignal, Store,
 };
 use crate::types::{
-    ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeKind, EmptyReason, EntityId, ScoredEntity,
-    TemporalAnchorMode, TemporalExpressionParseError, TemporalGranularity, TimeRange,
+    ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION,
+    ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, EdgeKind, EmptyReason, EntityId,
+    ScoredEntity, TemporalAnchorMode, TemporalExpressionParseError, TemporalGranularity, TimeRange,
     temporal_expression_from_query,
 };
 
@@ -38,11 +44,43 @@ const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 /// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
 /// 28-day default). The recency signal's source timestamp is the
 /// entity's `learned_at` (v1). This named constant is the engine
-/// default: the temporal pipeline's recency decay constant
-/// (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`, the ARCH-0004 §4.5 table
-/// value) derives from it, and callers of
-/// [`PipelineBuilder::boost_recency`] can pass it explicitly.
+/// default for unlisted dynamic type bytes; the temporal pipeline's
+/// recency decay constant (`RECENCY_DECAY_TAU_SECS = 28.0 * 86_400`,
+/// the ARCH-0004 §4.5 table value) derives from it.
 pub const DEFAULT_RECENCY_HALF_LIFE_DAYS: f32 = 28.0;
+
+/// RET-010c recency half-life table, keyed by entity type byte. Values are
+/// explicit contract rows, not derived from type defaults; unknown dynamic
+/// type bytes fall back to [`DEFAULT_RECENCY_HALF_LIFE_DAYS`].
+pub(crate) const RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE: &[(u8, f32)] = &[
+    (ENTITY_TYPE_CLAIM, 28.0),
+    (ENTITY_TYPE_TURN, 28.0),
+    (ENTITY_TYPE_SESSION, 28.0),
+    (ENTITY_TYPE_MESSAGE, 28.0),
+    (ENTITY_TYPE_PERSON, 365.0),
+    (ENTITY_TYPE_RELATIONSHIP, 180.0),
+    (ENTITY_TYPE_EVENT, 30.0),
+    (ENTITY_TYPE_SKILL, 90.0),
+    (ENTITY_TYPE_SUMMARY, 90.0),
+    (ENTITY_TYPE_PLACE, 180.0),
+    (ENTITY_TYPE_ASSET_TEXT, 90.0),
+    (ENTITY_TYPE_CONVERSATION, 30.0),
+    (ENTITY_TYPE_ORG, 180.0),
+    (ENTITY_TYPE_FACET, 180.0),
+    (ENTITY_TYPE_WORLD, 180.0),
+    (ENTITY_TYPE_ASSET, 90.0),
+    (ENTITY_TYPE_NOTIFICATION, 7.0),
+    (ENTITY_TYPE_TASK_LIST, 30.0),
+    (ENTITY_TYPE_TASK, 30.0),
+    (ENTITY_TYPE_MACHINE, 180.0),
+    (ENTITY_TYPE_CODE_ARTIFACT, 90.0),
+    (ENTITY_TYPE_REDACTION_AUDIT, 365.0),
+    (ENTITY_TYPE_MODEL, 180.0),
+    (ENTITY_TYPE_POLICY_MANIFEST, 365.0),
+    (ENTITY_TYPE_FEDERATION_GRANT, 365.0),
+    (ENTITY_TYPE_ACCESS_GRANT, 365.0),
+    (ENTITY_TYPE_PSYCH_PROFILE, 365.0),
+];
 
 /// ARCH-0004 §4.5 table value (`28.0 * 86_400`), derived from
 /// [`DEFAULT_RECENCY_HALF_LIFE_DAYS`]. The temporal scorer applies it as
@@ -56,9 +94,7 @@ const PPR_DAMPING: f32 = 0.15;
 const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
 const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
-const RRF_K: f32 = 60.0;
 const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
-const GRAVITY_DAMPENING_FACTOR: f32 = 0.5;
 
 #[derive(Debug, Clone)]
 struct TemporalSearchConfig {
@@ -758,9 +794,9 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         let recency = if self.temporal_search.is_none() {
-            self.recency_half_life.map(|half_life_days| {
-                crate::bm25::Bm25RecencyConfig::new(half_life_days, started_at)
-            })
+            self.recency_half_life
+                .filter(|half_life_days| half_life_days.is_finite() && *half_life_days > 0.0)
+                .map(|_| started_at)
         } else {
             None
         };
@@ -900,12 +936,17 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let text_channel_limit = scoped_text_channel_limit(
+                let scoped_text_channel_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     &rtxn,
                     *limit,
                     text_scope_widening_active,
                 )?;
+                let text_channel_limit = if recency.is_some() {
+                    scoped_text_channel_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+                } else {
+                    scoped_text_channel_limit
+                };
                 let mut prefix_probe_claim_gate = claim_gate_widening_probe;
                 let mut exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
@@ -925,11 +966,11 @@ impl<'a> PipelineBuilder<'a> {
                     query,
                     text_channel_limit,
                     crate::bm25::Bm25SearchOptions {
-                        recency,
+                        recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
-                if text_channel_limit > *limit {
+                if text_channel_limit > *limit && text_scope_widening_active {
                     truncate_widened_text_results_to_scope(
                         &mut text_results,
                         &self.vault.store,
@@ -1024,7 +1065,21 @@ impl<'a> PipelineBuilder<'a> {
                 });
             }
 
-            let mut scores = fusion::rrf_fuse(&ranked_lists, RRF_K);
+            let blend_config = RetrievalBlendConfig {
+                recency_now_secs: recency,
+                salience: self.apply_salience,
+                confidence: self.apply_confidence,
+                gravity: self.apply_gravity,
+            };
+            let (mut scores, _) = blended_retrieval_scores(
+                &ranked_lists,
+                vector_channel_index,
+                text_channel_index,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                blend_config,
+            )?;
             let total_in_scope = scores.len();
             let mut empty_reason = None;
 
@@ -1042,22 +1097,6 @@ impl<'a> PipelineBuilder<'a> {
             )?;
             if before_status_gate > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::AllActivated);
-            }
-
-            if self.ppr_expand.is_some()
-                && let Some(recency) = recency
-            {
-                // This pre-expansion pass is only for implicit PPR seed
-                // ordering. The later RRF fuse discards these magnitudes, and
-                // the final fused list receives the single persisted boost.
-                apply_pipeline_recency_boost(
-                    &mut scores,
-                    &self.vault.store,
-                    &rtxn,
-                    recency,
-                    &mut metadata_cache,
-                )?;
-                fusion::sort_scored_entities_desc(&mut scores);
             }
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
@@ -1121,39 +1160,30 @@ impl<'a> PipelineBuilder<'a> {
                         RetrievalSignal::Ppr,
                         &ppr_results,
                     );
-                    scores = fusion::rrf_fuse(&[scores, ppr_results], RRF_K);
+                    ranked_lists.push(ppr_results);
+                    let (blended, _) = blended_retrieval_scores(
+                        &ranked_lists,
+                        vector_channel_index,
+                        text_channel_index,
+                        &self.vault.store,
+                        &rtxn,
+                        &mut metadata_cache,
+                        blend_config,
+                    )?;
+                    scores = blended;
                 }
             }
 
-            if let Some(recency) = recency {
-                apply_pipeline_recency_boost(
-                    &mut scores,
-                    &self.vault.store,
-                    &rtxn,
-                    recency,
-                    &mut metadata_cache,
-                )?;
-                fusion::sort_scored_entities_desc(&mut scores);
-            }
-
-            if self.apply_salience {
-                fusion::boost_salience(&mut scores, &self.vault.store, &rtxn)?;
-            }
-
-            if self.apply_confidence {
-                fusion::boost_confidence(&mut scores, &self.vault.store, &rtxn)?;
-            }
-
-            let cosine_ghosts_dampened = if self.apply_gravity {
-                apply_gravity(
-                    &mut scores,
-                    &ranked_lists,
-                    vector_channel_index,
-                    text_channel_index,
-                )
-            } else {
-                0
-            };
+            let (blended_scores, cosine_ghosts_dampened) = blended_retrieval_scores(
+                &ranked_lists,
+                vector_channel_index,
+                text_channel_index,
+                &self.vault.store,
+                &rtxn,
+                &mut metadata_cache,
+                blend_config,
+            )?;
+            filter_blended_scores_to_allowed(&mut scores, blended_scores);
 
             let before_filters = scores.len();
             apply_filters(
@@ -1517,41 +1547,111 @@ fn scoped_entity_channel_limit(
     Ok(requested.max(entity_count))
 }
 
-fn apply_gravity(
-    scores: &mut [ScoredEntity],
+fn retrieval_recency_half_life_days_for_type(entity_type: u8) -> f32 {
+    RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE
+        .iter()
+        .find_map(|(kind, half_life_days)| (*kind == entity_type).then_some(*half_life_days))
+        .unwrap_or(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RetrievalBlendConfig {
+    recency_now_secs: Option<u64>,
+    salience: bool,
+    confidence: bool,
+    gravity: bool,
+}
+
+fn blended_retrieval_scores(
     ranked_lists: &[Vec<ScoredEntity>],
     vector_channel_index: Option<usize>,
     text_channel_index: Option<usize>,
-) -> usize {
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    config: RetrievalBlendConfig,
+) -> Result<(Vec<ScoredEntity>, usize)> {
+    let mut inputs = fusion::retrieval_candidates_from_ranked_lists(ranked_lists);
+    let cosine_ghosts = if config.gravity {
+        cosine_ghost_set(ranked_lists, vector_channel_index, text_channel_index)
+    } else {
+        HashSet::new()
+    };
+    let mut dampened = 0;
+    for input in &mut inputs {
+        let raw = store.entities.get(rtxn, input.id.as_bytes())?;
+
+        if let Some(now_secs) = config.recency_now_secs
+            && let Some(meta) = metadata_cache.get(store, rtxn, &input.id)?
+        {
+            let half_life_days =
+                f64::from(retrieval_recency_half_life_days_for_type(meta.entity_type));
+            let seconds_per_half_life = half_life_days * SECONDS_PER_DAY_F64;
+            let age_secs = now_secs.saturating_sub(meta.learned_at) as f64;
+            input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life) as f32;
+        }
+
+        if let Some(raw) = raw {
+            if config.salience
+                && let Some(salience) = fusion::decode_msgpack_float(raw, crate::claim::KEY_SAL)
+            {
+                input.salience = salience;
+            }
+            if config.confidence
+                && let Some(confidence) = fusion::decode_msgpack_float(raw, crate::claim::KEY_CONF)
+            {
+                input.confidence = confidence;
+            }
+        }
+
+        if config.gravity && !cosine_ghosts.is_empty() {
+            input.gravity = if cosine_ghosts.contains(&input.id) {
+                dampened += 1;
+                0.0
+            } else {
+                1.0
+            };
+        }
+    }
+
+    Ok((fusion::linear_log_blend(&inputs), dampened))
+}
+
+fn filter_blended_scores_to_allowed(scores: &mut Vec<ScoredEntity>, blended: Vec<ScoredEntity>) {
+    let allowed: HashSet<EntityId> = scores.iter().map(|scored| scored.id).collect();
+    scores.clear();
+    for scored in blended {
+        if allowed.contains(&scored.id) {
+            scores.push(scored);
+        }
+    }
+}
+
+fn cosine_ghost_set(
+    ranked_lists: &[Vec<ScoredEntity>],
+    vector_channel_index: Option<usize>,
+    text_channel_index: Option<usize>,
+) -> HashSet<EntityId> {
     let (Some(vector_channel_index), Some(text_channel_index)) =
         (vector_channel_index, text_channel_index)
     else {
-        return 0;
+        return HashSet::new();
     };
     let (Some(vector_results), Some(text_results)) = (
         ranked_lists.get(vector_channel_index),
         ranked_lists.get(text_channel_index),
     ) else {
-        return 0;
+        return HashSet::new();
     };
 
     let text_ids: HashSet<EntityId> = text_results.iter().map(|scored| scored.id).collect();
-    let cosine_ghosts: HashSet<EntityId> = vector_results
+    vector_results
         .iter()
         .filter(|scored| {
             scored.score > COSINE_GHOST_VECTOR_THRESHOLD && !text_ids.contains(&scored.id)
         })
         .map(|scored| scored.id)
-        .collect();
-
-    let mut dampened = 0;
-    for scored in scores {
-        if cosine_ghosts.contains(&scored.id) {
-            scored.score *= GRAVITY_DAMPENING_FACTOR;
-            dampened += 1;
-        }
-    }
-    dampened
+        .collect()
 }
 
 /// D19 read-path status gate (its own pipeline stage; ARCH-0003 retrieval
@@ -2676,34 +2776,6 @@ fn redistribute_context_pack_budget(
     caps
 }
 
-fn apply_pipeline_recency_boost(
-    scores: &mut [ScoredEntity],
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    recency: crate::bm25::Bm25RecencyConfig,
-    metadata_cache: &mut EntityMetadataCache,
-) -> Result<()> {
-    if !recency.half_life_days.is_finite()
-        || recency.half_life_days <= 0.0
-        || !recency.boost.is_finite()
-        || recency.boost <= 0.0
-    {
-        return Ok(());
-    }
-
-    let seconds_per_half_life = recency.half_life_days * SECONDS_PER_DAY_F64;
-    for scored in scores {
-        let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
-            continue;
-        };
-        let age_secs = recency.now_secs.saturating_sub(meta.learned_at) as f64;
-        let freshness = 2.0_f64.powf(-age_secs / seconds_per_half_life);
-        scored.score *= (1.0 + recency.boost * freshness) as f32;
-    }
-
-    Ok(())
-}
-
 fn read_entity_metadata(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -3045,21 +3117,60 @@ mod tests {
     }
 
     #[test]
-    fn dampens_cosine_ghost() {
+    fn recency_half_life_table_is_contract_pinned() {
+        assert_eq!(
+            RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
+            &[
+                (ENTITY_TYPE_CLAIM, 28.0),
+                (ENTITY_TYPE_TURN, 28.0),
+                (crate::types::ENTITY_TYPE_SESSION, 28.0),
+                (crate::types::ENTITY_TYPE_MESSAGE, 28.0),
+                (crate::types::ENTITY_TYPE_PERSON, 365.0),
+                (crate::types::ENTITY_TYPE_RELATIONSHIP, 180.0),
+                (ENTITY_TYPE_EVENT, 30.0),
+                (crate::types::ENTITY_TYPE_SKILL, 90.0),
+                (ENTITY_TYPE_SUMMARY, 90.0),
+                (crate::types::ENTITY_TYPE_PLACE, 180.0),
+                (crate::types::ENTITY_TYPE_ASSET_TEXT, 90.0),
+                (crate::types::ENTITY_TYPE_CONVERSATION, 30.0),
+                (crate::types::ENTITY_TYPE_ORG, 180.0),
+                (ENTITY_TYPE_FACET, 180.0),
+                (crate::types::ENTITY_TYPE_WORLD, 180.0),
+                (crate::types::ENTITY_TYPE_ASSET, 90.0),
+                (crate::types::ENTITY_TYPE_NOTIFICATION, 7.0),
+                (crate::types::ENTITY_TYPE_TASK_LIST, 30.0),
+                (crate::types::ENTITY_TYPE_TASK, 30.0),
+                (crate::types::ENTITY_TYPE_MACHINE, 180.0),
+                (crate::types::ENTITY_TYPE_CODE_ARTIFACT, 90.0),
+                (crate::types::ENTITY_TYPE_REDACTION_AUDIT, 365.0),
+                (crate::types::ENTITY_TYPE_MODEL, 180.0),
+                (crate::types::ENTITY_TYPE_POLICY_MANIFEST, 365.0),
+                (crate::types::ENTITY_TYPE_FEDERATION_GRANT, 365.0),
+                (crate::types::ENTITY_TYPE_ACCESS_GRANT, 365.0),
+                (crate::types::ENTITY_TYPE_PSYCH_PROFILE, 365.0),
+            ]
+        );
+        assert!(
+            retrieval_recency_half_life_days_for_type(crate::types::ENTITY_TYPE_PERSON)
+                > DEFAULT_RECENCY_HALF_LIFE_DAYS
+        );
+        assert_eq!(
+            retrieval_recency_half_life_days_for_type(250),
+            DEFAULT_RECENCY_HALF_LIFE_DAYS
+        );
+    }
+
+    #[test]
+    fn cosine_ghost_is_gravity_signal_not_multiplier() {
         assert_eq!(COSINE_GHOST_VECTOR_THRESHOLD, 0.3);
-        assert_eq!(GRAVITY_DAMPENING_FACTOR, 0.5);
 
         let ghost = entity_id(0xA0);
         let vector = vec![scored(ghost, 0.6)];
         let text = Vec::new();
-        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
-        let pre = to_score_map(&fused);
+        let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
 
-        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
-        let post = to_score_map(&fused);
-
-        assert_eq!(dampened, 1);
-        assert!(approx_eq(post[&ghost], pre[&ghost] * 0.5, 1e-7));
+        assert_eq!(ghosts.len(), 1);
+        assert!(ghosts.contains(&ghost));
     }
 
     #[test]
@@ -3068,15 +3179,11 @@ mod tests {
         let above = entity_id(0xA2);
         let vector = vec![scored(boundary, 0.30), scored(above, 0.31)];
         let text = Vec::new();
-        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
-        let pre = to_score_map(&fused);
+        let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
 
-        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
-        let post = to_score_map(&fused);
-
-        assert_eq!(dampened, 1);
-        assert!(approx_eq(post[&boundary], pre[&boundary], 1e-7));
-        assert!(approx_eq(post[&above], pre[&above] * 0.5, 1e-7));
+        assert_eq!(ghosts.len(), 1);
+        assert!(!ghosts.contains(&boundary));
+        assert!(ghosts.contains(&above));
     }
 
     #[test]
@@ -3084,28 +3191,18 @@ mod tests {
         let protected = entity_id(0xA3);
         let vector = vec![scored(protected, 0.6)];
         let text = vec![scored(protected, 9.0)];
-        let mut fused = fusion::rrf_fuse(&[vector.clone(), text.clone()], RRF_K);
-        let pre = to_score_map(&fused);
+        let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
 
-        let dampened = apply_gravity(&mut fused, &[vector, text], Some(0), Some(1));
-        let post = to_score_map(&fused);
-
-        assert_eq!(dampened, 0);
-        assert!(approx_eq(post[&protected], pre[&protected], 1e-7));
+        assert!(ghosts.is_empty());
     }
 
     #[test]
     fn single_channel_noop() {
         let ghost = entity_id(0xA4);
         let vector = vec![scored(ghost, 0.6)];
-        let mut fused = fusion::rrf_fuse(std::slice::from_ref(&vector), RRF_K);
-        let pre = to_score_map(&fused);
+        let ghosts = cosine_ghost_set(std::slice::from_ref(&vector), Some(0), None);
 
-        let dampened = apply_gravity(&mut fused, &[vector], Some(0), None);
-        let post = to_score_map(&fused);
-
-        assert_eq!(dampened, 0);
-        assert!(approx_eq(post[&ghost], pre[&ghost], 1e-7));
+        assert!(ghosts.is_empty());
     }
 
     #[test]
@@ -3157,13 +3254,9 @@ mod tests {
         let boosted_scores = to_score_map(&boosted.scores);
 
         assert_eq!(baseline.cosine_ghosts_dampened, 0);
-        assert!(approx_eq(baseline_scores[&ghost], 1.0 / 61.0, 1e-7));
+        assert!(approx_eq(baseline_scores[&ghost], 1.0, 1e-7));
         assert_eq!(boosted.cosine_ghosts_dampened, 1);
-        assert!(approx_eq(
-            boosted_scores[&ghost],
-            baseline_scores[&ghost] * 0.5,
-            1e-7
-        ));
+        assert!(boosted_scores[&ghost] < baseline_scores[&ghost]);
         Ok(())
     }
 
@@ -3735,7 +3828,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_ppr_uses_rrf_results_as_seeds() -> Result<()> {
+    fn expand_ppr_uses_blended_results_as_seeds() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
         let a = entity_id(20);
@@ -3794,7 +3887,7 @@ mod tests {
     }
 
     #[test]
-    fn search_ppr_as_pre_rrf_signal() -> Result<()> {
+    fn search_ppr_as_blend_candidate_signal() -> Result<()> {
         let (_dir, vault) = open_test_vault();
 
         let a = entity_id(22);
@@ -3896,7 +3989,7 @@ mod tests {
     }
 
     #[test]
-    fn recency_boost_applies_once_to_fused_text_scores() -> Result<()> {
+    fn recency_signal_applies_once_to_blended_candidates() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let old_text = entity_id(0x10);
         let fresh_text = entity_id(0x20);
@@ -3921,25 +4014,14 @@ mod tests {
             .boost_recency(0.01)
             .run()?;
 
-        let baseline_scores = to_score_map(&baseline);
-        let boosted_scores = to_score_map(&boosted);
-        let fresh_multiplier = 1.0 + crate::bm25::Bm25RecencyConfig::DEFAULT_BOOST as f32;
-
-        assert!(approx_eq(
-            boosted_scores[&fresh_text],
-            baseline_scores[&fresh_text] * fresh_multiplier,
-            1e-6
-        ));
-        assert!(approx_eq(
-            boosted_scores[&fresh_vector],
-            baseline_scores[&fresh_vector] * fresh_multiplier,
-            1e-6
-        ));
+        assert!(boosted.iter().any(|scored| scored.id == fresh_text));
+        assert!(boosted.iter().any(|scored| scored.id == fresh_vector));
+        assert_ne!(baseline, boosted);
         Ok(())
     }
 
     #[test]
-    fn recency_boost_applies_to_ppr_expansion_results() -> Result<()> {
+    fn recency_signal_applies_to_ppr_expansion_results() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let seed = entity_id(0x13);
         let expanded = entity_id(0x23);
@@ -3974,16 +4056,11 @@ mod tests {
             .boost_recency(0.01)
             .run()?;
 
-        let baseline_scores = to_score_map(&baseline);
         let boosted_scores = to_score_map(&boosted);
-        let fresh_multiplier = 1.0 + crate::bm25::Bm25RecencyConfig::DEFAULT_BOOST as f32;
 
-        assert!(baseline_scores.contains_key(&expanded));
-        assert!(approx_eq(
-            boosted_scores[&expanded],
-            baseline_scores[&expanded] * fresh_multiplier,
-            1e-6
-        ));
+        assert!(to_score_map(&baseline).contains_key(&expanded));
+        assert!(boosted_scores[&expanded] > 0.0);
+        assert_ne!(baseline, boosted);
         Ok(())
     }
 
@@ -5495,13 +5572,12 @@ mod tests {
     /// The query vector every facet test searches with.
     const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
-    /// LITERAL single-channel RRF fused scores for ranks 0–3 with the
-    /// engine's pinned `RRF_K = 60`: `1 / (60 + rank + 1)`. Derived by hand,
-    /// NOT read back from the code under test.
-    const FACET_R0: f32 = 1.0 / 61.0;
-    const FACET_R1: f32 = 1.0 / 62.0;
-    const FACET_R2: f32 = 1.0 / 63.0;
-    const FACET_R3: f32 = 1.0 / 64.0;
+    /// Neutral four-signal blend score when no optional signals are enabled:
+    /// all z-normalized signal columns are zero, so `exp(0) = 1`.
+    const FACET_R0: f32 = 1.0;
+    const FACET_R1: f32 = 1.0;
+    const FACET_R2: f32 = 1.0;
+    const FACET_R3: f32 = 1.0;
 
     struct FacetFixture {
         facet_a: EntityId,
@@ -5622,7 +5698,7 @@ mod tests {
 
     /// AC 3 — *(no facet)* mode regression pin: a query that never calls
     /// `.facet()` returns every candidate, other-facet claims included,
-    /// with the exact unfiltered/unboosted RRF scores in the exact
+    /// with the exact unfiltered/unboosted blend scores in the exact
     /// pre-feature order. Any accidental default-on filtering or rescoring
     /// fails this literal pin.
     #[test]

@@ -2154,9 +2154,9 @@ pub struct PackStats {
     pub query_time_us: u64,
     pub entities_hydrated: usize,
     pub neighbors_hydrated: usize,
-    /// Candidates dampened by the gravity post-RRF stage because they had
-    /// vector similarity above the cosine-ghost threshold and no BM25 text
-    /// channel presence.
+    /// Candidates assigned the low gravity signal because they had vector
+    /// similarity above the cosine-ghost threshold and no BM25 text channel
+    /// presence.
     pub cosine_ghosts_dampened: usize,
     /// CLAIM records silently excluded by the D19 read-path status gate
     /// (ARCH-0003: surface only `appr ∈ {auto, approved}` ∧ `life = active`
