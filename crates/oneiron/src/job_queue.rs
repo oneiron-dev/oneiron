@@ -403,6 +403,19 @@ impl<'a> JobQueue<'a> {
     /// Atomically claims the oldest queued job under LMDB's single-writer
     /// invariant.
     pub fn claim(&self, input: ClaimJob) -> Result<ClaimOutcome> {
+        self.claim_matching(input, None)
+    }
+
+    /// Atomically claims the oldest queued job with the requested kind.
+    ///
+    /// Non-matching queued jobs remain ready for their own workers; malformed
+    /// ready rows and stale indexes are still repaired while scanning.
+    pub fn claim_kind(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
+        validate_kind(kind)?;
+        self.claim_matching(input, Some(kind))
+    }
+
+    fn claim_matching(&self, input: ClaimJob, kind_filter: Option<&str>) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
         let mut wtxn = self.store.env.write_txn()?;
@@ -442,6 +455,9 @@ impl<'a> JobQueue<'a> {
                     continue;
                 }
             } else if record_ready_at > input.now {
+                continue;
+            }
+            if kind_filter.is_some_and(|kind| record.kind != kind) {
                 continue;
             }
             record.state = JobState::Leased;
@@ -1386,6 +1402,57 @@ mod tests {
             })?,
             ClaimOutcome::Empty
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_kind_skips_other_ready_jobs_without_leasing_them() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(other) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:other"), 10))?
+        else {
+            panic!("expected other job enqueue");
+        };
+        let EnqueueOutcome::Enqueued(companion) =
+            queue.enqueue(enqueue("companion_task", Some("companion:task"), 11))?
+        else {
+            panic!("expected companion job enqueue");
+        };
+
+        let ClaimOutcome::Claimed(claimed_companion) = queue.claim_kind(
+            "companion_task",
+            ClaimJob {
+                lease_owner: "companion-worker".to_owned(),
+                now: 20,
+            },
+        )?
+        else {
+            panic!("expected companion job claim");
+        };
+        assert_eq!(claimed_companion.id, companion.id);
+        assert_eq!(claimed_companion.kind, "companion_task");
+        assert_eq!(
+            claimed_companion.lease_owner.as_deref(),
+            Some("companion-worker")
+        );
+
+        let persisted_other = queue.get(other.id)?.expect("other job persisted");
+        assert_eq!(persisted_other.state, JobState::Queued);
+        assert_eq!(persisted_other.lease_owner, None);
+
+        let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimJob {
+            lease_owner: "generic-worker".to_owned(),
+            now: 21,
+        })?
+        else {
+            panic!("expected generic claim");
+        };
+        assert_eq!(claimed_other.id, other.id);
+        assert_eq!(claimed_other.kind, "claim_extraction");
+        assert_eq!(claimed_other.lease_owner.as_deref(), Some("generic-worker"));
 
         Ok(())
     }
