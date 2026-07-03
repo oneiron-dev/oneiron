@@ -190,6 +190,7 @@ pub enum ErrorKind {
     StructuralKindCollision,
     InvalidStructuralKindRegistration,
     InvalidJobQueueRecord,
+    InvalidJobQueueTransition,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -526,6 +527,14 @@ pub enum Error {
     /// A JobQueue input or persisted record failed structural validation.
     #[error("invalid job queue record: {0}")]
     InvalidJobQueueRecord(&'static str),
+    /// A JobQueue lifecycle operation was requested from a valid but
+    /// incompatible state. This is caller-visible transition rejection, not
+    /// persisted-record corruption.
+    #[error("invalid job queue transition: action={action}, state={state}")]
+    InvalidJobQueueTransition {
+        action: &'static str,
+        state: &'static str,
+    },
     /// The type byte of an existing entity record is immutable on re-put
     /// (M2 pinned decision D2). The short-id prefix is derived from the type
     /// byte at first insert, so re-typing would leave the record addressed
@@ -906,6 +915,7 @@ impl Error {
                 ErrorKind::InvalidStructuralKindRegistration
             }
             Self::InvalidJobQueueRecord(_) => ErrorKind::InvalidJobQueueRecord,
+            Self::InvalidJobQueueTransition { .. } => ErrorKind::InvalidJobQueueTransition,
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,

@@ -1,8 +1,8 @@
 //! Generic LMDB-backed background job queue.
 //!
-//! This is intentionally mechanical storage state only: enqueue and claim
-//! transition LMDB rows atomically, while execution policy, retry, completion,
-//! failure handling, and timeout cleanup stay outside this module.
+//! This is intentionally mechanical storage state only: enqueue, claim,
+//! complete, fail, and retry transition LMDB rows atomically, while execution
+//! policy, timeout cleanup, and metrics stay outside this module.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -12,23 +12,27 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-const JOB_RECORD_VERSION: u8 = 1;
+const JOB_RECORD_VERSION: u8 = 2;
+const DEDUPE_DOMAIN: &[u8] = b"oneiron.job_queue.dedupe.v1\0";
+const DEDUPE_INDEX_KEY_LEN: usize = 32;
 const READY_KEY_LEN: usize = 24;
 const MAX_KIND_LEN: usize = 128;
 const MAX_DEDUPE_KEY_LEN: usize = 512;
+const MAX_FAILURE_REASON_LEN: usize = 2048;
 const MAX_LEASE_OWNER_LEN: usize = 128;
 const MAX_RUN_ID_LEN: usize = 128;
 const ERR_EMPTY_KIND: &str = "kind must not be empty";
 const ERR_KIND_TOO_LONG: &str = "kind exceeds 128 bytes";
 const ERR_DEDUPE_KEY_EMPTY: &str = "dedupe key must not be empty";
 const ERR_DEDUPE_KEY_TOO_LONG: &str = "dedupe key exceeds 512 bytes";
+const ERR_FAILURE_REASON_EMPTY: &str = "failure reason must not be empty";
+const ERR_FAILURE_REASON_TOO_LONG: &str = "failure reason exceeds 2048 bytes";
 const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
 const ERR_LEASE_OWNER_TOO_LONG: &str = "lease owner exceeds 128 bytes";
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
 const ERR_RUN_ID_TOO_LONG: &str = "run id exceeds 128 bytes";
 const ERR_JOB_ID_LEN: &str = "job id must be 16 bytes";
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different job kind";
-#[cfg(test)]
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 
 /// Stable identifier for a queued job.
@@ -67,6 +71,23 @@ impl JobId {
 pub enum JobState {
     Queued,
     Leased,
+    Completed,
+    Failed,
+}
+
+impl JobState {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Leased => "leased",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    const fn is_pending(self) -> bool {
+        matches!(self, Self::Queued | Self::Leased)
+    }
 }
 
 /// Durable job row stored in LMDB.
@@ -78,6 +99,10 @@ pub struct JobRecord {
     pub state: JobState,
     pub lease_owner: Option<String>,
     pub attempt_count: u32,
+    #[serde(default)]
+    pub backoff_until: Option<u64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub run_id: Option<String>,
     pub dedupe_key: Option<String>,
     pub created_at: u64,
@@ -117,6 +142,60 @@ pub enum ClaimOutcome {
     Claimed(JobRecord),
 }
 
+/// Input for completing a leased job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteJob {
+    pub id: JobId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub now: u64,
+}
+
+/// Typed complete outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CompleteOutcome {
+    Completed(JobRecord),
+    AlreadyCompleted(JobRecord),
+}
+
+/// Input for failing a leased job terminally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailJob {
+    pub id: JobId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub reason: String,
+    pub now: u64,
+}
+
+/// Typed fail outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FailOutcome {
+    Failed(JobRecord),
+    AlreadyFailed(JobRecord),
+}
+
+/// Input for returning a leased job to the ready index after a retryable
+/// attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryJob {
+    pub id: JobId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub backoff_until: u64,
+    pub last_error: Option<String>,
+    pub now: u64,
+}
+
+/// Typed retry outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RetryOutcome {
+    Retried(JobRecord),
+}
+
 /// Queue handle over a vault store.
 pub struct JobQueue<'a> {
     store: &'a Store,
@@ -138,27 +217,30 @@ impl<'a> JobQueue<'a> {
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
         validate_optional_run_id(input.run_id.as_deref())?;
 
-        let dedupe_index_key = input
+        let dedupe_blake3_key = input
             .dedupe_key
             .as_deref()
-            .map(|dedupe_key| dedupe_index_key(&input.kind, dedupe_key));
+            .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, dedupe_key));
         if let (Some(dedupe_key), Some(index_key)) =
-            (input.dedupe_key.as_deref(), dedupe_index_key.as_deref())
+            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
         {
             let rtxn = self.store.env.read_txn()?;
-            if let Some(record) =
-                self.read_existing_dedupe_in_read_txn(&rtxn, index_key, &input.kind, dedupe_key)?
-            {
+            if let Some(record) = self.read_existing_dedupe_in_read_txn(
+                &rtxn,
+                &index_key.blake3[..],
+                &input.kind,
+                dedupe_key,
+            )? {
                 return Ok(EnqueueOutcome::Existing(record));
             }
         }
 
         let mut wtxn = self.store.env.write_txn()?;
         if let (Some(dedupe_key), Some(index_key)) =
-            (input.dedupe_key.as_deref(), dedupe_index_key.as_deref())
+            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
             && let Some(record) = self.read_existing_dedupe_in_write_txn(
                 &mut wtxn,
-                index_key,
+                &index_key.blake3[..],
                 &input.kind,
                 dedupe_key,
             )?
@@ -174,6 +256,8 @@ impl<'a> JobQueue<'a> {
             state: JobState::Queued,
             lease_owner: None,
             attempt_count: 0,
+            backoff_until: None,
+            last_error: None,
             run_id: input.run_id,
             dedupe_key: input.dedupe_key,
             created_at: input.now,
@@ -184,14 +268,14 @@ impl<'a> JobQueue<'a> {
         self.store
             .job_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        let ready_key = ready_key(record.created_at, record.id);
+        let ready_key = ready_key(ready_at(&record), record.id);
         self.store
             .job_ready
             .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
-        if let Some(index_key) = dedupe_index_key.as_deref() {
+        if let Some(index_key) = dedupe_blake3_key.as_ref() {
             self.store
                 .job_dedupe
-                .put(&mut wtxn, index_key, record.id.as_bytes())?;
+                .put(&mut wtxn, &index_key.blake3[..], record.id.as_bytes())?;
         }
         wtxn.commit()?;
 
@@ -205,11 +289,23 @@ impl<'a> JobQueue<'a> {
 
         let mut wtxn = self.store.env.write_txn()?;
         let mut stale_ready_keys = Vec::new();
+        let mut ready_replacements = Vec::new();
         let mut stale_missing_record_ids = HashSet::new();
         let mut claimed = None;
         for row in self.store.job_ready.iter(&wtxn)? {
             let (key, value) = row?;
-            let id = JobId::from_bytes(value)?;
+            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+                stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            let Ok(id) = JobId::from_bytes(value) else {
+                stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            if id != key_id {
+                stale_ready_keys.push(key.to_vec());
+                continue;
+            }
             let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
                 stale_missing_record_ids.insert(id);
                 stale_ready_keys.push(key.to_vec());
@@ -220,12 +316,23 @@ impl<'a> JobQueue<'a> {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             }
+            let record_ready_at = ready_at(&record);
+            if record_ready_at != key_ready_at {
+                stale_ready_keys.push(key.to_vec());
+                if record_ready_at > input.now {
+                    ready_replacements.push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+            } else if record_ready_at > input.now {
+                continue;
+            }
             record.state = JobState::Leased;
             record.lease_owner = Some(input.lease_owner.clone());
             record.attempt_count = record
                 .attempt_count
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("job attempt count"))?;
+            record.backoff_until = None;
             record.updated_at = input.now;
             claimed = Some((key.to_vec(), id, record));
             break;
@@ -234,6 +341,9 @@ impl<'a> JobQueue<'a> {
         self.delete_dedupe_entries_for_ids(&mut wtxn, &stale_missing_record_ids)?;
         for key in stale_ready_keys {
             self.store.job_ready.delete(&mut wtxn, &key)?;
+        }
+        for (key, id) in ready_replacements {
+            self.store.job_ready.put(&mut wtxn, &key, id.as_bytes())?;
         }
 
         let Some((ready_key, id, record)) = claimed else {
@@ -249,6 +359,138 @@ impl<'a> JobQueue<'a> {
         wtxn.commit()?;
 
         Ok(ClaimOutcome::Claimed(record))
+    }
+
+    /// Marks a leased job complete. Completing an already-completed job is an
+    /// idempotent success; all other states are rejected.
+    pub fn complete(&self, input: CompleteJob) -> Result<CompleteOutcome> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            let Some(raw_record) = self.store.job_records.get(&rtxn, input.id.as_bytes())? else {
+                return Err(invalid_transition("complete", "missing"));
+            };
+            let record = decode_record(raw_record, input.id)?;
+            if record.state == JobState::Completed {
+                return Ok(CompleteOutcome::AlreadyCompleted(record));
+            }
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
+            return Err(invalid_transition("complete", "missing"));
+        };
+        let mut record = decode_record(raw_record, input.id)?;
+        match record.state {
+            JobState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
+            JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease(
+                    &record,
+                    &input.lease_owner,
+                    input.attempt_count,
+                    "complete",
+                )?;
+                record.state = JobState::Completed;
+                record.lease_owner = None;
+                record.backoff_until = None;
+                record.last_error = None;
+                record.updated_at = input.now;
+                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                let encoded = encode_record(&record)?;
+                self.store
+                    .job_records
+                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                wtxn.commit()?;
+                Ok(CompleteOutcome::Completed(record))
+            }
+            state => Err(invalid_transition("complete", state.as_str())),
+        }
+    }
+
+    /// Marks a leased job terminally failed. Failing an already-failed job is
+    /// an idempotent success; all other states are rejected.
+    pub fn fail(&self, input: FailJob) -> Result<FailOutcome> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            let Some(raw_record) = self.store.job_records.get(&rtxn, input.id.as_bytes())? else {
+                return Err(invalid_transition("fail", "missing"));
+            };
+            let record = decode_record(raw_record, input.id)?;
+            if record.state == JobState::Failed {
+                return Ok(FailOutcome::AlreadyFailed(record));
+            }
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
+            return Err(invalid_transition("fail", "missing"));
+        };
+        let mut record = decode_record(raw_record, input.id)?;
+        match record.state {
+            JobState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
+            JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease(
+                    &record,
+                    &input.lease_owner,
+                    input.attempt_count,
+                    "fail",
+                )?;
+                validate_failure_reason(&input.reason)?;
+                record.state = JobState::Failed;
+                record.lease_owner = None;
+                record.backoff_until = None;
+                record.last_error = Some(input.reason);
+                record.updated_at = input.now;
+                self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                let encoded = encode_record(&record)?;
+                self.store
+                    .job_records
+                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                wtxn.commit()?;
+                Ok(FailOutcome::Failed(record))
+            }
+            state => Err(invalid_transition("fail", state.as_str())),
+        }
+    }
+
+    /// Requeues a leased job with explicit backoff state after a retryable
+    /// attempt. The original payload, run id, and advisory dedupe key stay on
+    /// the same durable row.
+    pub fn retry(&self, input: RetryJob) -> Result<RetryOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
+            return Err(invalid_transition("retry", "missing"));
+        };
+        let mut record = decode_record(raw_record, input.id)?;
+        match record.state {
+            JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease(
+                    &record,
+                    &input.lease_owner,
+                    input.attempt_count,
+                    "retry",
+                )?;
+                validate_optional_failure_reason(input.last_error.as_deref())?;
+                record.state = JobState::Queued;
+                record.lease_owner = None;
+                record.backoff_until = Some(input.backoff_until);
+                record.last_error = input.last_error;
+                record.updated_at = input.now;
+                let encoded = encode_record(&record)?;
+                self.store
+                    .job_records
+                    .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                let ready_key = ready_key(ready_at(&record), record.id);
+                self.store
+                    .job_ready
+                    .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
+                wtxn.commit()?;
+                Ok(RetryOutcome::Retried(record))
+            }
+            state => Err(invalid_transition("retry", state.as_str())),
+        }
     }
 
     /// Reads a job by id.
@@ -276,10 +518,39 @@ impl<'a> JobQueue<'a> {
         };
         let record = decode_record(raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
+        if !record.state.is_pending() {
+            return Ok(None);
+        }
         Ok(Some(record))
     }
 
     fn read_existing_dedupe_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        blake3_key: &[u8],
+        kind: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<JobRecord>> {
+        if let Some(record) =
+            self.read_existing_dedupe_entry_in_write_txn(txn, blake3_key, kind, dedupe_key)?
+        {
+            return Ok(Some(record));
+        }
+
+        let legacy_key = legacy_dedupe_index_key(kind, dedupe_key);
+        let Some(record) =
+            self.read_existing_dedupe_entry_in_write_txn(txn, &legacy_key, kind, dedupe_key)?
+        else {
+            return Ok(None);
+        };
+        self.store
+            .job_dedupe
+            .put(txn, blake3_key, record.id.as_bytes())?;
+        self.store.job_dedupe.delete(txn, &legacy_key)?;
+        Ok(Some(record))
+    }
+
+    fn read_existing_dedupe_entry_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         index_key: &[u8],
@@ -296,7 +567,25 @@ impl<'a> JobQueue<'a> {
         };
         let record = decode_record(raw, id)?;
         validate_dedupe_record(&record, kind, dedupe_key)?;
+        if !record.state.is_pending() {
+            self.store.job_dedupe.delete(txn, index_key)?;
+            return Ok(None);
+        }
         Ok(Some(record))
+    }
+
+    fn delete_dedupe_entry_for_record(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &JobRecord,
+    ) -> Result<()> {
+        if let Some(dedupe_key) = record.dedupe_key.as_deref() {
+            let blake3_key = dedupe_index_key(&record.kind, dedupe_key);
+            let legacy_key = legacy_dedupe_index_key(&record.kind, dedupe_key);
+            self.store.job_dedupe.delete(txn, &blake3_key[..])?;
+            self.store.job_dedupe.delete(txn, &legacy_key)?;
+        }
+        Ok(())
     }
 
     fn delete_dedupe_entries_for_ids(
@@ -344,6 +633,22 @@ fn validate_optional_dedupe(dedupe_key: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+fn validate_failure_reason(reason: &str) -> Result<()> {
+    validate_optional_failure_reason(Some(reason))
+}
+
+fn validate_optional_failure_reason(reason: Option<&str>) -> Result<()> {
+    if let Some(reason) = reason {
+        if reason.is_empty() {
+            return Err(Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_EMPTY));
+        }
+        if reason.len() > MAX_FAILURE_REASON_LEN {
+            return Err(Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_TOO_LONG));
+        }
+    }
+    Ok(())
+}
+
 fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {
     if let Some(run_id) = run_id {
         if run_id.is_empty() {
@@ -366,6 +671,21 @@ fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_transition_lease(
+    record: &JobRecord,
+    lease_owner: &str,
+    attempt_count: u32,
+    action: &'static str,
+) -> Result<()> {
+    if record.lease_owner.as_deref() != Some(lease_owner) {
+        return Err(invalid_transition(action, "leased_by_other"));
+    }
+    if record.attempt_count != attempt_count {
+        return Err(invalid_transition(action, "stale_attempt"));
+    }
+    Ok(())
+}
+
 fn validate_dedupe_record(record: &JobRecord, kind: &str, dedupe_key: &str) -> Result<()> {
     if record.kind != kind {
         return Err(Error::InvalidJobQueueRecord(ERR_DEDUPE_KIND_MISMATCH));
@@ -378,7 +698,29 @@ fn validate_dedupe_record(record: &JobRecord, kind: &str, dedupe_key: &str) -> R
     Ok(())
 }
 
-fn dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
+struct DedupeIndexKeys {
+    blake3: [u8; DEDUPE_INDEX_KEY_LEN],
+}
+
+impl DedupeIndexKeys {
+    fn new(kind: &str, dedupe_key: &str) -> Self {
+        Self {
+            blake3: dedupe_index_key(kind, dedupe_key),
+        }
+    }
+}
+
+fn dedupe_index_key(kind: &str, dedupe_key: &str) -> [u8; DEDUPE_INDEX_KEY_LEN] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(DEDUPE_DOMAIN);
+    hasher.update(&(kind.len() as u16).to_be_bytes());
+    hasher.update(kind.as_bytes());
+    hasher.update(&(dedupe_key.len() as u16).to_be_bytes());
+    hasher.update(dedupe_key.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+fn legacy_dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(2 + kind.len() + dedupe_key.len());
     key.extend_from_slice(&(kind.len() as u16).to_be_bytes());
     key.extend_from_slice(kind.as_bytes());
@@ -386,14 +728,17 @@ fn dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
     key
 }
 
-fn ready_key(created_at: u64, id: JobId) -> [u8; READY_KEY_LEN] {
+fn ready_at(record: &JobRecord) -> u64 {
+    record.backoff_until.unwrap_or(0)
+}
+
+fn ready_key(ready_at: u64, id: JobId) -> [u8; READY_KEY_LEN] {
     let mut key = [0_u8; READY_KEY_LEN];
-    key[..8].copy_from_slice(&created_at.to_be_bytes());
+    key[..8].copy_from_slice(&ready_at.to_be_bytes());
     key[8..].copy_from_slice(id.as_bytes());
     key
 }
 
-#[cfg(test)]
 fn decode_ready_key(bytes: &[u8]) -> Result<(u64, JobId)> {
     if bytes.len() != READY_KEY_LEN {
         return Err(Error::InvalidJobQueueRecord(ERR_READY_KEY_LEN));
@@ -431,6 +776,7 @@ fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
     validate_kind(&record.kind)?;
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
     validate_optional_run_id(record.run_id.as_deref())?;
+    validate_optional_failure_reason(record.last_error.as_deref())?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
     }
@@ -445,9 +791,38 @@ fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
                 "leased job must have a lease owner",
             ));
         }
+        JobState::Leased if record.backoff_until.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "leased job must not have backoff state",
+            ));
+        }
+        JobState::Completed | JobState::Failed if record.lease_owner.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "terminal job must not have a lease owner",
+            ));
+        }
+        JobState::Completed | JobState::Failed if record.backoff_until.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "terminal job must not have backoff state",
+            ));
+        }
+        JobState::Completed if record.last_error.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "completed job must not have a failure reason",
+            ));
+        }
+        JobState::Failed if record.last_error.is_none() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "failed job must have a failure reason",
+            ));
+        }
         _ => {}
     }
     Ok(record)
+}
+
+fn invalid_transition(action: &'static str, state: &'static str) -> Error {
+    Error::InvalidJobQueueTransition { action, state }
 }
 
 #[cfg(test)]
@@ -469,6 +844,16 @@ mod tests {
         }
     }
 
+    fn assert_invalid_transition(err: Error, action: &'static str, state: &'static str) {
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueTransition {
+                action: got_action,
+                state: got_state,
+            } if got_action == action && got_state == state
+        ));
+    }
+
     #[test]
     fn job_queue_enqueue_persists_required_fields() -> Result<()> {
         let (_dir, vault) = open_queue();
@@ -486,6 +871,8 @@ mod tests {
         assert_eq!(persisted.state, JobState::Queued);
         assert_eq!(persisted.lease_owner, None);
         assert_eq!(persisted.attempt_count, 0);
+        assert_eq!(persisted.backoff_until, None);
+        assert_eq!(persisted.last_error, None);
         assert_eq!(persisted.run_id.as_deref(), Some("run-10"));
         assert_eq!(persisted.dedupe_key.as_deref(), Some("turn:1"));
         assert_eq!(persisted.created_at, 10);
@@ -513,6 +900,73 @@ mod tests {
         assert_eq!(second.id, first.id);
         assert_eq!(second.payload, first.payload);
         assert_eq!(second.created_at, 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let index_key = dedupe_index_key("claim_extraction", "same");
+        assert_eq!(index_key.len(), DEDUPE_INDEX_KEY_LEN);
+        assert_ne!(index_key.as_slice(), b"\0\x10claim_extractionsame");
+
+        let rtxn = vault.store.env.read_txn()?;
+        let stored_id = vault
+            .store
+            .job_dedupe
+            .get(&rtxn, &index_key)?
+            .expect("dedupe row");
+        assert_eq!(JobId::from_bytes(stored_id)?, job.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let blake3_key = dedupe_index_key("claim_extraction", "same");
+        let legacy_key = legacy_dedupe_index_key("claim_extraction", "same");
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault.store.job_dedupe.delete(&mut wtxn, &blake3_key)?;
+            vault
+                .store
+                .job_dedupe
+                .put(&mut wtxn, &legacy_key, job.id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let EnqueueOutcome::Existing(existing) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 20))?
+        else {
+            panic!("expected legacy dedupe hit");
+        };
+        assert_eq!(existing.id, job.id);
+
+        let rtxn = vault.store.env.read_txn()?;
+        let stored_id = vault
+            .store
+            .job_dedupe
+            .get(&rtxn, &blake3_key)?
+            .expect("self-healed BLAKE3 dedupe row");
+        assert_eq!(JobId::from_bytes(stored_id)?, job.id);
+        assert!(vault.store.job_dedupe.get(&rtxn, &legacy_key)?.is_none());
 
         Ok(())
     }
@@ -597,6 +1051,532 @@ mod tests {
             })?,
             ClaimOutcome::Empty
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_treats_non_backoff_jobs_as_immediately_ready() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("future-created", None, 1_000))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 1,
+        })?
+        else {
+            panic!("expected future-created job without backoff to be claimable");
+        };
+        assert_eq!(claimed.id, job.id);
+        assert_eq!(claimed.created_at, 1_000);
+        assert_eq!(claimed.backoff_until, None);
+        assert_eq!(claimed.attempt_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_cleans_ready_key_id_mismatch_and_continues() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("first", None, 10))? else {
+            panic!("expected enqueue");
+        };
+        let stale_ready_key = ready_key(0, JobId { bytes: [0; 16] });
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_ready
+                .put(&mut wtxn, &stale_ready_key, job.id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim past stale ready row");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .job_ready
+                .get(&rtxn, &stale_ready_key)?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("first", None, 10))? else {
+            panic!("expected enqueue");
+        };
+        let malformed_key = vec![0];
+        let malformed_value_key = ready_key(0, JobId { bytes: [0; 16] });
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_ready
+                .put(&mut wtxn, &malformed_key, job.id.as_bytes())?;
+            vault
+                .store
+                .job_ready
+                .put(&mut wtxn, &malformed_value_key, b"bad")?;
+            wtxn.commit()?;
+        }
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim past malformed ready rows");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.job_ready.get(&rtxn, &malformed_key)?.is_none());
+        assert!(
+            vault
+                .store
+                .job_ready
+                .get(&rtxn, &malformed_value_key)?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let queued_complete = queue
+            .complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: 0,
+                now: 11,
+            })
+            .unwrap_err();
+        assert_invalid_transition(queued_complete, "complete", "queued");
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claimed job");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let wrong_owner_complete = queue
+            .complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claimed.attempt_count,
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_complete, "complete", "leased_by_other");
+
+        let CompleteOutcome::Completed(completed) = queue.complete(CompleteJob {
+            id: job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            now: 30,
+        })?
+        else {
+            panic!("expected complete");
+        };
+        assert_eq!(completed.state, JobState::Completed);
+        assert_eq!(completed.lease_owner, None);
+        assert_eq!(completed.backoff_until, None);
+        assert_eq!(completed.last_error, None);
+        assert_eq!(completed.payload, b"payload-10");
+        assert_eq!(completed.run_id.as_deref(), Some("run-10"));
+        assert_eq!(completed.dedupe_key.as_deref(), Some("turn:complete"));
+        assert_eq!(completed.updated_at, 30);
+
+        let CompleteOutcome::AlreadyCompleted(again) = queue.complete(CompleteJob {
+            id: job.id,
+            lease_owner: String::new(),
+            attempt_count: 0,
+            now: 40,
+        })?
+        else {
+            panic!("expected idempotent complete");
+        };
+        assert_eq!(again.updated_at, 30);
+
+        let completed_fail = queue
+            .fail(FailJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: 0,
+                reason: "boom".to_owned(),
+                now: 50,
+            })
+            .unwrap_err();
+        assert_invalid_transition(completed_fail, "fail", "completed");
+
+        let completed_retry = queue
+            .retry(RetryJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: 0,
+                backoff_until: 60,
+                last_error: Some("retryable".to_owned()),
+                now: 50,
+            })
+            .unwrap_err();
+        assert_invalid_transition(completed_retry, "retry", "completed");
+
+        let EnqueueOutcome::Enqueued(replacement) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), 60))?
+        else {
+            panic!("terminal dedupe key should be reusable");
+        };
+        assert_ne!(replacement.id, job.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let queued_fail = queue
+            .fail(FailJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: 0,
+                reason: "boom".to_owned(),
+                now: 11,
+            })
+            .unwrap_err();
+        assert_invalid_transition(queued_fail, "fail", "queued");
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claimed job");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let wrong_owner_fail = queue
+            .fail(FailJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: "fatal".to_owned(),
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_fail, "fail", "leased_by_other");
+
+        let FailOutcome::Failed(failed) = queue.fail(FailJob {
+            id: job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            reason: "fatal".to_owned(),
+            now: 30,
+        })?
+        else {
+            panic!("expected fail");
+        };
+        assert_eq!(failed.state, JobState::Failed);
+        assert_eq!(failed.lease_owner, None);
+        assert_eq!(failed.backoff_until, None);
+        assert_eq!(failed.last_error.as_deref(), Some("fatal"));
+        assert_eq!(failed.payload, b"payload-10");
+        assert_eq!(failed.run_id.as_deref(), Some("run-10"));
+        assert_eq!(failed.dedupe_key.as_deref(), Some("turn:fail"));
+
+        let FailOutcome::AlreadyFailed(again) = queue.fail(FailJob {
+            id: job.id,
+            lease_owner: String::new(),
+            attempt_count: 0,
+            reason: "x".repeat(MAX_FAILURE_REASON_LEN + 1),
+            now: 40,
+        })?
+        else {
+            panic!("expected idempotent fail");
+        };
+        assert_eq!(again.updated_at, 30);
+        assert_eq!(again.last_error.as_deref(), Some("fatal"));
+
+        let failed_complete = queue
+            .complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: 0,
+                now: 50,
+            })
+            .unwrap_err();
+        assert_invalid_transition(failed_complete, "complete", "failed");
+
+        let EnqueueOutcome::Enqueued(replacement) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), 60))?
+        else {
+            panic!("terminal dedupe key should be reusable");
+        };
+        assert_ne!(replacement.id, job.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
+        fn lease_second_attempt(queue: &JobQueue<'_>, dedupe_key: &str) -> Result<JobRecord> {
+            let EnqueueOutcome::Enqueued(job) =
+                queue.enqueue(enqueue("claim_extraction", Some(dedupe_key), 10))?
+            else {
+                panic!("expected enqueue");
+            };
+            let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 20,
+            })?
+            else {
+                panic!("expected first attempt");
+            };
+            assert_eq!(first_attempt.id, job.id);
+
+            let RetryOutcome::Retried(_) = queue.retry(RetryJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: first_attempt.attempt_count,
+                backoff_until: 30,
+                last_error: Some("retryable".to_owned()),
+                now: 25,
+            })?;
+
+            let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 30,
+            })?
+            else {
+                panic!("expected second attempt");
+            };
+            assert_eq!(second_attempt.id, job.id);
+            assert_eq!(
+                second_attempt.attempt_count,
+                first_attempt.attempt_count + 1
+            );
+            Ok(second_attempt)
+        }
+
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let complete_attempt = lease_second_attempt(&queue, "stale-complete")?;
+        let stale_complete = queue
+            .complete(CompleteJob {
+                id: complete_attempt.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: complete_attempt.attempt_count - 1,
+                now: 40,
+            })
+            .unwrap_err();
+        assert_invalid_transition(stale_complete, "complete", "stale_attempt");
+
+        let fail_attempt = lease_second_attempt(&queue, "stale-fail")?;
+        let stale_fail = queue
+            .fail(FailJob {
+                id: fail_attempt.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: fail_attempt.attempt_count - 1,
+                reason: "fatal".to_owned(),
+                now: 40,
+            })
+            .unwrap_err();
+        assert_invalid_transition(stale_fail, "fail", "stale_attempt");
+
+        let retry_attempt = lease_second_attempt(&queue, "stale-retry")?;
+        let stale_retry = queue
+            .retry(RetryJob {
+                id: retry_attempt.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: retry_attempt.attempt_count - 1,
+                backoff_until: 60,
+                last_error: Some("retryable".to_owned()),
+                now: 40,
+            })
+            .unwrap_err();
+        assert_invalid_transition(stale_retry, "retry", "stale_attempt");
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:empty-fail"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(mut claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+
+        let err = queue
+            .fail(FailJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: String::new(),
+                now: 30,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        ));
+
+        claimed.state = JobState::Failed;
+        claimed.lease_owner = None;
+        claimed.last_error = Some(String::new());
+        let encoded = encode_record(&claimed)?;
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .put(&mut wtxn, claimed.id.as_bytes(), &encoded)?;
+            wtxn.commit()?;
+        }
+
+        let err = queue.get(claimed.id).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claimed job");
+        };
+        assert_eq!(claimed.id, job.id);
+        assert_eq!(claimed.attempt_count, 1);
+
+        let wrong_owner_retry = queue
+            .retry(RetryJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                attempt_count: claimed.attempt_count,
+                backoff_until: 100,
+                last_error: Some("rate limited".to_owned()),
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_retry, "retry", "leased_by_other");
+
+        let RetryOutcome::Retried(retried) = queue.retry(RetryJob {
+            id: job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: 100,
+            last_error: Some("rate limited".to_owned()),
+            now: 30,
+        })?;
+        assert_eq!(retried.id, job.id);
+        assert_eq!(retried.state, JobState::Queued);
+        assert_eq!(retried.lease_owner, None);
+        assert_eq!(retried.attempt_count, 1);
+        assert_eq!(retried.backoff_until, Some(100));
+        assert_eq!(retried.last_error.as_deref(), Some("rate limited"));
+        assert_eq!(retried.payload, b"payload-10");
+        assert_eq!(retried.run_id.as_deref(), Some("run-10"));
+        assert_eq!(retried.dedupe_key.as_deref(), Some("turn:retry"));
+
+        let EnqueueOutcome::Existing(duplicate_pending) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 40))?
+        else {
+            panic!("pending dedupe key should coalesce");
+        };
+        assert_eq!(duplicate_pending.id, job.id);
+
+        assert_eq!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-b".to_owned(),
+                now: 99,
+            })?,
+            ClaimOutcome::Empty
+        );
+
+        let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+            lease_owner: "worker-b".to_owned(),
+            now: 100,
+        })?
+        else {
+            panic!("expected claim after backoff");
+        };
+        assert_eq!(second_attempt.id, job.id);
+        assert_eq!(second_attempt.attempt_count, 2);
+        assert_eq!(second_attempt.backoff_until, None);
+        assert_eq!(second_attempt.last_error.as_deref(), Some("rate limited"));
+        assert_eq!(second_attempt.payload, b"payload-10");
+        assert_eq!(second_attempt.run_id.as_deref(), Some("run-10"));
+        assert_eq!(second_attempt.dedupe_key.as_deref(), Some("turn:retry"));
 
         Ok(())
     }
