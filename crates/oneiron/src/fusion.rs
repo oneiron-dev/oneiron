@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::Cursor;
 
@@ -58,7 +60,10 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
         }
     }
 
-    let mut inputs: Vec<RetrievalBlendInput> = candidates
+    let mut candidates: Vec<EntityId> = candidates.into_iter().collect();
+    candidates.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+    candidates
         .into_iter()
         .map(|id| RetrievalBlendInput {
             id,
@@ -67,12 +72,11 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
             confidence: 0.0,
             gravity: 0.0,
         })
-        .collect();
-    inputs.sort_unstable_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
-    inputs
+        .collect()
 }
 
 pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEntity> {
+    let inputs = canonical_blend_inputs(inputs);
     let mut recency: Vec<f32> = inputs.iter().map(|input| input.recency).collect();
     let mut salience: Vec<f32> = inputs.iter().map(|input| input.salience).collect();
     let mut confidence: Vec<f32> = inputs.iter().map(|input| input.confidence).collect();
@@ -104,6 +108,28 @@ pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEnti
         .collect();
     sort_scored_entities_desc(&mut scores);
     scores
+}
+
+fn canonical_blend_inputs(inputs: &[RetrievalBlendInput]) -> Cow<'_, [RetrievalBlendInput]> {
+    if inputs
+        .windows(2)
+        .all(|pair| compare_blend_inputs(&pair[0], &pair[1]) != Ordering::Greater)
+    {
+        return Cow::Borrowed(inputs);
+    }
+
+    let mut ordered = inputs.to_vec();
+    ordered.sort_unstable_by(compare_blend_inputs);
+    Cow::Owned(ordered)
+}
+
+fn compare_blend_inputs(a: &RetrievalBlendInput, b: &RetrievalBlendInput) -> Ordering {
+    a.id.as_bytes()
+        .cmp(b.id.as_bytes())
+        .then_with(|| a.recency.total_cmp(&b.recency))
+        .then_with(|| a.salience.total_cmp(&b.salience))
+        .then_with(|| a.confidence.total_cmp(&b.confidence))
+        .then_with(|| a.gravity.total_cmp(&b.gravity))
 }
 
 fn z_normalize(values: &mut [f32]) {
@@ -187,6 +213,69 @@ mod tests {
         }
     }
 
+    fn blend_input(
+        id: [u8; 16],
+        recency: f32,
+        salience: f32,
+        confidence: f32,
+        gravity: f32,
+    ) -> RetrievalBlendInput {
+        RetrievalBlendInput {
+            id: EntityId::from_bytes_unchecked(id),
+            recency,
+            salience,
+            confidence,
+            gravity,
+        }
+    }
+
+    fn score_fingerprint(scores: &[ScoredEntity]) -> Vec<([u8; 16], u32)> {
+        scores
+            .iter()
+            .map(|scored| (*scored.id.as_bytes(), scored.score.to_bits()))
+            .collect()
+    }
+
+    fn determinism_harness_fingerprint(ranked_lists: &[Vec<ScoredEntity>]) -> Vec<([u8; 16], u32)> {
+        let mut inputs = retrieval_candidates_from_ranked_lists(ranked_lists);
+        for input in &mut inputs {
+            match input.id.as_bytes()[0] {
+                1 => {
+                    input.recency = 0.03;
+                    input.salience = 0.91;
+                    input.confidence = 0.27;
+                    input.gravity = 1.0;
+                }
+                2 => {
+                    input.recency = 0.89;
+                    input.salience = 0.07;
+                    input.confidence = 0.63;
+                    input.gravity = 0.0;
+                }
+                3 => {
+                    input.recency = 0.41;
+                    input.salience = 0.55;
+                    input.confidence = 0.13;
+                    input.gravity = 1.0;
+                }
+                4 => {
+                    input.recency = 0.67;
+                    input.salience = 0.33;
+                    input.confidence = 0.97;
+                    input.gravity = 0.0;
+                }
+                5 => {
+                    input.recency = 0.21;
+                    input.salience = 0.75;
+                    input.confidence = 0.49;
+                    input.gravity = 1.0;
+                }
+                _ => unreachable!("determinism harness only uses ids 1..=5"),
+            }
+        }
+        score_fingerprint(&linear_log_blend(&inputs))
+    }
+
     #[test]
     fn blend_weight_table_is_contract_pinned() {
         assert_eq!(
@@ -230,6 +319,78 @@ mod tests {
         let second = linear_log_blend(&inputs);
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn linear_log_blend_canonicalizes_unordered_inputs_before_reductions() {
+        let ordered = vec![
+            blend_input([1; 16], 0.03, 0.91, 0.27, 1.0),
+            blend_input([2; 16], 0.89, 0.07, 0.63, 0.0),
+            blend_input([3; 16], 0.41, 0.55, 0.13, 1.0),
+            blend_input([4; 16], 0.67, 0.33, 0.97, 0.0),
+            blend_input([5; 16], 0.21, 0.75, 0.49, 1.0),
+        ];
+        let interleaved = vec![ordered[3], ordered[0], ordered[4], ordered[1], ordered[2]];
+
+        assert_eq!(
+            score_fingerprint(&linear_log_blend(&ordered)),
+            score_fingerprint(&linear_log_blend(&interleaved))
+        );
+    }
+
+    #[test]
+    fn blend_fusion_bit_fingerprint_is_repeatable_across_threaded_runs() {
+        let ranked_lists = vec![
+            vec![
+                scored([3; 16], 0.73),
+                scored([1; 16], 0.73),
+                scored([5; 16], 0.11),
+            ],
+            vec![
+                scored([2; 16], 0.50),
+                scored([4; 16], 0.50),
+                scored([1; 16], 0.49),
+            ],
+            vec![scored([5; 16], 0.25), scored([3; 16], 0.25)],
+        ];
+        let reordered_ranked_lists = vec![
+            vec![scored([3; 16], 0.25), scored([5; 16], 0.25)],
+            vec![
+                scored([1; 16], 0.49),
+                scored([4; 16], 0.50),
+                scored([2; 16], 0.50),
+            ],
+            vec![
+                scored([5; 16], 0.11),
+                scored([1; 16], 0.73),
+                scored([3; 16], 0.73),
+            ],
+        ];
+        let expected = determinism_harness_fingerprint(&ranked_lists);
+
+        let worker_count = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1)
+            .min(8);
+        let handles: Vec<_> = (0..worker_count)
+            .map(|worker| {
+                let expected = expected.clone();
+                let ranked_lists = if worker % 2 == 0 {
+                    ranked_lists.clone()
+                } else {
+                    reordered_ranked_lists.clone()
+                };
+                std::thread::spawn(move || {
+                    for _ in 0..64 {
+                        assert_eq!(determinism_harness_fingerprint(&ranked_lists), expected);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("determinism worker panicked");
+        }
     }
 
     #[test]
