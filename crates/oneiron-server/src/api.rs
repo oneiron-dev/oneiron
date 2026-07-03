@@ -420,6 +420,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/turns/{turn_id}", get(get_core_turn))
         .route("/turns/annotate", get(read_turn_vad_annotation))
         .merge(core_mutation_routes);
+    // First-party code-run `self.*` dispatch is host-side only. External
+    // clients keep the plain REST verb/batch surface and bring their own runner.
     let companion_mutation_routes = Router::new()
         .route("/access-grants", post(create_companion_access_grant))
         .route("/register/records", post(create_companion_register_record))
