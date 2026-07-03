@@ -26,6 +26,7 @@ const ERR_LEASE_OWNER_TOO_LONG: &str = "lease owner exceeds 128 bytes";
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
 const ERR_RUN_ID_TOO_LONG: &str = "run id exceeds 128 bytes";
 const ERR_JOB_ID_LEN: &str = "job id must be 16 bytes";
+const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different job kind";
 #[cfg(test)]
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 
@@ -136,12 +137,31 @@ impl<'a> JobQueue<'a> {
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
         validate_optional_run_id(input.run_id.as_deref())?;
 
-        let mut wtxn = self.store.env.write_txn()?;
-        if let Some(dedupe_key) = input.dedupe_key.as_deref()
-            && let Some(existing_id) = self.store.job_dedupe.get(&wtxn, dedupe_key.as_bytes())?
+        let dedupe_index_key = input
+            .dedupe_key
+            .as_deref()
+            .map(|dedupe_key| dedupe_index_key(&input.kind, dedupe_key));
+        if let (Some(dedupe_key), Some(index_key)) =
+            (input.dedupe_key.as_deref(), dedupe_index_key.as_deref())
         {
-            let id = JobId::from_bytes(existing_id)?;
-            let record = self.read_record_in_txn(&wtxn, id)?;
+            let rtxn = self.store.env.read_txn()?;
+            if let Some(record) =
+                self.read_existing_dedupe_in_read_txn(&rtxn, index_key, &input.kind, dedupe_key)?
+            {
+                return Ok(EnqueueOutcome::Existing(record));
+            }
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        if let (Some(dedupe_key), Some(index_key)) =
+            (input.dedupe_key.as_deref(), dedupe_index_key.as_deref())
+            && let Some(record) = self.read_existing_dedupe_in_write_txn(
+                &mut wtxn,
+                index_key,
+                &input.kind,
+                dedupe_key,
+            )?
+        {
             wtxn.commit()?;
             return Ok(EnqueueOutcome::Existing(record));
         }
@@ -167,10 +187,10 @@ impl<'a> JobQueue<'a> {
         self.store
             .job_ready
             .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
-        if let Some(dedupe_key) = record.dedupe_key.as_deref() {
+        if let Some(index_key) = dedupe_index_key.as_deref() {
             self.store
                 .job_dedupe
-                .put(&mut wtxn, dedupe_key.as_bytes(), record.id.as_bytes())?;
+                .put(&mut wtxn, index_key, record.id.as_bytes())?;
         }
         wtxn.commit()?;
 
@@ -184,15 +204,17 @@ impl<'a> JobQueue<'a> {
 
         let mut wtxn = self.store.env.write_txn()?;
         let mut stale_ready_keys = Vec::new();
+        let mut stale_missing_record_ids = Vec::new();
         let mut claimed = None;
         for row in self.store.job_ready.iter(&wtxn)? {
             let (key, value) = row?;
             let id = JobId::from_bytes(value)?;
             let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
+                stale_missing_record_ids.push(id);
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let mut record = decode_record(raw_record)?;
+            let mut record = decode_record(raw_record, id)?;
             if record.state != JobState::Queued {
                 stale_ready_keys.push(key.to_vec());
                 continue;
@@ -204,15 +226,18 @@ impl<'a> JobQueue<'a> {
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("job attempt count"))?;
             record.updated_at = input.now;
-            claimed = Some((key.to_vec(), record));
+            claimed = Some((key.to_vec(), id, record));
             break;
         }
 
+        for id in stale_missing_record_ids {
+            self.delete_dedupe_entries_for_id(&mut wtxn, id)?;
+        }
         for key in stale_ready_keys {
             self.store.job_ready.delete(&mut wtxn, &key)?;
         }
 
-        let Some((ready_key, record)) = claimed else {
+        let Some((ready_key, id, record)) = claimed else {
             wtxn.commit()?;
             return Ok(ClaimOutcome::Empty);
         };
@@ -221,7 +246,7 @@ impl<'a> JobQueue<'a> {
         let encoded = encode_record(&record)?;
         self.store
             .job_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+            .put(&mut wtxn, id.as_bytes(), &encoded)?;
         wtxn.commit()?;
 
         Ok(ClaimOutcome::Claimed(record))
@@ -233,18 +258,60 @@ impl<'a> JobQueue<'a> {
         let Some(raw) = self.store.job_records.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        decode_record(raw).map(Some)
+        decode_record(raw, id).map(Some)
     }
 
-    fn read_record_in_txn(&self, txn: &heed::RwTxn<'_>, id: JobId) -> Result<JobRecord> {
-        let raw =
-            self.store
-                .job_records
-                .get(txn, id.as_bytes())?
-                .ok_or(Error::InvalidJobQueueRecord(
-                    "dedupe index points at a missing job",
-                ))?;
-        decode_record(raw)
+    fn read_existing_dedupe_in_read_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        index_key: &[u8],
+        kind: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<JobRecord>> {
+        let Some(existing_id) = self.store.job_dedupe.get(txn, index_key)? else {
+            return Ok(None);
+        };
+        let id = JobId::from_bytes(existing_id)?;
+        let Some(raw) = self.store.job_records.get(txn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let record = decode_record(raw, id)?;
+        validate_dedupe_record(&record, kind, dedupe_key)?;
+        Ok(Some(record))
+    }
+
+    fn read_existing_dedupe_in_write_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        index_key: &[u8],
+        kind: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<JobRecord>> {
+        let Some(existing_id) = self.store.job_dedupe.get(txn, index_key)? else {
+            return Ok(None);
+        };
+        let id = JobId::from_bytes(existing_id)?;
+        let Some(raw) = self.store.job_records.get(txn, id.as_bytes())? else {
+            self.store.job_dedupe.delete(txn, index_key)?;
+            return Ok(None);
+        };
+        let record = decode_record(raw, id)?;
+        validate_dedupe_record(&record, kind, dedupe_key)?;
+        Ok(Some(record))
+    }
+
+    fn delete_dedupe_entries_for_id(&self, txn: &mut heed::RwTxn<'_>, id: JobId) -> Result<()> {
+        let mut keys = Vec::new();
+        for row in self.store.job_dedupe.iter(txn)? {
+            let (key, value) = row?;
+            if value == id.as_bytes() {
+                keys.push(key.to_vec());
+            }
+        }
+        for key in keys {
+            self.store.job_dedupe.delete(txn, &key)?;
+        }
+        Ok(())
     }
 }
 
@@ -292,6 +359,26 @@ fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_dedupe_record(record: &JobRecord, kind: &str, dedupe_key: &str) -> Result<()> {
+    if record.kind != kind {
+        return Err(Error::InvalidJobQueueRecord(ERR_DEDUPE_KIND_MISMATCH));
+    }
+    if record.dedupe_key.as_deref() != Some(dedupe_key) {
+        return Err(Error::InvalidJobQueueRecord(
+            "dedupe index points at a job with a different dedupe key",
+        ));
+    }
+    Ok(())
+}
+
+fn dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(2 + kind.len() + dedupe_key.len());
+    key.extend_from_slice(&(kind.len() as u16).to_be_bytes());
+    key.extend_from_slice(kind.as_bytes());
+    key.extend_from_slice(dedupe_key.as_bytes());
+    key
+}
+
 fn ready_key(created_at: u64, id: JobId) -> [u8; READY_KEY_LEN] {
     let mut key = [0_u8; READY_KEY_LEN];
     key[..8].copy_from_slice(&created_at.to_be_bytes());
@@ -320,7 +407,7 @@ fn encode_record(record: &JobRecord) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-fn decode_record(raw: &[u8]) -> Result<JobRecord> {
+fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
     let Some((&version, body)) = raw.split_first() else {
         return Err(Error::InvalidJobQueueRecord("missing job record version"));
     };
@@ -331,11 +418,27 @@ fn decode_record(raw: &[u8]) -> Result<JobRecord> {
     }
     let record: JobRecord = rmp_serde::from_slice(body)
         .map_err(|_| Error::InvalidJobQueueRecord("failed to decode job record"))?;
+    if record.id != expected_id {
+        return Err(Error::InvalidJobQueueRecord("job_records key/id mismatch"));
+    }
     validate_kind(&record.kind)?;
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
     validate_optional_run_id(record.run_id.as_deref())?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
+    }
+    match record.state {
+        JobState::Queued if record.lease_owner.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "queued job must not have a lease owner",
+            ));
+        }
+        JobState::Leased if record.lease_owner.is_none() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "leased job must have a lease owner",
+            ));
+        }
+        _ => {}
     }
     Ok(record)
 }
@@ -408,6 +511,34 @@ mod tests {
     }
 
     #[test]
+    fn job_queue_dedupe_key_is_scoped_by_kind() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(first) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        else {
+            panic!("expected first enqueue");
+        };
+        let EnqueueOutcome::Enqueued(second) =
+            queue.enqueue(enqueue("signal_extraction", Some("same"), 20))?
+        else {
+            panic!("expected separate kind-scoped enqueue");
+        };
+        let EnqueueOutcome::Existing(third) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 30))?
+        else {
+            panic!("expected existing enqueue for matching kind");
+        };
+
+        assert_ne!(second.id, first.id);
+        assert_eq!(third.id, first.id);
+        assert_eq!(third.kind, "claim_extraction");
+
+        Ok(())
+    }
+
+    #[test]
     fn job_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
         let (_dir, vault) = open_queue();
         let queue = JobQueue::new(&vault);
@@ -459,6 +590,116 @@ mod tests {
             })?,
             ClaimOutcome::Empty
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:missing"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .delete(&mut wtxn, job.id.as_bytes())?;
+            wtxn.commit()?;
+        }
+
+        assert_eq!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 20,
+            })?,
+            ClaimOutcome::Empty
+        );
+
+        let index_key = dedupe_index_key("claim_extraction", "turn:missing");
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(vault.store.job_ready.iter(&rtxn)?.next().is_none());
+            assert!(vault.store.job_dedupe.get(&rtxn, &index_key)?.is_none());
+        }
+
+        let EnqueueOutcome::Enqueued(replacement) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:missing"), 30))?
+        else {
+            panic!("expected stale dedupe key to be reusable");
+        };
+        assert_ne!(replacement.id, job.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_decode_fails_closed_on_record_key_id_mismatch() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let mut corrupt = job.clone();
+        corrupt.id = JobId::now();
+        let encoded = encode_record(&corrupt)?;
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .put(&mut wtxn, job.id.as_bytes(), &encoded)?;
+            wtxn.commit()?;
+        }
+
+        let err = queue
+            .claim(ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 20,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueRecord("job_records key/id mismatch")
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let mut corrupt = job.clone();
+        corrupt.state = JobState::Leased;
+        corrupt.lease_owner = None;
+        let encoded = encode_record(&corrupt)?;
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .put(&mut wtxn, job.id.as_bytes(), &encoded)?;
+            wtxn.commit()?;
+        }
+
+        let err = queue.get(job.id).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueRecord("leased job must have a lease owner")
+        ));
 
         Ok(())
     }
