@@ -641,7 +641,7 @@ impl PolicyManifestDiagnostics {
             || self.unknown_axis_seen
     }
 
-    fn loaded_manifest_forces_fail_closed(self) -> bool {
+    pub(crate) fn loaded_manifest_forces_fail_closed(self) -> bool {
         self.malformed_manifest_seen
             || self.unsupported_schema_seen
             || self.engine_version_floor_seen
@@ -893,6 +893,9 @@ pub(crate) fn scoped_read_claim_allowed(
     {
         saw_core_read_grant = true;
         if grant.receipt_required {
+            continue;
+        }
+        if grant.budget.is_some() {
             continue;
         }
         if !scoped_read_actor_matches(grant, actor_key) {
@@ -2211,9 +2214,10 @@ mod tests {
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-        EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, ScoredEntity,
-        TimeRange, WriteActor, WriteProvenance,
+        ClaimCandidate, ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE,
+        ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
+        PackItemAccounting, PackStats, PackTokenStats, ScoredEntity, TimeRange, WriteActor,
+        WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -2630,6 +2634,28 @@ mod tests {
         )
     }
 
+    fn budgeted_core_read_scoped_grant_entry(actor_ref: &str, scope: Value) -> (Value, Value) {
+        (
+            Value::from(POLICY_SCOPED_GRANTS_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(GRANT_EFFECTOR_KEY),
+                    Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+                ),
+                (Value::from(GRANT_SCOPE_KEY), scope),
+                (
+                    Value::from(GRANT_RECEIPT_REQUIRED_KEY),
+                    Value::Boolean(false),
+                ),
+                (
+                    Value::from(GRANT_BUDGET_KEY),
+                    Value::Map(vec![(Value::from("limit"), Value::from(1_u64))]),
+                ),
+            ])]),
+        )
+    }
+
     fn core_read_world_grant_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
         encode_policy_manifest(vec![core_read_scoped_grant_entry(
             actor_ref,
@@ -2680,6 +2706,17 @@ mod tests {
             .put(id, entity_type, test_time(1), 1, &payload)
             .text(id, &[("body", text)])
             .commit()
+    }
+
+    fn put_vector_entity(vault: &crate::Vault, id: &EntityId, vector: &[f32]) -> Result<()> {
+        vault.put_entity(
+            id,
+            crate::types::ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"vector entity",
+        )?;
+        vault.put_vector(id, vector)
     }
 
     fn put_dangling_short_id(
@@ -2880,6 +2917,38 @@ mod tests {
     }
 
     #[test]
+    fn scoped_read_budgeted_core_grants_fail_closed_without_budget_enforcer() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let world = test_id(0x3A);
+        let data = encode_policy_manifest(vec![budgeted_core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        )]);
+        put_policy_manifest_bytes(&vault, 0x3B, &data)?;
+
+        let id = test_id(0x3C);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.world = Some(world);
+        put_claim_body(&vault, &id, &body)?;
+
+        let policy = resolve(&vault)?;
+        assert_eq!(policy.scoped_grants().len(), 1);
+        assert!(policy.scoped_grants()[0].budget.is_some());
+        let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
+        assert!(
+            !scoped_read_claim_allowed(&policy, &actor_key, &body, &[]),
+            "ScopedRead has no read-budget counter or receipt state, so budgeted grants must fail closed"
+        );
+
+        let scoped_read = vault.scoped_read(actor_key);
+        assert!(scoped_read.get(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         put_policy_manifest_bytes(&vault, 0x62, &encode_policy_manifest(vec![]))?;
@@ -2945,6 +3014,47 @@ mod tests {
 
         let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
         assert_eq!(scoped_read.search_candidate_limit(1, true, false)?, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
+        let _tmp = tempfile::tempdir().expect("temp dir");
+        let mut config = crate::types::VaultConfig::device();
+        config.dimensions = 4;
+        config.embedding_model = Some("scoped-read-test-model".to_owned());
+        let vault = crate::Vault::open(_tmp.path(), config)?;
+        let world = test_id(0x39);
+        put_policy_manifest_bytes(
+            &vault,
+            0x3D,
+            &core_read_world_grant_manifest("reader", world),
+        )?;
+        for seed in [0x3E, 0x3F] {
+            put_text_entity(
+                &vault,
+                &test_id(seed),
+                crate::types::ENTITY_TYPE_PERSON,
+                "hybrid-union",
+                serde_json::json!({"name": format!("text-{seed}")}),
+            )?;
+        }
+        for (seed, vector) in [
+            (0x40, [1.0_f32, 0.0, 0.0, 0.0]),
+            (0x41, [0.0_f32, 1.0, 0.0, 0.0]),
+            (0x42, [0.0_f32, 0.0, 1.0, 0.0]),
+        ] {
+            put_vector_entity(&vault, &test_id(seed), &vector)?;
+        }
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        assert_eq!(scoped_read.search_candidate_limit(1, true, false)?, 2);
+        assert_eq!(scoped_read.search_candidate_limit(1, false, true)?, 3);
+        assert_eq!(
+            scoped_read.search_candidate_limit(1, true, true)?,
+            5,
+            "hybrid scoped search must fetch the possible text/vector union before actor filtering"
+        );
         Ok(())
     }
 
@@ -3231,6 +3341,95 @@ mod tests {
         assert!(
             pack.neighbors.is_empty(),
             "neighbors reached only through a denied primary seed must not remain visible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_edges()
+    -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let allowed_world = test_id(0x73);
+        let denied_world = test_id(0x74);
+        put_policy_manifest_bytes(
+            &vault,
+            0x75,
+            &core_read_world_grant_manifest("reader", allowed_world),
+        )?;
+
+        let kept_seed = test_id(0x76);
+        let denied_seed = test_id(0x77);
+        let readable_neighbor = test_id(0x78);
+        put_text_entity(
+            &vault,
+            &kept_seed,
+            crate::types::ENTITY_TYPE_TURN,
+            "kept seed",
+            serde_json::json!({"text": "kept seed"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &readable_neighbor,
+            crate::types::ENTITY_TYPE_PERSON,
+            "readable neighbor",
+            serde_json::json!({"name": "readable neighbor"}),
+        )?;
+        let mut denied = source_trust_claim(ClaimSource::UserStated);
+        denied.world = Some(denied_world);
+        put_claim_body(&vault, &denied_seed, &denied)?;
+        vault.put_edge(&kept_seed, EdgeKind::Mentions, &readable_neighbor, 0.9)?;
+
+        let entity = |id: EntityId, entity_type: u8, score: f32| ContextEntity {
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            entity_type,
+            score,
+            fields: None,
+            edges: None,
+            vector: None,
+        };
+        let mut pack = ContextPack {
+            results: vec![
+                entity(kept_seed, crate::types::ENTITY_TYPE_TURN, 1.0),
+                entity(denied_seed, crate::types::ENTITY_TYPE_CLAIM, 0.9),
+            ],
+            neighbors: vec![entity(
+                readable_neighbor,
+                crate::types::ENTITY_TYPE_PERSON,
+                0.0,
+            )],
+            stats: PackStats {
+                candidates_considered: 2,
+                signals_used: Vec::new(),
+                query_time_us: 0,
+                entities_hydrated: 2,
+                neighbors_hydrated: 1,
+                cosine_ghosts_dampened: 0,
+                claims_suppressed: 0,
+                tokens: PackTokenStats::default(),
+                items_truncated: PackItemAccounting::item_budget(),
+                items_dropped: PackItemAccounting::token_budget(),
+            },
+            empty: None,
+        };
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        scoped_read.filter_context_pack(&mut pack)?;
+        assert_eq!(
+            pack.results
+                .iter()
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            vec![kept_seed]
+        );
+        assert_eq!(
+            pack.neighbors
+                .iter()
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            vec![readable_neighbor],
+            "omitted serialized edges must not cause readable neighbors from kept seeds to be pruned"
         );
         Ok(())
     }
