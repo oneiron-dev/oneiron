@@ -53,10 +53,11 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 /// Named-DB byte dump: db name → ordered `(key, value)` rows.
 type DbDump = BTreeMap<&'static str, Vec<(Vec<u8>, Vec<u8>)>>;
 
-/// Full byte dump of every named LMDB database (DB manifest,
-/// contracts.ts `dbManifest`) — the strongest possible "nothing changed"
-/// comparison form. DUP_SORT duplicates (text_postings) appear as repeated
-/// keys in iteration order.
+/// Full byte dump of every named LMDB database in the pinned manifest
+/// (`crate::store::DB_MANIFEST`, derived from ARCH-0019 / oneiron-docs
+/// contract data) — the strongest possible "nothing changed" comparison
+/// form. DUP_SORT duplicates (text_postings) appear as repeated keys in
+/// iteration order.
 fn dump_all_dbs(vault: &Vault) -> DbDump {
     let store = &vault.store;
     let rtxn = store.env.read_txn().unwrap();
@@ -97,6 +98,9 @@ fn dump_all_dbs(vault: &Vault) -> DbDump {
         short_ids,
         short_ids_reverse,
         sync_queue,
+        job_records,
+        job_ready,
+        job_dedupe,
     );
 
     let mut sync_state_rows = Vec::new();
