@@ -1572,11 +1572,7 @@ fn local_write_actor_entity_ref() -> EntityId {
 }
 
 const fn edge_actor_class_str(actor_class: EdgeActorClass) -> &'static str {
-    match actor_class {
-        EdgeActorClass::Human => "human",
-        EdgeActorClass::Agent => "agent",
-        EdgeActorClass::System => "system",
-    }
+    actor_class.gate_actor_class()
 }
 
 fn check_source_trust(

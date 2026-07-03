@@ -2353,6 +2353,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "blake3",
  "clap",
  "ed25519-dalek",
  "futures-util",
