@@ -207,7 +207,7 @@ struct PprCacheReadContext<'a, 'txn> {
 /// `s_out(u, τ)` the sum of the weights of `u`'s outgoing edges of kind `τ`,
 /// and `λ_τ` the per-kind budget from [`lambda_for_kind`]. `s_out` is summed
 /// on the fly inside the walk's existing prefix scans — there is NO persisted
-/// per-type strength database (the pinned 25-DB manifest contains none).
+/// per-type strength database (the pinned DB manifest contains none).
 ///
 /// Engine-defined extension (documented here pending an ARCH-0039 pin): the
 /// walk also expands over `edges_in`. Reverse hops use the symmetric
@@ -514,7 +514,7 @@ fn specificity_seed_weights(
 /// `mentions` edges, counted by an `edges_in` prefix scan filtered to
 /// kind = [`EdgeKind::Mentions`] at query time in the same read transaction
 /// (pinned decision — the count is a literal row count over the index; no
-/// persisted counter exists in the 25-DB manifest). Corrupt rows are a typed
+/// persisted counter exists in the DB manifest). Corrupt rows are a typed
 /// error, never silently skipped.
 fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Result<u64> {
     let mut count = 0_u64;

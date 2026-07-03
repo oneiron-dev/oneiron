@@ -188,6 +188,7 @@ pub enum ErrorKind {
     StructuralKindBandViolation,
     StructuralKindCollision,
     InvalidStructuralKindRegistration,
+    InvalidJobQueueRecord,
     EntityTypeImmutable,
     InvalidTimeRange,
     EdgeNotFound,
@@ -519,6 +520,9 @@ pub enum Error {
     /// Pack StructuralKind registration failed boundary vetting.
     #[error("invalid structural kind registration: {0}")]
     InvalidStructuralKindRegistration(&'static str),
+    /// A JobQueue input or persisted record failed structural validation.
+    #[error("invalid job queue record: {0}")]
+    InvalidJobQueueRecord(&'static str),
     /// The type byte of an existing entity record is immutable on re-put
     /// (M2 pinned decision D2). The short-id prefix is derived from the type
     /// byte at first insert, so re-typing would leave the record addressed
@@ -897,6 +901,7 @@ impl Error {
             Self::InvalidStructuralKindRegistration(_) => {
                 ErrorKind::InvalidStructuralKindRegistration
             }
+            Self::InvalidJobQueueRecord(_) => ErrorKind::InvalidJobQueueRecord,
             Self::EntityTypeImmutable { .. } => ErrorKind::EntityTypeImmutable,
             Self::InvalidTimeRange { .. } => ErrorKind::InvalidTimeRange,
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,

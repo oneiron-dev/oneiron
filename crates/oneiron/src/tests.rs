@@ -3454,8 +3454,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 6,
-        "ONE-1204 pins the current storage ABI at 6",
+        STORAGE_ABI_VERSION, 7,
+        "ONE-1206 pins the current storage ABI at 7",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3489,8 +3489,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 6,
-        "ONE-1204 pins the current storage ABI at 6",
+        STORAGE_ABI_VERSION, 7,
+        "ONE-1206 pins the current storage ABI at 7",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3514,6 +3514,41 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
             }
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(5), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1206 fail-closed gate over adding the generic job queue DBs: v6 code
+/// does not know `job_records`, `job_ready`, or `job_dedupe`, so v6 vaults
+/// must not open under ABI v7 without rebuild.
+#[test]
+fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 7,
+        "ONE-1206 pins the current storage ABI at 7",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(6))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1206 ABI v6 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(6),
+                current: STORAGE_ABI_VERSION,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(6), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
     Ok(())
 }
@@ -5009,17 +5044,23 @@ fn embedding_model_first_write_is_atomic() -> Result<()> {
 fn creates_contract_manifest_databases() -> Result<()> {
     // Also pins ONE-1093 feature-independence (formerly a separate test,
     // consolidated by ONE-1145): this test compiles and runs under BOTH the
-    // default and `--features sync` configs and asserts the same 25-name
+    // default and `--features sync` configs and asserts the same 28-name
     // materialized set, including the sync_state/sync_queue rows below.
     let (_dir, vault) = open_test_vault();
 
     let contract_names: Vec<&str> = DB_MANIFEST.iter().map(|entry| entry.name).collect();
-    assert_eq!(contract_names.len(), 25);
+    assert_eq!(contract_names.len(), 28);
     assert_eq!(MAX_DBS, 32);
     assert_eq!(DB_MANIFEST[23].n, 24);
     assert_eq!(DB_MANIFEST[23].name, "sync_state");
     assert_eq!(DB_MANIFEST[24].n, 25);
     assert_eq!(DB_MANIFEST[24].name, "sync_queue");
+    assert_eq!(DB_MANIFEST[25].n, 26);
+    assert_eq!(DB_MANIFEST[25].name, "job_records");
+    assert_eq!(DB_MANIFEST[26].n, 27);
+    assert_eq!(DB_MANIFEST[26].name, "job_ready");
+    assert_eq!(DB_MANIFEST[27].n, 28);
+    assert_eq!(DB_MANIFEST[27].name, "job_dedupe");
 
     let expected_materialized: Vec<String> = expected_manifest_names()
         .iter()
@@ -5077,13 +5118,19 @@ fn open_rejects_rogue_manifest_database_name() -> Result<()> {
     Ok(())
 }
 
-/// Consolidated from three name-only clones (ONE-1145): one core DB plus the
-/// two sync-era DBs (manifest rows 24/25). Removing ANY required manifest
-/// name must fail closed with the exact missing-name payload — including the
-/// sync DBs, which are part of the 25-name set regardless of features.
+/// Consolidated from name-only clones (ONE-1145/ONE-1206): one core DB plus
+/// sync-era and job-queue DBs. Removing ANY required manifest name must fail
+/// closed with the exact missing-name payload.
 #[test]
 fn open_rejects_missing_required_manifest_database_name() -> Result<()> {
-    for missing_name in ["hnsw_meta", "sync_state", "sync_queue"] {
+    for missing_name in [
+        "hnsw_meta",
+        "sync_state",
+        "sync_queue",
+        "job_records",
+        "job_ready",
+        "job_dedupe",
+    ] {
         let temp_dir = tempfile::tempdir()?;
         create_raw_vault_missing_manifest_name(temp_dir.path(), missing_name)?;
 
@@ -5184,8 +5231,8 @@ fn doctor_reflects_persisted_open_compatibility_values() -> Result<()> {
     );
     assert_eq!(report.text_index_schema_version, Some(2));
     assert!(report.unreadable_fields.is_empty());
-    assert_eq!(report.db_manifest.expected_count, 25);
-    assert_eq!(report.db_manifest.present_count, 25);
+    assert_eq!(report.db_manifest.expected_count, 28);
+    assert_eq!(report.db_manifest.present_count, 28);
     assert!(report.db_manifest.missing_names.is_empty());
     assert!(report.db_manifest.unexpected_names.is_empty());
     assert!(
@@ -5246,7 +5293,7 @@ fn doctor_does_not_write_data_file() -> Result<()> {
     let before_digest = Sha256::digest(std::fs::read(&data_file)?);
 
     let report = vault.doctor()?;
-    assert_eq!(report.db_manifest.present_count, 25);
+    assert_eq!(report.db_manifest.present_count, 28);
 
     let after = std::fs::metadata(&data_file)?;
     let after_digest = Sha256::digest(std::fs::read(&data_file)?);
@@ -5590,7 +5637,7 @@ fn open_gate_matrix_fails_closed() -> Result<()> {
             open_config: cfg_default,
             expected_kind: ErrorKind::StorageSchemaVersionChanged,
         },
-        // Gate 3: the 25-name DB manifest set (M1-1).
+        // Gate 3: the 28-name DB manifest set (M1-1).
         GateCase {
             name: "missing_required_manifest_db",
             prepare: prep_missing_manifest_db,
@@ -10739,7 +10786,7 @@ fn assert_no_entity_state(vault: &Vault, id: &EntityId) -> Result<()> {
         "entities row leaked for rejected write"
     );
     // Entity-keyed direct probe (ONE-1152): `short_ids_reverse` is the
-    // entity-keyed table per the pinned 25-DB manifest (key entity_id ->
+    // entity-keyed table per the pinned DB manifest (key entity_id ->
     // short_id ‖ content_hash). The pre-fix probe read the FORWARD
     // `short_ids` table by entity bytes — a guaranteed miss against its
     // `(short_id bytes ‖ content_hash u8)` key layout, i.e. a vacuous
@@ -10791,7 +10838,7 @@ fn slice_contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 /// ONE-1152 (a) oracle self-test: a leaked FORWARD short-id row — keyed
 /// `(short_id bytes ‖ content_hash u8)` with the entity id in the VALUE
-/// (pinned 25-DB manifest direction, ARCH-0019) — must trip
+/// (pinned DB manifest direction, ARCH-0019) — must trip
 /// [`assert_no_entity_state`]. Pre-fix, the oracle probed `short_ids` BY
 /// ENTITY KEY (a guaranteed miss against the forward layout) and never
 /// scanned forward values, so this exact plant escaped silently.
@@ -10820,7 +10867,7 @@ fn assert_no_entity_state_catches_leaked_forward_short_id_row() {
 /// whichever row links `id` to an ASCII `<prefix><counter>` short id.
 ///
 /// WHY (cross-branch schema compat, ONE-1102): the parallel ONE-1102 branch
-/// swaps the short-id table direction per the pinned 25-DB manifest
+/// swaps the short-id table direction per the pinned DB manifest
 /// (`short_ids`: key short_id bytes + content_hash u8 -> entity_id;
 /// `short_ids_reverse`: key entity_id -> short_id + hash), while this branch
 /// still carries the pre-1102 orientation (`short_ids`: entity_id ->
