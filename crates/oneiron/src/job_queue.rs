@@ -1,11 +1,12 @@
 //! Generic LMDB-backed background job queue.
 //!
 //! This is intentionally mechanical storage state only: enqueue, claim,
-//! complete, fail, and retry transition LMDB rows atomically, while execution
-//! policy, timeout cleanup, and metrics stay outside this module.
+//! complete, fail, retry, and lease cleanup transition LMDB rows atomically,
+//! while execution policy stays outside this module.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use uuid::Uuid;
 
 use crate::Vault;
@@ -34,6 +35,13 @@ const ERR_RUN_ID_TOO_LONG: &str = "run id exceeds 128 bytes";
 const ERR_JOB_ID_LEN: &str = "job id must be 16 bytes";
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different job kind";
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
+const ERR_LEASE_TIMEOUT_ZERO: &str = "lease timeout must be > 0";
+const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
+const JOB_QUEUE_RETRY_REASON_COUNT: usize = 2;
+static JOB_QUEUE_CLEANUP_RUNS: AtomicU64 = AtomicU64::new(0);
+static JOB_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
+static JOB_QUEUE_CLEANUP_RETRY_REASON_COUNTERS: [AtomicU64; JOB_QUEUE_RETRY_REASON_COUNT] =
+    [AtomicU64::new(0), AtomicU64::new(0)];
 
 /// Stable identifier for a queued job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -194,6 +202,116 @@ pub struct RetryJob {
 #[non_exhaustive]
 pub enum RetryOutcome {
     Retried(JobRecord),
+}
+
+/// Input for returning stale leased jobs to the ready index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CleanupJobLeases {
+    /// Current wall-clock seconds chosen by the caller.
+    pub now: u64,
+    /// A leased job expires when `now - updated_at >= lease_timeout_secs`.
+    pub lease_timeout_secs: u64,
+}
+
+/// Privacy-stable retry reason classes reported by job-queue cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum JobQueueRetryReason {
+    LeaseTimeout,
+    RetryBackoff,
+}
+
+impl JobQueueRetryReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeaseTimeout => "lease_timeout",
+            Self::RetryBackoff => "retry_backoff",
+        }
+    }
+
+    const fn metric_index(self) -> usize {
+        match self {
+            Self::LeaseTimeout => 0,
+            Self::RetryBackoff => 1,
+        }
+    }
+
+    const fn metric_values() -> [Self; JOB_QUEUE_RETRY_REASON_COUNT] {
+        [Self::LeaseTimeout, Self::RetryBackoff]
+    }
+}
+
+/// Count for one privacy-stable retry reason class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobQueueRetryReasonCount {
+    pub reason: JobQueueRetryReason,
+    pub count: u64,
+}
+
+impl JobQueueRetryReasonCount {
+    const fn zero(reason: JobQueueRetryReason) -> Self {
+        Self { reason, count: 0 }
+    }
+}
+
+/// Queue cleanup report shaped for runner and run-tree surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobQueueCleanupReport {
+    pub pending: u64,
+    pub running: u64,
+    pub failed: u64,
+    pub done: u64,
+    pub stale_requeued: u64,
+    pub retry_reasons: [JobQueueRetryReasonCount; JOB_QUEUE_RETRY_REASON_COUNT],
+}
+
+impl Default for JobQueueCleanupReport {
+    fn default() -> Self {
+        Self {
+            pending: 0,
+            running: 0,
+            failed: 0,
+            done: 0,
+            stale_requeued: 0,
+            retry_reasons: JobQueueRetryReason::metric_values().map(JobQueueRetryReasonCount::zero),
+        }
+    }
+}
+
+impl JobQueueCleanupReport {
+    #[must_use]
+    pub fn retry_reason_count(&self, reason: JobQueueRetryReason) -> u64 {
+        self.retry_reasons[reason.metric_index()].count
+    }
+
+    fn increment_retry_reason(&mut self, reason: JobQueueRetryReason) {
+        self.retry_reasons[reason.metric_index()].count += 1;
+    }
+}
+
+/// In-process cleanup counters with stable, content-free labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobQueueCleanupMetricsSnapshot {
+    pub runs: u64,
+    pub stale_requeued: u64,
+    pub retry_reasons: [JobQueueRetryReasonCount; JOB_QUEUE_RETRY_REASON_COUNT],
+}
+
+/// Returns process-local job-queue cleanup counters.
+#[must_use]
+pub fn job_queue_cleanup_metrics_snapshot() -> JobQueueCleanupMetricsSnapshot {
+    JobQueueCleanupMetricsSnapshot {
+        runs: JOB_QUEUE_CLEANUP_RUNS.load(AtomicOrdering::Relaxed),
+        stale_requeued: JOB_QUEUE_CLEANUP_STALE_REQUEUED.load(AtomicOrdering::Relaxed),
+        retry_reasons: JobQueueRetryReason::metric_values().map(|reason| {
+            JobQueueRetryReasonCount {
+                reason,
+                count: JOB_QUEUE_CLEANUP_RETRY_REASON_COUNTERS[reason.metric_index()]
+                    .load(AtomicOrdering::Relaxed),
+            }
+        }),
+    }
 }
 
 /// Queue handle over a vault store.
@@ -493,6 +611,100 @@ impl<'a> JobQueue<'a> {
         }
     }
 
+    /// Returns expired leases to the ready index under LMDB's single-writer
+    /// invariant. Cleanup never assigns a replacement owner; reclaim still
+    /// happens through [`Self::claim`]'s atomic admission step.
+    pub fn cleanup_leases(&self, input: CleanupJobLeases) -> Result<JobQueueCleanupReport> {
+        validate_cleanup_leases_input(&input)?;
+
+        let rtxn = self.store.env.read_txn()?;
+        let mut report = JobQueueCleanupReport::default();
+        let mut expired_candidates = Vec::new();
+
+        for row in self.store.job_records.iter(&rtxn)? {
+            let (key, raw_record) = row?;
+            let id = JobId::from_bytes(key)?;
+            let record = decode_record(raw_record, id)?;
+            match record.state {
+                JobState::Queued => {
+                    report.pending += 1;
+                    if record.backoff_until.is_some() {
+                        report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
+                    }
+                }
+                JobState::Leased if lease_expired(&record, input.now, input.lease_timeout_secs) => {
+                    report.running += 1;
+                    expired_candidates.push(id);
+                }
+                JobState::Leased => {
+                    report.running += 1;
+                }
+                JobState::Completed => {
+                    report.done += 1;
+                }
+                JobState::Failed => {
+                    report.failed += 1;
+                }
+            }
+        }
+        drop(rtxn);
+
+        if !expired_candidates.is_empty() {
+            let mut wtxn = self.store.env.write_txn()?;
+            for id in expired_candidates {
+                let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
+                    mark_rechecked_candidate_not_running(&mut report);
+                    continue;
+                };
+                let mut record = decode_record(raw_record, id)?;
+                match record.state {
+                    JobState::Leased
+                        if lease_expired(&record, input.now, input.lease_timeout_secs) =>
+                    {
+                        record.state = JobState::Queued;
+                        record.lease_owner = None;
+                        record.backoff_until = None;
+                        record.last_error = Some(RETRY_REASON_LEASE_TIMEOUT.to_owned());
+                        record.updated_at = input.now;
+                        let encoded = encode_record(&record)?;
+                        self.store
+                            .job_records
+                            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+                        let ready_key = ready_key(ready_at(&record), record.id);
+                        self.store
+                            .job_ready
+                            .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.pending += 1;
+                        report.stale_requeued += 1;
+                        report.increment_retry_reason(JobQueueRetryReason::LeaseTimeout);
+                    }
+                    JobState::Leased => {}
+                    JobState::Queued => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.pending += 1;
+                        if record.backoff_until.is_some() {
+                            report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
+                        }
+                    }
+                    JobState::Completed => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.done += 1;
+                    }
+                    JobState::Failed => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.failed += 1;
+                    }
+                }
+            }
+            wtxn.commit()?;
+        }
+
+        record_job_queue_cleanup_metrics(&report);
+        emit_job_queue_cleanup_span(&input, &report);
+        Ok(report)
+    }
+
     /// Reads a job by id.
     pub fn get(&self, id: JobId) -> Result<Option<JobRecord>> {
         let rtxn = self.store.env.read_txn()?;
@@ -671,6 +883,13 @@ fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_cleanup_leases_input(input: &CleanupJobLeases) -> Result<()> {
+    if input.lease_timeout_secs == 0 {
+        return Err(Error::InvalidJobQueueRecord(ERR_LEASE_TIMEOUT_ZERO));
+    }
+    Ok(())
+}
+
 fn validate_transition_lease(
     record: &JobRecord,
     lease_owner: &str,
@@ -730,6 +949,15 @@ fn legacy_dedupe_index_key(kind: &str, dedupe_key: &str) -> Vec<u8> {
 
 fn ready_at(record: &JobRecord) -> u64 {
     record.backoff_until.unwrap_or(0)
+}
+
+fn lease_expired(record: &JobRecord, now: u64, lease_timeout_secs: u64) -> bool {
+    now.checked_sub(record.updated_at)
+        .is_some_and(|age| age >= lease_timeout_secs)
+}
+
+fn mark_rechecked_candidate_not_running(report: &mut JobQueueCleanupReport) {
+    report.running = report.running.saturating_sub(1);
 }
 
 fn ready_key(ready_at: u64, id: JobId) -> [u8; READY_KEY_LEN] {
@@ -825,10 +1053,117 @@ fn invalid_transition(action: &'static str, state: &'static str) -> Error {
     Error::InvalidJobQueueTransition { action, state }
 }
 
+fn record_job_queue_cleanup_metrics(report: &JobQueueCleanupReport) {
+    JOB_QUEUE_CLEANUP_RUNS.fetch_add(1, AtomicOrdering::Relaxed);
+    JOB_QUEUE_CLEANUP_STALE_REQUEUED.fetch_add(report.stale_requeued, AtomicOrdering::Relaxed);
+    for counter in report.retry_reasons {
+        JOB_QUEUE_CLEANUP_RETRY_REASON_COUNTERS[counter.reason.metric_index()]
+            .fetch_add(counter.count, AtomicOrdering::Relaxed);
+    }
+}
+
+fn emit_job_queue_cleanup_span(input: &CleanupJobLeases, report: &JobQueueCleanupReport) {
+    let retry_lease_timeout = report.retry_reason_count(JobQueueRetryReason::LeaseTimeout);
+    let retry_backoff = report.retry_reason_count(JobQueueRetryReason::RetryBackoff);
+    let span = tracing::info_span!(
+        target: "oneiron::job_queue",
+        "job_queue_cleanup",
+        lease_timeout_secs = input.lease_timeout_secs,
+        pending = report.pending,
+        running = report.running,
+        failed = report.failed,
+        done = report.done,
+        stale_requeued = report.stale_requeued,
+        retry_lease_timeout,
+        retry_backoff,
+    );
+    let _entered = span.enter();
+    tracing::info!(
+        target: "oneiron::job_queue",
+        pending = report.pending,
+        running = report.running,
+        failed = report.failed,
+        done = report.done,
+        stale_requeued = report.stale_requeued,
+        retry_lease_timeout,
+        retry_backoff,
+        "job queue cleanup completed"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Vault, VaultConfig};
+    use std::collections::BTreeMap;
+    use std::fmt;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct TelemetryCapture {
+        records: Arc<Mutex<Vec<CapturedTelemetry>>>,
+    }
+
+    #[derive(Debug)]
+    struct CapturedTelemetry {
+        kind: &'static str,
+        name: String,
+        fields: BTreeMap<String, String>,
+    }
+
+    impl tracing::Subscriber for TelemetryCapture {
+        fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn register_callsite(
+            &self,
+            _metadata: &'static tracing::Metadata<'static>,
+        ) -> tracing::subscriber::Interest {
+            tracing::subscriber::Interest::always()
+        }
+
+        fn max_level_hint(&self) -> Option<tracing::metadata::LevelFilter> {
+            Some(tracing::metadata::LevelFilter::TRACE)
+        }
+
+        fn new_span(&self, attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            let mut fields = BTreeMap::new();
+            attrs.record(&mut TelemetryVisitor(&mut fields));
+            self.records.lock().unwrap().push(CapturedTelemetry {
+                kind: "span",
+                name: attrs.metadata().name().to_owned(),
+                fields,
+            });
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut fields = BTreeMap::new();
+            event.record(&mut TelemetryVisitor(&mut fields));
+            self.records.lock().unwrap().push(CapturedTelemetry {
+                kind: "event",
+                name: event.metadata().name().to_owned(),
+                fields,
+            });
+        }
+
+        fn enter(&self, _span: &tracing::span::Id) {}
+
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    struct TelemetryVisitor<'a>(&'a mut BTreeMap<String, String>);
+
+    impl tracing::field::Visit for TelemetryVisitor<'_> {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+            self.0.insert(field.name().to_owned(), format!("{value:?}"));
+        }
+    }
 
     fn open_queue() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -1704,6 +2039,416 @@ mod tests {
             err,
             Error::InvalidJobQueueRecord("leased job must have a lease owner")
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:stale"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected first claim");
+        };
+
+        let report = queue.cleanup_leases(CleanupJobLeases {
+            now: 40,
+            lease_timeout_secs: 10,
+        })?;
+        assert_eq!(report.pending, 1);
+        assert_eq!(report.running, 0);
+        assert_eq!(report.stale_requeued, 1);
+        assert_eq!(
+            report.retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+            1
+        );
+
+        let requeued = queue.get(job.id)?.expect("requeued job");
+        assert_eq!(requeued.state, JobState::Queued);
+        assert_eq!(requeued.lease_owner, None);
+        assert_eq!(requeued.attempt_count, first_attempt.attempt_count);
+        assert_eq!(requeued.last_error.as_deref(), Some("lease_timeout"));
+        assert_eq!(requeued.updated_at, 40);
+
+        let stale_complete = queue
+            .complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: first_attempt.attempt_count,
+                now: 41,
+            })
+            .unwrap_err();
+        assert_invalid_transition(stale_complete, "complete", "queued");
+
+        let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+            lease_owner: "worker-b".to_owned(),
+            now: 42,
+        })?
+        else {
+            panic!("expected reclaim through claim");
+        };
+        assert_eq!(second_attempt.id, job.id);
+        assert_eq!(second_attempt.lease_owner.as_deref(), Some("worker-b"));
+        assert_eq!(
+            second_attempt.attempt_count,
+            first_attempt.attempt_count + 1
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:zero"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+
+        let err = queue
+            .cleanup_leases(CleanupJobLeases {
+                now: 20,
+                lease_timeout_secs: 0,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidJobQueueRecord(ERR_LEASE_TIMEOUT_ZERO)
+        ));
+
+        let persisted = queue.get(job.id)?.expect("leased job");
+        assert_eq!(persisted.state, JobState::Leased);
+        assert_eq!(persisted.lease_owner.as_deref(), Some("worker-a"));
+        assert_eq!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-b".to_owned(),
+                now: 21,
+            })?,
+            ClaimOutcome::Empty
+        );
+        assert!(matches!(
+            queue.complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: claimed.attempt_count,
+                now: 22,
+            })?,
+            CompleteOutcome::Completed(_)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_does_not_duplicate_completed_jobs() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:done"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        let CompleteOutcome::Completed(_) = queue.complete(CompleteJob {
+            id: job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            now: 30,
+        })?
+        else {
+            panic!("expected complete");
+        };
+
+        let report = queue.cleanup_leases(CleanupJobLeases {
+            now: 1_000,
+            lease_timeout_secs: 1,
+        })?;
+        assert_eq!(report.done, 1);
+        assert_eq!(report.pending, 0);
+        assert_eq!(report.running, 0);
+        assert_eq!(report.stale_requeued, 0);
+        assert_eq!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-b".to_owned(),
+                now: 1_001,
+            })?,
+            ClaimOutcome::Empty
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(backoff_job) =
+            queue.enqueue(enqueue("backoff", Some("turn:backoff"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(backoff_claim) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 11,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        let RetryOutcome::Retried(_) = queue.retry(RetryJob {
+            id: backoff_job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: backoff_claim.attempt_count,
+            backoff_until: 80,
+            last_error: Some("provider said secret text".to_owned()),
+            now: 12,
+        })?;
+
+        let EnqueueOutcome::Enqueued(stale_job) =
+            queue.enqueue(enqueue("stale", Some("turn:stale"), 13))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(stale_claim) = queue.claim(ClaimJob {
+            lease_owner: "worker-stale".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected stale claim");
+        };
+        assert_eq!(stale_claim.id, stale_job.id);
+
+        let EnqueueOutcome::Enqueued(live_job) =
+            queue.enqueue(enqueue("live", Some("turn:live"), 21))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(live_claim) = queue.claim(ClaimJob {
+            lease_owner: "worker-live".to_owned(),
+            now: 30,
+        })?
+        else {
+            panic!("expected live claim");
+        };
+        assert_eq!(live_claim.id, live_job.id);
+
+        let EnqueueOutcome::Enqueued(done_job) =
+            queue.enqueue(enqueue("done", Some("turn:done"), 31))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(done_claim) = queue.claim(ClaimJob {
+            lease_owner: "worker-done".to_owned(),
+            now: 32,
+        })?
+        else {
+            panic!("expected done claim");
+        };
+        assert_eq!(done_claim.id, done_job.id);
+        let CompleteOutcome::Completed(_) = queue.complete(CompleteJob {
+            id: done_job.id,
+            lease_owner: "worker-done".to_owned(),
+            attempt_count: done_claim.attempt_count,
+            now: 33,
+        })?
+        else {
+            panic!("expected complete");
+        };
+
+        let EnqueueOutcome::Enqueued(failed_job) =
+            queue.enqueue(enqueue("failed", Some("turn:failed"), 34))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(failed_claim) = queue.claim(ClaimJob {
+            lease_owner: "worker-failed".to_owned(),
+            now: 35,
+        })?
+        else {
+            panic!("expected failed claim");
+        };
+        assert_eq!(failed_claim.id, failed_job.id);
+        let FailOutcome::Failed(_) = queue.fail(FailJob {
+            id: failed_job.id,
+            lease_owner: "worker-failed".to_owned(),
+            attempt_count: failed_claim.attempt_count,
+            reason: "fatal".to_owned(),
+            now: 36,
+        })?
+        else {
+            panic!("expected fail");
+        };
+
+        let EnqueueOutcome::Enqueued(queued_job) =
+            queue.enqueue(enqueue("queued", Some("turn:queued"), 37))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let report = queue.cleanup_leases(CleanupJobLeases {
+            now: 39,
+            lease_timeout_secs: 10,
+        })?;
+        assert_eq!(report.pending, 3);
+        assert_eq!(report.running, 1);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.done, 1);
+        assert_eq!(report.stale_requeued, 1);
+        assert_eq!(
+            report.retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+            1
+        );
+        assert_eq!(
+            report.retry_reason_count(JobQueueRetryReason::RetryBackoff),
+            1
+        );
+
+        let requeued = queue.get(stale_job.id)?.expect("stale job persisted");
+        assert_eq!(requeued.state, JobState::Queued);
+        assert_eq!(requeued.lease_owner, None);
+        assert_eq!(
+            queue.get(live_job.id)?.expect("live job").state,
+            JobState::Leased
+        );
+        assert_eq!(
+            queue.get(done_job.id)?.expect("done job").state,
+            JobState::Completed
+        );
+        assert_eq!(
+            queue.get(failed_job.id)?.expect("failed job").state,
+            JobState::Failed
+        );
+        assert_eq!(
+            queue.get(queued_job.id)?.expect("queued job").state,
+            JobState::Queued
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let before = job_queue_cleanup_metrics_snapshot();
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:metrics"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-secret-owner".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        queue.cleanup_leases(CleanupJobLeases {
+            now: 40,
+            lease_timeout_secs: 10,
+        })?;
+
+        let after = job_queue_cleanup_metrics_snapshot();
+        assert!(after.runs > before.runs);
+        assert!(after.stale_requeued > before.stale_requeued);
+        let labels = after
+            .retry_reasons
+            .iter()
+            .map(|counter| counter.reason.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["lease_timeout", "retry_backoff"]);
+        assert!(
+            after.retry_reasons[JobQueueRetryReason::LeaseTimeout.metric_index()].count
+                > before.retry_reasons[JobQueueRetryReason::LeaseTimeout.metric_index()].count
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let capture = TelemetryCapture::default();
+
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:logs"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-secret-owner".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        tracing::subscriber::with_default(capture.clone(), || {
+            queue.cleanup_leases(CleanupJobLeases {
+                now: 40,
+                lease_timeout_secs: 10,
+            })
+        })?;
+
+        let records = capture.records.lock().unwrap();
+        let span = records
+            .iter()
+            .find(|record| record.kind == "span" && record.name == "job_queue_cleanup")
+            .unwrap_or_else(|| panic!("cleanup span records={records:?}"));
+        assert!(span.fields.contains_key("pending"));
+        assert!(span.fields.contains_key("running"));
+        assert!(span.fields.contains_key("failed"));
+        assert!(span.fields.contains_key("done"));
+        assert!(span.fields.contains_key("stale_requeued"));
+        assert!(span.fields.contains_key("retry_lease_timeout"));
+        assert!(span.fields.contains_key("retry_backoff"));
+
+        let captured = records
+            .iter()
+            .flat_map(|record| {
+                std::iter::once(record.name.as_str())
+                    .chain(record.fields.keys().map(String::as_str))
+                    .chain(record.fields.values().map(String::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!captured.contains("worker-secret-owner"));
+        assert!(!captured.contains("payload-10"));
+        assert!(!captured.contains("run-10"));
+        assert!(!captured.contains("turn:logs"));
+        assert!(!captured.contains("claim_extraction"));
 
         Ok(())
     }

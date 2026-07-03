@@ -35,6 +35,8 @@ pub struct MaintenanceBuilder<'a> {
     do_recompute_hashes: bool,
     do_clear_text_index: bool,
     do_hard_erase_sweep: bool,
+    do_cleanup_job_queue: bool,
+    job_queue_lease_timeout_secs: u64,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -108,6 +110,9 @@ pub struct MaintenanceReport {
     /// `sweep_obligations_missing`; an unreadable receipt is a distinct
     /// signal from a dropped one and is never folded into it.
     pub sweep_obligations_undecodable: u64,
+    /// Job-queue lease cleanup counts. This is device-local runner-store
+    /// state and carries only stable counters, never payloads or lease owners.
+    pub job_queue_cleanup: crate::job_queue::JobQueueCleanupReport,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -122,6 +127,8 @@ impl<'a> MaintenanceBuilder<'a> {
             do_recompute_hashes: false,
             do_clear_text_index: false,
             do_hard_erase_sweep: false,
+            do_cleanup_job_queue: false,
+            job_queue_lease_timeout_secs: 0,
         }
     }
 
@@ -193,6 +200,14 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
+    /// Returns expired job leases to the ready index for recovery by the
+    /// normal atomic claim path. `run` fails closed if the timeout is zero.
+    pub fn cleanup_job_queue_leases(mut self, lease_timeout_secs: u64) -> Self {
+        self.do_cleanup_job_queue = true;
+        self.job_queue_lease_timeout_secs = lease_timeout_secs;
+        self
+    }
+
     pub fn run(self) -> Result<MaintenanceReport> {
         let mut report = MaintenanceReport::default();
 
@@ -242,6 +257,15 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_quarantine_rows_expired = run.quarantine_rows_expired;
             report.sweep_obligations_missing = run.obligations_missing;
             report.sweep_obligations_undecodable = run.obligations_undecodable;
+        }
+
+        if self.do_cleanup_job_queue {
+            report.job_queue_cleanup = crate::job_queue::JobQueue::new(self.vault).cleanup_leases(
+                crate::job_queue::CleanupJobLeases {
+                    now: crate::unix_seconds_now(),
+                    lease_timeout_secs: self.job_queue_lease_timeout_secs,
+                },
+            )?;
         }
 
         Ok(report)
@@ -674,6 +698,9 @@ mod tests {
     use heed::types::Bytes;
 
     use super::*;
+    use crate::job_queue::{
+        ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobQueue, JobQueueRetryReason,
+    };
     use crate::store::{
         GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
         VECTOR_VERSION_KEY,
@@ -2008,6 +2035,75 @@ mod tests {
 
         let report = vault.maintain().run()?;
         assert_eq!(report, MaintenanceReport::default());
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(EnqueueJob {
+            kind: "claim_extraction".to_owned(),
+            payload: b"payload".to_vec(),
+            dedupe_key: Some("turn:maintenance".to_owned()),
+            run_id: Some("run-maintenance".to_owned()),
+            now: 1,
+        })?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 2,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let report = vault.maintain().cleanup_job_queue_leases(1).run()?;
+        assert_eq!(report.job_queue_cleanup.pending, 1);
+        assert_eq!(report.job_queue_cleanup.running, 0);
+        assert_eq!(report.job_queue_cleanup.failed, 0);
+        assert_eq!(report.job_queue_cleanup.done, 0);
+        assert_eq!(report.job_queue_cleanup.stale_requeued, 1);
+        assert_eq!(
+            report
+                .job_queue_cleanup
+                .retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+            1
+        );
+
+        let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-b".to_owned(),
+            now: crate::unix_seconds_now(),
+        })?
+        else {
+            panic!("expected reclaimed job");
+        };
+        assert_eq!(reclaimed.id, job.id);
+        assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+
+        let err = vault
+            .maintain()
+            .cleanup_job_queue_leases(0)
+            .run()
+            .unwrap_err();
+        assert_matches!(
+            err,
+            Error::InvalidJobQueueRecord("lease timeout must be > 0")
+        );
+
         Ok(())
     }
 
