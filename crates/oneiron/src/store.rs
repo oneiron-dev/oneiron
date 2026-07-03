@@ -737,9 +737,9 @@ pub struct Store {
     pub(crate) sync_queue: Database<Bytes, Bytes>,
     /// Generic background job records keyed by job id.
     pub(crate) job_records: Database<Bytes, Bytes>,
-    /// Ready-job ordering index keyed by creation time then job id.
+    /// Ready-job ordering index keyed by ready-at time then job id.
     pub(crate) job_ready: Database<Bytes, Bytes>,
-    /// Caller-provided dedupe keys mapped to job ids.
+    /// Advisory dedupe index keys mapped to job ids.
     pub(crate) job_dedupe: Database<Bytes, Bytes>,
     /// True only for the open call that created a previously absent LMDB root.
     created_new_vault: bool,
