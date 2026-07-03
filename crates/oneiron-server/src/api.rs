@@ -83,6 +83,7 @@ const CAPABILITIES: &[&str] = &[
     "core.query",
     "core.context_pack",
     "core.hydrate",
+    "core.run_tree",
     "core.memory_timeline",
     "core.memory_verbs",
     "core.conversations",
@@ -113,6 +114,7 @@ const RESUME_NOTIFICATION_LIMIT: usize = 128;
 const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
+const CORE_RUN_TREE_RUN_ID_MAX_BYTES: usize = 128;
 const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
 const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
 const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
@@ -223,6 +225,7 @@ impl EiriSessionRagStore {
         core_memory_timeline,
         core_memory_verb,
         core_context_pack,
+        core_run_tree,
         list_core_conversations,
         create_core_conversation,
         list_core_conversation_turns,
@@ -279,6 +282,13 @@ impl EiriSessionRagStore {
         CoreBatchEntityInput,
         CoreBatchEntityResult,
         CoreBatchResponse,
+        CoreRunTreeQuery,
+        CoreRunTreeResponse,
+        CoreRunTreeNode,
+        CoreRunTreeStatus,
+        CoreRunTreeTimestamps,
+        CoreRunTreeFailure,
+        CoreRunTreeRepair,
         CoreTextField,
         CoreQueryRequest,
         CoreHydrateRequest,
@@ -411,6 +421,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/context-pack", post(core_context_pack))
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
+        .route("/run-tree", get(core_run_tree))
         .route("/memory/{id}/timeline", get(core_memory_timeline))
         .route("/conversations", get(list_core_conversations))
         .route(
@@ -1418,6 +1429,7 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
         ("/v1/core/batch/shortId/hydrate", "post"),
+        ("/v1/core/run-tree", "get"),
         ("/v1/core/memory/{id}/timeline", "get"),
         ("/v1/core/memory/verbs/{verb}", "post"),
         ("/v1/core/conversations", "get"),
@@ -4696,6 +4708,113 @@ struct CoreBatchResponse {
     entities: Vec<CoreBatchEntityResult>,
 }
 
+/// Query parameters for the runtime run-tree projection.
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
+struct CoreRunTreeQuery {
+    /// Optional runtime run id to filter the tree.
+    #[serde(default, rename = "run_id", alias = "runId")]
+    #[schema(example = "run-2026-07-03T12:00:00Z")]
+    #[param(example = "run-2026-07-03T12:00:00Z")]
+    run_id: Option<String>,
+}
+
+/// Runtime job tree response.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeResponse {
+    /// Root jobs after non-mutating repair of missing parents or cycles.
+    roots: Vec<CoreRunTreeNode>,
+    /// Repairs applied while rendering the tree from queue rows.
+    repairs: Vec<CoreRunTreeRepair>,
+}
+
+/// One runtime job in the rendered tree.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeNode {
+    /// Hex-encoded job id.
+    #[serde(rename = "job_id")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    job_id: String,
+    /// Runtime run id carried by the backing job row.
+    #[serde(rename = "run_id")]
+    #[schema(example = "run-2026-07-03T12:00:00Z")]
+    run_id: Option<String>,
+    /// Hex-encoded parent job id when the runner recorded one.
+    #[serde(rename = "parent_id")]
+    #[schema(example = "11111111111111111111111111111111")]
+    parent_id: Option<String>,
+    /// Worker kind exposed by the row or runner payload.
+    #[serde(rename = "worker_kind")]
+    #[schema(example = "orchestrator")]
+    worker_kind: String,
+    /// Surface lifecycle state.
+    status: CoreRunTreeStatus,
+    /// Queue row timestamps.
+    timestamps: CoreRunTreeTimestamps,
+    /// Terminal failure summary, when present.
+    failure: Option<CoreRunTreeFailure>,
+    /// Child jobs ordered deterministically by creation time and job id.
+    #[schema(no_recursion)]
+    children: Vec<CoreRunTreeNode>,
+}
+
+/// Surface lifecycle state for a runtime job.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreRunTreeStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// Queue row timestamps for a runtime job.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeTimestamps {
+    /// Creation timestamp from the backing queue row.
+    #[serde(rename = "created_at")]
+    #[schema(example = 1782357600_u64)]
+    created_at: u64,
+    /// Last update timestamp from the backing queue row.
+    #[serde(rename = "updated_at")]
+    #[schema(example = 1782357635_u64)]
+    updated_at: u64,
+}
+
+/// Summarized terminal failure state.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeFailure {
+    /// Last failure reason recorded on the backing queue row.
+    #[schema(example = "worker failed")]
+    reason: String,
+}
+
+/// Non-mutating repair applied while rendering a run tree.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum CoreRunTreeRepair {
+    MissingParent {
+        /// Job promoted to a root because its recorded parent row was absent.
+        #[serde(rename = "job_id")]
+        #[schema(example = "22222222222222222222222222222222")]
+        job_id: String,
+        /// Recorded parent id that was absent from the filtered row set.
+        #[serde(rename = "missing_parent_id")]
+        #[schema(example = "11111111111111111111111111111111")]
+        missing_parent_id: String,
+    },
+    ParentCycle {
+        /// Job promoted or skipped because following parents would cycle.
+        #[serde(rename = "job_id")]
+        #[schema(example = "22222222222222222222222222222222")]
+        job_id: String,
+        /// Parent edge involved in the cycle.
+        #[serde(rename = "parent_id")]
+        #[schema(example = "11111111111111111111111111111111")]
+        parent_id: String,
+    },
+}
+
 /// Unified core query request over existing text/vector retrieval APIs.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -5856,6 +5975,109 @@ async fn core_batch(
         count: entities.len(),
         entities,
     }))
+}
+
+/// Read the runtime job queue as a deterministic run tree.
+#[utoipa::path(
+    get,
+    path = "/v1/core/run-tree",
+    params(CoreRunTreeQuery),
+    responses(
+        (status = 200, description = "Runtime job queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
+        (status = 400, description = "Invalid run-tree query.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Run-tree read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_run_tree(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
+) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let params = query_params(query)?;
+    validate_core_run_tree_query(&params)?;
+
+    let adapter = oneiron::RunTreeAdapter::new(&server.vault);
+    let tree = match params.run_id.as_deref() {
+        Some(run_id) => adapter.read_run(run_id),
+        None => adapter.read(),
+    }
+    .map_err(|error| {
+        tracing::error!(error = %error, "core run tree read failed");
+        core_engine_error("core run tree read failed", error)
+    })?;
+
+    Ok(Json(core_run_tree_response(tree)))
+}
+
+fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<(), ApiError> {
+    let Some(run_id) = params.run_id.as_deref() else {
+        return Ok(());
+    };
+    if run_id.is_empty() {
+        return Err(ApiError::bad_request(
+            "run_id must not be empty",
+            Some("run_id"),
+        ));
+    }
+    if run_id.len() > CORE_RUN_TREE_RUN_ID_MAX_BYTES {
+        return Err(ApiError::bad_request(
+            "run_id exceeds 128 bytes",
+            Some("run_id"),
+        ));
+    }
+    Ok(())
+}
+
+fn core_run_tree_response(tree: oneiron::RunTree) -> CoreRunTreeResponse {
+    CoreRunTreeResponse {
+        roots: tree.roots.into_iter().map(core_run_tree_node).collect(),
+        repairs: tree.repairs.into_iter().map(core_run_tree_repair).collect(),
+    }
+}
+
+fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode {
+    CoreRunTreeNode {
+        job_id: node.job_id,
+        run_id: node.run_id,
+        parent_id: node.parent_id,
+        worker_kind: node.worker_kind,
+        status: core_run_tree_status(node.status),
+        timestamps: CoreRunTreeTimestamps {
+            created_at: node.timestamps.created_at,
+            updated_at: node.timestamps.updated_at,
+        },
+        failure: node.failure.map(|failure| CoreRunTreeFailure {
+            reason: failure.reason,
+        }),
+        children: node.children.into_iter().map(core_run_tree_node).collect(),
+    }
+}
+
+fn core_run_tree_status(status: oneiron::RunTreeStatus) -> CoreRunTreeStatus {
+    match status {
+        oneiron::RunTreeStatus::Queued => CoreRunTreeStatus::Queued,
+        oneiron::RunTreeStatus::Running => CoreRunTreeStatus::Running,
+        oneiron::RunTreeStatus::Completed => CoreRunTreeStatus::Completed,
+        oneiron::RunTreeStatus::Failed => CoreRunTreeStatus::Failed,
+    }
+}
+
+fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
+    match repair {
+        oneiron::RunTreeRepair::MissingParent {
+            job_id,
+            missing_parent_id,
+        } => CoreRunTreeRepair::MissingParent {
+            job_id,
+            missing_parent_id,
+        },
+        oneiron::RunTreeRepair::ParentCycle { job_id, parent_id } => {
+            CoreRunTreeRepair::ParentCycle { job_id, parent_id }
+        }
+    }
 }
 
 /// Query core memory through text and/or vector retrieval.
@@ -8967,6 +9189,7 @@ mod tests {
         ("/v1/core/context-pack", "post"),
         ("/v1/core/hydrate", "post"),
         ("/v1/core/batch/shortId/hydrate", "post"),
+        ("/v1/core/run-tree", "get"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -9035,6 +9258,13 @@ mod tests {
         "CoreMemoryVerbRequest",
         "CoreMemoryVerbResponse",
         "CoreQueryRequest",
+        "CoreRunTreeFailure",
+        "CoreRunTreeNode",
+        "CoreRunTreeQuery",
+        "CoreRunTreeRepair",
+        "CoreRunTreeResponse",
+        "CoreRunTreeStatus",
+        "CoreRunTreeTimestamps",
         "CoreShortIdHydrateError",
         "CoreShortIdHydrateErrorKind",
         "CoreTextField",
@@ -10620,6 +10850,66 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn v1_core_run_tree_reads_job_queue_rows() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let root = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-api");
+        let _other = enqueue_queue_job(server.vault.as_ref(), "other-run", 20, "run-other");
+
+        let (status, body) = core_json(
+            server,
+            "GET",
+            "/v1/core/run-tree?run_id=run-api",
+            "core:read",
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["repairs"], json!([]));
+        let roots = body["roots"].as_array().expect("run tree roots");
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(root.id)));
+        assert_eq!(roots[0]["run_id"], Value::from("run-api"));
+        assert_eq!(roots[0]["parent_id"], Value::Null);
+        assert_eq!(roots[0]["worker_kind"], Value::from("api-worker"));
+        assert_eq!(roots[0]["status"], Value::from("queued"));
+        assert_eq!(roots[0]["timestamps"]["created_at"], Value::from(10));
+        assert_eq!(roots[0]["children"], json!([]));
+    }
+
+    fn enqueue_queue_job(
+        vault: &oneiron::Vault,
+        kind: &str,
+        now: u64,
+        run_id: &str,
+    ) -> oneiron::JobRecord {
+        match oneiron::JobQueue::new(vault)
+            .enqueue(oneiron::EnqueueJob {
+                kind: kind.to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: Some(run_id.to_owned()),
+                now,
+            })
+            .expect("enqueue job")
+        {
+            oneiron::EnqueueOutcome::Enqueued(record)
+            | oneiron::EnqueueOutcome::Existing(record) => record,
+            _ => panic!("unexpected enqueue outcome"),
+        }
+    }
+
+    fn job_id_hex(id: oneiron::JobId) -> String {
+        id.as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     async fn top_up_route(
         server: Arc<SyncServer>,
         idempotency_key: &str,
@@ -10839,6 +11129,7 @@ mod tests {
             ("/v1/core/context-pack", "post"),
             ("/v1/core/hydrate", "post"),
             ("/v1/core/batch/shortId/hydrate", "post"),
+            ("/v1/core/run-tree", "get"),
             ("/v1/core/conversations", "get"),
             ("/v1/core/conversations", "post"),
             ("/v1/core/conversations/{conversation_id}/turns", "get"),
