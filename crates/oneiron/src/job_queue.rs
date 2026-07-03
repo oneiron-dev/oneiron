@@ -42,6 +42,28 @@ static JOB_QUEUE_CLEANUP_RUNS: AtomicU64 = AtomicU64::new(0);
 static JOB_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
 static JOB_QUEUE_CLEANUP_RETRY_REASON_COUNTERS: [AtomicU64; JOB_QUEUE_RETRY_REASON_COUNT] =
     [AtomicU64::new(0), AtomicU64::new(0)];
+const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
+
+#[derive(Debug, Default)]
+struct ClaimKindReadScan {
+    stale_ready_keys: Vec<Vec<u8>>,
+    ready_replacements: Vec<([u8; READY_KEY_LEN], JobId)>,
+    stale_missing_record_ids: HashSet<JobId>,
+    candidate: Option<ClaimKindCandidate>,
+}
+
+#[derive(Debug)]
+struct ClaimKindCandidate {
+    ready_key: Vec<u8>,
+    id: JobId,
+}
+
+#[derive(Debug)]
+enum ClaimKindWriteAttempt {
+    Claimed(JobRecord),
+    Empty,
+    Retry,
+}
 
 /// Stable identifier for a queued job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -412,7 +434,155 @@ impl<'a> JobQueue<'a> {
     /// ready rows and stale indexes are still repaired while scanning.
     pub fn claim_kind(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
         validate_kind(kind)?;
+        validate_lease_owner(&input.lease_owner)?;
+        self.claim_kind_with_read_scan(kind, input)
+    }
+
+    fn claim_kind_with_read_scan(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
+        for _ in 0..CLAIM_KIND_WRITE_RETRY_LIMIT {
+            let scan = self.scan_claim_kind_ready_rows(kind, input.now)?;
+            match self.try_claim_scanned_kind_candidate(kind, &input, scan)? {
+                ClaimKindWriteAttempt::Claimed(record) => return Ok(ClaimOutcome::Claimed(record)),
+                ClaimKindWriteAttempt::Empty => return Ok(ClaimOutcome::Empty),
+                ClaimKindWriteAttempt::Retry => {}
+            }
+        }
+
         self.claim_matching(input, Some(kind))
+    }
+
+    fn scan_claim_kind_ready_rows(&self, kind: &str, now: u64) -> Result<ClaimKindReadScan> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut scan = ClaimKindReadScan::default();
+        for row in self.store.job_ready.iter(&rtxn)? {
+            let (key, value) = row?;
+            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            let Ok(id) = JobId::from_bytes(value) else {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            if id != key_id {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            }
+            let Some(raw_record) = self.store.job_records.get(&rtxn, id.as_bytes())? else {
+                scan.stale_missing_record_ids.insert(id);
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            let record = decode_record(raw_record, id)?;
+            if record.state != JobState::Queued {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            }
+            let record_ready_at = ready_at(&record);
+            if record_ready_at != key_ready_at {
+                scan.stale_ready_keys.push(key.to_vec());
+                if record_ready_at > now {
+                    scan.ready_replacements
+                        .push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+                if record.kind != kind {
+                    scan.ready_replacements
+                        .push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+            } else if record_ready_at > now || record.kind != kind {
+                continue;
+            }
+            scan.candidate = Some(ClaimKindCandidate {
+                ready_key: key.to_vec(),
+                id,
+            });
+            break;
+        }
+
+        Ok(scan)
+    }
+
+    fn try_claim_scanned_kind_candidate(
+        &self,
+        kind: &str,
+        input: &ClaimJob,
+        scan: ClaimKindReadScan,
+    ) -> Result<ClaimKindWriteAttempt> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut claimed = None;
+        if let Some(candidate) = scan.candidate.as_ref() {
+            let Some(value) = self.store.job_ready.get(&wtxn, &candidate.ready_key)? else {
+                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+                wtxn.commit()?;
+                return Ok(ClaimKindWriteAttempt::Retry);
+            };
+            let Ok(id) = JobId::from_bytes(value) else {
+                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+                wtxn.commit()?;
+                return Ok(ClaimKindWriteAttempt::Retry);
+            };
+            if id != candidate.id {
+                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+                wtxn.commit()?;
+                return Ok(ClaimKindWriteAttempt::Retry);
+            }
+            let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
+                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+                wtxn.commit()?;
+                return Ok(ClaimKindWriteAttempt::Retry);
+            };
+            let mut record = decode_record(raw_record, id)?;
+            if record.state != JobState::Queued
+                || ready_at(&record) > input.now
+                || record.kind != kind
+            {
+                self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+                wtxn.commit()?;
+                return Ok(ClaimKindWriteAttempt::Retry);
+            }
+            record.state = JobState::Leased;
+            record.lease_owner = Some(input.lease_owner.clone());
+            record.attempt_count = record
+                .attempt_count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("job attempt count"))?;
+            record.backoff_until = None;
+            record.updated_at = input.now;
+            claimed = Some((candidate.ready_key.clone(), id, record));
+        }
+
+        self.apply_claim_kind_read_repairs(&mut wtxn, scan)?;
+
+        let Some((ready_key, id, record)) = claimed else {
+            wtxn.commit()?;
+            return Ok(ClaimKindWriteAttempt::Empty);
+        };
+
+        self.store.job_ready.delete(&mut wtxn, &ready_key)?;
+        let encoded = encode_record(&record)?;
+        self.store
+            .job_records
+            .put(&mut wtxn, id.as_bytes(), &encoded)?;
+        wtxn.commit()?;
+
+        Ok(ClaimKindWriteAttempt::Claimed(record))
+    }
+
+    fn apply_claim_kind_read_repairs(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        scan: ClaimKindReadScan,
+    ) -> Result<()> {
+        self.delete_dedupe_entries_for_ids(wtxn, &scan.stale_missing_record_ids)?;
+        for key in scan.stale_ready_keys {
+            self.store.job_ready.delete(wtxn, &key)?;
+        }
+        for (key, id) in scan.ready_replacements {
+            self.store.job_ready.put(wtxn, &key, id.as_bytes())?;
+        }
+        Ok(())
     }
 
     fn claim_matching(&self, input: ClaimJob, kind_filter: Option<&str>) -> Result<ClaimOutcome> {
@@ -458,6 +628,9 @@ impl<'a> JobQueue<'a> {
                 continue;
             }
             if kind_filter.is_some_and(|kind| record.kind != kind) {
+                if record_ready_at != key_ready_at {
+                    ready_replacements.push((ready_key(record_ready_at, id), id));
+                }
                 continue;
             }
             record.state = JobState::Leased;
@@ -1452,6 +1625,55 @@ mod tests {
         };
         assert_eq!(claimed_other.id, other.id);
         assert_eq!(claimed_other.kind, "claim_extraction");
+        assert_eq!(claimed_other.lease_owner.as_deref(), Some("generic-worker"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(other) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:stale-skip"), 10))?
+        else {
+            panic!("expected other job enqueue");
+        };
+        {
+            let mut stale_record = other.clone();
+            stale_record.backoff_until = Some(5);
+            stale_record.updated_at = 11;
+            let encoded = encode_record(&stale_record)?;
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .put(&mut wtxn, other.id.as_bytes(), &encoded)?;
+            wtxn.commit()?;
+        }
+
+        assert_eq!(
+            queue.claim_kind(
+                "companion_task",
+                ClaimJob {
+                    lease_owner: "companion-worker".to_owned(),
+                    now: 20,
+                },
+            )?,
+            ClaimOutcome::Empty
+        );
+
+        let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimJob {
+            lease_owner: "generic-worker".to_owned(),
+            now: 21,
+        })?
+        else {
+            panic!("expected skipped stale-ready job to remain claimable");
+        };
+        assert_eq!(claimed_other.id, other.id);
+        assert_eq!(claimed_other.kind, "claim_extraction");
+        assert_eq!(claimed_other.backoff_until, None);
         assert_eq!(claimed_other.lease_owner.as_deref(), Some("generic-worker"));
 
         Ok(())
