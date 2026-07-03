@@ -118,7 +118,8 @@ pub use crate::ingest::{
     NormalizedIngestRecord,
 };
 pub use crate::job_queue::{
-    ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobId, JobQueue, JobRecord, JobState,
+    ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
+    FailOutcome, JobId, JobQueue, JobRecord, JobState, RetryJob, RetryOutcome,
 };
 pub use crate::llm::{
     BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,

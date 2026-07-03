@@ -3454,8 +3454,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 7,
-        "ONE-1206 pins the current storage ABI at 7",
+        STORAGE_ABI_VERSION, 8,
+        "ONE-1213 pins the current storage ABI at 8",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3489,8 +3489,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 7,
-        "ONE-1206 pins the current storage ABI at 7",
+        STORAGE_ABI_VERSION, 8,
+        "ONE-1213 pins the current storage ABI at 8",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3524,8 +3524,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 7,
-        "ONE-1206 pins the current storage ABI at 7",
+        STORAGE_ABI_VERSION, 8,
+        "ONE-1213 pins the current storage ABI at 8",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3549,6 +3549,41 @@ fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
             }
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(6), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1213 fail-closed gate over adding durable job queue terminal states:
+/// v7 queue readers do not know `Completed`/`Failed` rows, so v7 vaults must
+/// not open under ABI v8 without rebuild.
+#[test]
+fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 8,
+        "ONE-1213 pins the current storage ABI at 8",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(7))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1213 ABI v7 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(7),
+                current: STORAGE_ABI_VERSION,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(7), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
     Ok(())
 }
