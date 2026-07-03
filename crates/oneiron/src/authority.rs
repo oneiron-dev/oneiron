@@ -1196,6 +1196,11 @@ fn fold_entry_state(
     if let Some(pending_widen) =
         pending_widen_for_entry(&state, entry, hash, &participants, context)
     {
+        let mut eventual_state = state.clone();
+        apply_op(&mut eventual_state, &entry.op, hash, true);
+        if !state_has_authority_consent(&eventual_state) {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
         state.pending_widens.insert(hash, pending_widen);
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
@@ -3008,6 +3013,41 @@ mod tests {
             EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(issue_hash))
                 if issue_hash == hash
         ));
+    }
+
+    #[test]
+    fn delayed_rotation_that_would_leave_no_authority_consent_is_not_pending() {
+        let owner = ed_key(115);
+        let owner_key = authority_key_from_ed(&owner);
+        let genesis = genesis_entry(115, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let genesis_hash = authority_entry_hash(&genesis).unwrap();
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let agent_key = authority_key_from_ed(&ed_key(116));
+        let rotate = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                1,
+                vec![genesis_hash],
+                AuthorityOp::RotateKey {
+                    old_key: owner_key.clone(),
+                    new_device: device(agent_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+                },
+                owner_key,
+                2,
+            ),
+            &owner,
+        );
+        let rotate_hash = authority_entry_hash(&rotate).unwrap();
+        let first_seen = BTreeMap::from([(rotate_hash, 10)]);
+
+        let fold = fold_authority_log_with_seen_times(&[genesis, rotate], &first_seen, 10);
+
+        assert!(!fold.pending_widens.contains_key(&rotate_hash));
+        assert!(!fold.roster.contains_key(&agent_key));
+        assert!(fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::MissingAuthorityConsent(issue_hash) if *issue_hash == rotate_hash
+        )));
     }
 
     #[test]
