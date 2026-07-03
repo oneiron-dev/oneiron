@@ -23,7 +23,7 @@ use crate::types::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKi
 use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
     EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
-    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
+    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
     decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
@@ -1665,7 +1665,7 @@ pub(crate) fn apply_ops(
                 apply_phonetic(store, wtxn, id, &codes)?;
             }
             BatchOp::Delete { id } => {
-                reject_policy_manifest_delete(store, wtxn, &id)?;
+                reject_engine_authored_delete(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
@@ -1920,14 +1920,17 @@ impl ChildOfBatchOverlay {
     }
 }
 
-fn reject_policy_manifest_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
+fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Ok(());
     };
-    if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+    if matches!(
+        header.entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
+    ) {
         return Err(Error::MaintenanceKindNotWritable(header.entity_type));
     }
     Ok(())
@@ -2349,6 +2352,12 @@ fn apply_put(
         }
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+    } else if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
+        if replicated {
+            validate_replicated_authority_log_for_local_vault(store, wtxn, data)?;
+        } else {
+            crate::authority::validate_authority_log_entry_body_bytes(data)?;
+        }
     } else if entity_type == crate::types::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
@@ -2543,6 +2552,71 @@ fn apply_put(
         had_vector_mutation,
         is_lexical_query_hint_claim,
     })
+}
+
+fn validate_replicated_authority_log_for_local_vault(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    data: &[u8],
+) -> Result<()> {
+    crate::authority::validate_authority_log_entry_body_bytes(data)?;
+    let entry = crate::authority::decode_authority_log_entry_body(data)?;
+    let entry_vault_id = match &entry.op {
+        crate::authority::AuthorityOp::Genesis { .. } => {
+            crate::authority::genesis_vault_id(&entry)?
+        }
+        _ => entry
+            .vault_id
+            .ok_or(Error::InvalidAuthorityLogBody("missing authority vault id"))?,
+    };
+    let local_fold =
+        crate::authority::fold_authority_log(&stored_authority_log_entries(store, wtxn)?);
+    let local_vault_id = local_fold.vault_id.ok_or(Error::InvalidAuthorityLogBody(
+        "missing local authority root",
+    ))?;
+    if entry_vault_id != local_vault_id {
+        return Err(Error::InvalidAuthorityLogBody(
+            "foreign authority log vault id",
+        ));
+    }
+    Ok(())
+}
+
+fn stored_authority_log_entries(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+) -> Result<Vec<crate::authority::AuthorityLogEntry>> {
+    let mut entries = Vec::new();
+    for entry in store
+        .type_index
+        .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+    {
+        let (key, _) = entry?;
+        let id = authority_type_index_entity_id(key)?;
+        let raw = store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+            return Err(Error::CorruptedIndex("type index row kind mismatch"));
+        }
+        entries.push(crate::authority::decode_authority_log_entry_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?);
+    }
+    Ok(entries)
+}
+
+fn authority_type_index_entity_id(key: &[u8]) -> Result<EntityId> {
+    if key.len() != 1 + ENTITY_ID_LEN || key[0] != ENTITY_TYPE_AUTHORITY_LOG {
+        return Err(Error::CorruptedIndex("type index key shape"));
+    }
+    let raw: [u8; ENTITY_ID_LEN] = key[1..]
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("type index entity id"))?;
+    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("type index entity id"))
 }
 
 fn validate_companion_register_put(
@@ -3617,6 +3691,8 @@ mod tests {
         WriteEnvelope, WriteProvenance,
     };
     use core::assert_matches;
+    #[cfg(feature = "sync")]
+    use ed25519_dalek::{Signer, SigningKey};
     use rmpv::Value;
 
     struct EdgeFixture {
@@ -5904,6 +5980,85 @@ mod tests {
             !pending_embedding_token(&vault, &claim)?.is_empty(),
             "replicated marker must carry a body token"
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_test_key(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_key_from_signing(signing: &SigningKey) -> crate::authority::AuthorityKey {
+        crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_test_device(
+        key: crate::authority::AuthorityKey,
+    ) -> crate::authority::DeviceAuthority {
+        crate::authority::DeviceAuthority {
+            key,
+            transport_key_binding: [0; 32],
+            attestation: crate::authority::AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: crate::authority::AuthorityTier::Software,
+            roles: crate::authority::ROLE_OWNER,
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
+        let signing = authority_test_key(seed);
+        let key = authority_key_from_signing(&signing);
+        let mut entry = crate::authority::AuthorityLogEntry {
+            schema_version: 1,
+            vault_id: None,
+            seq: 0,
+            parent_hashes: Vec::new(),
+            op: crate::authority::AuthorityOp::Genesis {
+                device: authority_test_device(key.clone()),
+                genesis_nonce: [seed.wrapping_add(1); 32],
+                tier_floor: crate::authority::AuthorityTier::Software,
+                pending_widen_delay_secs: 86_400,
+            },
+            signer: crate::authority::AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: u64::from(seed),
+        };
+        let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        entry
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn replicated_authority_log_rejects_foreign_vault_root() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let local = authority_genesis_fixture(72);
+        vault.put_authority_log_entry(&EntityId::now(), &local, test_time_range(1, 1), 1)?;
+
+        let foreign = authority_genesis_fixture(73);
+        let foreign_body = crate::authority::encode_authority_log_entry_body(&foreign)?;
+        let err = vault
+            .batch()
+            .put_replicated(
+                &EntityId::now(),
+                ENTITY_TYPE_AUTHORITY_LOG,
+                test_time_range(2, 2),
+                2,
+                &foreign_body,
+            )
+            .commit()
+            .expect_err("foreign authority log must not enter replicated storage");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidAuthorityLogBody);
         Ok(())
     }
 

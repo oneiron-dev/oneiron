@@ -28,6 +28,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 blake3 = "1"
 futures-core = "0.3"
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

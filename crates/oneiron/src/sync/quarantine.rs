@@ -186,6 +186,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // op, not a local storage/index failure. Keep generic InvalidKey
         // unclassified; only the grant-specific typed error quarantines.
         | ErrorKind::InvalidFederationGrantBody
+        | ErrorKind::InvalidAuthorityLogBody
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::ProvenanceOnStructuralEdge
         | ErrorKind::CycleDetected
@@ -1140,7 +1141,7 @@ pub(crate) fn apply_replayed_tombstone_for_sync(
             )));
         }
     }
-    vault.apply_replayed_tombstone(id, raw_value)
+    vault.apply_replayed_tombstone_for_sync(id, raw_value)
 }
 
 #[cfg(test)]
