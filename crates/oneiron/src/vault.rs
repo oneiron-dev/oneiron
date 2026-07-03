@@ -25,8 +25,9 @@ use crate::affect::{
 };
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::authority::{
-    AuthorityFold, AuthorityLogEntry, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, fold_authority_log,
+    AuthorityFold, AuthorityLogEntry, authority_entry_hash, authority_first_seen_sync_key,
+    decode_authority_first_seen_secs, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, fold_authority_log_with_seen_times,
 };
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
@@ -1005,10 +1006,12 @@ impl Vault {
     ///
     /// The fold is the authority boundary: replay doors only admit canonical,
     /// origin-signed records; signer ancestry, sequence, quorum, and roster
-    /// semantics are recomputed here from the stored log.
+    /// semantics are recomputed here from the stored log. Software-tier widens
+    /// are evaluated against this device's local first-seen timestamps.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
+        let mut first_seen_at_secs = std::collections::BTreeMap::new();
         for entry in self
             .store
             .type_index
@@ -1026,11 +1029,23 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }
-            entries.push(decode_authority_log_entry_body(
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?);
+            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let hash = authority_entry_hash(&entry)?;
+            if let Some(first_seen) = self
+                .store
+                .sync_state
+                .get(&rtxn, authority_first_seen_sync_key(&hash).as_str())?
+                .and_then(decode_authority_first_seen_secs)
+            {
+                first_seen_at_secs.insert(hash, first_seen);
+            }
+            entries.push(entry);
         }
-        Ok(fold_authority_log(&entries))
+        Ok(fold_authority_log_with_seen_times(
+            &entries,
+            &first_seen_at_secs,
+            unix_seconds_now(),
+        ))
     }
 
     /// Engine-authored write door for AccessGrant control-plane records.
