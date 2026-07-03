@@ -231,6 +231,7 @@ const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
+const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
 
 thread_local! {
     static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -505,6 +506,14 @@ pub struct PendingGateConsentRecord {
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
     pub reason_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dreamer_run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingGateConsentGroup {
+    pub dreamer_run_id: Option<String>,
+    pub records: Vec<PendingGateConsentRecord>,
 }
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
@@ -1287,6 +1296,69 @@ impl Store {
         Ok(())
     }
 
+    pub fn pending_gate_consents(&self, limit: usize) -> Result<Vec<PendingGateConsentRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let rtxn = self.env.read_txn()?;
+        let upper = pending_gate_consent_upper_bound();
+        let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
+        for row in self.vault_meta.range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(PENDING_GATE_CONSENT_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(PENDING_GATE_CONSENT_KEY_PREFIX) {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            let claim_id = pending_gate_consent_claim_id_from_key(key)?;
+            let record = decode_pending_gate_consent(value)?;
+            if record.claim_id != claim_id {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            records.push(record);
+        }
+
+        records.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| {
+                    left.decision_id
+                        .as_bytes()
+                        .cmp(&right.decision_id.as_bytes())
+                })
+                .then_with(|| left.claim_id.cmp(&right.claim_id))
+        });
+        records.truncate(limit);
+        Ok(records)
+    }
+
+    pub fn pending_gate_consent_groups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingGateConsentGroup>> {
+        let mut groups: Vec<PendingGateConsentGroup> = Vec::new();
+        for record in self.pending_gate_consents(limit)? {
+            let dreamer_run_id = record.dreamer_run_id.clone();
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group.dreamer_run_id == dreamer_run_id)
+            {
+                group.records.push(record);
+            } else {
+                groups.push(PendingGateConsentGroup {
+                    dreamer_run_id,
+                    records: vec![record],
+                });
+            }
+        }
+        Ok(groups)
+    }
+
     pub fn gate_decisions(&self, limit: usize) -> Result<Vec<GateDecisionRecord>> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -1837,6 +1909,26 @@ fn pending_gate_consent_key(claim_id: &[u8; 16]) -> Vec<u8> {
     key
 }
 
+fn pending_gate_consent_claim_id_from_key(key: &[u8]) -> Result<[u8; 16]> {
+    let bytes = key
+        .strip_prefix(PENDING_GATE_CONSENT_KEY_PREFIX)
+        .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+    bytes
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("pending gate consent"))
+}
+
+fn pending_gate_consent_upper_bound() -> Vec<u8> {
+    let mut key = Vec::from(PENDING_GATE_CONSENT_KEY_PREFIX);
+    let last = key
+        .last_mut()
+        .expect("pending gate consent key prefix must be non-empty");
+    *last = last
+        .checked_add(1)
+        .expect("pending gate consent key prefix upper bound must not overflow");
+    key
+}
+
 fn encode_gate_decision(record: &GateDecisionRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("gate decision ledger encode failed"))
@@ -1888,6 +1980,12 @@ fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord) -> Result<
             .reason_codes
             .iter()
             .all(|reason| reason.starts_with("gate.pending."))
+    {
+        return Err(Error::CorruptedIndex("pending gate consent"));
+    }
+    if let Some(dreamer_run_id) = record.dreamer_run_id.as_deref()
+        && (dreamer_run_id.trim().is_empty()
+            || dreamer_run_id.len() > PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN)
     {
         return Err(Error::CorruptedIndex("pending gate consent"));
     }
