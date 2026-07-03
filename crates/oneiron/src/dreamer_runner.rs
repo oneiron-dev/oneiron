@@ -556,16 +556,11 @@ impl<'a> DreamerRunnerStore<'a> {
         validate_budget_id(&input.budget_id)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let reservation_key = budget_reservation_key(&input.budget_id, input.child_job)?;
-        let Some(raw_reservation) = self.vault.store.vault_meta.get(&wtxn, &reservation_key)?
+        let Some(reservation) =
+            read_budget_reservation_in_txn(self.vault, &wtxn, &input.budget_id, input.child_job)?
         else {
             return Ok(DreamerBudgetSettlementOutcome::NoReservation);
         };
-        let reservation = decode_budget_reservation(raw_reservation)?;
-        if reservation.budget_id != input.budget_id || reservation.job_id != input.child_job {
-            return Err(invalid_dreamer_runner(
-                "dreamer budget reservation key/body mismatch",
-            ));
-        }
 
         let budget_key = budget_key(&input.budget_id)?;
         let Some(raw_budget) = self.vault.store.vault_meta.get(&wtxn, &budget_key)? else {
