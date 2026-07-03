@@ -122,7 +122,11 @@ fn authority_observation_secs_for_write(
         .get(wtxn, floor_key)?
         .and_then(crate::authority::decode_authority_first_seen_secs)
         .unwrap_or(0);
-    let observed_secs = previous_floor.max(candidate_secs);
+    let observed_secs = crate::authority::authority_observation_secs_for_domain(
+        store.authority_clock_domain,
+        previous_floor,
+        candidate_secs,
+    );
     if observed_secs != previous_floor {
         let encoded = crate::authority::encode_authority_first_seen_secs(observed_secs);
         store.sync_state.put(wtxn, floor_key, &encoded)?;
