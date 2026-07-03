@@ -53,13 +53,7 @@ pub(crate) fn load_or_mint_client_id_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
     match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
-        Some(raw) if raw.len() == 8 => {
-            let decoded = u64::from_le_bytes(raw.try_into().expect("length checked"));
-            if decoded == 0 {
-                return Err(Error::CorruptedIndex("sync client_id zero"));
-            }
-            Ok(decoded)
-        }
+        Some(raw) if raw.len() == 8 => decode_client_id_row(raw),
         Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
         None => {
             let minted = mint_client_id();
@@ -70,6 +64,38 @@ pub(crate) fn load_or_mint_client_id_in_txn(
             Ok(minted)
         }
     }
+}
+
+/// Reads `m:client_id` in a read transaction when present.
+///
+/// Missing rows return `Ok(None)` so callers can explicitly decide whether to
+/// mint in a write transaction.
+pub(crate) fn read_client_id_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Option<u64>> {
+    match vault.store.sync_state.get(rtxn, KEY_CLIENT_ID)? {
+        Some(raw) if raw.len() == 8 => decode_client_id_row(raw).map(Some),
+        Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
+        None => Ok(None),
+    }
+}
+
+/// Read-mostly own-txn accessor for this device's stable client id.
+///
+/// Existing identities are loaded under a read transaction; only a missing
+/// `m:client_id` escalates to the normal caller-txn mint path.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    if let Some(client_id) = read_client_id_in_txn(vault, &rtxn)? {
+        return Ok(client_id);
+    }
+    drop(rtxn);
+
+    let mut client_id = None;
+    vault.with_write_txn(|wtxn| {
+        client_id = Some(load_or_mint_client_id_in_txn(vault, wtxn)?);
+        Ok(())
+    })?;
+    Ok(client_id.expect("closure ran on Ok"))
 }
 
 /// Ensures the full device identity (client id + Ed25519 keypair) exists,
@@ -146,6 +172,14 @@ fn mint_client_id() -> u64 {
     }
 }
 
+fn decode_client_id_row(raw: &[u8]) -> Result<u64> {
+    let decoded = u64::from_le_bytes(raw.try_into().expect("length checked"));
+    if decoded == 0 {
+        return Err(Error::CorruptedIndex("sync client_id zero"));
+    }
+    Ok(decoded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +243,35 @@ mod tests {
             first.signing_key.to_bytes(),
             "stable signing key"
         );
+    }
+
+    #[test]
+    fn client_id_accessor_mints_only_client_id_then_reads_existing_row() {
+        let (_dir, vault) = test_vault();
+        let first = load_or_mint_client_id(&vault).unwrap();
+        assert_ne!(first, 0);
+
+        let rtxn = vault.store.env.read_txn().unwrap();
+        let id_row = vault
+            .store
+            .sync_state
+            .get(&rtxn, KEY_CLIENT_ID)
+            .unwrap()
+            .expect("client id row");
+        assert_eq!(u64::from_le_bytes(id_row.try_into().unwrap()), first);
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, KEY_DEVICE_SK)
+                .unwrap()
+                .is_none(),
+            "client-id-only accessor must not mint the receipt signing key"
+        );
+        drop(rtxn);
+
+        let second = load_or_mint_client_id(&vault).unwrap();
+        assert_eq!(second, first, "existing client id is stable");
     }
 
     /// Fail-closed arms: malformed/zero `m:client_id` and malformed
