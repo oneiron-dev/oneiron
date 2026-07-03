@@ -107,6 +107,7 @@ pub struct SandboxBoundaryContract {
     tier: SandboxGuestTier,
     linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
+    credential_call_effect: SandboxCredentialEffect,
     first_party_write_traps_deferred: bool,
 }
 
@@ -119,12 +120,14 @@ impl SandboxBoundaryContract {
                 tier,
                 linked_imports: READ_ONLY_IMPORTS,
                 proposal_delta_channel: false,
+                credential_call_effect: SandboxCredentialEffect::ReadOnly,
                 first_party_write_traps_deferred: true,
             },
             SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => Self {
                 tier,
                 linked_imports: READ_ONLY_IMPORTS,
                 proposal_delta_channel: true,
+                credential_call_effect: SandboxCredentialEffect::ReadOnly,
                 first_party_write_traps_deferred: false,
             },
         }
@@ -144,6 +147,12 @@ impl SandboxBoundaryContract {
     #[must_use]
     pub const fn has_proposal_delta_channel(self) -> bool {
         self.proposal_delta_channel
+    }
+
+    /// Credential-backed imports are handle-only and read-only at this boundary.
+    #[must_use]
+    pub const fn credential_call_effect(self) -> SandboxCredentialEffect {
+        self.credential_call_effect
     }
 
     /// First-party typed write traps are deliberately out of this ticket.
@@ -252,6 +261,11 @@ impl SandboxVirtualPath {
         {
             return Err(Error::InvalidClaimBody(
                 "sandbox virtual path contains nul byte",
+            ));
+        }
+        if components.iter().any(|component| component.contains('\\')) {
+            return Err(Error::InvalidClaimBody(
+                "sandbox virtual path contains host path separator",
             ));
         }
 
@@ -392,6 +406,65 @@ impl fmt::Debug for SandboxCredentialHandle {
     }
 }
 
+/// Effect class for credential-backed host operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SandboxCredentialEffect {
+    ReadOnly,
+}
+
+impl SandboxCredentialEffect {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+        }
+    }
+}
+
+/// Typed operation name for a credential-backed, read-only host call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxCredentialOperation {
+    name: String,
+    effect: SandboxCredentialEffect,
+}
+
+impl SandboxCredentialOperation {
+    /// Creates a read-only credential-backed operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidClaimBody`] when the operation name is blank or
+    /// contains control characters.
+    pub fn read_only(name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(Error::InvalidClaimBody(
+                "sandbox credential operation must not be blank",
+            ));
+        }
+        if trimmed.chars().any(char::is_control) {
+            return Err(Error::InvalidClaimBody(
+                "sandbox credential operation contains control character",
+            ));
+        }
+        Ok(Self {
+            name: trimmed.to_owned(),
+            effect: SandboxCredentialEffect::ReadOnly,
+        })
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn effect(&self) -> SandboxCredentialEffect {
+        self.effect
+    }
+}
+
 /// Read-only file request from guest code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxReadFile {
@@ -415,23 +488,42 @@ pub struct SandboxFileRead {
 /// Credential-backed host call from guest code.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SandboxCredentialCall {
-    pub operation: String,
-    pub credential: SandboxCredentialHandle,
-    pub args: Value,
+    operation: SandboxCredentialOperation,
+    credential: SandboxCredentialHandle,
+    args: Value,
 }
 
 impl SandboxCredentialCall {
-    #[must_use]
-    pub fn new(
+    /// Creates a handle-only credential call for a read-only host operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidClaimBody`] when the operation name is invalid.
+    pub fn read_only(
         operation: impl Into<String>,
         credential: SandboxCredentialHandle,
         args: Value,
-    ) -> Self {
-        Self {
-            operation: operation.into(),
+    ) -> Result<Self> {
+        Ok(Self {
+            operation: SandboxCredentialOperation::read_only(operation)?,
             credential,
             args,
-        }
+        })
+    }
+
+    #[must_use]
+    pub fn operation(&self) -> &SandboxCredentialOperation {
+        &self.operation
+    }
+
+    #[must_use]
+    pub fn credential(&self) -> &SandboxCredentialHandle {
+        &self.credential
+    }
+
+    #[must_use]
+    pub fn args(&self) -> &Value {
+        &self.args
     }
 
     /// Guest ABI serialization for the call. It carries a credential handle,
@@ -441,7 +533,7 @@ impl SandboxCredentialCall {
         Value::Map(vec![
             (
                 Value::from(ABI_KEY_OPERATION),
-                Value::from(self.operation.clone()),
+                Value::from(self.operation.as_str().to_owned()),
             ),
             (
                 Value::from(ABI_KEY_CREDENTIAL_HANDLE),
@@ -455,8 +547,20 @@ impl SandboxCredentialCall {
 /// Host receipt for a credential-backed call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxCredentialOutcome {
-    pub operation: String,
-    pub credential: SandboxCredentialHandle,
+    operation: SandboxCredentialOperation,
+    credential: SandboxCredentialHandle,
+}
+
+impl SandboxCredentialOutcome {
+    #[must_use]
+    pub fn operation(&self) -> &SandboxCredentialOperation {
+        &self.operation
+    }
+
+    #[must_use]
+    pub fn credential(&self) -> &SandboxCredentialHandle {
+        &self.credential
+    }
 }
 
 /// Single write intent emitted by a propose-only guest.
@@ -527,10 +631,10 @@ impl SandboxClaimProposal {
 /// Reviewable delta emitted for one foreign/untrusted write intent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SandboxProposalDelta {
-    pub id: EntityId,
-    pub tier: SandboxGuestTier,
-    pub approval: ClaimApprovalStatus,
-    pub write: SandboxProposalWrite,
+    id: EntityId,
+    tier: SandboxGuestTier,
+    approval: ClaimApprovalStatus,
+    write: SandboxProposalWrite,
 }
 
 impl SandboxProposalDelta {
@@ -555,6 +659,26 @@ impl SandboxProposalDelta {
     #[must_use]
     pub const fn kind(&self) -> SandboxProposalKind {
         self.write.kind()
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> EntityId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn tier(&self) -> SandboxGuestTier {
+        self.tier
+    }
+
+    #[must_use]
+    pub const fn approval(&self) -> ClaimApprovalStatus {
+        self.approval
+    }
+
+    #[must_use]
+    pub const fn write(&self) -> &SandboxProposalWrite {
+        &self.write
     }
 }
 
@@ -717,6 +841,7 @@ mod tests {
             "/etc/passwd".to_owned(),
             "/mnt/workspace/../secret".to_owned(),
             "/mnt/workspace/./file".to_owned(),
+            "/mnt/workspace/..\\secret".to_owned(),
             "/mnt/unknown/file".to_owned(),
             "/mnt/workspace//file".to_owned(),
         ] {
@@ -732,13 +857,14 @@ mod tests {
     fn code_sandbox_credential_calls_serialize_handle_not_secret() -> Result<()> {
         let secret_material = "ghp_secret_value_that_must_not_cross_boundary";
         let handle = SandboxCredentialHandle::new("github-main")?;
-        let call = SandboxCredentialCall::new(
+        let call = SandboxCredentialCall::read_only(
             "github.rest.get",
             handle.clone(),
             Value::Map(vec![(Value::from("repo"), Value::from("oneiron"))]),
-        );
+        )?;
         let guest_value = call.guest_abi_value();
 
+        assert_eq!(call.operation().effect(), SandboxCredentialEffect::ReadOnly);
         assert!(format!("{guest_value:?}").contains("github-main"));
         assert!(!format!("{guest_value:?}").contains(secret_material));
         assert!(!format!("{call:?}").contains(secret_material));
@@ -747,7 +873,11 @@ mod tests {
         let mut adapter =
             FakeSandboxAdapter::new(SandboxGuestTier::Foreign, host_mounts(dir.path()));
         let outcome = adapter.call_credential(call)?;
-        assert_eq!(outcome.credential, handle);
+        assert_eq!(outcome.credential(), &handle);
+        assert_eq!(
+            outcome.operation().effect(),
+            SandboxCredentialEffect::ReadOnly
+        );
         assert_eq!(adapter.credential_calls().len(), 1);
         assert!(!format!("{adapter:?}").contains(secret_material));
         Ok(())
@@ -760,6 +890,10 @@ mod tests {
             assert_eq!(contract.tier(), tier);
             assert!(tier.requires_zero_write_imports());
             assert!(contract.has_proposal_delta_channel());
+            assert_eq!(
+                contract.credential_call_effect(),
+                SandboxCredentialEffect::ReadOnly
+            );
             assert!(!contract.links_write_imports());
             assert!(
                 contract
@@ -772,6 +906,10 @@ mod tests {
         let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
         assert!(first_party.first_party_write_traps_deferred());
         assert!(!first_party.has_proposal_delta_channel());
+        assert_eq!(
+            first_party.credential_call_effect(),
+            SandboxCredentialEffect::ReadOnly
+        );
         assert!(!first_party.links_write_imports());
     }
 
@@ -786,11 +924,11 @@ mod tests {
             SandboxFileWriteProposal::new(path.clone(), b"proposed edit".to_vec()),
         ))?;
 
-        assert_eq!(delta.tier, SandboxGuestTier::Foreign);
-        assert_eq!(delta.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(delta.tier(), SandboxGuestTier::Foreign);
+        assert_eq!(delta.approval(), ClaimApprovalStatus::Proposed);
         assert_eq!(delta.kind(), SandboxProposalKind::FileWrite);
         assert_eq!(adapter.proposal_deltas().len(), 1);
-        let SandboxProposalWrite::FileWrite(file) = &adapter.proposal_deltas()[0].write else {
+        let SandboxProposalWrite::FileWrite(file) = adapter.proposal_deltas()[0].write() else {
             panic!("expected file write proposal");
         };
         assert_eq!(file.path, path);
@@ -816,15 +954,33 @@ mod tests {
             SandboxClaimProposal::new(claim_id, candidate),
         ))?;
 
-        assert_eq!(delta.tier, SandboxGuestTier::Untrusted);
-        assert_eq!(delta.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(delta.tier(), SandboxGuestTier::Untrusted);
+        assert_eq!(delta.approval(), ClaimApprovalStatus::Proposed);
         assert_eq!(delta.kind(), SandboxProposalKind::ClaimCandidate);
         assert_eq!(adapter.proposal_deltas().len(), 1);
-        let SandboxProposalWrite::ClaimCandidate(proposal) = &adapter.proposal_deltas()[0].write
+        let SandboxProposalWrite::ClaimCandidate(proposal) = adapter.proposal_deltas()[0].write()
         else {
             panic!("expected claim proposal");
         };
         assert_eq!(proposal.id, claim_id);
+        Ok(())
+    }
+
+    #[test]
+    fn code_sandbox_first_party_proposal_channel_is_closed() -> Result<()> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut adapter =
+            FakeSandboxAdapter::new(SandboxGuestTier::FirstPartyDreamer, host_mounts(dir.path()));
+        let path = SandboxVirtualPath::try_new("/mnt/outputs/result.md")?;
+
+        assert!(
+            adapter
+                .propose_write(SandboxProposalWrite::FileWrite(
+                    SandboxFileWriteProposal::new(path, b"not yet".to_vec())
+                ))
+                .is_err()
+        );
+        assert!(adapter.proposal_deltas().is_empty());
         Ok(())
     }
 }

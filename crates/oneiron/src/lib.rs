@@ -103,10 +103,11 @@ pub use crate::code_run::{
 pub use crate::code_sandbox::{
     FakeSandboxAdapter, SANDBOX_MNT_ROOT, SANDBOX_OUTPUTS_ROOT, SANDBOX_SKILLS_ROOT,
     SANDBOX_UPLOADS_ROOT, SANDBOX_WORKSPACE_ROOT, SandboxBoundaryAdapter, SandboxBoundaryContract,
-    SandboxClaimProposal, SandboxCredentialCall, SandboxCredentialHandle, SandboxCredentialOutcome,
-    SandboxFileRead, SandboxFileWriteProposal, SandboxGuestTier, SandboxImportClass,
-    SandboxLinkedImport, SandboxMount, SandboxMountTable, SandboxProposalDelta,
-    SandboxProposalKind, SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
+    SandboxClaimProposal, SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle,
+    SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead,
+    SandboxFileWriteProposal, SandboxGuestTier, SandboxImportClass, SandboxLinkedImport,
+    SandboxMount, SandboxMountTable, SandboxProposalDelta, SandboxProposalKind,
+    SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
 };
 pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,
