@@ -2594,8 +2594,11 @@ fn apply_put(
 }
 
 pub(crate) struct ReplicatedAuthorityLogValidation {
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) signer_key: crate::authority::AuthorityKey,
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) signer_known: bool,
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
 }
 
