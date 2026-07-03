@@ -1780,7 +1780,7 @@ fn retrieval_trace_fork_hash(
     candidate_set: &[[u8; ENTITY_ID_LEN]],
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v0");
+    fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
 
     fork_hash_vector_query(&mut hasher, builder.vector_search.as_ref());
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
