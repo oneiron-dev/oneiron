@@ -61,12 +61,13 @@ use crate::provenance::{
     validate_model_substrate_field, winner_index,
 };
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalAction, RetrievalOutcome,
-    RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY,
-    TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION,
-    TEXT_INDEX_SCHEMA_VERSION_KEY, lmdb_database_open_guard,
+    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
+    PendingGateConsentRecord, RetrievalAction, RetrievalOutcome, RetrievalOutcomeRecord,
+    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
+    RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY,
+    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    lmdb_database_open_guard,
 };
 use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
@@ -4948,6 +4949,22 @@ impl Vault {
         run_id: RetrievalRunId,
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
         self.store.retrieval_outcomes(run_id)
+    }
+
+    /// Returns pending Gate consent proposals ordered by their write decision.
+    pub fn pending_gate_consents(&self, limit: usize) -> Result<Vec<PendingGateConsentRecord>> {
+        self.store.pending_gate_consents(limit)
+    }
+
+    /// Returns pending Gate consent proposals grouped by Dreamer run id.
+    ///
+    /// Proposals without a Dreamer run id are returned in the default lane,
+    /// represented by a group with `dreamer_run_id == None`.
+    pub fn pending_gate_consent_groups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingGateConsentGroup>> {
+        self.store.pending_gate_consent_groups(limit)
     }
 
     /// Creates a maintenance builder for index and cache upkeep operations.
