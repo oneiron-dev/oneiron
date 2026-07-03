@@ -801,6 +801,12 @@ pub struct Store {
 
 static NEXT_AUTHORITY_CLOCK_DOMAIN: AtomicUsize = AtomicUsize::new(1);
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        crate::authority::release_authority_clock_domain(self.authority_clock_domain);
+    }
+}
+
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
