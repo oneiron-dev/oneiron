@@ -24,6 +24,10 @@ use crate::affect::{
     mean_vad,
 };
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
+use crate::authority::{
+    AuthorityFold, AuthorityLogEntry, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, fold_authority_log,
+};
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
     deindex_lexical_query_hints_for_target, delete_from_phonetic_postings,
@@ -65,15 +69,16 @@ use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
     CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EntityClassification, EntityId,
-    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
-    StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
-    VaultConfig, bytes_to_hex_lower, decode_companion_record_body, decode_edge_value_for_kind,
-    edge_value_layout_for_kind, encode_companion_record_body, entity_type_registry_entry,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
+    EntityClassification, EntityId, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
+    ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
+    VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_companion_record_body,
+    decode_edge_value_for_kind, edge_value_layout_for_kind, encode_companion_record_body,
+    entity_type_registry_entry,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -966,6 +971,68 @@ impl Vault {
             .commit()
     }
 
+    /// Engine-authored write door for signed AUTHORITY_LOG entries.
+    ///
+    /// Generic public puts for `ENTITY_TYPE_AUTHORITY_LOG` stay rejected with
+    /// `MaintenanceKindNotWritable`; this method validates canonical bytes and
+    /// the origin signature before using the internal maintenance path.
+    pub fn put_authority_log_entry(
+        &self,
+        id: &EntityId,
+        entry: &AuthorityLogEntry,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_authority_log_entry_body(entry)?;
+        self.apply_authority_log_entry_body(id, occurred, learned_at, data)
+    }
+
+    /// Reads and decodes one AUTHORITY_LOG entry by entity id.
+    pub fn get_authority_log_entry(&self, id: &EntityId) -> Result<Option<AuthorityLogEntry>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Folds all stored AUTHORITY_LOG entries into the current authority roster.
+    ///
+    /// The fold is the authority boundary: replay doors only admit canonical,
+    /// origin-signed records; signer ancestry, sequence, quorum, and roster
+    /// semantics are recomputed here from the stored log.
+    pub fn authority_fold(&self) -> Result<AuthorityFold> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut entries = Vec::new();
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+        {
+            let (key, _) = entry?;
+            let id = entity_id_from_type_index_key(key)?;
+            let raw = self
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            entries.push(decode_authority_log_entry_body(
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?);
+        }
+        Ok(fold_authority_log(&entries))
+    }
+
     /// Engine-authored write door for AccessGrant control-plane records.
     ///
     /// Public generic entity puts for `ENTITY_TYPE_ACCESS_GRANT` remain
@@ -1243,6 +1310,38 @@ impl Vault {
     fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.apply_access_grant_body(&mut wtxn, id, learned_at, data.to_vec())?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn apply_authority_log_entry_body(
+        &self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        crate::authority::validate_authority_log_entry_body_bytes(&data)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                occurred,
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -3205,7 +3304,7 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at);
         };
-        if header.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
+        if is_delete_protected_engine_record(header.entity_type) {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
         // ONE-1149 race-test rendezvous: the header is proven `Some` (the
@@ -3756,6 +3855,11 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         let decoded = decode_tombstone_value(raw_value);
+        if let Some(header) = self.read_entity_header(id)?
+            && is_delete_protected_engine_record(header.entity_type)
+        {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
         // EdgeRef and sweep refs are only readable PRE-scrub.
         let captured = self.capture_provenance_delete(id)?;
@@ -3848,6 +3952,24 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
         })
+    }
+
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_replayed_tombstone_for_sync(
+        &self,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<ReplayedTombstoneOutcome> {
+        if let Some(header) = self.read_entity_header(id)?
+            && is_delete_protected_engine_record(header.entity_type)
+        {
+            return Ok(ReplayedTombstoneOutcome::HardPurged {
+                erased: false,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+        self.apply_replayed_tombstone(id, raw_value)
     }
 
     fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
@@ -5642,6 +5764,13 @@ impl Vault {
     }
 }
 
+fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
+    )
+}
+
 /// A session-scoped actor binding created by [`Vault::as_actor`]
 /// (ONE-1113 ruling, session ergonomics): the handle carries
 /// `actor_entity_ref` + the caller-supplied D13 `actor_class` and injects
@@ -6541,6 +6670,26 @@ mod tests {
         assert_matches!(
             err,
             Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
+        );
+        assert!(vault.get_raw(&id)?.is_some());
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn sync_replayed_tombstone_noops_for_delete_protected_engine_record() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let vault = Vault::open(tmp.path(), test_config())?;
+        let id = crate::gate::default_policy_manifest_id()?;
+
+        let outcome = vault.apply_replayed_tombstone_for_sync(&id, b"malformed-hard-tombstone")?;
+        assert_eq!(
+            outcome,
+            ReplayedTombstoneOutcome::HardPurged {
+                erased: false,
+                receipt_id: None,
+                sweep_key: None,
+            }
         );
         assert!(vault.get_raw(&id)?.is_some());
         Ok(())

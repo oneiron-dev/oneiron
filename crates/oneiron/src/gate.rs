@@ -2357,6 +2357,16 @@ mod tests {
         payload
     }
 
+    fn authority_log_blob(data: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(crate::types::ENTITY_TYPE_AUTHORITY_LOG);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(data);
+        payload
+    }
+
     fn put_malformed_access_grant_bytes(
         vault: &crate::Vault,
         id: &EntityId,
@@ -4388,6 +4398,40 @@ mod tests {
         );
 
         assert_auto_source_rejected(&vault, 0x86, ClaimSource::ToolOutput)
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn forward_rematerialize_quarantines_malformed_authority_log() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::map_insert_bytes;
+        use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::forward_rematerialize;
+
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0x87);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("local", &window_key);
+        let blob = authority_log_blob(b"not an authority log body");
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob)
+            .expect("insert malformed authority log into CRDT");
+        doc.commit();
+
+        let materialized = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+        assert_eq!(materialized, 0);
+        assert!(vault.get_raw(&id)?.is_none());
+        let records = quarantined_records(&vault)?;
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.container == QuarantineContainer::Entities
+                    && record.reason_code == "InvalidAuthorityLogBody"
+            }),
+            "malformed authority log replay should be quarantined, got {records:?}"
+        );
+
+        Ok(())
     }
 
     #[cfg(feature = "sync")]

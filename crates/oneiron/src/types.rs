@@ -64,9 +64,10 @@ pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// `mo` is RESERVED. MACHINE (82) reuse was REJECTED — kind = shape
 /// (DEC-0005 §7): a model substrate is not a device.
 pub const ENTITY_TYPE_MODEL: u8 = 121;
-// Byte 122 is reserved for future AUTHORITY_LOG maintenance records.
-// It is intentionally unregistered until that substrate lands, so it remains
-// rejected with `InvalidEntityType` on write paths.
+/// AUTHORITY_LOG entry (ONE-1324). Engine-authored maintenance kind for the
+/// fold-verified vault authority roster; public puts are rejected with
+/// `MaintenanceKindNotWritable`.
+pub const ENTITY_TYPE_AUTHORITY_LOG: u8 = 122;
 /// DEC-0005 PolicyManifestV1 entity. Engine-authored maintenance kind used by
 /// the Gate resolver; public puts are rejected with
 /// `MaintenanceKindNotWritable`.
@@ -94,7 +95,7 @@ pub const ENTITY_TYPE_PSYCH_PROFILE: u8 = 129;
 ///
 /// CLAIM (byte 0) is the single SEMANTIC type (ARCH-0003) and deliberately
 /// NOT a StructuralKind; core and pack kinds ARE StructuralKinds; maintenance
-/// records (REDACTION_AUDIT=120, MODEL=121, AUTHORITY_LOG=122 reserved,
+/// records (REDACTION_AUDIT=120, MODEL=121, AUTHORITY_LOG=122,
 /// POLICY_MANIFEST=123, FEDERATION_GRANT=124, CONNECTION_RECORD=125 reserved,
 /// DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127 reserved,
 /// ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130 reserved) are
@@ -187,7 +188,7 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 ///
 /// Per contracts.ts §1: byte 0 (CLAIM) is the semantic type and deliberately
 /// NOT a StructuralKind; maintenance records (REDACTION_AUDIT = 120,
-/// MODEL = 121, AUTHORITY_LOG = 122 reserved, POLICY_MANIFEST = 123,
+/// MODEL = 121, AUTHORITY_LOG = 122, POLICY_MANIFEST = 123,
 /// FEDERATION_GRANT = 124, CONNECTION_RECORD = 125 reserved,
 /// DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127 reserved,
 /// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved)
@@ -392,7 +393,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
     },
-    // Byte 122 is reserved for AUTHORITY_LOG and intentionally unregistered.
+    EntityTypeRegistryEntry {
+        kind: "AUTHORITY_LOG",
+        type_byte: ENTITY_TYPE_AUTHORITY_LOG,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
     EntityTypeRegistryEntry {
         kind: "POLICY_MANIFEST",
         type_byte: ENTITY_TYPE_POLICY_MANIFEST,
@@ -852,7 +859,7 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 
 /// First byte of the induced / dynamic / maintenance type-byte band
 /// (contracts.ts `typeByteBands` row `120+`). Registered kinds in this band
-/// (REDACTION_AUDIT = 120, MODEL = 121, AUTHORITY_LOG = 122 reserved,
+/// (REDACTION_AUDIT = 120, MODEL = 121, AUTHORITY_LOG = 122,
 /// POLICY_MANIFEST = 123, FEDERATION_GRANT = 124, CONNECTION_RECORD = 125
 /// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
 /// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
