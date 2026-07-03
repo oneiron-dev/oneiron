@@ -62,10 +62,11 @@ use crate::provenance::{
 };
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
-    PendingGateConsentRecord, RetrievalAction, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
-    RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY,
-    STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
+    RetrievalBlendWeightTableEntry, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
+    RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
+    RetrievalTrace, RetrievalTraceForkHash, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
+    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
     lmdb_database_open_guard,
 };
@@ -4936,6 +4937,20 @@ impl Vault {
         fork_hash: RetrievalTraceForkHash,
     ) -> Result<Option<RetrievalTrace>> {
         self.store.retrieval_trace_by_fork_hash(fork_hash)
+    }
+
+    /// Returns the active RET-010 retrieval-blend weight table entry.
+    pub fn retrieval_blend_weight_table(&self) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store.retrieval_blend_weight_table()
+    }
+
+    /// Tunes and persists the active RET-010 retrieval-blend weight table
+    /// from persisted retrieval rewards.
+    pub fn tune_retrieval_blend_weights(
+        &self,
+        config: RetrievalBlendTuningConfig,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store.tune_retrieval_blend_weights(config)
     }
 
     /// Idempotently writes or replaces a retrieval outcome row for one run.
