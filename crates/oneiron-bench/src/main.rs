@@ -1,6 +1,6 @@
 //! oneiron-bench — benchmark harness skeleton.
 //!
-//! Subcommands (plan ONE-317 §9, ONE-318, ONE-1120):
+//! Subcommands (plan ONE-317 §9, ONE-1120, ONE-1311):
 //!
 //! * `analyzer throughput` — tokenization MiB/s microbench over a
 //!   built-in mixed-script corpus.
@@ -15,10 +15,12 @@
 //!   ONEIRON-ARCH-0042: fixture + run-manifest parse, fixture ingest,
 //!   deterministic context-pack arm, fixed scorer/carding model, and explicit
 //!   not-ready Agentic/Chat arms.
+//! * `beam trace-export` — ONE-1311 bench-side RetrievalTrace JSONL export seam
+//!   for the BEAM deterministic-arm reader.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
-//! matrix lives in ONE-318; this binary only ships the skeleton and
-//! cheap in-workspace checks.
+//! matrix is not shipped here; this binary only ships the bench skeleton,
+//! cheap in-workspace checks, and the ONE-1311 trace export seam.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -27,6 +29,7 @@ use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 mod beam;
+mod retrieval_trace_export;
 mod vector;
 
 fn main() -> ExitCode {
@@ -72,21 +75,23 @@ fn print_help() {
            analyzer                    run all analyzer benches (throughput + smoke)\n\
            analyzer throughput         tokenization MiB/s microbench\n\
            analyzer smoke              hand-crafted BM25F retrieval smoke test\n\
-           bm25 hot-term-ingest [N]    ingest N docs (default 10000) sharing one\n\
+          bm25 hot-term-ingest [N]    ingest N docs (default 10000) sharing one\n\
                                        hot term; reports per-chunk + total cost\n\
                                        (ONE-299 posting-append microbench)\n\
-           beam smoke                  run the BEAM 128K fixture scaffold smoke\n\
+          beam smoke                  run the BEAM 128K fixture scaffold smoke\n\
                                        aligned with ONEIRON-ARCH-0042\n\
                                        (deterministic context-pack arm +\n\
                                        explicit not-ready Agentic/Chat arms)\n\
-           vector                      ARCH-0019 vector perf/recall harness\n\
+          beam trace-export           export RetrievalTrace JSONL by fork hash\n\
+                                       (ONE-1311 BEAM deterministic-arm reader)\n\
+          vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
                                        [--churn-pct 1..99] [--churn-ops N]\n\
                                        [--no-recall-assert]\n\
          \n\
          note: MIRACL / Mr.TyDi / internal SEA retrieval quality matrix\n\
-         lives in ONE-318 (not yet implemented)."
+         is not yet implemented in this binary."
     );
 }
 
