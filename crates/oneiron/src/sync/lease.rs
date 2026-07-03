@@ -319,7 +319,7 @@ pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
     vault_id: u64,
     id: &EntityId,
     blob: &[u8],
-) -> Result<()> {
+) -> Result<[u8; 32]> {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
 
     if blob.len() < ENTITY_METADATA_HEADER_LEN {
@@ -388,7 +388,7 @@ pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
             });
         }
     }
-    Ok(())
+    Ok(parts.pubkey)
 }
 
 fn claimed_lease_record_in_txn(
@@ -644,7 +644,7 @@ mod tests {
         blob: &[u8],
     ) -> Result<()> {
         let rtxn = vault.store.env.read_txn().unwrap();
-        verify_new_receipt_origin_for_vault_in_txn(vault, &rtxn, vault_id, id, blob)
+        verify_new_receipt_origin_for_vault_in_txn(vault, &rtxn, vault_id, id, blob).map(|_| ())
     }
 
     /// OD-4 layout literals: 66 B, version 0x02, status byte at [1],
