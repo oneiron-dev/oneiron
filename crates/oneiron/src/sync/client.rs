@@ -44,7 +44,8 @@ use std::cmp::Ordering::{Equal, Less};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use loro::{LoroDoc, VersionVector};
+use loro::awareness::{EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent};
+use loro::{LoroDoc, LoroValue, Subscription, VersionVector};
 use tokio::sync::mpsc;
 
 use crate::Vault;
@@ -61,8 +62,8 @@ use crate::sync::selector::{
     admit_federated_window_update, encode_selector_vv_request,
 };
 use crate::sync::transport::{
-    self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_AWARENESS, TAG_BULK_TRANSFER,
-    TAG_BULK_TRANSFER_DONE, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_BULK_TRANSFER,
+    TAG_BULK_TRANSFER_DONE, TAG_EPHEMERAL, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
     TAG_WINDOW_SYNC, TransportError, window_sub_tags,
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
@@ -103,6 +104,8 @@ pub struct SyncClientConfig {
     pub reconnect_backoff_max_ms: u32,
     /// Initial reconnection delay. Default: 1s.
     pub reconnect_initial_ms: u32,
+    /// Ephemeral state inactivity timeout in milliseconds. Default: 30s.
+    pub ephemeral_timeout_ms: i64,
 }
 
 impl Default for SyncClientConfig {
@@ -114,6 +117,7 @@ impl Default for SyncClientConfig {
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,
             reconnect_initial_ms: 1_000,
+            ephemeral_timeout_ms: 30_000,
         }
     }
 }
@@ -144,7 +148,20 @@ pub enum SyncEvent {
     LeaseDenied {
         client_id: u64,
     },
+    EphemeralChanged {
+        origin: EphemeralChangeOrigin,
+        added: Vec<String>,
+        updated: Vec<String>,
+        removed: Vec<String>,
+    },
     Error(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EphemeralChangeOrigin {
+    Local,
+    Remote,
+    Timeout,
 }
 
 /// Client-side sync engine.
@@ -163,6 +180,8 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     server_vvs: HashMap<String, VersionVector>,
+    ephemeral_store: EphemeralStore,
+    _ephemeral_subscription: Subscription,
     status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -196,6 +215,23 @@ impl SyncClient {
             .set_peer_id(client_id)
             .map_err(|e| Error::SyncProtocolError(format!("set root doc peer id: {e}")))?;
 
+        let ephemeral_store = EphemeralStore::new(config.ephemeral_timeout_ms);
+        let ephemeral_event_tx = event_tx.clone();
+        let ephemeral_subscription =
+            ephemeral_store.subscribe(Box::new(move |event: &EphemeralStoreEvent| {
+                let _ = ephemeral_event_tx.send(SyncEvent::EphemeralChanged {
+                    origin: match event.by {
+                        EphemeralEventTrigger::Local => EphemeralChangeOrigin::Local,
+                        EphemeralEventTrigger::Import => EphemeralChangeOrigin::Remote,
+                        EphemeralEventTrigger::Timeout => EphemeralChangeOrigin::Timeout,
+                    },
+                    added: event.added.as_ref().clone(),
+                    updated: event.updated.as_ref().clone(),
+                    removed: event.removed.as_ref().clone(),
+                });
+                true
+            }));
+
         let client = Self {
             vault,
             manager,
@@ -204,6 +240,8 @@ impl SyncClient {
             device_signing_key: identity.signing_key,
             config,
             server_vvs: HashMap::new(),
+            ephemeral_store,
+            _ephemeral_subscription: ephemeral_subscription,
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -253,6 +291,37 @@ impl SyncClient {
 
     pub fn root_doc(&self) -> &LoroDoc {
         &self.root_doc
+    }
+
+    /// Reads the current non-expired ephemeral value for `key`.
+    pub fn ephemeral(&self, key: &str) -> Option<LoroValue> {
+        self.ephemeral_store.get(key)
+    }
+
+    /// Returns all currently stored non-deleted ephemeral keys.
+    pub fn ephemeral_keys(&self) -> Vec<String> {
+        self.ephemeral_store.keys()
+    }
+
+    /// Sets a local ephemeral key and returns the wire frame to send.
+    pub fn set_ephemeral(
+        &self,
+        key: &str,
+        value: impl Into<LoroValue>,
+    ) -> std::result::Result<Vec<u8>, TransportError> {
+        self.ephemeral_store.set(key, value);
+        transport::encode_ephemeral(&self.ephemeral_store.encode(key)).into_result()
+    }
+
+    /// Deletes a local ephemeral key and returns the wire frame to send.
+    pub fn delete_ephemeral(&self, key: &str) -> std::result::Result<Vec<u8>, TransportError> {
+        self.ephemeral_store.delete(key);
+        transport::encode_ephemeral(&self.ephemeral_store.encode(key)).into_result()
+    }
+
+    /// Runs the Rust-side `EphemeralStore` timeout housekeeping tick.
+    pub fn remove_outdated_ephemeral(&self) {
+        self.ephemeral_store.remove_outdated();
     }
 
     /// Returns the list of window keys from the root doc (set by server).
@@ -334,10 +403,16 @@ impl SyncClient {
                     return Err(TransportError::Storage(format!("persist root doc: {err}")));
                 }
             }
-            TAG_AWARENESS => {
-                // Server presence broadcast — the client does not track peer
-                // presence yet. Ignore instead of surfacing UnknownTag errors
-                // for every awareness fan-out (ONE-1127).
+            TAG_EPHEMERAL => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
+                self.ephemeral_store
+                    .apply(payload)
+                    .map_err(|_| TransportError::InvalidPayload("ephemeral import failed"))?;
             }
             TAG_LEASE_GRANTED => {
                 // ONE-1140 (OD-5): the server's ack for this connect's lease
@@ -2433,20 +2508,99 @@ mod tests {
     }
 
     #[test]
-    fn awareness_broadcast_is_ignored() {
+    fn ephemeral_frame_applies_and_emits_event() {
         let manager = test_manager();
-        let (mut client, mut rx) = test_client(&manager);
-        let mut msg = vec![TAG_AWARENESS];
-        msg.extend_from_slice(br#"{"online":true,"typing":false,"device_name":"mac"}"#);
+        let (client_a, mut rx_a) = test_client(&manager);
+        let (mut client_b, mut rx_b) = test_client(&manager);
 
-        let responses = client.handle_server_message(&msg).unwrap();
+        let msg = client_a
+            .set_ephemeral("presence:device-a", "online")
+            .unwrap();
+        let _ = rx_a.try_recv().expect("local set emits an event");
+
+        let responses = client_b.handle_server_message(&msg).unwrap();
         assert!(
             responses.is_empty(),
-            "awareness must be ignored, not echoed"
+            "ephemeral import must not echo an immediate response"
         );
-        assert!(
-            rx.try_recv().is_err(),
-            "awareness must not emit error events"
+        assert_eq!(
+            client_b.ephemeral("presence:device-a"),
+            Some("online".into())
+        );
+        let event = rx_b.try_recv().expect("remote import emits an event");
+        assert_matches!(
+            event,
+            SyncEvent::EphemeralChanged {
+                origin: EphemeralChangeOrigin::Remote,
+                added,
+                updated,
+                removed,
+            } if added == vec!["presence:device-a".to_string()]
+                && updated.is_empty()
+                && removed.is_empty()
+        );
+    }
+
+    #[test]
+    fn ephemeral_delete_removes_remote_key() {
+        let manager = test_manager();
+        let (client_a, mut rx_a) = test_client(&manager);
+        let (mut client_b, mut rx_b) = test_client(&manager);
+        let key = "presence:device-a";
+
+        let set = client_a.set_ephemeral(key, "online").unwrap();
+        let _ = rx_a.try_recv().expect("local set emits an event");
+        client_b.handle_server_message(&set).unwrap();
+        let _ = rx_b.try_recv().expect("remote set emits an event");
+        assert_eq!(client_b.ephemeral(key), Some("online".into()));
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let delete = client_a.delete_ephemeral(key).unwrap();
+        let _ = rx_a.try_recv().expect("local delete emits an event");
+        client_b.handle_server_message(&delete).unwrap();
+        assert!(client_b.ephemeral(key).is_none());
+        let event = rx_b.try_recv().expect("remote delete emits an event");
+        assert_matches!(
+            event,
+            SyncEvent::EphemeralChanged {
+                origin: EphemeralChangeOrigin::Remote,
+                added,
+                updated,
+                removed,
+            } if added.is_empty()
+                && updated.is_empty()
+                && removed == vec![key.to_string()]
+        );
+    }
+
+    #[test]
+    fn ephemeral_timeout_housekeeping_removes_key() {
+        let manager = test_manager();
+        let config = SyncClientConfig {
+            ephemeral_timeout_ms: 5,
+            ..Default::default()
+        };
+        let (client, mut rx) = SyncClient::new(manager, config).unwrap();
+        let key = "presence:device-a";
+
+        let _ = client.set_ephemeral(key, "online").unwrap();
+        let _ = rx.try_recv().expect("local set emits an event");
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        client.remove_outdated_ephemeral();
+
+        assert!(client.ephemeral(key).is_none());
+        let event = rx.try_recv().expect("timeout emits an event");
+        assert_matches!(
+            event,
+            SyncEvent::EphemeralChanged {
+                origin: EphemeralChangeOrigin::Timeout,
+                added,
+                updated,
+                removed,
+            } if added.is_empty()
+                && updated.is_empty()
+                && removed == vec![key.to_string()]
         );
     }
 

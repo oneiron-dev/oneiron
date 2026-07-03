@@ -4,7 +4,7 @@
 //! 1. Phase 1: Root doc sync (send snapshot to new client)
 //! 2. Phase 2: Default windows (current + previous) via VV exchange + updates
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
-//! 4. Ongoing: bidirectional incremental sync via WindowSync + Awareness
+//! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -251,6 +251,28 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         }
     }
 
+    // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
+    server.ephemeral_store.remove_outdated();
+    if !server.ephemeral_store.get_all_states().is_empty() {
+        let snapshot = server.ephemeral_store.encode_all();
+        match protocol::encode_ephemeral(&snapshot).into_result() {
+            Ok(msg) => {
+                if ws_sink.send(WsMessage::Binary(msg.into())).await.is_err() {
+                    tracing::warn!(conn_id, "failed to send ephemeral snapshot");
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    conn_id,
+                    error = %e,
+                    "failed to encode ephemeral snapshot"
+                );
+                return;
+            }
+        }
+    }
+
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let federation_quota = FederationQuotaConfig::new(
@@ -417,11 +439,6 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         }
     }
 
-    // Cleanup
-    {
-        let mut awareness = server.awareness.write().await;
-        awareness.remove(&conn_id);
-    }
     outbound_handle.abort();
     tracing::info!(conn_id, "connection closed");
 }
@@ -505,11 +522,15 @@ async fn handle_sync_message(
             );
             Ok(())
         }
-        SyncMessage::Awareness(state) => {
-            let mut awareness = server.awareness.write().await;
-            awareness.insert(conn_id, state.clone());
-            // Broadcast awareness to other connections
-            let encoded = protocol::encode_awareness(&state);
+        SyncMessage::Ephemeral(payload) => {
+            server.ephemeral_store.remove_outdated();
+            server
+                .ephemeral_store
+                .apply(&payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral payload"))?;
+            let encoded = protocol::encode_ephemeral(&payload)
+                .into_result()
+                .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             Ok(())
         }
@@ -2008,11 +2029,11 @@ mod tests {
         // before root `leases` payloads flow, while the current full-window
         // and selector-capable versions stay distinct for broadcast filtering.
         assert_eq!(
-            validate_protocol_hello(&[3, 4]),
+            validate_protocol_hello(&[3, 6]),
             Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
         );
         assert_eq!(
-            validate_protocol_hello(&[3, 5]),
+            validate_protocol_hello(&[3, 7]),
             Ok(protocol::PROTOCOL_VERSION)
         );
 
@@ -2020,12 +2041,14 @@ mod tests {
             ("v1_peer", &[3, 1]),
             ("old_full_window_v2_peer", &[3, 2]),
             ("old_selector_v3_peer", &[3, 3]),
-            ("future_version", &[3, 6]),
+            ("old_full_window_v4_peer", &[3, 4]),
+            ("old_selector_v5_peer", &[3, 5]),
+            ("future_version", &[3, 8]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 5]),
+            ("wrong_tag", &[2, 7]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 5, 0]),
+            ("trailing_bytes", &[3, 7, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(

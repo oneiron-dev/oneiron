@@ -71,6 +71,8 @@ pub struct SyncServerConfig {
     pub federation_flood_pause_secs: u64,
     /// Maximum inbound protocol messages per connection per second.
     pub max_messages_per_sec: u32,
+    /// Loro ephemeral-store inactivity timeout in milliseconds.
+    pub ephemeral_timeout_ms: i64,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
@@ -100,6 +102,7 @@ impl Default for SyncServerConfig {
                 oneiron::sync::DEFAULT_MAX_FEDERATION_WINDOWS_PER_CONNECTION,
             federation_flood_pause_secs: oneiron::sync::DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
             max_messages_per_sec: 200,
+            ephemeral_timeout_ms: 30_000,
             max_entity_blob: 64 * 1024,             // 64 KB
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             usage_mode: runtime.mode.usage_mode(),
@@ -146,6 +149,7 @@ impl fmt::Debug for SyncServerConfig {
                 &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
@@ -257,6 +261,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_messages_per_sec: Option<u32>,
 
+    /// Loro ephemeral-store inactivity timeout in milliseconds.
+    #[arg(long)]
+    pub ephemeral_timeout_ms: Option<i64>,
+
     /// Maximum entity blob size in bytes.
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
@@ -353,6 +361,7 @@ impl fmt::Debug for ServeArgs {
                 &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("usage_mode", &self.usage_mode)
@@ -408,6 +417,7 @@ pub struct ServeConfig {
     pub max_federation_windows_per_connection: usize,
     pub federation_flood_pause_secs: u64,
     pub max_messages_per_sec: u32,
+    pub ephemeral_timeout_ms: i64,
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
@@ -442,6 +452,7 @@ impl Default for ServeConfig {
             max_federation_windows_per_connection: server.max_federation_windows_per_connection,
             federation_flood_pause_secs: server.federation_flood_pause_secs,
             max_messages_per_sec: server.max_messages_per_sec,
+            ephemeral_timeout_ms: server.ephemeral_timeout_ms,
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
             usage_mode: runtime.mode.usage_mode(),
@@ -486,6 +497,7 @@ impl fmt::Debug for ServeConfig {
                 &self.federation_flood_pause_secs,
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
@@ -511,6 +523,7 @@ impl ServeConfig {
             max_federation_windows_per_connection: self.max_federation_windows_per_connection,
             federation_flood_pause_secs: self.federation_flood_pause_secs,
             max_messages_per_sec: self.max_messages_per_sec,
+            ephemeral_timeout_ms: self.ephemeral_timeout_ms,
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
             runtime: self.runtime.clone(),
@@ -587,6 +600,7 @@ impl EnvConfig {
         values.federation_flood_pause_secs =
             lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
+        values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.usage_mode = lookup_parse(&mut lookup, "ONEIRON_USAGE_MODE")?;
@@ -679,6 +693,7 @@ struct FileServeConfig {
     max_federation_windows_per_connection: Option<usize>,
     federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
+    ephemeral_timeout_ms: Option<i64>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
@@ -709,6 +724,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_federation_windows_per_connection: value.max_federation_windows_per_connection,
             federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
+            ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
@@ -740,6 +756,7 @@ struct PartialServeConfig {
     max_federation_windows_per_connection: Option<usize>,
     federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
+    ephemeral_timeout_ms: Option<i64>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
@@ -811,6 +828,9 @@ impl PartialServeConfig {
         if let Some(value) = self.max_messages_per_sec {
             resolved.max_messages_per_sec = value;
         }
+        if let Some(value) = self.ephemeral_timeout_ms {
+            resolved.ephemeral_timeout_ms = value;
+        }
         if let Some(value) = self.max_entity_blob {
             resolved.max_entity_blob = value;
         }
@@ -854,6 +874,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_federation_windows_per_connection: value.max_federation_windows_per_connection,
             federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
+            ephemeral_timeout_ms: value.ephemeral_timeout_ms,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),

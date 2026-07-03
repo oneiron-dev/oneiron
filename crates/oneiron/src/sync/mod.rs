@@ -43,7 +43,7 @@ pub mod transport;
 pub mod types;
 pub mod window;
 
-pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
@@ -80,9 +80,9 @@ pub use selector::{
 };
 pub use transport::{
     LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION,
-    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC, TransportError,
-    decode_bulk_transfer, decode_bulk_transfer_done, decode_protocol_hello, decode_window_sync,
-    encode_bulk_transfer, encode_bulk_transfer_done, encode_legacy_full_window_protocol_hello,
-    encode_protocol_hello, encode_window_sync,
+    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_EPHEMERAL, TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC,
+    TransportError, decode_bulk_transfer, decode_bulk_transfer_done, decode_protocol_hello,
+    decode_window_sync, encode_bulk_transfer, encode_bulk_transfer_done, encode_ephemeral,
+    encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{SyncConfig, WindowKey};
