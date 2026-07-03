@@ -1014,6 +1014,27 @@ impl<'a> JobQueue<'a> {
         decode_record(raw, id).map(Some)
     }
 
+    /// Reads all persisted job rows in deterministic creation order.
+    pub fn list(&self) -> Result<Vec<JobRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut records = Vec::new();
+        for row in self.store.job_records.iter(&rtxn)? {
+            let (key, raw_record) = row?;
+            let id = JobId::from_bytes(key)?;
+            records.push(decode_record(raw_record, id)?);
+        }
+        records.sort_by(job_record_order);
+        Ok(records)
+    }
+
+    /// Reads persisted job rows for one run id in deterministic creation order.
+    pub fn list_run(&self, run_id: &str) -> Result<Vec<JobRecord>> {
+        validate_optional_run_id(Some(run_id))?;
+        let mut records = self.list()?;
+        records.retain(|record| record.run_id.as_deref() == Some(run_id));
+        Ok(records)
+    }
+
     fn read_existing_dedupe_in_read_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1258,6 +1279,12 @@ fn lease_expired(record: &JobRecord, now: u64, lease_timeout_secs: u64) -> bool 
 
 fn mark_rechecked_candidate_not_running(report: &mut JobQueueCleanupReport) {
     report.running = report.running.saturating_sub(1);
+}
+
+pub(crate) fn job_record_order(left: &JobRecord, right: &JobRecord) -> std::cmp::Ordering {
+    left.created_at
+        .cmp(&right.created_at)
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
 }
 
 fn ready_key(ready_at: u64, id: JobId) -> [u8; READY_KEY_LEN] {
