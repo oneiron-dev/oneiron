@@ -1,8 +1,7 @@
 //! Custom Oneiron sync protocol — server-side extensions.
 //!
 //! Re-exports the shared wire protocol from `oneiron::sync` and adds
-//! server-specific types: `AwarenessState`, `SyncMessage`, `ProtocolError`,
-//! and close codes.
+//! server-specific types: `SyncMessage`, `ProtocolError`, and close codes.
 
 // Re-export shared wire constants and encode/decode functions.
 pub(crate) use oneiron::sync::{
@@ -13,8 +12,8 @@ pub(crate) use oneiron::sync::{
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
     LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED, LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, TAG_AWARENESS, TAG_LEASE_REQUEST, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
-    decode_lease_request, decode_protocol_hello, encode_lease_granted,
+    PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
+    decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
 };
 
 /// Sub-tags within WindowSync messages.
@@ -108,44 +107,6 @@ impl<T> PaginatedResponse<T> {
     }
 }
 
-// ─── Awareness ────────────────────────────────────────────────────────────────
-
-/// Custom awareness state (Loro doesn't have built-in awareness).
-/// Simple JSON-serializable presence state per device.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub(crate) struct AwarenessState {
-    pub online: bool,
-    pub typing: bool,
-    pub device_name: String,
-}
-
-impl Default for AwarenessState {
-    fn default() -> Self {
-        Self {
-            online: true,
-            typing: false,
-            device_name: String::new(),
-        }
-    }
-}
-
-/// Encodes an awareness message for the wire.
-///
-/// Format: `[TAG_AWARENESS:1][json_bytes]`
-pub(crate) fn encode_awareness(state: &AwarenessState) -> Vec<u8> {
-    let json = serde_json::to_vec(state).expect("AwarenessState serialization cannot fail");
-    let mut buf = Vec::with_capacity(1 + json.len());
-    buf.push(TAG_AWARENESS);
-    buf.extend_from_slice(&json);
-    buf
-}
-
-/// Decodes an awareness message (after tag byte has been consumed).
-pub(crate) fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolError> {
-    serde_json::from_slice(data)
-        .map_err(|_| ProtocolError::InvalidPayload("invalid awareness JSON"))
-}
-
 // ─── Top-level Message Dispatch ───────────────────────────────────────────────
 
 /// Parsed top-level message from the wire.
@@ -153,8 +114,8 @@ pub(crate) fn decode_awareness(data: &[u8]) -> Result<AwarenessState, ProtocolEr
 pub(crate) enum SyncMessage {
     /// Root doc update bytes (tag 0). Server rejects these from clients.
     RootUpdate(Vec<u8>),
-    /// Awareness state (tag 1). Bidirectional.
-    Awareness(AwarenessState),
+    /// Loro-native ephemeral store bytes (tag 1). Bidirectional.
+    Ephemeral(Vec<u8>),
     /// Root version vector (tag 2). Used for sync negotiation.
     RootVersionVector(Vec<u8>),
     /// LeaseRequest (tag 4, ONE-1140): the client's frame #2 on every
@@ -193,10 +154,7 @@ pub(crate) fn parse_message(data: &[u8]) -> Result<SyncMessage, ProtocolError> {
 
     match tag {
         TAG_SYNC_UPDATE => Ok(SyncMessage::RootUpdate(payload.to_vec())),
-        TAG_AWARENESS => {
-            let state = decode_awareness(payload)?;
-            Ok(SyncMessage::Awareness(state))
-        }
+        TAG_EPHEMERAL => Ok(SyncMessage::Ephemeral(payload.to_vec())),
         TAG_VERSION_VECTOR => Ok(SyncMessage::RootVersionVector(payload.to_vec())),
         TAG_LEASE_REQUEST => {
             let (client_id, pubkey, pop_sig) = decode_lease_request(payload)
@@ -361,17 +319,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_message_awareness() {
-        let state = AwarenessState {
-            online: true,
-            typing: true,
-            device_name: "iPhone".to_string(),
+    fn parse_message_ephemeral() {
+        let payload = b"ephemeral-bytes";
+        let encoded = encode_ephemeral(payload).into_result().unwrap();
+        let SyncMessage::Ephemeral(bytes) = parse_message(&encoded).unwrap() else {
+            panic!("expected Ephemeral");
         };
-        let encoded = encode_awareness(&state);
-        let SyncMessage::Awareness(s) = parse_message(&encoded).unwrap() else {
-            panic!("expected Awareness");
-        };
-        assert_eq!(s, state);
+        assert_eq!(bytes, payload);
     }
 
     #[test]
@@ -380,15 +334,13 @@ mod tests {
     }
 
     #[test]
-    fn awareness_roundtrip() {
-        let state = AwarenessState {
-            online: false,
-            typing: false,
-            device_name: "MacBook".to_string(),
+    fn ephemeral_roundtrip() {
+        let encoded = encode_ephemeral(b"snapshot").into_result().unwrap();
+        let decoded = parse_message(&encoded).unwrap();
+        let SyncMessage::Ephemeral(bytes) = decoded else {
+            panic!("expected Ephemeral");
         };
-        let encoded = encode_awareness(&state);
-        let decoded = decode_awareness(&encoded[1..]).unwrap();
-        assert_eq!(decoded, state);
+        assert_eq!(bytes, b"snapshot");
     }
 
     #[test]

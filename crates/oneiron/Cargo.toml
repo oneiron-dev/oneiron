@@ -24,6 +24,7 @@ rmpv = { workspace = true }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 p256 = { workspace = true }
 futures-core = { workspace = true }
@@ -72,7 +73,14 @@ heed = { workspace = true, features = ["posix-sem"] }
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
-sync = ["loro", "dep:tokio", "dep:tokio-tungstenite", "dep:futures-util", "dep:zstd"]
+sync = [
+    "loro",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
+    "dep:futures-util",
+    "dep:zstd",
+    "dep:postcard",
+]
 # Compiles in cross-crate test-only fault-injection seams (e.g. the lease
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
