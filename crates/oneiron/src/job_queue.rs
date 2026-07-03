@@ -217,17 +217,17 @@ impl<'a> JobQueue<'a> {
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
         validate_optional_run_id(input.run_id.as_deref())?;
 
-        let dedupe_index_keys = input
+        let dedupe_blake3_key = input
             .dedupe_key
             .as_deref()
             .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, dedupe_key));
-        if let (Some(dedupe_key), Some(index_keys)) =
-            (input.dedupe_key.as_deref(), dedupe_index_keys.as_ref())
+        if let (Some(dedupe_key), Some(index_key)) =
+            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
         {
             let rtxn = self.store.env.read_txn()?;
             if let Some(record) = self.read_existing_dedupe_in_read_txn(
                 &rtxn,
-                &index_keys.blake3[..],
+                &index_key.blake3[..],
                 &input.kind,
                 dedupe_key,
             )? {
@@ -236,11 +236,11 @@ impl<'a> JobQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        if let (Some(dedupe_key), Some(index_keys)) =
-            (input.dedupe_key.as_deref(), dedupe_index_keys.as_ref())
+        if let (Some(dedupe_key), Some(index_key)) =
+            (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
             && let Some(record) = self.read_existing_dedupe_in_write_txn(
                 &mut wtxn,
-                index_keys,
+                &index_key.blake3[..],
                 &input.kind,
                 dedupe_key,
             )?
@@ -272,10 +272,10 @@ impl<'a> JobQueue<'a> {
         self.store
             .job_ready
             .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
-        if let Some(index_keys) = dedupe_index_keys.as_ref() {
+        if let Some(index_key) = dedupe_blake3_key.as_ref() {
             self.store
                 .job_dedupe
-                .put(&mut wtxn, &index_keys.blake3[..], record.id.as_bytes())?;
+                .put(&mut wtxn, &index_key.blake3[..], record.id.as_bytes())?;
         }
         wtxn.commit()?;
 
@@ -527,32 +527,26 @@ impl<'a> JobQueue<'a> {
     fn read_existing_dedupe_in_write_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        index_keys: &DedupeIndexKeys,
+        blake3_key: &[u8],
         kind: &str,
         dedupe_key: &str,
     ) -> Result<Option<JobRecord>> {
-        if let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
-            txn,
-            &index_keys.blake3[..],
-            kind,
-            dedupe_key,
-        )? {
+        if let Some(record) =
+            self.read_existing_dedupe_entry_in_write_txn(txn, blake3_key, kind, dedupe_key)?
+        {
             return Ok(Some(record));
         }
 
-        let Some(record) = self.read_existing_dedupe_entry_in_write_txn(
-            txn,
-            &index_keys.legacy,
-            kind,
-            dedupe_key,
-        )?
+        let legacy_key = legacy_dedupe_index_key(kind, dedupe_key);
+        let Some(record) =
+            self.read_existing_dedupe_entry_in_write_txn(txn, &legacy_key, kind, dedupe_key)?
         else {
             return Ok(None);
         };
         self.store
             .job_dedupe
-            .put(txn, &index_keys.blake3[..], record.id.as_bytes())?;
-        self.store.job_dedupe.delete(txn, &index_keys.legacy)?;
+            .put(txn, blake3_key, record.id.as_bytes())?;
+        self.store.job_dedupe.delete(txn, &legacy_key)?;
         Ok(Some(record))
     }
 
@@ -586,9 +580,10 @@ impl<'a> JobQueue<'a> {
         record: &JobRecord,
     ) -> Result<()> {
         if let Some(dedupe_key) = record.dedupe_key.as_deref() {
-            let index_keys = DedupeIndexKeys::new(&record.kind, dedupe_key);
-            self.store.job_dedupe.delete(txn, &index_keys.blake3[..])?;
-            self.store.job_dedupe.delete(txn, &index_keys.legacy)?;
+            let blake3_key = dedupe_index_key(&record.kind, dedupe_key);
+            let legacy_key = legacy_dedupe_index_key(&record.kind, dedupe_key);
+            self.store.job_dedupe.delete(txn, &blake3_key[..])?;
+            self.store.job_dedupe.delete(txn, &legacy_key)?;
         }
         Ok(())
     }
@@ -705,14 +700,12 @@ fn validate_dedupe_record(record: &JobRecord, kind: &str, dedupe_key: &str) -> R
 
 struct DedupeIndexKeys {
     blake3: [u8; DEDUPE_INDEX_KEY_LEN],
-    legacy: Vec<u8>,
 }
 
 impl DedupeIndexKeys {
     fn new(kind: &str, dedupe_key: &str) -> Self {
         Self {
             blake3: dedupe_index_key(kind, dedupe_key),
-            legacy: legacy_dedupe_index_key(kind, dedupe_key),
         }
     }
 }
