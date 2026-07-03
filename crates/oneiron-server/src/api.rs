@@ -6488,11 +6488,12 @@ async fn core_context_pack(
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    builder = apply_context_pack_budget(
+    let (builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
         0,
         candidate_limit,
+        req.limit,
         max_neighbors,
     )?;
 
@@ -6505,6 +6506,7 @@ async fn core_context_pack(
             ContextPackResponseLimits {
                 results: req.limit,
                 neighbors: max_neighbors,
+                retrieval: retrieval_budget,
             },
             "core context-pack failed",
             eiri_context,
@@ -6959,8 +6961,15 @@ fn apply_context_pack_budget<'a>(
     budget: Option<&ContextPackBudgetControls>,
     top_level_max_item_tokens: usize,
     scoped_candidate_limit: usize,
+    result_limit: usize,
     default_selected_edges: usize,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
+) -> Result<
+    (
+        oneiron::ContextPackBuilder<'a>,
+        oneiron::ContextPackRetrievalBudget,
+    ),
+    ApiError,
+> {
     let max_item_tokens = budget
         .and_then(|budget| budget.max_item_tokens)
         .unwrap_or(top_level_max_item_tokens);
@@ -6989,23 +6998,74 @@ fn apply_context_pack_budget<'a>(
             Some("budget.retrieval.selected_edges"),
         ));
     }
+    let (response_budget, internal_budget) = resolve_context_pack_retrieval_budgets(
+        retrieval,
+        result_limit,
+        scoped_candidate_limit,
+        default_selected_edges,
+    );
+    builder = builder.retrieval_budget(internal_budget);
+    Ok((builder, response_budget))
+}
+
+fn resolve_context_pack_retrieval_budgets(
+    retrieval: Option<&ContextPackRetrievalBudgetControls>,
+    result_limit: usize,
+    scoped_candidate_limit: usize,
+    default_selected_edges: usize,
+) -> (
+    oneiron::ContextPackRetrievalBudget,
+    oneiron::ContextPackRetrievalBudget,
+) {
     let selected_edges = retrieval
         .and_then(|retrieval| retrieval.selected_edges)
         .unwrap_or(default_selected_edges);
-    let scoped_bucket = |configured: Option<usize>| {
-        configured
-            .unwrap_or(scoped_candidate_limit)
-            .max(scoped_candidate_limit)
-    };
-    builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
-        scoped_bucket(retrieval.and_then(|retrieval| retrieval.claims)),
-        scoped_bucket(retrieval.and_then(|retrieval| retrieval.turns)),
-        scoped_bucket(retrieval.and_then(|retrieval| retrieval.summaries)),
-        scoped_bucket(retrieval.and_then(|retrieval| retrieval.facets)),
-        scoped_bucket(retrieval.and_then(|retrieval| retrieval.other)),
+    let mut response_budget = oneiron::ContextPackRetrievalBudget::from_limit(
+        result_limit,
+        oneiron::TokenAllocation::default(),
         selected_edges,
-    ));
-    Ok(builder)
+    );
+    if let Some(retrieval) = retrieval {
+        if let Some(claims) = retrieval.claims {
+            response_budget.claims = claims;
+        }
+        if let Some(turns) = retrieval.turns {
+            response_budget.turns = turns;
+        }
+        if let Some(summaries) = retrieval.summaries {
+            response_budget.summaries = summaries;
+        }
+        if let Some(facets) = retrieval.facets {
+            response_budget.facets = facets;
+        }
+        if let Some(other) = retrieval.other {
+            response_budget.other = other;
+        }
+    }
+    let internal_budget =
+        widen_context_pack_retrieval_budget(response_budget, scoped_candidate_limit);
+    (response_budget, internal_budget)
+}
+
+fn widen_context_pack_retrieval_budget(
+    budget: oneiron::ContextPackRetrievalBudget,
+    scoped_candidate_limit: usize,
+) -> oneiron::ContextPackRetrievalBudget {
+    let widen = |bucket: usize| {
+        if bucket == 0 {
+            0
+        } else {
+            bucket.max(scoped_candidate_limit)
+        }
+    };
+    oneiron::ContextPackRetrievalBudget::new(
+        widen(budget.claims),
+        widen(budget.turns),
+        widen(budget.summaries),
+        widen(budget.facets),
+        widen(budget.other),
+        budget.selected_edges,
+    )
 }
 
 fn resolve_eiri_context_v4_request(
@@ -7312,6 +7372,62 @@ async fn advance_eiri_session_rag_state(
 struct ContextPackResponseLimits {
     results: usize,
     neighbors: usize,
+    retrieval: oneiron::ContextPackRetrievalBudget,
+}
+
+fn apply_context_pack_response_limits(
+    pack: &mut oneiron::ContextPack,
+    limits: ContextPackResponseLimits,
+) {
+    apply_context_pack_response_retrieval_budget(pack, limits.retrieval);
+    pack.results.truncate(limits.results);
+    pack.neighbors.truncate(limits.neighbors);
+    scrub_context_pack_visible_stats(pack);
+}
+
+fn apply_context_pack_response_retrieval_budget(
+    pack: &mut oneiron::ContextPack,
+    budget: oneiron::ContextPackRetrievalBudget,
+) {
+    let mut claims = 0_usize;
+    let mut turns = 0_usize;
+    let mut summaries = 0_usize;
+    let mut facets = 0_usize;
+    let mut other = 0_usize;
+    pack.results.retain(|entity| {
+        let (count, limit) = match entity.entity_type {
+            oneiron::types::ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
+            oneiron::types::ENTITY_TYPE_TURN => (&mut turns, budget.turns),
+            oneiron::types::ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
+            oneiron::types::ENTITY_TYPE_FACET => (&mut facets, budget.facets),
+            _ => (&mut other, budget.other),
+        };
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    });
+}
+
+fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
+    pack.stats.candidates_considered = pack.results.len();
+    pack.stats.entities_hydrated = pack.results.len();
+    pack.stats.neighbors_hydrated = pack.neighbors.len();
+
+    if pack.results.is_empty() && pack.neighbors.is_empty() {
+        if let Some(empty) = pack.empty.as_mut() {
+            empty.total_in_scope = 0;
+        } else {
+            pack.empty = Some(oneiron::EmptyContext {
+                reason: oneiron::EmptyReason::FilterMatchedNone,
+                total_in_scope: 0,
+                hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
+            });
+        }
+    } else {
+        pack.empty = None;
+    }
 }
 
 async fn run_context_pack_builder(
@@ -7334,8 +7450,7 @@ async fn run_context_pack_builder(
             tracing::error!(error = %error, "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
         })?;
-    pack.value.results.truncate(response_limits.results);
-    pack.value.neighbors.truncate(response_limits.neighbors);
+    apply_context_pack_response_limits(&mut pack.value, response_limits);
     let pack = pack.finish_projected_json(&projection);
     let run_id = pack.run_id;
     let pack = pack.value;
@@ -8751,11 +8866,12 @@ async fn context_pack(
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    builder = apply_context_pack_budget(
+    let (builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
         req.max_item_tokens,
         candidate_limit,
+        req.limit,
         max_neighbors,
     )?;
 
@@ -8768,6 +8884,7 @@ async fn context_pack(
             ContextPackResponseLimits {
                 results: req.limit,
                 neighbors: max_neighbors,
+                retrieval: retrieval_budget,
             },
             "context-pack failed",
             eiri_context,
@@ -9070,6 +9187,100 @@ mod tests {
             },
             empty: None,
         }
+    }
+
+    #[test]
+    fn context_pack_scoped_budget_preserves_default_response_split() {
+        let (response, internal) = resolve_context_pack_retrieval_budgets(None, 5, 100, 7);
+        let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
+            5,
+            oneiron::TokenAllocation::default(),
+            7,
+        );
+
+        assert_eq!(response, defaults);
+        assert_eq!(internal.selected_edges, 7);
+        assert_eq!(internal.claims, 100);
+        assert_eq!(internal.turns, 100);
+        assert_eq!(internal.summaries, 100);
+        assert_eq!(internal.facets, 100);
+        assert_eq!(internal.other, 100);
+    }
+
+    #[test]
+    fn context_pack_scoped_budget_preserves_explicit_zero_buckets() {
+        let controls = ContextPackRetrievalBudgetControls {
+            claims: Some(0),
+            turns: Some(2),
+            selected_edges: Some(3),
+            ..Default::default()
+        };
+
+        let (response, internal) =
+            resolve_context_pack_retrieval_budgets(Some(&controls), 10, 50, 9);
+
+        assert_eq!(response.claims, 0);
+        assert_eq!(internal.claims, 0);
+        assert_eq!(response.turns, 2);
+        assert_eq!(internal.turns, 50);
+        assert_eq!(response.selected_edges, 3);
+        assert_eq!(internal.selected_edges, 3);
+    }
+
+    #[test]
+    fn context_pack_response_limits_scrub_stats_after_scoped_truncation() {
+        let mut pack = synthetic_context_pack(0);
+        let claim_a = seeded_test_entity_id(0x0012_6501);
+        let claim_b = seeded_test_entity_id(0x0012_6502);
+        let turn = seeded_test_entity_id(0x0012_6503);
+        let neighbor = seeded_test_entity_id(0x0012_6504);
+        let entity = |id: oneiron::EntityId, entity_type: u8| oneiron::ContextEntity {
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            entity_type,
+            score: 1.0,
+            fields: None,
+            edges: None,
+            vector: None,
+        };
+        pack.results = vec![
+            entity(claim_a, oneiron::types::ENTITY_TYPE_CLAIM),
+            entity(claim_b, oneiron::types::ENTITY_TYPE_CLAIM),
+            entity(turn, ENTITY_TYPE_TURN),
+        ];
+        pack.neighbors = vec![
+            entity(neighbor, oneiron::types::ENTITY_TYPE_SUMMARY),
+            entity(
+                seeded_test_entity_id(0x0012_6505),
+                oneiron::types::ENTITY_TYPE_SUMMARY,
+            ),
+        ];
+        pack.stats.candidates_considered = 99;
+        pack.stats.entities_hydrated = 88;
+        pack.stats.neighbors_hydrated = 77;
+
+        apply_context_pack_response_limits(
+            &mut pack,
+            ContextPackResponseLimits {
+                results: 10,
+                neighbors: 1,
+                retrieval: oneiron::ContextPackRetrievalBudget::new(1, 1, 0, 0, 0, 0),
+            },
+        );
+
+        assert_eq!(
+            pack.results
+                .iter()
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            vec![claim_a, turn]
+        );
+        assert_eq!(pack.neighbors.len(), 1);
+        assert_eq!(pack.stats.candidates_considered, 2);
+        assert_eq!(pack.stats.entities_hydrated, 2);
+        assert_eq!(pack.stats.neighbors_hydrated, 1);
+        assert!(pack.empty.is_none());
     }
 
     fn seed_active_claim(

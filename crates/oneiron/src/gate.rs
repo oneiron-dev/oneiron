@@ -3065,6 +3065,46 @@ mod tests {
     }
 
     #[test]
+    fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x6F, &encode_policy_manifest(vec![]))?;
+
+        let claim_id = test_id(0xD0);
+        put_claim_body(
+            &vault,
+            &claim_id,
+            &source_trust_claim(ClaimSource::UserStated),
+        )?;
+        let short_id = "cldeleted";
+        let content_hash = 0x5B;
+        put_dangling_short_id(&vault, short_id, content_hash, &claim_id)?;
+
+        let outcome = vault
+            .delete_entity_with_reason(&claim_id, crate::deletion::DeleteReason::UserDelete)?;
+        assert!(outcome.existed);
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        let hydrated = scoped_read
+            .hydrate_short_id(short_id, content_hash)?
+            .expect("deleted claim short id should preserve deletion metadata");
+        assert_eq!(hydrated.id, claim_id);
+        assert_eq!(hydrated.entity_type, crate::types::ENTITY_TYPE_CLAIM);
+        assert!(hydrated.body.is_none());
+        let deletion = hydrated.deletion.expect("deleted claim metadata");
+        assert!(matches!(
+            deletion.source,
+            crate::types::HydratedShortIdDeletionSource::Tombstone
+                | crate::types::HydratedShortIdDeletionSource::PendingTombstone
+        ));
+        assert_eq!(
+            deletion.reason,
+            Some(crate::types::HydratedShortIdDeletionReason::UserDelete)
+        );
+        assert!(!deletion.hard);
+        Ok(())
+    }
+
+    #[test]
     fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let allowed_world = test_id(0xCC);

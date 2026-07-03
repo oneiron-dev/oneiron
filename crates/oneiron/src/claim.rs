@@ -39,8 +39,8 @@ use crate::affect::{
 use crate::error::{Error, Result};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo,
-    EdgeKind, EmptyContext, EmptyReason, EntityId, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    EdgeKind, EmptyContext, EmptyReason, EntityId, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, ScoredEntity,
 };
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -245,9 +245,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(None);
         };
         if result.body.is_none() {
-            if result.deletion.as_ref().is_some_and(|deletion| {
-                deletion.source == HydratedShortIdDeletionSource::DanglingShortId
-            }) {
+            if result.deletion.is_some() {
                 return Ok(Some(result));
             }
             return if result.entity_type == ENTITY_TYPE_CLAIM {
