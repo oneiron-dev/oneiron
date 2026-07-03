@@ -50,9 +50,85 @@ const PSYCH_MIRROR_STRUCTURED_TEXT_SEPARATOR: &str = "\n";
 /// may occupy in an `All`-scope pack — fiction takes at most half, so it can
 /// never crowd base reality out (ARCH-0004 / ARCH-0022).
 const DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION: f32 = 0.5;
+pub const MCP_CONTEXT_PACK_REF_SCHEMA_VERSION: &str = "context_pack_ref.v1";
 #[cfg(test)]
 thread_local! {
     static EDGE_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpContextPackRef {
+    pub schema_version: String,
+    #[serde(default)]
+    pub context_version: Option<String>,
+    #[serde(default)]
+    pub pack_ref: Option<String>,
+    #[serde(default)]
+    pub retrieval_run_id: Option<String>,
+    #[serde(default)]
+    pub result_ids: Vec<String>,
+    #[serde(default)]
+    pub budget_ref: Option<String>,
+}
+
+impl McpContextPackRef {
+    pub fn validate(&self) -> std::result::Result<(), McpContextPackRefError> {
+        if self.schema_version != MCP_CONTEXT_PACK_REF_SCHEMA_VERSION {
+            return Err(McpContextPackRefError::UnsupportedSchemaVersion);
+        }
+        validate_optional_context_pack_ref_field(
+            "context_version",
+            self.context_version.as_deref(),
+        )?;
+        validate_optional_context_pack_ref_field("pack_ref", self.pack_ref.as_deref())?;
+        validate_optional_context_pack_ref_field(
+            "retrieval_run_id",
+            self.retrieval_run_id.as_deref(),
+        )?;
+        validate_optional_context_pack_ref_field("budget_ref", self.budget_ref.as_deref())?;
+        if self.pack_ref.is_none() && self.retrieval_run_id.is_none() && self.result_ids.is_empty()
+        {
+            return Err(McpContextPackRefError::MissingHandle);
+        }
+        for result_id in &self.result_ids {
+            validate_context_pack_result_id(result_id)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+pub enum McpContextPackRefError {
+    #[error("unsupported context-pack reference schema version")]
+    UnsupportedSchemaVersion,
+    #[error("context-pack reference requires pack_ref, retrieval_run_id, or result_ids")]
+    MissingHandle,
+    #[error("{0} must not be blank")]
+    BlankField(&'static str),
+    #[error("result_ids entries must be canonical entity ids")]
+    InvalidResultId,
+}
+
+fn validate_optional_context_pack_ref_field(
+    field: &'static str,
+    value: Option<&str>,
+) -> std::result::Result<(), McpContextPackRefError> {
+    if value.is_some_and(|value| value.trim().is_empty()) {
+        return Err(McpContextPackRefError::BlankField(field));
+    }
+    Ok(())
+}
+
+fn validate_context_pack_result_id(
+    result_id: &str,
+) -> std::result::Result<(), McpContextPackRefError> {
+    let parsed =
+        EntityId::from_hex(result_id).map_err(|_| McpContextPackRefError::InvalidResultId)?;
+    if parsed.to_hex() != result_id {
+        return Err(McpContextPackRefError::InvalidResultId);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -1947,6 +2023,55 @@ mod tests {
 
     fn edge_scan_count() -> usize {
         EDGE_SCAN_COUNT.with(Cell::get)
+    }
+
+    #[test]
+    fn mcp_context_pack_ref_requires_supported_version_and_handle() {
+        let mut context_pack = McpContextPackRef {
+            schema_version: MCP_CONTEXT_PACK_REF_SCHEMA_VERSION.to_owned(),
+            context_version: Some(EIRI_CONTEXT_VERSION_V4.to_owned()),
+            pack_ref: Some("context-pack:test".to_owned()),
+            retrieval_run_id: None,
+            result_ids: Vec::new(),
+            budget_ref: None,
+        };
+        assert_eq!(context_pack.validate(), Ok(()));
+
+        context_pack.schema_version = "context_pack_ref.v2".to_owned();
+        assert_eq!(
+            context_pack.validate(),
+            Err(McpContextPackRefError::UnsupportedSchemaVersion)
+        );
+
+        context_pack.schema_version = MCP_CONTEXT_PACK_REF_SCHEMA_VERSION.to_owned();
+        context_pack.pack_ref = None;
+        assert_eq!(
+            context_pack.validate(),
+            Err(McpContextPackRefError::MissingHandle)
+        );
+    }
+
+    #[test]
+    fn mcp_context_pack_ref_rejects_blank_fields_and_noncanonical_results() {
+        let mut context_pack = McpContextPackRef {
+            schema_version: MCP_CONTEXT_PACK_REF_SCHEMA_VERSION.to_owned(),
+            context_version: Some("  ".to_owned()),
+            pack_ref: Some("context-pack:test".to_owned()),
+            retrieval_run_id: None,
+            result_ids: Vec::new(),
+            budget_ref: None,
+        };
+        assert_eq!(
+            context_pack.validate(),
+            Err(McpContextPackRefError::BlankField("context_version"))
+        );
+
+        context_pack.context_version = Some(EIRI_CONTEXT_VERSION_V4.to_owned());
+        context_pack.result_ids = vec!["7777777777777777777777777777777X".to_owned()];
+        assert_eq!(
+            context_pack.validate(),
+            Err(McpContextPackRefError::InvalidResultId)
+        );
     }
 
     fn test_config() -> VaultConfig {
