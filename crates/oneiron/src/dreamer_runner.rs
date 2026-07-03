@@ -288,8 +288,8 @@ impl<'a> DreamerRunnerStore<'a> {
     ///
     /// A successful admission leases one queue row, mutates the private budget
     /// counter, and optionally writes a durable started milestone claim before
-    /// committing. Budget denial drops the transaction, leaving the job queued
-    /// and the budget row unchanged.
+    /// committing. Budget denial commits only queue scan repairs, leaving the
+    /// job queued and the budget row unchanged.
     pub fn admit_next(&self, input: AdmitDreamerJob) -> Result<DreamerAdmissionOutcome> {
         validate_budget_id(&input.budget_id)?;
         if input.reserve_units == 0 {
@@ -308,6 +308,26 @@ impl<'a> DreamerRunnerStore<'a> {
         }
 
         let mut wtxn = self.vault.store.env.write_txn()?;
+        if !self
+            .jobs
+            .repair_kind_ready_in_txn(&mut wtxn, DREAMER_RUNNER_JOB_KIND, input.now)?
+        {
+            wtxn.commit()?;
+            return Ok(DreamerAdmissionOutcome::Empty);
+        }
+
+        let mut budget = read_or_initialize_budget_in_txn(
+            self.vault,
+            &wtxn,
+            &input.budget_id,
+            input.budget_total_units,
+            input.now,
+        )?;
+        if input.reserve_units > budget.remaining_units {
+            wtxn.commit()?;
+            return Ok(DreamerAdmissionOutcome::BudgetExhausted(budget));
+        }
+
         let claim = self.jobs.claim_kind_in_txn(
             &mut wtxn,
             DREAMER_RUNNER_JOB_KIND,
@@ -320,17 +340,6 @@ impl<'a> DreamerRunnerStore<'a> {
             wtxn.commit()?;
             return Ok(DreamerAdmissionOutcome::Empty);
         };
-
-        let mut budget = read_or_initialize_budget_in_txn(
-            self.vault,
-            &wtxn,
-            &input.budget_id,
-            input.budget_total_units,
-            input.now,
-        )?;
-        if input.reserve_units > budget.remaining_units {
-            return Ok(DreamerAdmissionOutcome::BudgetExhausted(budget));
-        }
 
         budget.remaining_units -= input.reserve_units;
         budget.reserved_units = budget
@@ -1042,6 +1051,24 @@ mod tests {
         }
     }
 
+    fn test_ready_key(ready_at: u64, id: JobId) -> [u8; 24] {
+        let mut key = [0_u8; 24];
+        key[..8].copy_from_slice(&ready_at.to_be_bytes());
+        key[8..].copy_from_slice(id.as_bytes());
+        key
+    }
+
+    fn job_dedupe_points_to(vault: &Vault, id: JobId) -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        for row in vault.store.job_dedupe.iter(&rtxn)? {
+            let (_key, value) = row?;
+            if value == id.as_bytes() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn milestone_fixture(
         vault: &Vault,
         claim_id: EntityId,
@@ -1049,8 +1076,8 @@ mod tests {
     ) -> Result<DreamerMilestoneClaim> {
         let actor = EntityId::now();
         let subject = EntityId::now();
-        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"actor")?;
-        vault.put_entity(&subject, ENTITY_TYPE_TASK, occurred(1), 1, b"subject")?;
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(at), at, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_TASK, occurred(at), at, b"subject")?;
         let envelope = WriteEnvelope::new(
             WriteActor::new(actor, EdgeActorClass::Human),
             ClaimSource::UserStated,
@@ -1065,6 +1092,35 @@ mod tests {
             occurred: occurred(at),
             learned_at: at,
         })
+    }
+
+    #[cfg(feature = "sync")]
+    fn write_dreamer_boundary_claim(
+        vault: &Vault,
+        claim_id: EntityId,
+        predicate: &'static str,
+        at: u64,
+    ) -> Result<()> {
+        let actor = EntityId::now();
+        let subject = EntityId::now();
+        vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(at), at, b"actor")?;
+        vault.put_entity(&subject, ENTITY_TYPE_TASK, occurred(at), at, b"subject")?;
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("dreamer-sync-boundary-test"))?,
+            ClaimApprovalStatus::Approved,
+        );
+        let candidate = crate::types::ClaimCandidate::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            Value::from(predicate),
+            1.0,
+        );
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, occurred(at), at)
+            .commit()
     }
 
     #[test]
@@ -1147,7 +1203,31 @@ mod tests {
     fn dreamer_admission_budget_denial_does_not_lease_or_persist_budget() -> Result<()> {
         let (_dir, vault) = open_vault();
         let runner = DreamerRunnerStore::new(&vault);
+        let stale = match runner.enqueue(EnqueueDreamerJob {
+            job_type: "stale".to_owned(),
+            input: Value::from("stale"),
+            parent_job: None,
+            dedupe_key: Some("stale-dedupe".to_owned()),
+            run_id: None,
+            now: 5,
+        })? {
+            EnqueueDreamerJobOutcome::Enqueued(status)
+            | EnqueueDreamerJobOutcome::Existing(status) => status,
+        };
         let queued = enqueue_job(&runner, "expand", 10)?;
+        let stale_ready_key = test_ready_key(5, stale.job.id);
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_records
+                .delete(&mut wtxn, stale.job.id.as_bytes())?;
+            wtxn.commit()?;
+        }
+        assert!(
+            job_dedupe_points_to(&vault, stale.job.id)?,
+            "fixture must leave a stale dedupe index before denial"
+        );
 
         let denied = runner.admit_next(AdmitDreamerJob {
             lease_owner: "dreamer-worker".to_owned(),
@@ -1171,6 +1251,20 @@ mod tests {
         assert_eq!(status.job.state, JobState::Queued);
         assert_eq!(status.job.attempt_count, 0);
         assert!(status.job.lease_owner.is_none());
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .job_ready
+                .get(&rtxn, &stale_ready_key)?
+                .is_none(),
+            "budget denial must commit stale ready-row repairs"
+        );
+        drop(rtxn);
+        assert!(
+            !job_dedupe_points_to(&vault, stale.job.id)?,
+            "budget denial must commit stale dedupe cleanup"
+        );
 
         Ok(())
     }
@@ -1242,6 +1336,125 @@ mod tests {
                 .get(&rtxn, claim_id.as_bytes())?
                 .is_some(),
             "milestone claims are the durable vault claim surface"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::map_get_bytes;
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window;
+        use loro::{ExportMode, LoroDoc};
+
+        let learned_at = 1_772_000_000;
+        let window_key = WindowKey::from_timestamp(learned_at);
+        let (_dir_a, vault_a) = open_vault();
+        let runner_a = DreamerRunnerStore::new(&vault_a);
+        let queued = enqueue_job(&runner_a, "expand", learned_at)?;
+        let milestone_id = EntityId::now();
+        let milestone = milestone_fixture(&vault_a, milestone_id, learned_at)?;
+
+        runner_a.admit_next(AdmitDreamerJob {
+            lease_owner: "dreamer-worker".to_owned(),
+            now: learned_at,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10,
+            reserve_units: 4,
+            started_milestone: Some(milestone),
+        })?;
+        runner_a.park_job(ParkDreamerJob {
+            job_id: queued.job.id,
+            reason: "waiting for wake budget settle".to_owned(),
+            now: learned_at + 1,
+        })?;
+
+        let consent_id = EntityId::now();
+        let effect_id = EntityId::now();
+        let checkpoint_id = EntityId::now();
+        write_dreamer_boundary_claim(&vault_a, consent_id, "dreamer.consent", learned_at)?;
+        write_dreamer_boundary_claim(&vault_a, effect_id, "dreamer.effect", learned_at)?;
+        write_dreamer_boundary_claim(&vault_a, checkpoint_id, "dreamer.checkpoint", learned_at)?;
+
+        let durable_claims = [milestone_id, consent_id, effect_id, checkpoint_id];
+        let doc_a = create_window_doc("node-a", &window_key);
+        let mirrored = window::reverse_rematerialize(&vault_a, &doc_a, &window_key)?;
+        assert!(
+            mirrored >= durable_claims.len() as u32,
+            "reverse rematerialize must mirror durable Dreamer claims"
+        );
+
+        let entities = doc_a.get_map("entities");
+        for claim_id in durable_claims {
+            assert_eq!(
+                map_get_bytes(&entities, claim_id.to_hex().as_str()).as_deref(),
+                vault_a.get_raw(&claim_id)?.as_deref(),
+                "durable Dreamer claim must be present in the sync doc"
+            );
+        }
+
+        let queued_as_entity = EntityId::from_bytes(*queued.job.id.as_bytes())?;
+        assert!(
+            map_get_bytes(&entities, queued_as_entity.to_hex().as_str()).is_none(),
+            "queue job rows and leases must not be emitted as sync entities"
+        );
+        assert!(
+            map_get_bytes(&entities, "dreamer:budget:wake").is_none(),
+            "private runner keys must not be emitted into the sync entity map"
+        );
+
+        let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
+        let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
+        let (_dir_b, vault_b) = open_vault();
+        let materializer = Materializer::new();
+        let restored = window::forward_rematerialize(&vault_b, &doc_b, &materializer, &window_key)?;
+        assert!(
+            restored >= durable_claims.len() as u32,
+            "forward rematerialize must restore durable Dreamer claims"
+        );
+        for claim_id in durable_claims {
+            assert!(
+                vault_b.get_claim(&claim_id)?.is_some(),
+                "durable Dreamer claim must survive CRDT sync"
+            );
+        }
+
+        let rtxn = vault_b.store.env.read_txn()?;
+        assert!(
+            vault_b
+                .store
+                .job_records
+                .get(&rtxn, queued.job.id.as_bytes())?
+                .is_none(),
+            "queue leases must remain private to the runner store"
+        );
+        assert!(
+            vault_b
+                .store
+                .vault_meta
+                .get(&rtxn, &budget_key("wake")?)?
+                .is_none(),
+            "private budget rows must not sync"
+        );
+        assert!(
+            vault_b
+                .store
+                .vault_meta
+                .get(&rtxn, &run_tree_key(queued.job.id))?
+                .is_none(),
+            "private run-tree rows must not sync"
+        );
+        assert!(
+            vault_b
+                .store
+                .vault_meta
+                .get(&rtxn, &parked_key(queued.job.id))?
+                .is_none(),
+            "private parked rows must not sync"
         );
 
         Ok(())
