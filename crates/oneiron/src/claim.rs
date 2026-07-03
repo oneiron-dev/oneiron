@@ -27,7 +27,7 @@
 //! §G.1); no predicate registry, consent matrix, or conflict-set logic lives
 //! here.
 
-use std::{collections::HashSet, io::Cursor};
+use std::{collections::HashSet, io::Cursor, sync::Mutex};
 
 use rmpv::Value;
 
@@ -38,9 +38,13 @@ use crate::affect::{
 };
 use crate::error::{Error, Result};
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeKind, EmptyContext,
+    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeInfo, EdgeKind, EmptyContext,
     EmptyReason, EntityId, HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord,
     MemoryTimelineRecordState, ScoredEntity,
+};
+use crate::{
+    batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
+    gate::PolicyManifestResolution,
 };
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
@@ -168,6 +172,7 @@ impl ScopedReadActorKey {
 pub struct ScopedRead<'a> {
     vault: &'a crate::vault::Vault,
     actor_key: ScopedReadActorKey,
+    policy: Mutex<Option<PolicyManifestResolution>>,
 }
 
 impl crate::vault::Vault {
@@ -176,6 +181,7 @@ impl crate::vault::Vault {
         ScopedRead {
             vault: self,
             actor_key,
+            policy: Mutex::new(None),
         }
     }
 }
@@ -192,9 +198,7 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn search(&self, query: &str, vector: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, true)?;
+        let fetch_limit = self.search_candidate_limit(limit, true, true)?;
         let results = self
             .vault
             .query()
@@ -204,26 +208,32 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, true, false)?;
+        let fetch_limit = self.search_candidate_limit(limit, true, false)?;
         let results = self.vault.search_text(query, fetch_limit)?;
         self.filter_scored_entities_to_limit(results, limit)
     }
 
     pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
-        let fetch_limit = self
-            .vault
-            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let fetch_limit = self.search_candidate_limit(limit, false, true)?;
         let results = self.vault.search_vector(query, fetch_limit)?;
         self.filter_scored_entities_to_limit(results, limit)
     }
 
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        if !self.is_entity_actor_readable(id)? {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(raw) = self.vault.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(Some(body.to_vec()));
+        }
+        if !self.is_claim_raw_readable_in(&rtxn, id, raw)? {
             return Ok(None);
         }
-        self.vault.get(id)
+        Ok(Some(body.to_vec()))
     }
 
     pub fn hydrate_short_id(
@@ -246,7 +256,14 @@ impl<'a> ScopedRead<'a> {
                 Ok(Some(result))
             };
         }
-        if self.is_entity_actor_readable(&result.id)? {
+        if result.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(Some(result));
+        }
+        let Some(body) = result.body.as_deref() else {
+            return Ok(None);
+        };
+        let body = decode_claim_body(body, true)?;
+        if self.is_claim_readable_with_body(&result.id, &body)? {
             Ok(Some(result))
         } else {
             Ok(None)
@@ -254,9 +271,39 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
+        if !self.is_entity_readable(anchor)? {
+            return Ok(MemoryTimeline {
+                anchor: *anchor,
+                records: Vec::new(),
+            });
+        }
         let mut timeline = self.vault.memory_timeline(anchor)?;
         timeline.records = self.filter_memory_timeline_records(timeline.records)?;
         Ok(timeline)
+    }
+
+    pub fn edges_out(&self, id: &EntityId) -> Result<Option<Vec<EdgeInfo>>> {
+        if !self.is_entity_readable(id)? {
+            return Ok(None);
+        }
+        let edges = self.vault.edges_out(id)?;
+        let mut kept = Vec::with_capacity(edges.len());
+        for edge in edges {
+            if self.is_entity_readable(&edge.target)? {
+                kept.push(edge);
+            }
+        }
+        Ok(Some(kept))
+    }
+
+    pub fn search_candidate_limit(
+        &self,
+        requested: usize,
+        include_text: bool,
+        include_vector: bool,
+    ) -> Result<usize> {
+        self.vault
+            .scoped_read_search_candidate_limit(requested, include_text, include_vector)
     }
 
     pub fn filter_scored_entities(&self, results: Vec<ScoredEntity>) -> Result<Vec<ScoredEntity>> {
@@ -301,25 +348,58 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
-        match self.vault.get_entity_type(id)? {
-            None => Ok(false),
-            Some(ENTITY_TYPE_CLAIM) => self.is_claim_readable(id),
-            Some(_) => Ok(true),
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.is_entity_readable_in(&rtxn, id)
+    }
+
+    fn is_entity_readable_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let Some(raw) = self.vault.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            self.is_claim_raw_readable_in(rtxn, id, raw)
+        } else {
+            Ok(true)
         }
     }
 
-    fn is_claim_readable(&self, id: &EntityId) -> Result<bool> {
-        if self.vault.is_deleted_shell(id)? {
+    fn is_claim_raw_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if raw.len() == ENTITY_METADATA_HEADER_LEN && self.vault.is_deleted_shell(id)? {
             return Ok(false);
         }
-        let Some(body) = self.vault.get_claim(id)? else {
-            return Ok(false);
-        };
-        if !claim_surfaceable(&body) {
+        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        self.is_claim_readable_with_body_in(rtxn, id, &body)
+    }
+
+    fn is_claim_readable_with_body(&self, id: &EntityId, body: &ClaimBody) -> Result<bool> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.is_claim_readable_with_body_in(&rtxn, id, body)
+    }
+
+    fn is_claim_readable_with_body_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        if !claim_surfaceable(body) {
             return Ok(false);
         }
-        self.vault
-            .scoped_read_claim_allowed(&self.actor_key, id, &body)
+        let policy = self.policy_manifest_in(rtxn)?;
+        let claim_facets = self.vault.claim_facet_refs_in(rtxn, id)?;
+        Ok(crate::gate::scoped_read_claim_allowed(
+            &policy,
+            &self.actor_key,
+            body,
+            &claim_facets,
+        ))
     }
 
     fn filter_context_entities(
@@ -361,7 +441,7 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => self.is_entity_actor_readable(&record.id)?,
+                (_, Some(ENTITY_TYPE_CLAIM)) => self.is_entity_readable(&record.id)?,
                 (_, Some(_)) => true,
                 (_, None) => false,
             };
@@ -377,26 +457,21 @@ impl<'a> ScopedRead<'a> {
         Ok(kept)
     }
 
-    fn is_entity_actor_readable(&self, id: &EntityId) -> Result<bool> {
-        match self.vault.get_entity_type(id)? {
-            None => Ok(false),
-            Some(ENTITY_TYPE_CLAIM) => self.is_claim_actor_readable(id),
-            Some(_) => Ok(true),
+    fn policy_manifest_in(&self, rtxn: &heed::RoTxn<'_>) -> Result<PolicyManifestResolution> {
+        let cached_policy = self
+            .policy
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(policy) = cached_policy {
+            return Ok(policy);
         }
-    }
-
-    fn is_claim_actor_readable(&self, id: &EntityId) -> Result<bool> {
-        if self.vault.is_deleted_shell(id)? {
-            return Ok(false);
-        }
-        let Some(body) = self.vault.get_claim(id)? else {
-            return Ok(false);
-        };
-        if !claim_surfaceable(&body) {
-            return Ok(false);
-        }
-        self.vault
-            .scoped_read_claim_allowed(&self.actor_key, id, &body)
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)?;
+        *self
+            .policy
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(policy.clone());
+        Ok(policy)
     }
 }
 

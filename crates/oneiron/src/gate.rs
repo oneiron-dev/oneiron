@@ -3038,6 +3038,82 @@ mod tests {
     }
 
     #[test]
+    fn scoped_read_context_pack_filters_before_response_limit() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let facet = test_id(0xE1);
+        put_policy_manifest_bytes(
+            &vault,
+            0x6B,
+            &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+                "reader",
+                Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
+            )]),
+        )?;
+        put_text_entity(
+            &vault,
+            &test_id(0x21),
+            crate::types::ENTITY_TYPE_PERSON,
+            "claim subject",
+            serde_json::json!({"name": "subject"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &facet,
+            crate::types::ENTITY_TYPE_FACET,
+            "facet",
+            serde_json::json!({"name": "facet"}),
+        )?;
+
+        let denied_ids = [test_id(0xE3), test_id(0xE4), test_id(0xE5), test_id(0xE6)];
+        for (index, id) in denied_ids.iter().enumerate() {
+            let body = source_trust_claim(ClaimSource::UserStated);
+            let text = std::iter::repeat_n("packslots", 8 - index)
+                .collect::<Vec<_>>()
+                .join(" ");
+            put_claim_text_body(&vault, id, &text, &body)?;
+        }
+
+        let allowed_id = test_id(0xE7);
+        let allowed = source_trust_claim(ClaimSource::UserStated);
+        put_claim_text_body(&vault, &allowed_id, "packslots", &allowed)?;
+        vault.put_edge(&allowed_id, EdgeKind::FacetOf, &facet, 0.7)?;
+
+        let unscoped_top = vault
+            .context_pack()
+            .limit(denied_ids.len())
+            .search_text("packslots", denied_ids.len())
+            .run()?;
+        assert!(
+            !unscoped_top
+                .results
+                .iter()
+                .any(|entity| entity.id == allowed_id),
+            "test setup must place denied pack results ahead of the allowed claim"
+        );
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        let candidate_limit = scoped_read.search_candidate_limit(1, true, false)?;
+        let mut pack = vault
+            .context_pack()
+            .limit(candidate_limit)
+            .retrieval_budget(crate::types::ContextPackRetrievalBudget::new(
+                candidate_limit,
+                candidate_limit,
+                candidate_limit,
+                candidate_limit,
+                candidate_limit,
+                crate::context_pack::DEFAULT_MAX_NEIGHBORS,
+            ))
+            .search_text("packslots", candidate_limit)
+            .run()?;
+        scoped_read.filter_context_pack(&mut pack)?;
+        pack.results.truncate(1);
+        assert_eq!(pack.results.len(), 1);
+        assert_eq!(pack.results[0].id, allowed_id);
+        Ok(())
+    }
+
+    #[test]
     fn scoped_read_memory_timeline_prunes_links_to_filtered_records() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let allowed_world = test_id(0xD0);
@@ -3065,6 +3141,83 @@ mod tests {
         assert_eq!(record.id, new);
         assert!(record.supersedes.is_empty());
         assert!(record.superseded_by.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_memory_timeline_rejects_unreadable_anchor() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let allowed_world = test_id(0xD7);
+        let denied_world = test_id(0xD8);
+        put_policy_manifest_bytes(
+            &vault,
+            0x69,
+            &core_read_world_grant_manifest("reader", allowed_world),
+        )?;
+
+        let old = test_id(0xD9);
+        let denied_anchor = test_id(0xDA);
+        let mut allowed = source_trust_claim(ClaimSource::UserStated);
+        allowed.world = Some(allowed_world);
+        let mut denied = source_trust_claim(ClaimSource::UserStated);
+        denied.world = Some(denied_world);
+        put_claim_body(&vault, &old, &allowed)?;
+        put_claim_body(&vault, &denied_anchor, &denied)?;
+        vault.put_edge(&denied_anchor, EdgeKind::Supersedes, &old, 0.3)?;
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        let timeline = scoped_read.memory_timeline(&denied_anchor)?;
+        assert!(
+            timeline.records.is_empty(),
+            "unreadable anchors must not reveal readable chain neighbors"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let allowed_world = test_id(0xDB);
+        let denied_world = test_id(0xDC);
+        put_policy_manifest_bytes(
+            &vault,
+            0x6A,
+            &core_read_world_grant_manifest("reader", allowed_world),
+        )?;
+
+        let source = test_id(0xDD);
+        let allowed_claim = test_id(0xDE);
+        let denied_claim = test_id(0xDF);
+        put_text_entity(
+            &vault,
+            &source,
+            crate::types::ENTITY_TYPE_TURN,
+            "source",
+            serde_json::json!({"text": "source"}),
+        )?;
+        let mut allowed = source_trust_claim(ClaimSource::UserStated);
+        allowed.world = Some(allowed_world);
+        let mut denied = source_trust_claim(ClaimSource::UserStated);
+        denied.world = Some(denied_world);
+        put_claim_body(&vault, &allowed_claim, &allowed)?;
+        put_claim_body(&vault, &denied_claim, &denied)?;
+        vault.put_edge(&source, EdgeKind::Supports, &allowed_claim, 0.7)?;
+        vault.put_edge(&source, EdgeKind::Opposes, &denied_claim, 0.7)?;
+
+        let denied_source = test_id(0xE0);
+        put_claim_body(&vault, &denied_source, &denied)?;
+        vault.put_edge(&denied_source, EdgeKind::Supports, &allowed_claim, 0.7)?;
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        let edges = scoped_read
+            .edges_out(&source)?
+            .expect("readable source should return scoped edges");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, allowed_claim);
+        assert!(
+            scoped_read.edges_out(&denied_source)?.is_none(),
+            "denied edge sources must not reveal outgoing relationships"
+        );
         Ok(())
     }
 
