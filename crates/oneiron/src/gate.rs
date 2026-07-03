@@ -766,6 +766,13 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn has_scoped_read_grants(&self) -> bool {
+        self.scoped_grants()
+            .iter()
+            .any(scoped_read_grant_has_read_effector)
+    }
+
+    #[must_use]
     pub(crate) fn signatures(&self) -> &[PolicySignature] {
         &self.signatures
     }
@@ -879,11 +886,15 @@ pub(crate) fn scoped_read_claim_allowed(
     }
 
     let mut saw_core_read_grant = false;
-    for grant in policy.scoped_grants().iter().filter(|grant| {
-        grant.effector.trim() == SCOPED_READ_EFFECTOR_CORE_READ
-            || grant.effector.trim() == SCOPED_READ_EFFECTOR_ONEIRON_READ
-    }) {
+    for grant in policy
+        .scoped_grants()
+        .iter()
+        .filter(|grant| scoped_read_grant_has_read_effector(grant))
+    {
         saw_core_read_grant = true;
+        if grant.receipt_required {
+            continue;
+        }
         if !scoped_read_actor_matches(grant, actor_key) {
             continue;
         }
@@ -893,6 +904,11 @@ pub(crate) fn scoped_read_claim_allowed(
     }
 
     !saw_core_read_grant
+}
+
+fn scoped_read_grant_has_read_effector(grant: &PolicyScopedGrant) -> bool {
+    grant.effector.trim() == SCOPED_READ_EFFECTOR_CORE_READ
+        || grant.effector.trim() == SCOPED_READ_EFFECTOR_ONEIRON_READ
 }
 
 fn scoped_read_actor_matches(grant: &PolicyScopedGrant, actor_key: &ScopedReadActorKey) -> bool {
@@ -2589,6 +2605,27 @@ mod tests {
                     Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
                 ),
                 (Value::from(GRANT_SCOPE_KEY), scope),
+                (
+                    Value::from(GRANT_RECEIPT_REQUIRED_KEY),
+                    Value::Boolean(false),
+                ),
+            ])]),
+        )
+    }
+
+    fn receipt_required_core_read_scoped_grant_entry(
+        actor_ref: &str,
+        scope: Value,
+    ) -> (Value, Value) {
+        (
+            Value::from(POLICY_SCOPED_GRANTS_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(GRANT_EFFECTOR_KEY),
+                    Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+                ),
+                (Value::from(GRANT_SCOPE_KEY), scope),
             ])]),
         )
     }
@@ -2811,6 +2848,38 @@ mod tests {
     }
 
     #[test]
+    fn scoped_read_receipt_required_core_grants_fail_closed_without_receipt() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let world = test_id(0x33);
+        let data = encode_policy_manifest(vec![receipt_required_core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        )]);
+        put_policy_manifest_bytes(&vault, 0x6C, &data)?;
+
+        let id = test_id(0x34);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.world = Some(world);
+        put_claim_body(&vault, &id, &body)?;
+
+        let policy = resolve(&vault)?;
+        assert_eq!(policy.scoped_grants().len(), 1);
+        assert!(policy.scoped_grants()[0].receipt_required);
+        let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
+        assert!(
+            !scoped_read_claim_allowed(&policy, &actor_key, &body, &[]),
+            "ScopedReadActorKey does not carry a consent receipt, so receipt-required grants must fail closed"
+        );
+
+        let scoped_read = vault.scoped_read(actor_key);
+        assert!(scoped_read.get(&id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         put_policy_manifest_bytes(&vault, 0x62, &encode_policy_manifest(vec![]))?;
@@ -2857,6 +2926,25 @@ mod tests {
             .map(|result| result.id)
             .collect();
         assert_eq!(visible, vec![live_id]);
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_search_candidate_limit_is_not_widened_without_core_read_grants() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x6D, &encode_policy_manifest(vec![]))?;
+        for seed in 0x35..=0x38 {
+            put_text_entity(
+                &vault,
+                &test_id(seed),
+                crate::types::ENTITY_TYPE_PERSON,
+                "nowiden",
+                serde_json::json!({"name": format!("person-{seed}")}),
+            )?;
+        }
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        assert_eq!(scoped_read.search_candidate_limit(1, true, false)?, 1);
         Ok(())
     }
 
@@ -3033,6 +3121,76 @@ mod tests {
         assert!(
             !leaked,
             "scoped context-pack edges must not reveal denied claims"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let facet = test_id(0x6E);
+        put_policy_manifest_bytes(
+            &vault,
+            0x70,
+            &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+                "reader",
+                Value::Map(vec![(Value::from("facet"), Value::from(facet.to_hex()))]),
+            )]),
+        )?;
+
+        let denied_seed = test_id(0x71);
+        let readable_neighbor = test_id(0x72);
+        put_text_entity(
+            &vault,
+            &facet,
+            crate::types::ENTITY_TYPE_FACET,
+            "facet",
+            serde_json::json!({"name": "facet"}),
+        )?;
+        put_text_entity(
+            &vault,
+            &test_id(0x21),
+            crate::types::ENTITY_TYPE_PERSON,
+            "claim subject",
+            serde_json::json!({"name": "subject"}),
+        )?;
+        let denied = source_trust_claim(ClaimSource::UserStated);
+        put_claim_text_body(&vault, &denied_seed, "neighborleak", &denied)?;
+        put_text_entity(
+            &vault,
+            &readable_neighbor,
+            crate::types::ENTITY_TYPE_PERSON,
+            "neighbor target",
+            serde_json::json!({"name": "neighbor"}),
+        )?;
+        vault.put_edge(&denied_seed, EdgeKind::Mentions, &readable_neighbor, 0.9)?;
+
+        let mut pack = vault
+            .context_pack()
+            .search_text("neighborleak", 10)
+            .edge_hop(1)
+            .max_neighbors(10)
+            .run()?;
+        assert!(
+            pack.results.iter().any(|entity| entity.id == denied_seed),
+            "test setup should surface the denied primary result before scoped filtering"
+        );
+        assert!(
+            pack.neighbors
+                .iter()
+                .any(|entity| entity.id == readable_neighbor),
+            "test setup should expand to the readable neighbor before scoped filtering"
+        );
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        scoped_read.filter_context_pack(&mut pack)?;
+        assert!(
+            pack.results.is_empty(),
+            "the denied primary seed should be removed"
+        );
+        assert!(
+            pack.neighbors.is_empty(),
+            "neighbors reached only through a denied primary seed must not remain visible"
         );
         Ok(())
     }
