@@ -153,7 +153,7 @@ pub use crate::skill::{
 pub use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
     RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord,
-    RetrievalTraceStage, RetrievalTraceStageRecord,
+    RetrievalTraceForkHash, RetrievalTraceStage, RetrievalTraceStageRecord,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
