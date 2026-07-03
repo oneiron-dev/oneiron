@@ -540,9 +540,9 @@ impl<'a> DreamerRunnerStore<'a> {
         always_on_local: bool,
         primary_device: bool,
     ) -> Result<DreamerHomeNodeCandidate> {
-        let identity = crate::identity::ensure_device_identity(self.vault)?;
+        let node_id = crate::identity::load_or_mint_client_id(self.vault)?;
         Ok(DreamerHomeNodeCandidate {
-            node_id: identity.client_id,
+            node_id,
             cloud: false,
             attached,
             always_on_local,
@@ -715,24 +715,39 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: AdmitDreamerConsolidationJob,
     ) -> Result<DreamerConsolidationAdmissionOutcome> {
+        validate_admission_input(&input.admission)?;
         if input.local_node_id == 0 {
             return Err(invalid_dreamer_runner(
                 "dreamer local node_id must be nonzero",
             ));
         }
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
         if input.scope == DreamerConsolidationScope::Macro {
-            let Some(designation) = self.home_node_designation()? else {
+            let local_node_id =
+                crate::identity::load_or_mint_client_id_in_txn(self.vault, &mut wtxn)?;
+            if input.local_node_id != local_node_id {
+                return Err(invalid_dreamer_runner(
+                    "dreamer local node_id does not match vault identity",
+                ));
+            }
+
+            let Some(designation) = home_node_designation_in_txn(self.vault, &wtxn)? else {
+                wtxn.commit()?;
                 return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
             };
-            if designation.node_id != input.local_node_id {
+            if designation.node_id != local_node_id {
+                wtxn.commit()?;
                 return Ok(DreamerConsolidationAdmissionOutcome::NotHomeNode(
                     designation,
                 ));
             }
         }
 
-        self.admit_next_kind(input.scope.job_kind(), input.admission)
-            .map(DreamerConsolidationAdmissionOutcome::Admission)
+        let outcome =
+            self.admit_next_kind_in_txn(&mut wtxn, input.scope.job_kind(), input.admission)?;
+        wtxn.commit()?;
+        Ok(DreamerConsolidationAdmissionOutcome::Admission(outcome))
     }
 
     fn admit_next_kind(
@@ -740,40 +755,35 @@ impl<'a> DreamerRunnerStore<'a> {
         queue_kind: &str,
         input: AdmitDreamerJob,
     ) -> Result<DreamerAdmissionOutcome> {
-        validate_budget_id(&input.budget_id)?;
-        if input.reserve_units == 0 {
-            return Err(invalid_dreamer_runner(
-                "dreamer admission reserve_units must be > 0",
-            ));
-        }
-        if input
-            .started_milestone
-            .as_ref()
-            .is_some_and(|milestone| milestone.kind != DreamerMilestoneKind::Started)
-        {
-            return Err(invalid_dreamer_runner(
-                "dreamer admission milestone must be started",
-            ));
-        }
-
+        validate_admission_input(&input)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.admit_next_kind_in_txn(&mut wtxn, queue_kind, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    fn admit_next_kind_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
+        input: AdmitDreamerJob,
+    ) -> Result<DreamerAdmissionOutcome> {
         let Some(candidate_job_id) = self
             .jobs
-            .ready_kind_candidate_in_txn(&mut wtxn, queue_kind, input.now)?
+            .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
         else {
-            wtxn.commit()?;
             return Ok(DreamerAdmissionOutcome::Empty);
         };
 
         let mut budget = read_or_initialize_budget_in_txn(
             self.vault,
-            &wtxn,
+            wtxn,
             &input.budget_id,
             input.budget_total_units,
             input.now,
         )?;
         let existing_reservation =
-            read_budget_reservation_in_txn(self.vault, &wtxn, &input.budget_id, candidate_job_id)?;
+            read_budget_reservation_in_txn(self.vault, wtxn, &input.budget_id, candidate_job_id)?;
         if let Some(reservation) = existing_reservation.as_ref() {
             if reservation.reserved_units > budget.reserved_units {
                 return Err(invalid_dreamer_runner(
@@ -781,12 +791,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 ));
             }
         } else if input.reserve_units > budget.remaining_units {
-            wtxn.commit()?;
             return Ok(DreamerAdmissionOutcome::BudgetExhausted(budget));
         }
 
         let claim = self.jobs.claim_kind_in_txn(
-            &mut wtxn,
+            wtxn,
             queue_kind,
             ClaimJob {
                 lease_owner: input.lease_owner,
@@ -794,7 +803,6 @@ impl<'a> DreamerRunnerStore<'a> {
             },
         )?;
         let ClaimOutcome::Claimed(job) = claim else {
-            wtxn.commit()?;
             return Ok(DreamerAdmissionOutcome::Empty);
         };
         if job.id != candidate_job_id {
@@ -813,16 +821,15 @@ impl<'a> DreamerRunnerStore<'a> {
                 created_at: input.now,
                 updated_at: input.now,
             };
-            reserve_budget_for_child_in_txn(self.vault, &mut wtxn, &mut budget, &reservation)?;
+            reserve_budget_for_child_in_txn(self.vault, wtxn, &mut budget, &reservation)?;
             reservation
         };
 
         if let Some(milestone) = input.started_milestone {
-            apply_milestone_claim_in_txn(self.vault, &mut wtxn, job.id, milestone)?;
+            apply_milestone_claim_in_txn(self.vault, wtxn, job.id, milestone)?;
         }
 
         let status = decode_dreamer_job_status(job)?;
-        wtxn.commit()?;
 
         Ok(DreamerAdmissionOutcome::Admitted(Box::new(
             DreamerAdmittedJob {
@@ -1061,6 +1068,20 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_CONSOLIDATION_MICRO_JOB_KIND
         || kind == DREAMER_CONSOLIDATION_MESO_JOB_KIND
         || kind == DREAMER_CONSOLIDATION_MACRO_JOB_KIND
+}
+
+fn home_node_designation_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+) -> Result<Option<DreamerHomeNodeDesignation>> {
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(txn, DREAMER_PRIVATE_HOME_NODE_KEY)?
+    else {
+        return Ok(None);
+    };
+    decode_home_node_designation(raw).map(Some)
 }
 
 fn elect_home_node_designation(
@@ -1938,6 +1959,25 @@ fn validate_park_reason(reason: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_admission_input(input: &AdmitDreamerJob) -> Result<()> {
+    validate_budget_id(&input.budget_id)?;
+    if input.reserve_units == 0 {
+        return Err(invalid_dreamer_runner(
+            "dreamer admission reserve_units must be > 0",
+        ));
+    }
+    if input
+        .started_milestone
+        .as_ref()
+        .is_some_and(|milestone| milestone.kind != DreamerMilestoneKind::Started)
+    {
+        return Err(invalid_dreamer_runner(
+            "dreamer admission milestone must be started",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_budget_record(record: &DreamerBudgetRecord) -> Result<()> {
     validate_budget_id(&record.budget_id)?;
     if record.remaining_units > record.total_units || record.reserved_units > record.total_units {
@@ -2063,6 +2103,10 @@ mod tests {
                 started_milestone: None,
             },
         })
+    }
+
+    fn different_node_id(node_id: u64) -> u64 {
+        if node_id == u64::MAX { 1 } else { node_id + 1 }
     }
 
     fn test_ready_key(ready_at: u64, id: JobId) -> [u8; 24] {
@@ -2298,12 +2342,12 @@ mod tests {
     fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()> {
         let (_dir, vault) = open_vault();
         let runner = DreamerRunnerStore::new(&vault);
-        let primary = DreamerHomeNodeCandidate::primary_device(30);
-        let always_on = DreamerHomeNodeCandidate::always_on_local(20);
+        let local = runner.local_home_node_candidate(true, true, false)?;
+        let primary = DreamerHomeNodeCandidate::primary_device(different_node_id(local.node_id));
         let designation = runner
-            .elect_home_node(&[primary, always_on], 100)?
+            .elect_home_node(&[primary, local], 100)?
             .expect("always-on local wins");
-        assert_eq!(designation.node_id, 20);
+        assert_eq!(designation.node_id, local.node_id);
 
         let macro_job = enqueue_consolidation_job(
             &runner,
@@ -2312,19 +2356,32 @@ mod tests {
             10,
         )?;
 
-        let non_home =
-            admit_consolidation(&runner, DreamerConsolidationScope::Macro, 30, "primary", 20)?;
-        assert_eq!(
-            non_home,
-            DreamerConsolidationAdmissionOutcome::NotHomeNode(designation)
+        let non_home = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            primary.node_id,
+            "primary",
+            20,
         );
+        assert!(matches!(
+            non_home,
+            Err(Error::InvalidJobQueueRecord(
+                "dreamer local node_id does not match vault identity"
+            ))
+        ));
         let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
         assert_eq!(still_queued.job.state, JobState::Queued);
         assert_eq!(still_queued.job.attempt_count, 0);
 
         let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
             admitted,
-        )) = admit_consolidation(&runner, DreamerConsolidationScope::Macro, 20, "home", 21)?
+        )) = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "home",
+            21,
+        )?
         else {
             panic!("elected home node should admit MACRO consolidation");
         };
@@ -2338,14 +2395,65 @@ mod tests {
     }
 
     #[test]
-    fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
+    fn dreamer_macro_consolidation_rejects_spoofed_remote_home_node_id() -> Result<()> {
         let (_dir, vault) = open_vault();
         let runner = DreamerRunnerStore::new(&vault);
+        let local = runner.local_home_node_candidate(true, false, true)?;
+        let remote_home = DreamerHomeNodeCandidate::cloud(different_node_id(local.node_id), true);
+        let designation = runner
+            .elect_home_node(&[local, remote_home], 100)?
+            .expect("attached cloud wins");
+        assert_eq!(designation.node_id, remote_home.node_id);
+
         let macro_job =
             enqueue_consolidation_job(&runner, DreamerConsolidationScope::Macro, None, 10)?;
 
-        let outcome =
-            admit_consolidation(&runner, DreamerConsolidationScope::Macro, 20, "worker", 20)?;
+        let spoofed_home_id = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            designation.node_id,
+            "spoof",
+            20,
+        );
+        assert!(matches!(
+            spoofed_home_id,
+            Err(Error::InvalidJobQueueRecord(
+                "dreamer local node_id does not match vault identity"
+            ))
+        ));
+
+        let honest_local = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            21,
+        )?;
+        assert_eq!(
+            honest_local,
+            DreamerConsolidationAdmissionOutcome::NotHomeNode(designation)
+        );
+        let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
+        assert_eq!(still_queued.job.state, JobState::Queued);
+        assert_eq!(still_queued.job.attempt_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let local = runner.local_home_node_candidate(true, true, false)?;
+        let macro_job =
+            enqueue_consolidation_job(&runner, DreamerConsolidationScope::Macro, None, 10)?;
+
+        let outcome = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "worker",
+            20,
+        )?;
         assert_eq!(outcome, DreamerConsolidationAdmissionOutcome::NoHomeNode);
         let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
         assert_eq!(still_queued.job.state, JobState::Queued);
