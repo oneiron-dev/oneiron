@@ -134,15 +134,6 @@ fn authority_observation_secs_for_write(
     Ok(observed_secs)
 }
 
-fn mark_authority_first_seen_backfill_complete(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
-    store.sync_state.put(
-        wtxn,
-        crate::authority::authority_first_seen_backfill_sync_key(),
-        &[1],
-    )?;
-    Ok(())
-}
-
 /// Builder for atomic multi-database write batches.
 #[must_use = "BatchBuilder performs no writes until `.commit()` is called"]
 pub struct BatchBuilder<'a> {
@@ -2535,16 +2526,12 @@ fn apply_put(
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
     if let Some(key) = authority_first_seen_key {
-        let observed_secs = authority_observation_secs_for_write(
-            store,
-            wtxn,
-            crate::unix_seconds_now().max(learned_at),
-        )?;
+        let observed_secs =
+            authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
         if store.sync_state.get(wtxn, key.as_str())?.is_none() {
             let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
             store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
         }
-        mark_authority_first_seen_backfill_complete(store, wtxn)?;
     }
 
     let type_key = Store::encode_type_key(entity_type, &id);
@@ -6179,6 +6166,55 @@ mod tests {
             "missing local first-seen data must fail closed instead of trusting entity metadata"
         );
         assert!(!missing_sidecar_fold.roster.contains_key(&enroll_key));
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let genesis = authority_genesis_fixture(86);
+
+        vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &rtxn,
+                    crate::authority::authority_first_seen_backfill_sync_key(),
+                )?
+                .is_none(),
+            "a single authority write must not suppress the legacy sidecar scan"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let genesis = authority_genesis_fixture(87);
+        let genesis_hash = crate::authority::authority_entry_hash(&genesis)?;
+        let genesis_sidecar = crate::authority::authority_first_seen_sync_key(&genesis_hash);
+        let future_learned_at = crate::unix_seconds_now()
+            .saturating_add(crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS);
+
+        vault.put_authority_log_entry(
+            &EntityId::now(),
+            &genesis,
+            test_time_range(1, 1),
+            future_learned_at,
+        )?;
+
+        let first_seen = authority_first_seen_for_test(&vault, &genesis_sidecar)?
+            .expect("authority log put must create first-seen sidecar");
+        assert!(
+            first_seen < future_learned_at,
+            "local first-seen must come from local observation time, not future learned_at metadata"
+        );
         Ok(())
     }
 
