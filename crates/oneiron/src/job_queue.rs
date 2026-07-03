@@ -5,6 +5,7 @@
 //! failure handling, and timeout cleanup stay outside this module.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::Vault;
@@ -204,13 +205,13 @@ impl<'a> JobQueue<'a> {
 
         let mut wtxn = self.store.env.write_txn()?;
         let mut stale_ready_keys = Vec::new();
-        let mut stale_missing_record_ids = Vec::new();
+        let mut stale_missing_record_ids = HashSet::new();
         let mut claimed = None;
         for row in self.store.job_ready.iter(&wtxn)? {
             let (key, value) = row?;
             let id = JobId::from_bytes(value)?;
             let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
-                stale_missing_record_ids.push(id);
+                stale_missing_record_ids.insert(id);
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
@@ -230,9 +231,7 @@ impl<'a> JobQueue<'a> {
             break;
         }
 
-        for id in stale_missing_record_ids {
-            self.delete_dedupe_entries_for_id(&mut wtxn, id)?;
-        }
+        self.delete_dedupe_entries_for_ids(&mut wtxn, &stale_missing_record_ids)?;
         for key in stale_ready_keys {
             self.store.job_ready.delete(&mut wtxn, &key)?;
         }
@@ -300,11 +299,19 @@ impl<'a> JobQueue<'a> {
         Ok(Some(record))
     }
 
-    fn delete_dedupe_entries_for_id(&self, txn: &mut heed::RwTxn<'_>, id: JobId) -> Result<()> {
+    fn delete_dedupe_entries_for_ids(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ids: &HashSet<JobId>,
+    ) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
         let mut keys = Vec::new();
         for row in self.store.job_dedupe.iter(txn)? {
             let (key, value) = row?;
-            if value == id.as_bytes() {
+            let id = JobId::from_bytes(value)?;
+            if ids.contains(&id) {
                 keys.push(key.to_vec());
             }
         }
@@ -599,8 +606,13 @@ mod tests {
         let (_dir, vault) = open_queue();
         let queue = JobQueue::new(&vault);
 
-        let EnqueueOutcome::Enqueued(job) =
+        let EnqueueOutcome::Enqueued(first) =
             queue.enqueue(enqueue("claim_extraction", Some("turn:missing"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let EnqueueOutcome::Enqueued(second) =
+            queue.enqueue(enqueue("claim_extraction", Some("turn:missing-too"), 11))?
         else {
             panic!("expected enqueue");
         };
@@ -609,7 +621,11 @@ mod tests {
             vault
                 .store
                 .job_records
-                .delete(&mut wtxn, job.id.as_bytes())?;
+                .delete(&mut wtxn, first.id.as_bytes())?;
+            vault
+                .store
+                .job_records
+                .delete(&mut wtxn, second.id.as_bytes())?;
             wtxn.commit()?;
         }
 
@@ -622,10 +638,18 @@ mod tests {
         );
 
         let index_key = dedupe_index_key("claim_extraction", "turn:missing");
+        let second_index_key = dedupe_index_key("claim_extraction", "turn:missing-too");
         {
             let rtxn = vault.store.env.read_txn()?;
             assert!(vault.store.job_ready.iter(&rtxn)?.next().is_none());
             assert!(vault.store.job_dedupe.get(&rtxn, &index_key)?.is_none());
+            assert!(
+                vault
+                    .store
+                    .job_dedupe
+                    .get(&rtxn, &second_index_key)?
+                    .is_none()
+            );
         }
 
         let EnqueueOutcome::Enqueued(replacement) =
@@ -633,7 +657,7 @@ mod tests {
         else {
             panic!("expected stale dedupe key to be reusable");
         };
-        assert_ne!(replacement.id, job.id);
+        assert_ne!(replacement.id, first.id);
 
         Ok(())
     }
