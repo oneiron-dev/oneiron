@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
-use loro::awareness::EphemeralStore;
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
@@ -11,7 +10,7 @@ use oneiron::sync::schema::{
     add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
 };
 use oneiron::sync::server_state;
-use oneiron::sync::{self, WindowKey, WindowManager};
+use oneiron::sync::{self, EphemeralStore, WindowKey, WindowManager};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::config::SyncServerConfig;
@@ -134,6 +133,8 @@ impl SyncServer {
         vault: Arc<oneiron::Vault>,
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
+        config.validate()?;
+
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
             None => {
@@ -319,6 +320,8 @@ impl SyncServer {
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {
+        self.ephemeral_store.remove_outdated();
+
         match self.expire_leases_once().await {
             Ok(report) => {
                 if report.skipped {
@@ -964,6 +967,22 @@ mod tests {
         );
         assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
         assert!(read_window_list(&server.root_doc).is_empty());
+    }
+
+    #[test]
+    fn server_rejects_non_positive_ephemeral_timeout() {
+        let (_dir, vault) = test_vault();
+        let result = SyncServer::new(
+            vault,
+            SyncServerConfig {
+                ephemeral_timeout_ms: 0,
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(error) if error
+                    .to_string()
+                    .contains("ephemeral_timeout_ms must be positive")));
     }
 
     #[test]

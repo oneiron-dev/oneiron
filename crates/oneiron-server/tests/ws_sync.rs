@@ -19,18 +19,17 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
-use loro::awareness::EphemeralStore;
-use loro::{ExportMode, LoroDoc, LoroValue};
+use loro::{ExportMode, LoroDoc};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::transport::{
     self, TAG_EPHEMERAL, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags,
 };
 use oneiron::sync::{
-    ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncStatus,
-    WindowManager,
+    ConnectionConfig, EphemeralStore, EphemeralWireState, LoroValue, SyncClient, SyncClientConfig,
+    SyncConnection, SyncEvent, SyncStatus, WindowManager,
 };
 use oneiron::types::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
@@ -393,6 +392,32 @@ fn encode_ephemeral_set(key: &str, value: impl Into<LoroValue>) -> Vec<u8> {
     transport::encode_ephemeral(&store.encode(key))
         .into_result()
         .unwrap()
+}
+
+fn encode_ephemeral_delete(key: &str) -> Vec<u8> {
+    let store = EphemeralStore::new(30_000);
+    store.delete(key);
+    transport::encode_ephemeral(&store.encode(key))
+        .into_result()
+        .unwrap()
+}
+
+fn encode_ephemeral_wire_state(key: &str, value: impl Into<LoroValue>, timestamp: i64) -> Vec<u8> {
+    let payload = transport::encode_ephemeral_states(&[EphemeralWireState {
+        key: key.to_owned(),
+        value: Some(value.into()),
+        timestamp,
+    }])
+    .unwrap();
+    transport::encode_ephemeral(&payload).into_result().unwrap()
+}
+
+fn epoch_millis() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    millis.min(i64::MAX as u128) as i64
 }
 
 fn apply_ephemeral_frame(store: &EphemeralStore, frame: &[u8]) {
@@ -1022,6 +1047,222 @@ async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
     let root = next_binary(&mut client_b).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     expect_no_binary(&mut client_b, Duration::from_millis(150)).await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_late_join_snapshot_includes_delete_tombstone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("tombstone-secret")),
+    )
+    .await;
+
+    let mut client_a = connect(addr, Some("tombstone-secret")).await.unwrap();
+    let mut client_b = connect(addr, Some("tombstone-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    let key = "presence:device-a";
+    client_a
+        .send(Message::Binary(encode_ephemeral_set(key, "online").into()))
+        .await
+        .unwrap();
+
+    let stale_receiver = EphemeralStore::new(30_000);
+    let relayed_set = next_binary(&mut client_b).await;
+    apply_ephemeral_frame(&stale_receiver, &relayed_set);
+    assert_eq!(stale_receiver.get(key), Some("online".into()));
+
+    tokio::time::sleep(Duration::from_millis(2)).await;
+    client_a
+        .send(Message::Binary(encode_ephemeral_delete(key).into()))
+        .await
+        .unwrap();
+
+    let mut client_c = connect(addr, Some("tombstone-secret")).await.unwrap();
+    let root = next_binary(&mut client_c).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let tombstone_snapshot = next_binary(&mut client_c).await;
+    apply_ephemeral_frame(&stale_receiver, &tombstone_snapshot);
+    assert!(
+        stale_receiver.get(key).is_none(),
+        "late-join snapshot must carry tombstones, not only live values"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_relay_uses_hub_canonical_state_for_stale_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("canonical-secret")),
+    )
+    .await;
+
+    let mut client_a = connect(addr, Some("canonical-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+
+    let key = "presence:device-a";
+    let now = epoch_millis();
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_wire_state(key, "newer", now).into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut client_b = connect(addr, Some("canonical-secret")).await.unwrap();
+    let _ = next_binary(&mut client_b).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // late-join snapshot
+
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_wire_state(key, "stale", now - 1).into(),
+        ))
+        .await
+        .unwrap();
+
+    let relayed = next_binary(&mut client_b).await;
+    assert_eq!(relayed[0], TAG_EPHEMERAL);
+    let states = transport::decode_ephemeral_states(&relayed[1..]).unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].key, key);
+    assert_eq!(states[0].value, Some("newer".into()));
+    assert_eq!(
+        states[0].timestamp, now,
+        "server must relay the hub's accepted LWW timestamp"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_rejects_far_future_timestamp_before_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("future-secret")),
+    )
+    .await;
+
+    let mut ws = connect(addr, Some("future-secret")).await.unwrap();
+    let _ = next_binary(&mut ws).await; // root snapshot
+
+    ws.send(Message::Binary(
+        encode_ephemeral_wire_state(
+            "presence:future-device",
+            "online",
+            epoch_millis() + 10 * 60_000,
+        )
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    assert_ws_closes(
+        &mut ws,
+        "server must close on implausibly future-dated ephemeral state",
+    )
+    .await;
+
+    let mut late = connect(addr, Some("future-secret")).await.unwrap();
+    let root = next_binary(&mut late).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    expect_no_binary(&mut late, Duration::from_millis(150)).await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn oversized_ephemeral_payload_is_rejected_before_apply() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = SyncServerConfig {
+        auth_secret: Some("eph-size-secret".to_string()),
+        max_ephemeral_payload_bytes: 4,
+        ..Default::default()
+    };
+    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+
+    let mut ws = connect(addr, Some("eph-size-secret")).await.unwrap();
+    let _ = next_binary(&mut ws).await; // root snapshot
+    let mut oversized = vec![TAG_EPHEMERAL];
+    oversized.extend_from_slice(&[0u8; 5]);
+    ws.send(Message::Binary(oversized.into())).await.unwrap();
+
+    assert_ws_closes(
+        &mut ws,
+        "server must close before applying oversized ephemeral payload",
+    )
+    .await;
+
+    let mut late = connect(addr, Some("eph-size-secret")).await.unwrap();
+    let root = next_binary(&mut late).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    expect_no_binary(&mut late, Duration::from_millis(150)).await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_snapshot_cap_rejects_growth_before_hub_apply() {
+    let key_a = "presence:device-a";
+    let key_b = "presence:device-b";
+    let frame_a = encode_ephemeral_set(key_a, "online-online-online");
+    let frame_b = encode_ephemeral_set(key_b, "online-online-online");
+    let candidate = EphemeralStore::new(30_000);
+    candidate.apply(&frame_a[1..]).unwrap();
+    let first_snapshot_len = candidate.encode_all().len();
+    candidate.apply(&frame_b[1..]).unwrap();
+    let two_key_snapshot_len = candidate.encode_all().len();
+    assert!(two_key_snapshot_len > first_snapshot_len);
+
+    let dir = tempfile::tempdir().unwrap();
+    let config = SyncServerConfig {
+        auth_secret: Some("eph-hub-cap-secret".to_string()),
+        max_ephemeral_payload_bytes: frame_a.len().max(frame_b.len()),
+        max_ephemeral_snapshot_bytes: two_key_snapshot_len - 1,
+        ..Default::default()
+    };
+    assert!(config.max_ephemeral_snapshot_bytes >= first_snapshot_len);
+    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+
+    let mut client_a = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
+    let mut client_b = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    client_a
+        .send(Message::Binary(frame_a.into()))
+        .await
+        .unwrap();
+    let relayed = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &relayed);
+    assert_eq!(receiver.get(key_a), Some("online-online-online".into()));
+
+    client_a
+        .send(Message::Binary(frame_b.into()))
+        .await
+        .unwrap();
+    assert_ws_closes(
+        &mut client_a,
+        "server must reject ephemeral updates that would exceed hub snapshot cap",
+    )
+    .await;
+
+    let mut late = connect(addr, Some("eph-hub-cap-secret")).await.unwrap();
+    let root = next_binary(&mut late).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let snapshot = next_binary(&mut late).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &snapshot);
+    assert_eq!(receiver.get(key_a), Some("online-online-online".into()));
+    assert!(receiver.get(key_b).is_none());
 
     handle.abort();
 }
