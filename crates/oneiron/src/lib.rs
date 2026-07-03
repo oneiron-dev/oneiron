@@ -10,6 +10,7 @@ pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
 pub mod code_run;
+pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
@@ -98,6 +99,15 @@ pub use crate::code_run::{
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
     SelfMemorySearchCall, SelfMemorySearchResult, SelfMemoryWriteFixtureCall,
     SelfMemoryWriteResult,
+};
+pub use crate::code_sandbox::{
+    FakeSandboxAdapter, SANDBOX_MNT_ROOT, SANDBOX_OUTPUTS_ROOT, SANDBOX_SKILLS_ROOT,
+    SANDBOX_UPLOADS_ROOT, SANDBOX_WORKSPACE_ROOT, SandboxBoundaryAdapter, SandboxBoundaryContract,
+    SandboxClaimProposal, SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle,
+    SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead,
+    SandboxFileWriteProposal, SandboxGuestTier, SandboxImportClass, SandboxLinkedImport,
+    SandboxMount, SandboxMountTable, SandboxProposalDelta, SandboxProposalKind,
+    SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
 };
 pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,

@@ -3,7 +3,8 @@
 //! This module does not execute guest code and does not expose the downstream
 //! CODE-007a write-trap surface. It gives the host a typed dispatch boundary that
 //! binds WHO/source outside the guest call payload, then routes fixture writes
-//! through the existing batch/gate chokepoint.
+//! through the existing batch/gate chokepoint. The sandbox link-time boundary
+//! contract lives in [`crate::code_sandbox`].
 
 use rmpv::Value;
 
