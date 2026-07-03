@@ -19,6 +19,7 @@ use super::loro_support::{
 };
 use super::quarantine::{self, QuarantineContainer};
 use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
+use super::quota;
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
@@ -27,8 +28,9 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST,
-    EntityId, decode_companion_record_body, decode_edge_value_for_kind,
+    CompanionExportClassification, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_POLICY_MANIFEST, EntityId, decode_companion_record_body,
+    decode_edge_value_for_kind,
 };
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
@@ -1096,12 +1098,57 @@ pub fn forward_rematerialize(
                         terminal_quarantines.push(id);
                         return Ok(false);
                     }
-                    crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
+                    let pubkey = crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
                         vault,
                         wtxn,
                         lease_vault_id,
                         &id,
                         blob,
+                    )?;
+                    let _quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
+                        vault,
+                        wtxn,
+                        quota::peer_key_from_redaction_pubkey(&pubkey),
+                        crate::unix_seconds_now(),
+                    )?;
+                    vault
+                        .batch_in()
+                        .put_replicated(
+                            &id,
+                            header.entity_type,
+                            crate::types::TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                            data,
+                        )
+                        .apply(wtxn)?;
+                    Ok(true)
+                })
+            } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
+                vault.with_write_txn(|wtxn| {
+                    if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())?
+                        && local == blob
+                    {
+                        return Ok(false);
+                    }
+                    let validation =
+                        crate::batch::validate_replicated_authority_log_for_local_vault(
+                            &vault.store,
+                            wtxn,
+                            data,
+                        )?;
+                    let peer_key = if validation.signer_known {
+                        quota::peer_key_from_authority_key(&validation.signer_key)
+                    } else {
+                        quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
+                    };
+                    let _quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
+                        vault,
+                        wtxn,
+                        peer_key,
+                        crate::unix_seconds_now(),
                     )?;
                     vault
                         .batch_in()
@@ -1148,6 +1195,8 @@ pub fn forward_rematerialize(
                 }
                 Ok(false) => {}
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
+                    let retryable_quota =
+                        matches!(err, Error::MaintenanceIngestQuotaExceeded { .. });
                     if let Err(q_err) = quarantine::quarantine_rejected_op(
                         vault,
                         window_key.as_str(),
@@ -1157,7 +1206,7 @@ pub fn forward_rematerialize(
                         blob,
                     ) {
                         entity_error = Some(q_err);
-                    } else {
+                    } else if !retryable_quota {
                         terminal_quarantines.push(id);
                     }
                 }
