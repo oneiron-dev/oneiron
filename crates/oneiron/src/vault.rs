@@ -27,9 +27,9 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, Multiling
 use crate::authority::{
     AuthorityFold, AuthorityLogEntry, authority_entry_hash, authority_first_seen_backfill_sync_key,
     authority_first_seen_clock_sync_key, authority_first_seen_sync_key,
-    decode_authority_first_seen_secs, decode_authority_log_entry_body,
-    encode_authority_first_seen_secs, encode_authority_log_entry_body,
-    fold_authority_log_with_seen_times,
+    authority_observation_secs_for_domain, decode_authority_first_seen_secs,
+    decode_authority_log_entry_body, encode_authority_first_seen_secs,
+    encode_authority_log_entry_body, fold_authority_log_with_seen_times,
 };
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
@@ -1033,7 +1033,11 @@ impl Vault {
                 .get(wtxn, floor_key)?
                 .and_then(decode_authority_first_seen_secs)
                 .unwrap_or(0);
-            let observed_floor = previous_floor.max(unix_seconds_now());
+            let observed_floor = authority_observation_secs_for_domain(
+                self.store.authority_clock_domain,
+                previous_floor,
+                unix_seconds_now(),
+            );
             if observed_floor != previous_floor {
                 let encoded = encode_authority_first_seen_secs(observed_floor);
                 self.store.sync_state.put(wtxn, floor_key, &encoded)?;
@@ -1097,7 +1101,7 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
         let mut first_seen_at_secs = std::collections::BTreeMap::new();
-        let clock_floor = self
+        let previous_floor = self
             .store
             .sync_state
             .get(&rtxn, authority_first_seen_clock_sync_key())?
@@ -1132,10 +1136,31 @@ impl Vault {
             }
             entries.push(entry);
         }
+        drop(rtxn);
+        let now_secs = self.with_write_txn(|wtxn| {
+            let previous_floor = self
+                .store
+                .sync_state
+                .get(wtxn, authority_first_seen_clock_sync_key())?
+                .and_then(decode_authority_first_seen_secs)
+                .unwrap_or(previous_floor);
+            let now_secs = authority_observation_secs_for_domain(
+                self.store.authority_clock_domain,
+                previous_floor,
+                unix_seconds_now(),
+            );
+            if now_secs != previous_floor {
+                let encoded = encode_authority_first_seen_secs(now_secs);
+                self.store
+                    .sync_state
+                    .put(wtxn, authority_first_seen_clock_sync_key(), &encoded)?;
+            }
+            Ok(now_secs)
+        })?;
         Ok(fold_authority_log_with_seen_times(
             &entries,
             &first_seen_at_secs,
-            unix_seconds_now().max(clock_floor),
+            now_secs,
         ))
     }
 
