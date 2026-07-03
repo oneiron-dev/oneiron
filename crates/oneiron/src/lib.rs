@@ -59,16 +59,16 @@ pub use crate::analyzer::{
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
 };
 pub use crate::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityAttestation,
-    AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
-    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden,
-    AuthoritySignature, AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId,
-    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FoldedDevice,
-    MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body, fold_authority_log,
-    fold_authority_log_with_seen_times, genesis_vault_id, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    AUTHORITY_FORK_ALARM_KIND, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN,
+    AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
+    AuthorityFold, AuthorityFoldIssue, AuthorityFork, AuthorityForkAlarm, AuthorityForkStatus,
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden, AuthoritySignature,
+    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    DeviceAuthority, FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, fold_authority_log, fold_authority_log_with_seen_times,
+    genesis_vault_id, validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::bm25::Bm25Formula;
