@@ -25,8 +25,11 @@ use crate::affect::{
 };
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::authority::{
-    AuthorityFold, AuthorityLogEntry, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, fold_authority_log,
+    AuthorityFold, AuthorityLogEntry, authority_entry_hash, authority_first_seen_backfill_sync_key,
+    authority_first_seen_clock_sync_key, authority_first_seen_sync_key,
+    authority_observation_secs_for_domain, decode_authority_first_seen_secs,
+    decode_authority_log_entry_body, encode_authority_first_seen_secs,
+    encode_authority_log_entry_body, fold_authority_log_with_seen_times,
 };
 use crate::batch::{
     BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
@@ -1001,14 +1004,109 @@ impl Vault {
         decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
+    fn backfill_authority_first_seen_sidecars(&self) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        let already_backfilled = self
+            .store
+            .sync_state
+            .get(&rtxn, authority_first_seen_backfill_sync_key())?
+            .is_some();
+        drop(rtxn);
+        if already_backfilled {
+            return Ok(());
+        }
+
+        self.with_write_txn(|wtxn| {
+            if self
+                .store
+                .sync_state
+                .get(wtxn, authority_first_seen_backfill_sync_key())?
+                .is_some()
+            {
+                return Ok(());
+            }
+
+            let floor_key = authority_first_seen_clock_sync_key();
+            let previous_floor = self
+                .store
+                .sync_state
+                .get(wtxn, floor_key)?
+                .and_then(decode_authority_first_seen_secs)
+                .unwrap_or(0);
+            let observed_floor = authority_observation_secs_for_domain(
+                self.store.authority_clock_domain,
+                previous_floor,
+                unix_seconds_now(),
+            );
+            if observed_floor != previous_floor {
+                let encoded = encode_authority_first_seen_secs(observed_floor);
+                self.store.sync_state.put(wtxn, floor_key, &encoded)?;
+            }
+
+            let mut missing_sidecars = Vec::new();
+            for entry in self
+                .store
+                .type_index
+                .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
+            {
+                let (key, _) = entry?;
+                let id = entity_id_from_type_index_key(key)?;
+                let raw = self
+                    .store
+                    .entities
+                    .get(wtxn, id.as_bytes())?
+                    .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+                let header = EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+                    return Err(Error::CorruptedIndex("type index row kind mismatch"));
+                }
+                let authority_entry =
+                    decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                let hash = authority_entry_hash(&authority_entry)?;
+                let sidecar_key = authority_first_seen_sync_key(&hash);
+                if self
+                    .store
+                    .sync_state
+                    .get(wtxn, sidecar_key.as_str())?
+                    .is_none()
+                {
+                    missing_sidecars.push((
+                        sidecar_key,
+                        encode_authority_first_seen_secs(header.learned_at.min(observed_floor)),
+                    ));
+                }
+            }
+            for (sidecar_key, first_seen) in missing_sidecars {
+                self.store
+                    .sync_state
+                    .put(wtxn, sidecar_key.as_str(), &first_seen)?;
+            }
+
+            self.store
+                .sync_state
+                .put(wtxn, authority_first_seen_backfill_sync_key(), &[1])?;
+            Ok(())
+        })
+    }
+
     /// Folds all stored AUTHORITY_LOG entries into the current authority roster.
     ///
     /// The fold is the authority boundary: replay doors only admit canonical,
     /// origin-signed records; signer ancestry, sequence, quorum, and roster
-    /// semantics are recomputed here from the stored log.
+    /// semantics are recomputed here from the stored log. Software-tier widens
+    /// are evaluated against this device's local first-seen timestamps.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
+        self.backfill_authority_first_seen_sidecars()?;
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
+        let mut first_seen_at_secs = std::collections::BTreeMap::new();
+        let previous_floor = self
+            .store
+            .sync_state
+            .get(&rtxn, authority_first_seen_clock_sync_key())?
+            .and_then(decode_authority_first_seen_secs)
+            .unwrap_or(0);
         for entry in self
             .store
             .type_index
@@ -1026,11 +1124,44 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
                 return Err(Error::CorruptedIndex("type index row kind mismatch"));
             }
-            entries.push(decode_authority_log_entry_body(
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?);
+            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let hash = authority_entry_hash(&entry)?;
+            if let Some(first_seen) = self
+                .store
+                .sync_state
+                .get(&rtxn, authority_first_seen_sync_key(&hash).as_str())?
+                .and_then(decode_authority_first_seen_secs)
+            {
+                first_seen_at_secs.insert(hash, first_seen);
+            }
+            entries.push(entry);
         }
-        Ok(fold_authority_log(&entries))
+        drop(rtxn);
+        let now_secs = self.with_write_txn(|wtxn| {
+            let previous_floor = self
+                .store
+                .sync_state
+                .get(wtxn, authority_first_seen_clock_sync_key())?
+                .and_then(decode_authority_first_seen_secs)
+                .unwrap_or(previous_floor);
+            let now_secs = authority_observation_secs_for_domain(
+                self.store.authority_clock_domain,
+                previous_floor,
+                unix_seconds_now(),
+            );
+            if now_secs != previous_floor {
+                let encoded = encode_authority_first_seen_secs(now_secs);
+                self.store
+                    .sync_state
+                    .put(wtxn, authority_first_seen_clock_sync_key(), &encoded)?;
+            }
+            Ok(now_secs)
+        })?;
+        Ok(fold_authority_log_with_seen_times(
+            &entries,
+            &first_seen_at_secs,
+            now_secs,
+        ))
     }
 
     /// Engine-authored write door for AccessGrant control-plane records.

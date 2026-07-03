@@ -111,6 +111,29 @@ impl EntityMetadataHeader {
     }
 }
 
+fn authority_observation_secs_for_write(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    candidate_secs: u64,
+) -> Result<u64> {
+    let floor_key = crate::authority::authority_first_seen_clock_sync_key();
+    let previous_floor = store
+        .sync_state
+        .get(wtxn, floor_key)?
+        .and_then(crate::authority::decode_authority_first_seen_secs)
+        .unwrap_or(0);
+    let observed_secs = crate::authority::authority_observation_secs_for_domain(
+        store.authority_clock_domain,
+        previous_floor,
+        candidate_secs,
+    );
+    if observed_secs != previous_floor {
+        let encoded = crate::authority::encode_authority_first_seen_secs(observed_secs);
+        store.sync_state.put(wtxn, floor_key, &encoded)?;
+    }
+    Ok(observed_secs)
+}
+
 /// Builder for atomic multi-database write batches.
 #[must_use = "BatchBuilder performs no writes until `.commit()` is called"]
 pub struct BatchBuilder<'a> {
@@ -2375,6 +2398,14 @@ fn apply_put(
             end: occurred.end,
         });
     }
+    let authority_first_seen_key = if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
+        let entry = crate::authority::decode_authority_log_entry_body(data)?;
+        Some(crate::authority::authority_first_seen_sync_key(
+            &crate::authority::authority_entry_hash(&entry)?,
+        ))
+    } else {
+        None
+    };
     // Maintenance-band kinds (REDACTION_AUDIT = 120) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
     // Only the internal sync path reaches here with such a kind (public puts are
@@ -2494,6 +2525,14 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    if let Some(key) = authority_first_seen_key {
+        let observed_secs =
+            authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
+        if store.sync_state.get(wtxn, key.as_str())?.is_none() {
+            let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
+            store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
+        }
+    }
 
     let type_key = Store::encode_type_key(entity_type, &id);
     store.type_index.put(wtxn, &type_key, &[])?;
@@ -6045,6 +6084,204 @@ mod tests {
         let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
         entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
         entry
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_enroll_fixture(
+        vault_id: crate::authority::AuthorityVaultId,
+        parent: &crate::authority::AuthorityLogEntry,
+        signer: &SigningKey,
+        new_seed: u8,
+        seq: u64,
+    ) -> crate::authority::AuthorityLogEntry {
+        let signer_key = authority_key_from_signing(signer);
+        let new_key = authority_key_from_signing(&authority_test_key(new_seed));
+        let mut entry = crate::authority::AuthorityLogEntry {
+            schema_version: 1,
+            vault_id: Some(vault_id),
+            seq,
+            parent_hashes: vec![
+                crate::authority::authority_entry_hash(parent).expect("parent hash"),
+            ],
+            op: crate::authority::AuthorityOp::EnrollDevice {
+                device: authority_test_device(new_key),
+            },
+            signer: crate::authority::AuthoritySignature {
+                suite: signer_key.suite(),
+                public_key: signer_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: u64::from(new_seed),
+        };
+        let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+        entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+        entry
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_first_seen_for_test(vault: &Vault, key: &str) -> Result<Option<u64>> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .sync_state
+            .get(&rtxn, key)?
+            .and_then(crate::authority::decode_authority_first_seen_secs))
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_log_first_seen_sidecar_drives_live_fold() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let owner = authority_test_key(74);
+        let genesis = authority_genesis_fixture(74);
+        let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 75, 1);
+        let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
+        let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
+        let enroll_key = authority_key_from_signing(&authority_test_key(75));
+        let genesis_id = EntityId::now();
+        let enroll_id = EntityId::now();
+
+        vault.put_authority_log_entry(&genesis_id, &genesis, test_time_range(1, 1), 1)?;
+        vault.put_authority_log_entry(&enroll_id, &enroll, test_time_range(2, 2), 2)?;
+
+        let first_seen = authority_first_seen_for_test(&vault, &enroll_sidecar)?
+            .expect("authority log put must create first-seen sidecar");
+        let fold = vault.authority_fold()?;
+        assert!(fold.pending_widens.contains_key(&enroll_hash));
+        assert!(!fold.roster.contains_key(&enroll_key));
+
+        vault.put_authority_log_entry(&enroll_id, &enroll, test_time_range(3, 3), 999_999)?;
+        assert_eq!(
+            authority_first_seen_for_test(&vault, &enroll_sidecar)?,
+            Some(first_seen),
+            "metadata-only rewrites must not move local first-seen"
+        );
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, enroll_sidecar.as_str())?;
+            Ok(())
+        })?;
+        let missing_sidecar_fold = vault.authority_fold()?;
+        assert_eq!(
+            missing_sidecar_fold
+                .pending_widens
+                .get(&enroll_hash)
+                .and_then(|pending| pending.first_seen_at_secs),
+            None,
+            "missing local first-seen data must fail closed instead of trusting entity metadata"
+        );
+        assert!(!missing_sidecar_fold.roster.contains_key(&enroll_key));
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_log_write_does_not_mark_legacy_backfill_complete() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let genesis = authority_genesis_fixture(86);
+
+        vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(
+                    &rtxn,
+                    crate::authority::authority_first_seen_backfill_sync_key(),
+                )?
+                .is_none(),
+            "a single authority write must not suppress the legacy sidecar scan"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_log_first_seen_ignores_future_learned_at_metadata() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let genesis = authority_genesis_fixture(87);
+        let genesis_hash = crate::authority::authority_entry_hash(&genesis)?;
+        let genesis_sidecar = crate::authority::authority_first_seen_sync_key(&genesis_hash);
+        let future_learned_at = crate::unix_seconds_now()
+            .saturating_add(crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS);
+
+        vault.put_authority_log_entry(
+            &EntityId::now(),
+            &genesis,
+            test_time_range(1, 1),
+            future_learned_at,
+        )?;
+
+        let first_seen = authority_first_seen_for_test(&vault, &genesis_sidecar)?
+            .expect("authority log put must create first-seen sidecar");
+        assert!(
+            first_seen < future_learned_at,
+            "local first-seen must come from local observation time, not future learned_at metadata"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let owner = authority_test_key(84);
+        let genesis = authority_genesis_fixture(84);
+        let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 85, 1);
+        let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
+        let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
+        let enroll_key = authority_key_from_signing(&authority_test_key(85));
+
+        vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
+        vault.put_authority_log_entry(&EntityId::now(), &enroll, test_time_range(2, 2), 2)?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, enroll_sidecar.as_str())?;
+            vault.store.sync_state.delete(
+                wtxn,
+                crate::authority::authority_first_seen_backfill_sync_key(),
+            )?;
+            Ok(())
+        })?;
+
+        let backfilled_fold = vault.authority_fold()?;
+        assert!(backfilled_fold.roster.contains_key(&enroll_key));
+        assert_eq!(
+            authority_first_seen_for_test(&vault, &enroll_sidecar)?,
+            Some(2),
+            "legacy sidecar migration should preserve the stored learned-at observation"
+        );
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, enroll_sidecar.as_str())?;
+            Ok(())
+        })?;
+        let missing_after_marker = vault.authority_fold()?;
+        assert!(
+            !missing_after_marker.roster.contains_key(&enroll_key),
+            "after migration, a missing sidecar must still fail closed"
+        );
+        assert_eq!(
+            missing_after_marker
+                .pending_widens
+                .get(&enroll_hash)
+                .and_then(|pending| pending.first_seen_at_secs),
+            None
+        );
+        Ok(())
     }
 
     #[cfg(feature = "sync")]
