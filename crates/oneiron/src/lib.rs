@@ -71,7 +71,10 @@ pub use crate::authority::{
     genesis_vault_id, validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
-pub use crate::bm25::Bm25Formula;
+pub use crate::bm25::{
+    Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
+    bm25_diagnostics_snapshot,
+};
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
