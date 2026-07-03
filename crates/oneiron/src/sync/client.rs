@@ -44,8 +44,7 @@ use std::cmp::Ordering::{Equal, Less};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use loro::awareness::{EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent};
-use loro::{LoroDoc, LoroValue, Subscription, VersionVector};
+use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
 use crate::Vault;
@@ -68,6 +67,9 @@ use crate::sync::transport::{
 };
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
+use crate::sync::{
+    EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent, LoroValue, Subscription,
+};
 
 /// Root doc snapshot row (ARCH-0023b key table: server-write-only
 /// `meta.windows`; client persists what it imported).
@@ -199,6 +201,12 @@ impl SyncClient {
         manager: Arc<WindowManager>,
         config: SyncClientConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<SyncEvent>)> {
+        if config.ephemeral_timeout_ms <= 0 {
+            return Err(Error::SyncProtocolError(
+                "ephemeral_timeout_ms must be positive".to_owned(),
+            ));
+        }
+
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
 
@@ -2571,6 +2579,26 @@ mod tests {
                 && updated.is_empty()
                 && removed == vec![key.to_string()]
         );
+    }
+
+    #[test]
+    fn client_rejects_non_positive_ephemeral_timeout() {
+        let manager = test_manager();
+        let result = SyncClient::new(
+            manager,
+            SyncClientConfig {
+                ephemeral_timeout_ms: 0,
+                ..Default::default()
+            },
+        );
+
+        match result {
+            Err(Error::SyncProtocolError(msg)) => {
+                assert!(msg.contains("ephemeral_timeout_ms must be positive"));
+            }
+            Ok(_) => panic!("client construction must reject non-positive ephemeral timeout"),
+            Err(err) => panic!("unexpected error: {err}"),
+        }
     }
 
     #[test]

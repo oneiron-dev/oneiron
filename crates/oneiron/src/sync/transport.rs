@@ -2,9 +2,13 @@
 //!
 //! Shared between client and server. Defines the custom message tags
 //! and encoding/decoding for WindowSync, BulkTransfer, BulkTransferDone.
-//! Engine-agnostic — no CRDT library types here.
+//! Mostly engine-agnostic. The ephemeral lane intentionally exposes Loro's
+//! native wire record shape so untrusted `EphemeralStore` bytes can be bounded
+//! and timestamp-validated before apply.
 
 use crate::sync::types::parse_window_key_str;
+use loro::LoroValue;
+use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
@@ -284,6 +288,34 @@ pub fn encode_ephemeral(payload: &[u8]) -> EncodedFrame {
     buf.push(TAG_EPHEMERAL);
     buf.extend_from_slice(payload);
     EncodedFrame::ok(buf)
+}
+
+/// Decoded Loro `EphemeralStore` wire record.
+///
+/// This mirrors the postcard-encoded shape used by Loro 1.10.x. It is shared
+/// so callers can validate untrusted ephemeral bytes before applying them to a
+/// store while still relaying the native bytes on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EphemeralWireState {
+    pub key: String,
+    pub value: Option<LoroValue>,
+    pub timestamp: i64,
+}
+
+/// Decodes Loro-native `EphemeralStore` bytes into timestamped wire records.
+pub fn decode_ephemeral_states(payload: &[u8]) -> Result<Vec<EphemeralWireState>, TransportError> {
+    postcard::from_bytes(payload)
+        .map_err(|_| TransportError::InvalidPayload("invalid ephemeral payload"))
+}
+
+/// Encodes timestamped Loro-native ephemeral records.
+///
+/// Production callers normally use `EphemeralStore::encode*`; this helper is
+/// kept with the decoder so tests and defensive transport tooling can build
+/// exact timestamp fixtures without hand-rolling postcard details.
+pub fn encode_ephemeral_states(states: &[EphemeralWireState]) -> Result<Vec<u8>, TransportError> {
+    postcard::to_allocvec(states)
+        .map_err(|_| TransportError::InvalidPayload("invalid ephemeral payload"))
 }
 
 /// Decodes a LeaseGranted payload (after the tag byte has been consumed).

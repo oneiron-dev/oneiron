@@ -33,6 +33,9 @@ const LEGACY_DEFAULT_VAULT_PATH: &str = "./vault";
 /// - `max_federation_windows_per_connection` — ENFORCED on grant-backed
 ///   selector connections as a tighter distinct-window quota with temporary
 ///   pause instead of closing the socket.
+/// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
+///   ENFORCED before ephemeral hub mutation and before late-join snapshot
+///   send. Oversized late-join snapshots are skipped, not connection-fatal.
 /// - `max_connections_per_user` — not enforced until auth has per-user
 ///   identity.
 #[derive(Clone)]
@@ -73,6 +76,10 @@ pub struct SyncServerConfig {
     pub max_messages_per_sec: u32,
     /// Loro ephemeral-store inactivity timeout in milliseconds.
     pub ephemeral_timeout_ms: i64,
+    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
+    pub max_ephemeral_payload_bytes: usize,
+    /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
+    pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
@@ -103,8 +110,10 @@ impl Default for SyncServerConfig {
             federation_flood_pause_secs: oneiron::sync::DEFAULT_FEDERATION_FLOOD_PAUSE_SECS,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
-            max_entity_blob: 64 * 1024,             // 64 KB
-            max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
+            max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
+            max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
+            max_entity_blob: 64 * 1024,               // 64 KB
+            max_bulk_decompressed: 8 * 1024 * 1024,   // 8 MB
             usage_mode: runtime.mode.usage_mode(),
             runtime,
         }
@@ -117,6 +126,25 @@ impl SyncServerConfig {
             return self.usage_mode;
         }
         self.runtime.mode.usage_mode()
+    }
+
+    pub fn validate(&self) -> Result<(), oneiron::Error> {
+        if self.ephemeral_timeout_ms <= 0 {
+            return Err(oneiron::Error::SyncProtocolError(
+                "ephemeral_timeout_ms must be positive".to_owned(),
+            ));
+        }
+        if self.max_ephemeral_payload_bytes == 0 {
+            return Err(oneiron::Error::SyncProtocolError(
+                "max_ephemeral_payload_bytes must be positive".to_owned(),
+            ));
+        }
+        if self.max_ephemeral_snapshot_bytes == 0 {
+            return Err(oneiron::Error::SyncProtocolError(
+                "max_ephemeral_snapshot_bytes must be positive".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -150,6 +178,14 @@ impl fmt::Debug for SyncServerConfig {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field(
+                "max_ephemeral_payload_bytes",
+                &self.max_ephemeral_payload_bytes,
+            )
+            .field(
+                "max_ephemeral_snapshot_bytes",
+                &self.max_ephemeral_snapshot_bytes,
+            )
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
@@ -265,6 +301,14 @@ pub struct ServeArgs {
     #[arg(long)]
     pub ephemeral_timeout_ms: Option<i64>,
 
+    /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
+    #[arg(long)]
+    pub max_ephemeral_payload_bytes: Option<usize>,
+
+    /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
+    #[arg(long)]
+    pub max_ephemeral_snapshot_bytes: Option<usize>,
+
     /// Maximum entity blob size in bytes.
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
@@ -362,6 +406,14 @@ impl fmt::Debug for ServeArgs {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field(
+                "max_ephemeral_payload_bytes",
+                &self.max_ephemeral_payload_bytes,
+            )
+            .field(
+                "max_ephemeral_snapshot_bytes",
+                &self.max_ephemeral_snapshot_bytes,
+            )
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("usage_mode", &self.usage_mode)
@@ -418,6 +470,8 @@ pub struct ServeConfig {
     pub federation_flood_pause_secs: u64,
     pub max_messages_per_sec: u32,
     pub ephemeral_timeout_ms: i64,
+    pub max_ephemeral_payload_bytes: usize,
+    pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
@@ -453,6 +507,8 @@ impl Default for ServeConfig {
             federation_flood_pause_secs: server.federation_flood_pause_secs,
             max_messages_per_sec: server.max_messages_per_sec,
             ephemeral_timeout_ms: server.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: server.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: server.max_ephemeral_snapshot_bytes,
             max_entity_blob: server.max_entity_blob,
             max_bulk_decompressed: server.max_bulk_decompressed,
             usage_mode: runtime.mode.usage_mode(),
@@ -498,6 +554,14 @@ impl fmt::Debug for ServeConfig {
             )
             .field("max_messages_per_sec", &self.max_messages_per_sec)
             .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field(
+                "max_ephemeral_payload_bytes",
+                &self.max_ephemeral_payload_bytes,
+            )
+            .field(
+                "max_ephemeral_snapshot_bytes",
+                &self.max_ephemeral_snapshot_bytes,
+            )
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
@@ -524,6 +588,8 @@ impl ServeConfig {
             federation_flood_pause_secs: self.federation_flood_pause_secs,
             max_messages_per_sec: self.max_messages_per_sec,
             ephemeral_timeout_ms: self.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: self.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: self.max_ephemeral_snapshot_bytes,
             max_entity_blob: self.max_entity_blob,
             max_bulk_decompressed: self.max_bulk_decompressed,
             runtime: self.runtime.clone(),
@@ -601,6 +667,10 @@ impl EnvConfig {
             lookup_parse(&mut lookup, "ONEIRON_FEDERATION_FLOOD_PAUSE_SECS")?;
         values.max_messages_per_sec = lookup_parse(&mut lookup, "ONEIRON_MAX_MESSAGES_PER_SEC")?;
         values.ephemeral_timeout_ms = lookup_parse(&mut lookup, "ONEIRON_EPHEMERAL_TIMEOUT_MS")?;
+        values.max_ephemeral_payload_bytes =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES")?;
+        values.max_ephemeral_snapshot_bytes =
+            lookup_parse(&mut lookup, "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES")?;
         values.max_entity_blob = lookup_parse(&mut lookup, "ONEIRON_MAX_ENTITY_BLOB")?;
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.usage_mode = lookup_parse(&mut lookup, "ONEIRON_USAGE_MODE")?;
@@ -641,7 +711,21 @@ pub fn resolve_serve_config_with_sources(
     file_values.apply_to(&mut resolved);
     env.values.apply_to(&mut resolved);
     flag_values.apply_to(&mut resolved);
+    validate_serve_config(&resolved)?;
     Ok(resolved)
+}
+
+fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
+    if config.ephemeral_timeout_ms <= 0 {
+        anyhow::bail!("ephemeral_timeout_ms must be positive");
+    }
+    if config.max_ephemeral_payload_bytes == 0 {
+        anyhow::bail!("max_ephemeral_payload_bytes must be positive");
+    }
+    if config.max_ephemeral_snapshot_bytes == 0 {
+        anyhow::bail!("max_ephemeral_snapshot_bytes must be positive");
+    }
+    Ok(())
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
@@ -694,6 +778,8 @@ struct FileServeConfig {
     federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
+    max_ephemeral_payload_bytes: Option<usize>,
+    max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
@@ -725,6 +811,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
@@ -757,6 +845,8 @@ struct PartialServeConfig {
     federation_flood_pause_secs: Option<u64>,
     max_messages_per_sec: Option<u32>,
     ephemeral_timeout_ms: Option<i64>,
+    max_ephemeral_payload_bytes: Option<usize>,
+    max_ephemeral_snapshot_bytes: Option<usize>,
     max_entity_blob: Option<usize>,
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
@@ -831,6 +921,12 @@ impl PartialServeConfig {
         if let Some(value) = self.ephemeral_timeout_ms {
             resolved.ephemeral_timeout_ms = value;
         }
+        if let Some(value) = self.max_ephemeral_payload_bytes {
+            resolved.max_ephemeral_payload_bytes = value;
+        }
+        if let Some(value) = self.max_ephemeral_snapshot_bytes {
+            resolved.max_ephemeral_snapshot_bytes = value;
+        }
         if let Some(value) = self.max_entity_blob {
             resolved.max_entity_blob = value;
         }
@@ -875,6 +971,8 @@ impl From<&ServeArgs> for PartialServeConfig {
             federation_flood_pause_secs: value.federation_flood_pause_secs,
             max_messages_per_sec: value.max_messages_per_sec,
             ephemeral_timeout_ms: value.ephemeral_timeout_ms,
+            max_ephemeral_payload_bytes: value.max_ephemeral_payload_bytes,
+            max_ephemeral_snapshot_bytes: value.max_ephemeral_snapshot_bytes,
             max_entity_blob: value.max_entity_blob,
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),
@@ -1176,6 +1274,39 @@ mod tests {
 
         assert_eq!(resolved.lease_vault_id, 7);
         assert_eq!(resolved.sync_server_config().lease_vault_id, 7);
+    }
+
+    #[test]
+    fn serve_config_rejects_non_positive_ephemeral_timeout() {
+        let env = EnvConfig::from_pairs([("ONEIRON_EPHEMERAL_TIMEOUT_MS", "0")]).unwrap();
+
+        let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("ephemeral_timeout_ms must be positive"));
+    }
+
+    #[test]
+    fn serve_config_rejects_zero_ephemeral_limits() {
+        for (key, message) in [
+            (
+                "ONEIRON_MAX_EPHEMERAL_PAYLOAD_BYTES",
+                "max_ephemeral_payload_bytes must be positive",
+            ),
+            (
+                "ONEIRON_MAX_EPHEMERAL_SNAPSHOT_BYTES",
+                "max_ephemeral_snapshot_bytes must be positive",
+            ),
+        ] {
+            let env = EnvConfig::from_pairs([(key, "0")]).unwrap();
+
+            let error = resolve_serve_config_with_sources(&ServeArgs::default(), env, None)
+                .unwrap_err()
+                .to_string();
+
+            assert!(error.contains(message));
+        }
     }
 
     #[test]

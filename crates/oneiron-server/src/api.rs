@@ -1477,7 +1477,9 @@ fn add_security_scheme(spec: &mut Value) {
                     "max_messages_per_sec": 64,
                     "max_windows_per_connection": 8,
                     "max_frame_size_bytes": 1048576,
-                    "max_update_payload_bytes": 1048576
+                    "max_update_payload_bytes": 1048576,
+                    "max_ephemeral_payload_bytes": 65536,
+                    "max_ephemeral_snapshot_bytes": 262144
                 },
                 "runtime": {
                     "mode": "local_free",
@@ -1719,6 +1721,12 @@ struct RateLimitStatus {
     /// Maximum accepted sync update payload size in bytes.
     #[schema(example = 1048576)]
     max_update_payload_bytes: usize,
+    /// Maximum accepted ephemeral payload size in bytes.
+    #[schema(example = 65536)]
+    max_ephemeral_payload_bytes: usize,
+    /// Maximum encoded ephemeral hub snapshot size in bytes.
+    #[schema(example = 262144)]
+    max_ephemeral_snapshot_bytes: usize,
 }
 
 /// Vault bootstrap discovery for external agents with only the Phase-1 auth
@@ -1973,6 +1981,8 @@ fn rate_limit_status(config: &SyncServerConfig) -> RateLimitStatus {
         max_windows_per_connection: config.max_windows_per_connection,
         max_frame_size_bytes: config.max_frame_size,
         max_update_payload_bytes: config.max_update_payload,
+        max_ephemeral_payload_bytes: config.max_ephemeral_payload_bytes,
+        max_ephemeral_snapshot_bytes: config.max_ephemeral_snapshot_bytes,
     }
 }
 
