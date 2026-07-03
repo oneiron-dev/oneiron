@@ -394,7 +394,9 @@ impl<'de> Deserialize<'de> for LensNode {
     where
         D: Deserializer<'de>,
     {
-        LensNodeSeed { depth: 1 }.deserialize(deserializer)
+        let node = LensNodeSeed { depth: 1 }.deserialize(deserializer)?;
+        validate_lens_tree(&node).map_err(de::Error::custom)?;
+        Ok(node)
     }
 }
 
@@ -941,12 +943,37 @@ pub struct ThreadEntryAtom {
     pub seal: Option<SealAtom>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CollectionAtom {
     pub title: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub rows: Vec<LedgerRowAtom>,
+}
+
+impl<'de> Deserialize<'de> for CollectionAtom {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct CollectionAtomWire {
+            title: LensText,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            rows: Vec<LedgerRowAtom>,
+        }
+
+        let wire = CollectionAtomWire::deserialize(deserializer)?;
+        let atom = Self {
+            title: wire.title,
+            rows: wire.rows,
+        };
+        atom.validate().map_err(de::Error::custom)?;
+        let mut budget = LensBudget::default();
+        atom.count_collection_items(&mut budget)
+            .map_err(de::Error::custom)?;
+        Ok(atom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -990,13 +1017,36 @@ pub struct TwoClocksAtom {
     pub learned_at: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NeighborhoodGraphAtom {
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub nodes: Vec<GraphNode>,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub edges: Vec<GraphEdge>,
+}
+
+impl<'de> Deserialize<'de> for NeighborhoodGraphAtom {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct NeighborhoodGraphAtomWire {
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            nodes: Vec<GraphNode>,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            edges: Vec<GraphEdge>,
+        }
+
+        let wire = NeighborhoodGraphAtomWire::deserialize(deserializer)?;
+        let atom = Self {
+            nodes: wire.nodes,
+            edges: wire.edges,
+        };
+        atom.validate().map_err(de::Error::custom)?;
+        Ok(atom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1523,13 +1573,7 @@ impl LensAtom {
                 budget.add_collection("lens section lines", atom.lines.len())
             }
             Self::ThreadEntry(_) => Ok(()),
-            Self::Sheet(atom) => {
-                budget.add_collection("lens collection rows", atom.rows.len())?;
-                for row in &atom.rows {
-                    budget.add_collection("ledger row cells", row.cells.len())?;
-                }
-                Ok(())
-            }
+            Self::Sheet(atom) => atom.count_collection_items(budget),
             Self::Receipt(atom) => budget.add_collection("receipt lines", atom.lines.len()),
             Self::Postmark(_) | Self::PackLine(_) | Self::TwoClocks(_) | Self::Throbber(_) => {
                 Ok(())
@@ -1579,6 +1623,14 @@ impl CollectionAtom {
         }
         Ok(())
     }
+
+    fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
+        budget.add_collection("lens collection rows", self.rows.len())?;
+        for row in &self.rows {
+            budget.add_collection("ledger row cells", row.cells.len())?;
+        }
+        Ok(())
+    }
 }
 
 impl ReceiptAtom {
@@ -1623,7 +1675,13 @@ impl QuickFilterAtom {
     fn validate(&self) -> Result<()> {
         validate_self_ui_options("quick filter options", &self.options)?;
         validate_lens_collection_len("quick filter selected values", self.selected.len())?;
+        let mut selected_values = HashSet::with_capacity(self.selected.len());
         for selected in &self.selected {
+            if !selected_values.insert(selected.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "quick filter selected values must not contain duplicates".to_string(),
+                ));
+            }
             validate_selected_option("quick filter selected value", &self.options, Some(selected))?;
         }
         self.action.validate()
@@ -1900,6 +1958,19 @@ mod tests {
             level: SealLevel::Actor,
             label: text("actor-sealed"),
         }
+    }
+
+    fn rows_at_collection_limit_with_one_cell_each() -> Vec<LedgerRowAtom> {
+        (0..MAX_LENS_COLLECTION_ITEMS)
+            .map(|index| LedgerRowAtom {
+                cells: vec![LedgerCell {
+                    label: text(&format!("label-{index}")),
+                    value: text("value"),
+                }],
+                status: None,
+                seal: None,
+            })
+            .collect()
     }
 
     fn sample_atoms() -> Vec<LensAtom> {
@@ -2291,6 +2362,37 @@ mod tests {
     }
 
     #[test]
+    fn quick_filter_rejects_duplicate_selected_values() {
+        let props = json!({
+            "id": "filter",
+            "label": "Status",
+            "options": [{ "value": "approved", "label": "Approved" }],
+            "selected": ["approved", "approved"],
+            "action": { "command": "filter_status" }
+        });
+
+        assert!(
+            serde_json::from_value::<QuickFilterAtom>(props.clone()).is_err(),
+            "standalone quick filters should reject duplicate selected values"
+        );
+
+        let attempted = json!({
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "root": {
+                "id": "root",
+                "atom": {
+                    "kind": "quick_filter",
+                    "props": props
+                }
+            }
+        });
+        assert!(
+            serde_json::from_value::<GeneratedLens>(attempted).is_err(),
+            "quick filters should reject duplicate selected values"
+        );
+    }
+
+    #[test]
     fn self_ui_controls_round_trip_and_numbers_are_finite() {
         let controls = vec![
             SelfUiControl::Button(ButtonControl {
@@ -2445,25 +2547,37 @@ mod tests {
             GeneratedLens::new(root).is_err(),
             "oversized lens trees should be rejected"
         );
+
+        let mut root = LensNode::new(
+            id("root"),
+            LensAtom::Throbber(ThrobberAtom {
+                label: text("loading"),
+            }),
+        );
+        root.children = (0..MAX_LENS_NODE_COUNT)
+            .map(|index| {
+                LensNode::new(
+                    id(&format!("standalone-node-{index}")),
+                    LensAtom::Throbber(ThrobberAtom {
+                        label: text("loading"),
+                    }),
+                )
+            })
+            .collect();
+        let encoded = serde_json::to_value(&root).expect("node encodes");
+        assert!(
+            serde_json::from_value::<LensNode>(encoded).is_err(),
+            "standalone lens nodes should enforce tree node budgets"
+        );
     }
 
     #[test]
     fn generated_lens_rejects_aggregate_collection_budget() {
-        let rows = (0..MAX_LENS_COLLECTION_ITEMS)
-            .map(|index| LedgerRowAtom {
-                cells: vec![LedgerCell {
-                    label: text(&format!("label-{index}")),
-                    value: text("value"),
-                }],
-                status: None,
-                seal: None,
-            })
-            .collect();
         let root = LensNode::new(
             id("root"),
             LensAtom::Sheet(CollectionAtom {
                 title: text("too-many-total-items"),
-                rows,
+                rows: rows_at_collection_limit_with_one_cell_each(),
             }),
         );
 
@@ -2472,24 +2586,24 @@ mod tests {
             "nested collection totals over budget should be rejected"
         );
 
-        let rows = (0..MAX_LENS_COLLECTION_ITEMS)
-            .map(|index| LedgerRowAtom {
-                cells: vec![LedgerCell {
-                    label: text(&format!("label-{index}")),
-                    value: text("value"),
-                }],
-                status: None,
-                seal: None,
-            })
-            .collect();
         let atom = LensAtom::Sheet(CollectionAtom {
             title: text("too-many-total-items"),
-            rows,
+            rows: rows_at_collection_limit_with_one_cell_each(),
         });
         let encoded = serde_json::to_value(&atom).expect("atom encodes");
         assert!(
             serde_json::from_value::<LensAtom>(encoded).is_err(),
             "standalone atoms should enforce aggregate collection totals"
+        );
+
+        let atom = CollectionAtom {
+            title: text("too-many-total-items"),
+            rows: rows_at_collection_limit_with_one_cell_each(),
+        };
+        let encoded = serde_json::to_value(&atom).expect("collection encodes");
+        assert!(
+            serde_json::from_value::<CollectionAtom>(encoded).is_err(),
+            "standalone collection props should enforce aggregate collection totals"
         );
     }
 
@@ -2520,7 +2634,7 @@ mod tests {
 
     #[test]
     fn neighborhood_graph_rejects_dangling_and_duplicate_edges() {
-        let graph_with_dangling_edge = LensAtom::NeighborhoodGraph(NeighborhoodGraphAtom {
+        let graph_with_dangling_edge = NeighborhoodGraphAtom {
             nodes: vec![GraphNode {
                 id: handle("ada"),
                 label: text("Ada"),
@@ -2530,31 +2644,33 @@ mod tests {
                 to: handle("missing"),
                 label: text("knows"),
             }],
-        });
+        };
 
         assert!(
-            GeneratedLens::new(LensNode::new(id("root"), graph_with_dangling_edge)).is_err(),
+            GeneratedLens::new(LensNode::new(
+                id("root"),
+                LensAtom::NeighborhoodGraph(graph_with_dangling_edge.clone()),
+            ))
+            .is_err(),
             "dangling graph edges should be rejected"
         );
 
-        let graph_with_dangling_edge = LensAtom::NeighborhoodGraph(NeighborhoodGraphAtom {
-            nodes: vec![GraphNode {
-                id: handle("ada"),
-                label: text("Ada"),
-            }],
-            edges: vec![GraphEdge {
-                from: handle("ada"),
-                to: handle("missing"),
-                label: text("knows"),
-            }],
-        });
-        let encoded = serde_json::to_value(&graph_with_dangling_edge).expect("atom encodes");
+        let encoded = serde_json::to_value(LensAtom::NeighborhoodGraph(
+            graph_with_dangling_edge.clone(),
+        ))
+        .expect("atom encodes");
         assert!(
             serde_json::from_value::<LensAtom>(encoded).is_err(),
             "standalone graph atoms should reject dangling edges"
         );
 
-        let graph_with_duplicate_nodes = LensAtom::NeighborhoodGraph(NeighborhoodGraphAtom {
+        let encoded = serde_json::to_value(&graph_with_dangling_edge).expect("graph encodes");
+        assert!(
+            serde_json::from_value::<NeighborhoodGraphAtom>(encoded).is_err(),
+            "standalone graph props should reject dangling edges"
+        );
+
+        let graph_with_duplicate_nodes = NeighborhoodGraphAtom {
             nodes: vec![
                 GraphNode {
                     id: handle("ada"),
@@ -2566,11 +2682,21 @@ mod tests {
                 },
             ],
             edges: Vec::new(),
-        });
+        };
 
         assert!(
-            GeneratedLens::new(LensNode::new(id("root"), graph_with_duplicate_nodes)).is_err(),
+            GeneratedLens::new(LensNode::new(
+                id("root"),
+                LensAtom::NeighborhoodGraph(graph_with_duplicate_nodes.clone()),
+            ))
+            .is_err(),
             "duplicate graph nodes should be rejected"
+        );
+
+        let encoded = serde_json::to_value(&graph_with_duplicate_nodes).expect("graph encodes");
+        assert!(
+            serde_json::from_value::<NeighborhoodGraphAtom>(encoded).is_err(),
+            "standalone graph props should reject duplicate node ids"
         );
     }
 
