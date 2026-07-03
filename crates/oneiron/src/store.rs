@@ -1842,20 +1842,14 @@ impl Store {
         let mut component_count = 0_usize;
         let mut data_window = RetrievalBlendWeightDataWindow::default();
 
-        for (scanned_runs, row) in self
-            .vault_meta
-            .rev_range(
-                &rtxn,
-                &(
-                    std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
-                    std::ops::Bound::Excluded(upper.as_slice()),
-                ),
-            )?
-            .enumerate()
-        {
-            if scanned_runs == config.max_runs {
-                break;
-            }
+        let mut accepted_runs = 0_usize;
+        for row in self.vault_meta.rev_range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
             let (key, value) = row?;
             if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
                 break;
@@ -1872,6 +1866,10 @@ impl Store {
             if record.run_id != run_id {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
             }
+            if accepted_runs == config.max_runs {
+                break;
+            }
+            accepted_runs += 1;
 
             let outcomes = retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)?;
             let run_reward_count_before = reward_count;
@@ -2188,9 +2186,13 @@ fn encode_retrieval_blend_weight_table(entry: &RetrievalBlendWeightTableEntry) -
 }
 
 fn decode_retrieval_blend_weight_table(raw: &[u8]) -> Result<RetrievalBlendWeightTableEntry> {
-    let entry: RetrievalBlendWeightTableEntry = rmp_serde::from_slice(raw)
+    let mut entry: RetrievalBlendWeightTableEntry = rmp_serde::from_slice(raw)
         .map_err(|_| Error::CorruptedIndex("retrieval blend weight table"))?;
     vet_retrieval_blend_weight_table_entry(&entry)?;
+    entry.weights = entry
+        .weights
+        .normalized()
+        .map_err(|_| Error::CorruptedIndex("retrieval blend weight table"))?;
     Ok(entry)
 }
 
@@ -4282,6 +4284,116 @@ mod tests {
             Some(RETRIEVAL_BLEND_TUNER_ALGORITHM)
         );
         assert_eq!(vault.retrieval_blend_weight_table()?, updated);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let completed_run_id = RetrievalRunId::now();
+        let completed = RetrievalRunRecord::new(
+            completed_run_id,
+            RetrievalAction::Pipeline,
+            300,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4A).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&completed)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: completed_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let provisional_run_id = RetrievalRunId::now();
+        let provisional = RetrievalRunRecord::new(
+            provisional_run_id,
+            RetrievalAction::ContextPack,
+            400,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4B).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Salience,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&provisional)?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+            max_runs: 1,
+            learning_rate: 0.10,
+            min_reward_count: 1,
+        })?;
+
+        assert!(updated.weights.recency > before.weights.recency);
+        assert_eq!(updated.data_window.run_count, 1);
+        assert_eq!(updated.data_window.outcome_count, 1);
+        assert_eq!(updated.data_window.started_at_min, Some(300));
+        assert_eq!(updated.data_window.started_at_max, Some(300));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_weight_table_load_normalizes_persisted_weights() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let mut provenance = BTreeMap::new();
+        provenance.insert("source".to_owned(), "test".to_owned());
+        provenance.insert("algorithm".to_owned(), "test.unnormalized".to_owned());
+        let entry = RetrievalBlendWeightTableEntry {
+            version: RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
+            weights: RetrievalBlendWeights::new(2.0, 3.0, 4.0, 1.0),
+            tuned_at: 123,
+            provenance,
+            data_window: RetrievalBlendWeightDataWindow::default(),
+        };
+        let raw = rmp_serde::to_vec_named(&entry).expect("encode synthetic blend table");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, &raw)?;
+            Ok(())
+        })?;
+
+        let loaded = vault.retrieval_blend_weight_table()?;
+        let sum = loaded.weights.recency
+            + loaded.weights.salience
+            + loaded.weights.confidence
+            + loaded.weights.gravity;
+        assert!((sum - 1.0).abs() < 1.0e-6);
+        assert!((loaded.weights.recency - 0.2).abs() < 1.0e-6);
+        assert!((loaded.weights.salience - 0.3).abs() < 1.0e-6);
+        assert!((loaded.weights.confidence - 0.4).abs() < 1.0e-6);
+        assert!((loaded.weights.gravity - 0.1).abs() < 1.0e-6);
+        assert_eq!(loaded.tuned_at, 123);
         Ok(())
     }
 }
