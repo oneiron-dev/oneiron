@@ -1351,7 +1351,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
 
 pub(crate) fn resolve_policy_manifest(
     store: &Store,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
 
@@ -2527,7 +2527,8 @@ mod tests {
     }
 
     fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
-        vault.with_write_txn(|wtxn| resolve_policy_manifest(&vault.store, wtxn))
+        let rtxn = vault.store.env.read_txn()?;
+        resolve_policy_manifest(&vault.store, &rtxn)
     }
 
     fn first_party_eiri_connector_actor_id() -> EntityId {
@@ -2757,6 +2758,10 @@ mod tests {
         put_claim_body(&vault, &stale_id, &stale)?;
 
         let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        assert!(scoped_read.get(&live_id)?.is_some());
+        assert!(scoped_read.get(&proposed_id)?.is_none());
+        assert!(scoped_read.get(&stale_id)?.is_none());
+
         let visible: Vec<_> = scoped_read
             .filter_scored_entities(vec![
                 ScoredEntity {

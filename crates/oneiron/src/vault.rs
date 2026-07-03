@@ -4711,12 +4711,11 @@ impl Vault {
         actor_key: &ScopedReadActorKey,
         body: &ClaimBody,
     ) -> Result<bool> {
-        self.with_write_txn(|wtxn| {
-            let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
-            Ok(crate::gate::scoped_read_claim_allowed(
-                &policy, actor_key, body,
-            ))
-        })
+        let rtxn = self.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        Ok(crate::gate::scoped_read_claim_allowed(
+            &policy, actor_key, body,
+        ))
     }
 
     /// Deletes a directed edge and its reverse index entry.
@@ -6788,7 +6787,8 @@ mod tests {
     }
 
     fn resolve_policy_manifest(vault: &Vault) -> Result<crate::gate::PolicyManifestResolution> {
-        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))
+        let rtxn = vault.store.env.read_txn()?;
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)
     }
 
     fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
