@@ -10,6 +10,7 @@
   ],
   "arms": [
     "deterministic",
+    "vanilla_rag",
     "backbone_solo",
     "agentic",
     "chat"
@@ -34,6 +35,28 @@
         "tokenAccounting": {
           "source": "tokenizer_count",
           "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
+        }
+      }
+    },
+    {
+      "competitorId": "vanilla-rag",
+      "arm": "vanilla_rag",
+      "card": {
+        "displayName": "Vanilla RAG",
+        "publicParityStatus": "fixture_only",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Strong vanilla RAG comparator over the same fixture corpus; no external benchmark claims."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "tokenizer_count",
+          "notes": "Local vanilla-RAG query and serialized output counted with the offline o200k_base tokenizer under the same token budget."
         }
       }
     },
