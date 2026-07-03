@@ -210,6 +210,35 @@
       }
     },
     {
+      "name": "edit_invalid_remember_occurrence_range",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "remember",
+        "idempotency_key": "mcp-fixture-invalid-occurrence-range",
+        "entity": {
+          "entity_type": 1,
+          "occurred_start": 20,
+          "occurred_end": 10,
+          "body": {
+            "txt": "This impossible range should not execute"
+          }
+        }
+      }
+    },
+    {
       "name": "ask_invalid_missing_context_pack",
       "tool": "oneiron.ask",
       "valid": false,
@@ -276,6 +305,28 @@
         "target": {
           "entity_ref": "44444444444444444444444444444444",
           "short_ref": "abc123:4f"
+        }
+      }
+    },
+    {
+      "name": "read_invalid_short_ref_shape",
+      "tool": "oneiron.read",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context"
+        },
+        "target": {
+          "short_ref": "not-a-ref"
         }
       }
     },

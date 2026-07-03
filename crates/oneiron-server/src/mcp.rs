@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
 const MCP_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
+const SHORT_REF_PATTERN: &str = "^[a-z]{2}[0-9]+:[0-9A-Fa-f]{2}$";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpToolName {
@@ -83,6 +84,7 @@ impl McpToolName {
 pub struct McpToolSchema {
     pub name: &'static str,
     pub description: &'static str,
+    #[serde(rename = "inputSchema")]
     pub input_schema: Value,
 }
 
@@ -517,7 +519,9 @@ impl McpReadTarget {
             (Some(entity_ref), None, None) => {
                 validate_entity_ref(tool, "target.entity_ref", entity_ref)
             }
-            (None, Some(short_ref), None) => validate_nonblank(tool, "target.short_ref", short_ref),
+            (None, Some(short_ref), None) => {
+                validate_short_ref(tool, "target.short_ref", short_ref)
+            }
             (None, None, Some(context_pack)) => {
                 validate_context_pack_field(tool, "target.context_pack", context_pack)
             }
@@ -533,6 +537,15 @@ impl McpReadTarget {
 impl McpEditEntityInput {
     fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
         validate_optional_entity_ref(tool, "entity.id", self.id.as_deref())?;
+        if let (Some(start), Some(end)) = (self.occurred_start, self.occurred_end)
+            && start > end
+        {
+            return Err(McpToolValidationError::field(
+                tool,
+                "entity.occurred_start",
+                "must be less than or equal to entity.occurred_end",
+            ));
+        }
         for text in &self.text {
             text.validate(tool)?;
         }
@@ -666,6 +679,52 @@ fn validate_nonblank(
     }
 }
 
+fn validate_short_ref(
+    tool: McpToolName,
+    field: &'static str,
+    reference: &str,
+) -> Result<(), McpToolValidationError> {
+    validate_nonblank(tool, field, reference)?;
+    let Some((short_id, content_hash)) = reference.split_once(':') else {
+        return Err(McpToolValidationError::field(
+            tool,
+            field,
+            "must be in shortId:contentHashHex form",
+        ));
+    };
+    validate_short_ref_parts(tool, field, short_id, content_hash)
+}
+
+fn validate_short_ref_parts(
+    tool: McpToolName,
+    field: &'static str,
+    short_id: &str,
+    content_hash: &str,
+) -> Result<(), McpToolValidationError> {
+    let short_id_bytes = short_id.as_bytes();
+    if short_id_bytes.len() < 3
+        || !short_id_bytes[0].is_ascii_lowercase()
+        || !short_id_bytes[1].is_ascii_lowercase()
+        || !short_id_bytes[2..].iter().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(McpToolValidationError::field(
+            tool,
+            field,
+            "short id must be two lowercase letters followed by decimal digits",
+        ));
+    }
+    if content_hash.len() != 2 || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(McpToolValidationError::field(
+            tool,
+            field,
+            "content hash must be exactly two hex digits",
+        ));
+    }
+    u8::from_str_radix(content_hash, 16)
+        .map_err(|_| McpToolValidationError::field(tool, field, "content hash must be hex"))?;
+    Ok(())
+}
+
 fn validate_optional_nonblank(
     tool: McpToolName,
     field: &'static str,
@@ -796,12 +855,43 @@ fn edit_tool_schema() -> Value {
             json!([
                 {
                     "if": {
+                        "properties": { "verb": { "const": "remember" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["entity"],
+                        "not": forbidden_properties_schema(&["id", "new_id", "old_id", "at", "reason"]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "supersede" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["new_id", "old_id"],
+                        "not": forbidden_properties_schema(&["entity", "id", "reason"]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "retract" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["id"],
+                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "reason"]),
+                    },
+                },
+                {
+                    "if": {
                         "properties": { "verb": { "const": "delete" } },
                         "required": ["verb"],
                     },
                     "then": {
                         "required": ["id", "reason"],
                         "properties": { "reason": { "const": "user_delete" } },
+                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "at"]),
                     },
                 },
                 {
@@ -816,6 +906,7 @@ fn edit_tool_schema() -> Value {
                                 "enum": ["user_hard_delete", "gdpr_delete", "policy_delete"],
                             },
                         },
+                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "at"]),
                     },
                 },
             ]),
@@ -880,6 +971,14 @@ fn tool_schema_root(id: &'static str, properties: Value, required: &[&'static st
     })
 }
 
+fn forbidden_properties_schema(properties: &[&'static str]) -> Value {
+    let disallowed = properties
+        .iter()
+        .map(|field| json!({ "required": [field] }))
+        .collect::<Vec<_>>();
+    json!({ "anyOf": disallowed })
+}
+
 fn schema_version_property() -> Value {
     json!({
         "type": "string",
@@ -891,6 +990,13 @@ fn entity_id_schema() -> Value {
     json!({
         "type": "string",
         "pattern": ENTITY_ID_PATTERN,
+    })
+}
+
+fn short_ref_schema() -> Value {
+    json!({
+        "type": "string",
+        "pattern": SHORT_REF_PATTERN,
     })
 }
 
@@ -1007,7 +1113,7 @@ fn read_target_schema() -> Value {
         ],
         "properties": {
             "entity_ref": entity_id_schema(),
-            "short_ref": nonblank_string_schema(),
+            "short_ref": short_ref_schema(),
             "context_pack": context_pack_ref_schema(),
         },
     })
@@ -1409,8 +1515,34 @@ mod tests {
         }
     }
 
+    fn actor_json() -> Value {
+        json!({
+            "actor_ref": ACTOR_ID,
+            "actor_class": "agent",
+            "gate_actor_class": "agent",
+            "gate_actor_ref": ACTOR_ID,
+            "scope": {},
+        })
+    }
+
+    fn consent_json(purpose: &str) -> Value {
+        json!({
+            "policy_ref": "policy:foreign-mcp",
+            "purpose": purpose,
+        })
+    }
+
     fn unexpected_actor_ceiling_lookup(_: &str, _: &str) -> bool {
         panic!("actor ceiling lookup should not run after credential failure")
+    }
+
+    #[test]
+    fn mcp_tool_schema_serializes_protocol_input_schema_field() {
+        let schema =
+            serde_json::to_value(mcp_tool_schema(McpToolName::Read)).expect("schema serializes");
+
+        assert!(schema.get("inputSchema").is_some());
+        assert!(schema.get("input_schema").is_none());
     }
 
     #[test]
@@ -1487,14 +1619,25 @@ mod tests {
                 .len(),
             3
         );
+        assert_eq!(
+            read_target["properties"]["short_ref"]["pattern"],
+            Value::String(SHORT_REF_PATTERN.to_owned())
+        );
 
         let edit = edit_tool_schema();
+        let edit_verbs = edit["allOf"]
+            .as_array()
+            .expect("edit verb-specific constraints")
+            .iter()
+            .map(|branch| {
+                branch["if"]["properties"]["verb"]["const"]
+                    .as_str()
+                    .expect("verb const")
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            edit["allOf"]
-                .as_array()
-                .expect("edit delete-family constraints")
-                .len(),
-            2
+            edit_verbs,
+            vec!["remember", "supersede", "retract", "delete", "hard_delete"]
         );
     }
 
@@ -1529,6 +1672,70 @@ mod tests {
             error
                 .to_string()
                 .starts_with("oneiron.read.target.context_pack:"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn read_target_short_ref_uses_hydrate_parser_shape() {
+        let error = validate_mcp_tool_args(
+            McpToolName::Read,
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("read_context"),
+                "target": {
+                    "short_ref": "not-a-ref",
+                },
+            }),
+        )
+        .expect_err("invalid short ref should fail before hydrate");
+
+        assert!(
+            error.to_string().contains("shortId:contentHashHex"),
+            "{error}"
+        );
+
+        validate_mcp_tool_args(
+            McpToolName::Read,
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("read_context"),
+                "target": {
+                    "short_ref": "ab123:4f",
+                },
+            }),
+        )
+        .expect("hydrate-shaped short ref should validate");
+    }
+
+    #[test]
+    fn remember_rejects_impossible_occurrence_range() {
+        let error = validate_mcp_tool_args(
+            McpToolName::Edit,
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("write_memory"),
+                "verb": "remember",
+                "idempotency_key": "mcp-test-impossible-range",
+                "entity": {
+                    "entity_type": 1,
+                    "occurred_start": 20,
+                    "occurred_end": 10,
+                    "body": {
+                        "txt": "Impossible range"
+                    },
+                },
+            }),
+        )
+        .expect_err("start greater than end should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("entity.occurred_start: must be less than or equal"),
             "{error}"
         );
     }
