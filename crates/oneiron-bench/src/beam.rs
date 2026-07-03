@@ -2490,10 +2490,16 @@ fn configured_vanilla_rag_context_pack_builder<'a>(
     case: &FixtureCase,
     query_vector: &'a [f32],
 ) -> ContextPackBuilder<'a> {
+    let retrieval_limit = if case.fixture_class == FixtureClass::LowConfidence && case.limit == 0 {
+        LOW_CONFIDENCE_RETRIEVAL_LIMIT
+    } else {
+        case.limit
+    };
+
     vault
         .context_pack()
-        .search_text(&case.query, case.limit)
-        .search_vector(query_vector, case.limit)
+        .search_text(&case.query, retrieval_limit)
+        .search_vector(query_vector, retrieval_limit)
         .field_profile(FieldProfile::Standard)
         .format(BEAM_CONTEXT_PACK_FORMAT)
         .merge_neighbors(false)
@@ -4057,23 +4063,31 @@ neighbors:
         let manifest = manifest_for_fixture_case(&fixture, "eval004-low-confidence");
         let report =
             run_fixture_manifest(&manifest, &fixture).expect("low-confidence fixture runs");
-        let deterministic = find_arm(&report, ArmKind::Deterministic);
-        let ArmOutcome::Completed { context_pack } = &deterministic.outcome else {
-            panic!("deterministic arm should complete");
-        };
-        let empty = context_pack
-            .empty
-            .as_ref()
-            .expect("below-threshold empty report");
 
-        assert_eq!(context_pack.limit, 0);
-        assert_eq!(context_pack.result_count, 0);
-        assert_eq!(empty.reason, "below_threshold");
-        assert!(empty.total_in_scope > 0);
+        for kind in [ArmKind::Deterministic, ArmKind::VanillaRag] {
+            let arm = find_arm(&report, kind);
+            let ArmOutcome::Completed { context_pack } = &arm.outcome else {
+                panic!("{} arm should complete", kind.as_str());
+            };
+            let empty = context_pack.empty.as_ref().unwrap_or_else(|| {
+                panic!("{} arm should report below-threshold empty", kind.as_str())
+            });
+
+            assert_eq!(context_pack.limit, 0);
+            assert_eq!(context_pack.result_count, 0);
+            assert_eq!(empty.reason, "below_threshold");
+            assert!(
+                empty.total_in_scope > 0,
+                "{} arm should count in-scope low-confidence candidates",
+                kind.as_str()
+            );
+        }
 
         let report_json = serde_json::to_value(&report).expect("report serializes");
         let deterministic = deterministic_competitor_json(&report_json);
         assert_abstention_gate_passed(deterministic, "low_confidence_abstention");
+        let vanilla = vanilla_rag_competitor_json(&report_json);
+        assert_abstention_gate_passed(vanilla, "low_confidence_abstention");
     }
 
     #[test]
@@ -5233,6 +5247,15 @@ neighbors:
             .iter()
             .find(|competitor| competitor["competitorId"] == "deterministic-context-pack")
             .expect("deterministic competitor")
+    }
+
+    fn vanilla_rag_competitor_json(report_json: &serde_json::Value) -> &serde_json::Value {
+        report_json["cases"][0]["competitors"]
+            .as_array()
+            .expect("competitors array")
+            .iter()
+            .find(|competitor| competitor["competitorId"] == "vanilla-rag")
+            .expect("vanilla-rag competitor")
     }
 
     fn assert_abstention_gate_passed(competitor: &serde_json::Value, expected_gate: &str) {
