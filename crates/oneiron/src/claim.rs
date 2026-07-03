@@ -38,9 +38,9 @@ use crate::affect::{
 };
 use crate::error::{Error, Result};
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeInfo, EdgeKind, EmptyContext,
-    EmptyReason, EntityId, HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, ScoredEntity,
+    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo,
+    EdgeKind, EmptyContext, EmptyReason, EntityId, HydratedShortIdDeletionSource, MemoryTimeline,
+    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
 };
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -302,6 +302,22 @@ impl<'a> ScopedRead<'a> {
         include_text: bool,
         include_vector: bool,
     ) -> Result<usize> {
+        if requested == 0 {
+            return Ok(0);
+        }
+
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
+        let diagnostics = policy.diagnostics();
+        let loaded_manifest_forces_fail_closed = diagnostics.malformed_manifest_seen
+            || diagnostics.unsupported_schema_seen
+            || diagnostics.engine_version_floor_seen
+            || diagnostics.unknown_axis_seen;
+        if !loaded_manifest_forces_fail_closed && !policy.has_scoped_read_grants() {
+            return Ok(requested);
+        }
+        drop(rtxn);
+
         self.vault
             .scoped_read_search_candidate_limit(requested, include_text, include_vector)
     }
@@ -331,11 +347,17 @@ impl<'a> ScopedRead<'a> {
         let previous_count = pack.results.len() + pack.neighbors.len();
         let (results, result_suppressed) =
             self.filter_context_entities(std::mem::take(&mut pack.results))?;
-        let (neighbors, neighbor_suppressed) =
+        let (mut neighbors, neighbor_suppressed) =
             self.filter_context_entities(std::mem::take(&mut pack.neighbors))?;
+        let reachability_suppressed = if result_suppressed > 0 {
+            Self::retain_neighbors_reachable_from_results(&mut neighbors, &results)
+        } else {
+            0
+        };
         pack.results = results;
         pack.neighbors = neighbors;
-        pack.stats.claims_suppressed += result_suppressed + neighbor_suppressed;
+        pack.stats.claims_suppressed +=
+            result_suppressed + neighbor_suppressed + reachability_suppressed;
 
         if previous_count > 0 && pack.results.is_empty() && pack.neighbors.is_empty() {
             pack.empty = Some(EmptyContext {
@@ -419,6 +441,28 @@ impl<'a> ScopedRead<'a> {
         Ok((kept, claims_suppressed))
     }
 
+    fn retain_neighbors_reachable_from_results(
+        neighbors: &mut Vec<ContextEntity>,
+        results: &[ContextEntity],
+    ) -> usize {
+        let reachable_ids = results
+            .iter()
+            .filter_map(|entity| entity.edges.as_ref())
+            .flat_map(|edges| edges.iter())
+            .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
+            .map(|edge| edge.target)
+            .collect::<HashSet<_>>();
+        let mut claims_suppressed = 0;
+        neighbors.retain(|entity| {
+            let keep = reachable_ids.contains(&entity.id);
+            if !keep && entity.entity_type == ENTITY_TYPE_CLAIM {
+                claims_suppressed += 1;
+            }
+            keep
+        });
+        claims_suppressed
+    }
+
     fn filter_context_entity_edges(&self, entity: &mut ContextEntity) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
             return Ok(());
@@ -473,6 +517,13 @@ impl<'a> ScopedRead<'a> {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(policy.clone());
         Ok(policy)
     }
+}
+
+fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
+    !matches!(edge.kind, EdgeKind::ChildOf | EdgeKind::AssignedTo)
+        && !edge
+            .provenance
+            .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)
 }
 
 pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
