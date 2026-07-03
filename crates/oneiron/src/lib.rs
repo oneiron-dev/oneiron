@@ -22,6 +22,7 @@ pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod ingest;
 pub mod job_queue;
+pub mod lens;
 pub(crate) mod limits;
 pub mod llm;
 pub mod maintain;
@@ -124,6 +125,17 @@ pub use crate::job_queue::{
     EnqueueOutcome, FailJob, FailOutcome, JobId, JobQueue, JobQueueCleanupMetricsSnapshot,
     JobQueueCleanupReport, JobQueueRetryReason, JobQueueRetryReasonCount, JobRecord, JobState,
     RetryJob, RetryOutcome, job_queue_cleanup_metrics_snapshot,
+};
+pub use crate::lens::{
+    AnswerSheetAtom, AsofScrubberAtom, ButtonControl, ClaimLineAtom, CollectionAtom, FiniteF64,
+    GENERATED_LENS_ATOM_KINDS, GeneratedLens, GraphEdge, GraphNode, InspectorAtom,
+    LENS_ATOM_KIT_VERSION, LedgerCell, LedgerRowAtom, LensAtom, LensAtomId, LensHandleName,
+    LensHandleRef, LensHandleRole, LensNode, LensStatus, LensText, MetaLineAtom,
+    NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom, QuickFilterAtom, ReceiptAtom, SealAtom,
+    SealLevel, SectionAtom, SegmentedControl, SelectControl, SelfUiAction, SelfUiActionId,
+    SelfUiControl, SelfUiControlId, SelfUiOption, SelfUiOptionValue, SelfUiValue, SliderControl,
+    StatusDotAtom, TextInputControl, ThreadEntryAtom, ThrobberAtom, ToggleControl, TwoClocksAtom,
+    VadBadge, VoiceLineAtom,
 };
 pub use crate::llm::{
     BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
