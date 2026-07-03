@@ -12249,7 +12249,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_core_memory_timeline_orders_supersession_chain() {
+    async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
         let (_dir, server) = test_server();
         let subject = seeded_test_entity_id(0x1261_0100);
         let old = seeded_test_entity_id(0x1261_0101);
@@ -12287,10 +12287,7 @@ mod tests {
         assert_eq!(records.len(), 1, "{body:#}");
         assert_eq!(records[0]["id"], Value::from(new.to_hex()));
         assert_eq!(records[0]["state"], Value::from("live"));
-        assert_eq!(
-            records[0]["supersedes"],
-            Value::Array(vec![Value::from(old.to_hex())])
-        );
+        assert_eq!(records[0]["supersedes"], Value::Array(vec![]));
     }
 
     #[tokio::test]

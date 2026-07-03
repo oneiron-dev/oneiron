@@ -27,7 +27,7 @@
 //! §G.1); no predicate registry, consent matrix, or conflict-set logic lives
 //! here.
 
-use std::io::Cursor;
+use std::{collections::HashSet, io::Cursor};
 
 use rmpv::Value;
 
@@ -39,8 +39,8 @@ use crate::affect::{
 use crate::error::{Error, Result};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeKind, EmptyContext,
-    EmptyReason, EntityId, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity,
+    EmptyReason, EntityId, HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, ScoredEntity,
 };
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
@@ -192,22 +192,31 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn search(&self, query: &str, vector: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, true)?;
         let results = self
             .vault
             .query()
-            .search(query, vector, None, limit)
+            .search(query, vector, None, fetch_limit)
             .run()?;
-        self.filter_scored_entities(results)
+        self.filter_scored_entities_to_limit(results, limit)
     }
 
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
-        let results = self.vault.search_text(query, limit)?;
-        self.filter_scored_entities(results)
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, true, false)?;
+        let results = self.vault.search_text(query, fetch_limit)?;
+        self.filter_scored_entities_to_limit(results, limit)
     }
 
     pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
-        let results = self.vault.search_vector(query, limit)?;
-        self.filter_scored_entities(results)
+        let fetch_limit = self
+            .vault
+            .scoped_read_search_candidate_limit(limit, false, true)?;
+        let results = self.vault.search_vector(query, fetch_limit)?;
+        self.filter_scored_entities_to_limit(results, limit)
     }
 
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -226,7 +235,12 @@ impl<'a> ScopedRead<'a> {
             return Ok(None);
         };
         if result.body.is_none() {
-            return if result.entity_type == ENTITY_TYPE_CLAIM || result.entity_type == 0 {
+            if result.deletion.as_ref().is_some_and(|deletion| {
+                deletion.source == HydratedShortIdDeletionSource::DanglingShortId
+            }) {
+                return Ok(Some(result));
+            }
+            return if result.entity_type == ENTITY_TYPE_CLAIM {
                 Ok(None)
             } else {
                 Ok(Some(result))
@@ -246,10 +260,21 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn filter_scored_entities(&self, results: Vec<ScoredEntity>) -> Result<Vec<ScoredEntity>> {
+        self.filter_scored_entities_to_limit(results, usize::MAX)
+    }
+
+    fn filter_scored_entities_to_limit(
+        &self,
+        results: Vec<ScoredEntity>,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
         let mut kept = Vec::with_capacity(results.len());
         for result in results {
             if self.is_entity_readable(&result.id)? {
                 kept.push(result);
+                if kept.len() == limit {
+                    break;
+                }
             }
         }
         Ok(kept)
@@ -293,7 +318,8 @@ impl<'a> ScopedRead<'a> {
         if !claim_surfaceable(&body) {
             return Ok(false);
         }
-        self.vault.scoped_read_claim_allowed(&self.actor_key, &body)
+        self.vault
+            .scoped_read_claim_allowed(&self.actor_key, id, &body)
     }
 
     fn filter_context_entities(
@@ -302,14 +328,29 @@ impl<'a> ScopedRead<'a> {
     ) -> Result<(Vec<ContextEntity>, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
-        for entity in entities {
+        for mut entity in entities {
             if self.is_entity_readable(&entity.id)? {
+                self.filter_context_entity_edges(&mut entity)?;
                 kept.push(entity);
             } else if entity.entity_type == ENTITY_TYPE_CLAIM {
                 claims_suppressed += 1;
             }
         }
         Ok((kept, claims_suppressed))
+    }
+
+    fn filter_context_entity_edges(&self, entity: &mut ContextEntity) -> Result<()> {
+        let Some(edges) = entity.edges.as_mut() else {
+            return Ok(());
+        };
+        let mut kept = Vec::with_capacity(edges.len());
+        for edge in edges.drain(..) {
+            if self.is_entity_readable(&edge.target)? {
+                kept.push(edge);
+            }
+        }
+        *edges = kept;
+        Ok(())
     }
 
     fn filter_memory_timeline_records(
@@ -327,6 +368,11 @@ impl<'a> ScopedRead<'a> {
             if readable {
                 kept.push(record);
             }
+        }
+        let kept_ids: HashSet<EntityId> = kept.iter().map(|record| record.id).collect();
+        for record in &mut kept {
+            record.supersedes.retain(|id| kept_ids.contains(id));
+            record.superseded_by.retain(|id| kept_ids.contains(id));
         }
         Ok(kept)
     }
@@ -349,7 +395,8 @@ impl<'a> ScopedRead<'a> {
         if !claim_surfaceable(&body) {
             return Ok(false);
         }
-        self.vault.scoped_read_claim_allowed(&self.actor_key, &body)
+        self.vault
+            .scoped_read_claim_allowed(&self.actor_key, id, &body)
     }
 }
 
