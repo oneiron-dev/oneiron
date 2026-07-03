@@ -2593,11 +2593,17 @@ fn apply_put(
     })
 }
 
-fn validate_replicated_authority_log_for_local_vault(
+pub(crate) struct ReplicatedAuthorityLogValidation {
+    pub(crate) signer_key: crate::authority::AuthorityKey,
+    pub(crate) signer_known: bool,
+    pub(crate) local_vault_id: crate::authority::AuthorityVaultId,
+}
+
+pub(crate) fn validate_replicated_authority_log_for_local_vault(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     data: &[u8],
-) -> Result<()> {
+) -> Result<ReplicatedAuthorityLogValidation> {
     crate::authority::validate_authority_log_entry_body_bytes(data)?;
     let entry = crate::authority::decode_authority_log_entry_body(data)?;
     let entry_vault_id = match &entry.op {
@@ -2618,7 +2624,11 @@ fn validate_replicated_authority_log_for_local_vault(
             "foreign authority log vault id",
         ));
     }
-    Ok(())
+    Ok(ReplicatedAuthorityLogValidation {
+        signer_known: local_fold.roster.contains_key(&entry.signer.public_key),
+        signer_key: entry.signer.public_key,
+        local_vault_id,
+    })
 }
 
 fn stored_authority_log_entries(

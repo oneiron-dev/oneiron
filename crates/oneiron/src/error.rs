@@ -223,6 +223,8 @@ pub enum ErrorKind {
     WindowBusy,
     #[cfg(feature = "sync")]
     SyncProtocolError,
+    #[cfg(feature = "sync")]
+    MaintenanceIngestQuotaExceeded,
     InvalidRedactionReceiptBody,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
@@ -766,6 +768,21 @@ pub enum Error {
     #[cfg(feature = "sync")]
     #[error("sync protocol error: {0}")]
     SyncProtocolError(String),
+    /// A signed maintenance-band op arriving through a sync replay door would
+    /// exceed this device's local per-peer ingest quota for the current quota
+    /// window. The op is quarantined and can be lazily re-admitted by a later
+    /// rematerialization pass once a new quota window is under budget.
+    #[cfg(feature = "sync")]
+    #[error(
+        "maintenance ingest quota exceeded for peer {peer_key_hex}: accepted {accepted_count}/{max_ops_per_peer_window} in quota window starting {window_start_secs} ({quota_window_secs}s)"
+    )]
+    MaintenanceIngestQuotaExceeded {
+        peer_key_hex: String,
+        accepted_count: u32,
+        max_ops_per_peer_window: u32,
+        window_start_secs: u64,
+        quota_window_secs: u64,
+    },
     /// A REDACTION_AUDIT (type 120) blob arriving through a sync replay door
     /// failed structural validation against the pinned contracts.ts
     /// `redactionAuditReceipt` field set (request_id, scope, reason,
@@ -948,6 +965,10 @@ impl Error {
             Self::WindowBusy { .. } => ErrorKind::WindowBusy,
             #[cfg(feature = "sync")]
             Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
+            #[cfg(feature = "sync")]
+            Self::MaintenanceIngestQuotaExceeded { .. } => {
+                ErrorKind::MaintenanceIngestQuotaExceeded
+            }
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
