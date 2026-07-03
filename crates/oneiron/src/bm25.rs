@@ -154,6 +154,83 @@ fn record_bm25_diagnostic(kind: Bm25DiagnosticKind) {
     BM25_DIAGNOSTIC_COUNTERS[kind.metric_index()].fetch_add(1, AtomicOrdering::Relaxed);
 }
 
+fn prove_bm25_doc_counted_for_missing_posting_repair(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    expected_lengths: &HashMap<u16, u32>,
+) -> Result<()> {
+    let mut saw_doc = false;
+    let mut recomputed_total_docs = 0_u32;
+    let mut recomputed_field_stats: BTreeMap<u16, (u32, u64)> = BTreeMap::new();
+
+    for row in store.text_doc_field_lengths.iter(txn)? {
+        let (raw_id, raw_lengths) = row?;
+        if raw_id.len() != ENTITY_ID_LEN {
+            return Err(corrupted("field lengths key has invalid byte length"));
+        }
+        let lengths = decode_field_lengths(raw_lengths)?;
+        if raw_id == id.as_bytes() {
+            if &lengths != expected_lengths {
+                return Err(corrupted(
+                    "field lengths changed during missing posting repair",
+                ));
+            }
+            saw_doc = true;
+        }
+
+        recomputed_total_docs = recomputed_total_docs
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("bm25 total_docs recompute"))?;
+        for (&fid, &len) in &lengths {
+            let (doc_count, total_length) = recomputed_field_stats.entry(fid).or_default();
+            *doc_count = doc_count
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("bm25 field doc_count recompute"))?;
+            *total_length =
+                total_length
+                    .checked_add(u64::from(len))
+                    .ok_or(Error::ArithmeticOverflow(
+                        "bm25 field total_length recompute",
+                    ))?;
+        }
+    }
+
+    if !saw_doc {
+        return Err(corrupted(
+            "missing field lengths for missing posting repair",
+        ));
+    }
+    if read_total_docs(store, txn)? != recomputed_total_docs {
+        return Err(corrupted(
+            "missing posting repair cannot prove document is counted in total_docs",
+        ));
+    }
+
+    for (&fid, &expected) in &recomputed_field_stats {
+        if read_field_stats(store, txn, fid)? != expected {
+            return Err(corrupted(
+                "missing posting repair cannot prove document is counted in field stats",
+            ));
+        }
+    }
+    for row in store.text_bm25_field_stats.iter(txn)? {
+        let (raw_fid, raw_stats) = row?;
+        if raw_fid.len() != 2 {
+            return Err(corrupted("field stats key has invalid byte length"));
+        }
+        if raw_stats.len() != FIELD_STATS_LEN {
+            return Err(corrupted("field stats has invalid byte length"));
+        }
+        let fid = u16::from_be_bytes([raw_fid[0], raw_fid[1]]);
+        if !recomputed_field_stats.contains_key(&fid) {
+            return Err(corrupted("field stats row has no matching doc lengths"));
+        }
+    }
+
+    Ok(())
+}
+
 // === Rank profile configuration ===
 
 /// Per-channel length normalization policy.
@@ -515,24 +592,33 @@ pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -
         }
     }
 
+    let mut postings_to_delete = Vec::new();
+    let mut missing_posting_diagnostics = Vec::new();
     for term in per_term.keys() {
         // Forward index says this term exists for this doc. If the posting
-        // row or entity duplicate is already missing, finish deleting the
-        // remaining per-doc metadata and corpus stats: the stale forward row
-        // is the only durable owner left to clean up. Record a content-free
-        // diagnostic counter so this rare repair path is observable without
-        // emitting per-term logs.
-        let entry = match find_posting_dup(store, wtxn, term, id)? {
-            PostingLookup::Found(entry) => entry,
+        // row or entity duplicate is already missing, only finish deleting the
+        // remaining per-doc metadata and corpus stats after proving the
+        // aggregate stats still count this doc. Otherwise a previous partial
+        // repair could make this call double-decrement corpus stats.
+        match find_posting_dup(store, wtxn, term, id)? {
+            PostingLookup::Found(entry) => postings_to_delete.push((term.as_str(), entry)),
             PostingLookup::RowMissing => {
-                record_bm25_diagnostic(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow);
-                continue;
+                missing_posting_diagnostics
+                    .push(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow);
             }
             PostingLookup::EntityMissing => {
-                record_bm25_diagnostic(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity);
-                continue;
+                missing_posting_diagnostics
+                    .push(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity);
             }
         };
+    }
+    if !missing_posting_diagnostics.is_empty() {
+        prove_bm25_doc_counted_for_missing_posting_repair(store, wtxn, id, &lengths)?;
+        for kind in missing_posting_diagnostics {
+            record_bm25_diagnostic(kind);
+        }
+    }
+    for (term, entry) in postings_to_delete {
         // Exactly one duplicate item is removed; LMDB drops the term key
         // itself once its last duplicate is deleted.
         if !store
@@ -1601,6 +1687,12 @@ mod tests {
 
     fn contains_id(results: &[ScoredEntity], id: &EntityId) -> bool {
         results.iter().any(|r| r.id == *id)
+    }
+
+    fn reset_bm25_diagnostics() {
+        for counter in &BM25_DIAGNOSTIC_COUNTERS {
+            counter.store(0, AtomicOrdering::Relaxed);
+        }
     }
 
     fn put_text_doc(vault: &Vault, id: &EntityId, text: &str) -> Result<()> {
@@ -3412,6 +3504,7 @@ mod tests {
 
     #[test]
     fn bm25_diagnostics_increment_for_targeted_search_corruption() -> Result<()> {
+        reset_bm25_diagnostics();
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -3438,9 +3531,9 @@ mod tests {
         )
         .unwrap_err();
         assert_matches!(err, Error::CorruptedIndex(_));
-        assert!(
-            bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MissingScoredDocumentMetadata)
-                > before_missing_metadata
+        assert_eq!(
+            bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MissingScoredDocumentMetadata),
+            before_missing_metadata + 1
         );
 
         let temp_dir = tempfile::tempdir()?;
@@ -3476,9 +3569,9 @@ mod tests {
         )
         .unwrap_err();
         assert_matches!(err, Error::CorruptedIndex(_));
-        assert!(
-            bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MalformedPostingAlignment)
-                > before_malformed
+        assert_eq!(
+            bm25_diagnostics_snapshot().count(Bm25DiagnosticKind::MalformedPostingAlignment),
+            before_malformed + 1
         );
 
         Ok(())
@@ -3486,6 +3579,7 @@ mod tests {
 
     #[test]
     fn deindex_self_heals_missing_postings_and_records_diagnostics() -> Result<()> {
+        reset_bm25_diagnostics();
         let temp_dir = tempfile::tempdir()?;
         let vault = Vault::open(temp_dir.path(), test_config())?;
         let id = EntityId::now();
@@ -3507,10 +3601,10 @@ mod tests {
         deindex_text(&vault.store, &mut wtxn, &id)?;
         wtxn.commit()?;
         assert!(vault.search_text("alpha", 10)?.is_empty());
-        assert!(
+        assert_eq!(
             bm25_diagnostics_snapshot()
-                .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow)
-                > before_missing_row
+                .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingRow),
+            before_missing_row + 1
         );
 
         let temp_dir = tempfile::tempdir()?;
@@ -3538,11 +3632,88 @@ mod tests {
         let results = vault.search_text("alpha", 10)?;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, other);
-        assert!(
+        assert_eq!(
             bm25_diagnostics_snapshot()
-                .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity)
-                > before_missing_entity
+                .count(Bm25DiagnosticKind::DeindexSelfHealedMissingPostingEntity),
+            before_missing_entity + 1
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn deindex_missing_posting_after_partial_repair_fails_closed() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = EntityId::now();
+        let other = EntityId::now();
+        put_text_doc(&vault, &id, "alpha")?;
+        put_text_doc(&vault, &other, "alpha")?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let entry = match find_posting_dup(&vault.store, &wtxn, "alpha", &id)? {
+            PostingLookup::Found(entry) => entry,
+            _ => panic!("alpha posting dup for doc must exist"),
+        };
+        assert!(
+            vault
+                .store
+                .text_postings
+                .delete_one_duplicate(&mut wtxn, b"alpha", &entry)?
+        );
+
+        let raw_lengths = vault
+            .store
+            .text_doc_field_lengths
+            .get(&wtxn, id.as_bytes())?
+            .expect("length row written on index")
+            .to_vec();
+        let lengths = decode_field_lengths(&raw_lengths)?;
+        for (&fid, &len) in &lengths {
+            let (doc_count, total_length) = read_field_stats(&vault.store, &wtxn, fid)?;
+            let doc_count = doc_count
+                .checked_sub(1)
+                .expect("test setup starts with two indexed docs");
+            let total_length = total_length
+                .checked_sub(u64::from(len))
+                .expect("test setup starts with this doc counted");
+            if doc_count == 0 && total_length == 0 {
+                vault
+                    .store
+                    .text_bm25_field_stats
+                    .delete(&mut wtxn, &fid.to_be_bytes())?;
+            } else {
+                write_field_stats(&vault.store, &mut wtxn, fid, doc_count, total_length)?;
+            }
+        }
+        let total_docs = read_total_docs(&vault.store, &wtxn)?;
+        write_total_docs(&vault.store, &mut wtxn, total_docs - 1)?;
+        wtxn.commit()?;
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
+        assert_matches!(err, Error::CorruptedIndex(_));
+        drop(wtxn);
+
+        let results = vault.search_text("alpha", 10)?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, other);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert_eq!(read_total_docs(&vault.store, &rtxn)?, 1);
+        let raw_other_lengths = vault
+            .store
+            .text_doc_field_lengths
+            .get(&rtxn, other.as_bytes())?
+            .expect("other length row remains indexed")
+            .to_vec();
+        let other_lengths = decode_field_lengths(&raw_other_lengths)?;
+        for (&fid, &len) in &other_lengths {
+            assert_eq!(
+                read_field_stats(&vault.store, &rtxn, fid)?,
+                (1, u64::from(len))
+            );
+        }
 
         Ok(())
     }
