@@ -476,14 +476,14 @@ impl<'a> JobQueue<'a> {
         self.claim_matching_in_txn(wtxn, input, Some(kind))
     }
 
-    /// Repairs ready/dedupe rows while checking whether a queued job of this
-    /// kind is currently claimable, without leasing it.
-    pub(crate) fn repair_kind_ready_in_txn(
+    /// Repairs ready/dedupe rows while returning the oldest claimable job id of
+    /// this kind, without leasing it.
+    pub(crate) fn ready_kind_candidate_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         kind: &str,
         now: u64,
-    ) -> Result<bool> {
+    ) -> Result<Option<JobId>> {
         validate_kind(kind)?;
 
         let mut scan = ClaimKindReadScan::default();
@@ -534,9 +534,9 @@ impl<'a> JobQueue<'a> {
             break;
         }
 
-        let has_candidate = scan.candidate.is_some();
+        let candidate = scan.candidate.as_ref().map(|candidate| candidate.id);
         self.apply_claim_kind_read_repairs(wtxn, scan)?;
-        Ok(has_candidate)
+        Ok(candidate)
     }
 
     fn claim_kind_with_read_scan(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
