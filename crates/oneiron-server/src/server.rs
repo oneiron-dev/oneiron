@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
+use loro::awareness::EphemeralStore;
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
@@ -11,10 +12,9 @@ use oneiron::sync::schema::{
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{self, WindowKey, WindowManager};
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, broadcast};
 
 use crate::config::SyncServerConfig;
-use crate::protocol::AwarenessState;
 use crate::usage::UsageLedger;
 
 /// User id passed to the shared window loader. The server vault is
@@ -38,8 +38,8 @@ pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
-    /// Per-connection awareness state.
-    pub(crate) awareness: RwLock<HashMap<u32, AwarenessState>>,
+    /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
+    pub(crate) ephemeral_store: EphemeralStore,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
@@ -191,7 +191,7 @@ impl SyncServer {
             usage_ledger: UsageLedger::new(vault.clone()),
             vault,
             root_doc,
-            awareness: RwLock::new(HashMap::new()),
+            ephemeral_store: EphemeralStore::new(config.ephemeral_timeout_ms),
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),

@@ -22,9 +22,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use loro::{ExportMode, LoroDoc};
+use loro::awareness::EphemeralStore;
+use loro::{ExportMode, LoroDoc, LoroValue};
 use oneiron::sync::bridge::Materializer;
-use oneiron::sync::transport::{self, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags};
+use oneiron::sync::transport::{
+    self, TAG_EPHEMERAL, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags,
+};
 use oneiron::sync::{
     ConnectionConfig, SyncClient, SyncClientConfig, SyncConnection, SyncEvent, SyncStatus,
     WindowManager,
@@ -188,6 +191,29 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
             other => panic!("unexpected WebSocket message: {other:?}"),
         }
     }
+}
+
+async fn expect_no_binary(ws: &mut WsStream, duration: Duration) {
+    let result = tokio::time::timeout(duration, async {
+        loop {
+            let msg = ws
+                .next()
+                .await
+                .expect("WebSocket stream ended unexpectedly")
+                .expect("WebSocket error");
+            match msg {
+                Message::Binary(data) => return data.to_vec(),
+                Message::Ping(_) | Message::Pong(_) => continue,
+                other => panic!("unexpected WebSocket message: {other:?}"),
+            }
+        }
+    })
+    .await;
+    assert!(
+        result.is_err(),
+        "unexpected binary frame: {:?}",
+        result.ok()
+    );
 }
 
 async fn assert_ws_closes(ws: &mut WsStream, reason: &str) {
@@ -359,6 +385,19 @@ fn deep_map_bytes(doc: &LoroDoc, map: &str, key: &str) -> Option<Vec<u8>> {
     let inner = root.get(map)?.as_map()?;
     let value = inner.get(key)?.as_binary()?;
     Some(value.to_vec())
+}
+
+fn encode_ephemeral_set(key: &str, value: impl Into<LoroValue>) -> Vec<u8> {
+    let store = EphemeralStore::new(30_000);
+    store.set(key, value);
+    transport::encode_ephemeral(&store.encode(key))
+        .into_result()
+        .unwrap()
+}
+
+fn apply_ephemeral_frame(store: &EphemeralStore, frame: &[u8]) {
+    assert_eq!(frame[0], TAG_EPHEMERAL);
+    store.apply(&frame[1..]).unwrap();
 }
 
 // ─── /ws auth ─────────────────────────────────────────────────────────────────
@@ -900,6 +939,140 @@ async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
 }
 
 // ─── Update relay + durability ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn ephemeral_presence_relays_between_two_clients() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("presence-secret")),
+    )
+    .await;
+
+    let mut client_a = connect(addr, Some("presence-secret")).await.unwrap();
+    let mut client_b = connect(addr, Some("presence-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+
+    let relayed = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &relayed);
+    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_late_join_receives_hub_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("late-secret")),
+    )
+    .await;
+
+    let mut client_a = connect(addr, Some("late-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut client_b = connect(addr, Some("late-secret")).await.unwrap();
+    let root = next_binary(&mut client_b).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    let snapshot = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &snapshot);
+    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = SyncServerConfig {
+        auth_secret: Some("ttl-secret".to_string()),
+        ephemeral_timeout_ms: 5,
+        ..Default::default()
+    };
+    let (addr, _server, handle) = spawn_server(open_vault(dir.path()), config).await;
+
+    let mut client_a = connect(addr, Some("ttl-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let mut client_b = connect(addr, Some("ttl-secret")).await.unwrap();
+    let root = next_binary(&mut client_b).await;
+    assert_eq!(root[0], TAG_SYNC_UPDATE);
+    expect_no_binary(&mut client_b, Duration::from_millis(150)).await;
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn ephemeral_frames_coexist_with_window_sync_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let (addr, _server, handle) = spawn_server(
+        open_vault(dir.path()),
+        config_with_secret(Some("coexist-secret")),
+    )
+    .await;
+
+    let mut client_a = connect(addr, Some("coexist-secret")).await.unwrap();
+    let mut client_b = connect(addr, Some("coexist-secret")).await.unwrap();
+    let _ = next_binary(&mut client_a).await; // root snapshot
+    let _ = next_binary(&mut client_b).await; // root snapshot
+
+    client_a
+        .send(Message::Binary(
+            encode_ephemeral_set("presence:device-a", "online").into(),
+        ))
+        .await
+        .unwrap();
+    let relayed = next_binary(&mut client_b).await;
+    let receiver = EphemeralStore::new(30_000);
+    apply_ephemeral_frame(&receiver, &relayed);
+    assert_eq!(receiver.get("presence:device-a"), Some("online".into()));
+
+    let author = LoroDoc::new();
+    author
+        .get_map("entities")
+        .insert("e-coexist", b"window-payload".as_slice())
+        .unwrap();
+    author.commit();
+    let update = author.export(ExportMode::all_updates()).unwrap();
+    let window_update = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &update);
+    client_a
+        .send(Message::Binary(window_update.into()))
+        .await
+        .unwrap();
+
+    let relayed = next_binary(&mut client_b).await;
+    assert_eq!(relayed[0], TAG_WINDOW_SYNC);
+    let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
+    assert_eq!(key, "2026-02");
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    assert_eq!(payload, update.as_slice());
+
+    handle.abort();
+}
 
 #[tokio::test]
 async fn imported_update_relays_to_second_client_and_persists_contract_keys() {

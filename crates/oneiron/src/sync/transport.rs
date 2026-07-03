@@ -12,8 +12,8 @@ use std::ops::{Deref, DerefMut};
 
 /// CRDT update bytes for the root doc.
 pub const TAG_SYNC_UPDATE: u8 = 0;
-/// Custom awareness state (JSON-encoded).
-pub const TAG_AWARENESS: u8 = 1;
+/// Loro-native ephemeral state bytes (`EphemeralStore::encode*()`).
+pub const TAG_EPHEMERAL: u8 = 1;
 /// Loro binary `VersionVector::encode()` bytes for sync negotiation.
 pub const TAG_VERSION_VECTOR: u8 = 2;
 /// Protocol-version hello: `[TAG_PROTOCOL_HELLO:1][version:1]`.
@@ -68,13 +68,17 @@ pub const LEASE_STATUS_REJECTED: u8 = 0x00;
 /// so old clients do not quarantine scoped root `leases` entries.
 /// v5 = scoped lease root keys for selector-capable clients (ONE-1271,
 /// FED-002 plus FED-005 scoped keys).
-pub const PROTOCOL_VERSION: u8 = 5;
+/// v6 = Loro-native ephemeral tag 1 payloads for full-window clients
+/// (SYNC-EPH-1 replaces JSON awareness bytes).
+/// v7 = Loro-native ephemeral tag 1 payloads for selector-capable clients,
+/// kept distinct from v6 for broadcast filtering.
+pub const PROTOCOL_VERSION: u8 = 7;
 /// Full-window protocol version kept separate from selector-capable clients.
 ///
 /// Full-window peers cannot use selector sync, but their
 /// `VV_REQUEST`/`VV_RESPONSE`/`UPDATE` flow remains byte-compatible once they
 /// send the scoped-lease-capable hello.
-pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 4;
+pub const LEGACY_FULL_WINDOW_PROTOCOL_VERSION: u8 = 6;
 
 /// Shared 8 MB cap for decoded payloads: bulk-transfer decompression and
 /// root-doc imports both refuse anything larger (decompression-bomb /
@@ -266,6 +270,20 @@ pub fn encode_lease_granted(status: u8, client_id: u64, expires_at: u64) -> Vec<
     buf.extend_from_slice(&expires_at.to_be_bytes());
     debug_assert_eq!(buf.len(), LEASE_GRANTED_FRAME_LEN);
     buf
+}
+
+/// Encodes a Loro `EphemeralStore` update or snapshot frame.
+///
+/// Format: `[TAG_EPHEMERAL:1][ephemeral_store_bytes]`.
+pub fn encode_ephemeral(payload: &[u8]) -> EncodedFrame {
+    let capacity = match checked_encoded_frame_len(1, payload.len()) {
+        Ok(capacity) => capacity,
+        Err(err) => return EncodedFrame::err(err),
+    };
+    let mut buf = Vec::with_capacity(capacity);
+    buf.push(TAG_EPHEMERAL);
+    buf.extend_from_slice(payload);
+    EncodedFrame::ok(buf)
 }
 
 /// Decodes a LeaseGranted payload (after the tag byte has been consumed).
@@ -580,7 +598,7 @@ mod tests {
     #[test]
     fn protocol_hello_wire_literals() {
         // Contract literals: the hello frame is EXACTLY
-        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=5]. A drifted tag or
+        // [TAG_PROTOCOL_HELLO=3, PROTOCOL_VERSION=7]. A drifted tag or
         // version byte is a silent wire break — assert the raw bytes.
         // Version pinned 1→2 by the ONE-1140 atomic wire train (OD-5):
         // lease frames + connect sequence + leases registry + attested
@@ -589,14 +607,16 @@ mod tests {
         // negotiate successfully with pre-selector daemons.
         // Version pinned 3→4/5 by FED-005 scoped lease keys so v2/v3 clients
         // are rejected before they can quarantine scoped root `leases` rows.
+        // Version pinned 4/5→6/7 by SYNC-EPH-1 because tag 1 payloads changed
+        // from JSON awareness to Loro-native EphemeralStore bytes.
         assert_eq!(TAG_PROTOCOL_HELLO, 3, "hello tag byte is pinned to 3");
-        assert_eq!(PROTOCOL_VERSION, 5, "wire protocol version is pinned to 5");
+        assert_eq!(PROTOCOL_VERSION, 7, "wire protocol version is pinned to 7");
         assert_eq!(
-            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 4,
-            "legacy full-window version is pinned to 4"
+            LEGACY_FULL_WINDOW_PROTOCOL_VERSION, 6,
+            "legacy full-window version is pinned to 6"
         );
-        assert_eq!(encode_protocol_hello(), vec![3u8, 5u8]);
-        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 4u8]);
+        assert_eq!(encode_protocol_hello(), vec![3u8, 7u8]);
+        assert_eq!(encode_legacy_full_window_protocol_hello(), vec![3u8, 6u8]);
     }
 
     #[test]
