@@ -29,6 +29,8 @@ pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
 pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for Dreamer milestone claim values.
 pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
+/// Default fan-out reservation for one Dreamer child, in token-like units.
+pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_JOB_TYPE: &str = "job_type";
@@ -46,6 +48,7 @@ const KEY_CREATED_AT: &str = "created_at";
 const KEY_REASON: &str = "reason";
 const KEY_PARKED_AT: &str = "parked_at";
 const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
+const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 1;
 const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 const DREAMER_PARKED_SCHEMA_VERSION: u64 = 1;
 const DREAMER_BUDGET_KEYS: [&str; 6] = [
@@ -56,6 +59,14 @@ const DREAMER_BUDGET_KEYS: [&str; 6] = [
     KEY_RESERVED_UNITS,
     KEY_UPDATED_AT,
 ];
+const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 6] = [
+    KEY_SCHEMA_VERSION,
+    KEY_BUDGET_ID,
+    KEY_JOB_ID,
+    KEY_RESERVED_UNITS,
+    KEY_CREATED_AT,
+    KEY_UPDATED_AT,
+];
 const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_SCHEMA_VERSION,
     KEY_JOB_ID,
@@ -64,6 +75,7 @@ const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
 ];
 const DREAMER_PARKED_KEYS: [&str; 4] = [KEY_SCHEMA_VERSION, KEY_JOB_ID, KEY_REASON, KEY_PARKED_AT];
 const DREAMER_PRIVATE_BUDGET_PREFIX: &[u8] = b"dreamer:budget:";
+const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reservation:";
 const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
 const DREAMER_PRIVATE_PARKED_PREFIX: &[u8] = b"dreamer:parked:";
 const MAX_DREAMER_JOB_TYPE_LEN: usize = 128;
@@ -163,6 +175,105 @@ pub struct DreamerBudgetRecord {
     pub updated_at: u64,
 }
 
+/// Wake-budget fan-out policy knobs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DreamerWakeBudgetConfig {
+    pub child_reserve_units: u64,
+}
+
+impl Default for DreamerWakeBudgetConfig {
+    fn default() -> Self {
+        Self {
+            child_reserve_units: DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
+        }
+    }
+}
+
+impl DreamerWakeBudgetConfig {
+    /// Validates budget policy knobs before they are used for admission.
+    pub fn validate(self) -> Result<()> {
+        if self.child_reserve_units == 0 {
+            return Err(invalid_dreamer_runner(
+                "dreamer child reserve units must be > 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Private per-child reservation row used to reconcile completion or abort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerBudgetReservation {
+    pub budget_id: String,
+    pub job_id: JobId,
+    pub reserved_units: u64,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// Explicit reserve input for callers that already have a child job id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReserveDreamerBudget {
+    pub budget_id: String,
+    pub child_job: JobId,
+    /// Initial local budget total when no private row exists yet. Existing
+    /// rows keep their stored total.
+    pub budget_total_units: u64,
+    pub reserve_units: u64,
+    pub now: u64,
+}
+
+/// Reserve result for a private wake-budget counter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DreamerBudgetReserveOutcome {
+    BudgetExhausted(DreamerBudgetRecord),
+    AlreadyReserved(DreamerBudgetReservation),
+    Reserved(Box<DreamerReservedBudget>),
+}
+
+/// A newly reserved child budget and the counter row after reservation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerReservedBudget {
+    pub budget: DreamerBudgetRecord,
+    pub reservation: DreamerBudgetReservation,
+}
+
+/// Completion-time budget settlement for a previously reserved child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettleDreamerBudget {
+    pub budget_id: String,
+    pub child_job: JobId,
+    pub actual_units: u64,
+    pub now: u64,
+}
+
+/// Abort-time refund for a previously reserved child.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbortDreamerBudgetReservation {
+    pub budget_id: String,
+    pub child_job: JobId,
+    pub now: u64,
+}
+
+/// Settlement result for a child budget reservation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DreamerBudgetSettlementOutcome {
+    NoReservation,
+    Settled(DreamerBudgetSettlement),
+}
+
+/// Counter reconciliation after completion or abort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerBudgetSettlement {
+    pub budget: DreamerBudgetRecord,
+    pub reservation: DreamerBudgetReservation,
+    pub actual_units: u64,
+    pub refunded_units: u64,
+    pub over_reserved_units: u64,
+}
+
 /// Input for the atomic Dreamer admission step.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AdmitDreamerJob {
@@ -192,6 +303,7 @@ pub enum DreamerAdmissionOutcome {
 pub struct DreamerAdmittedJob {
     pub status: DreamerJobStatus,
     pub budget: DreamerBudgetRecord,
+    pub reservation: DreamerBudgetReservation,
 }
 
 /// Private run-tree row keyed by job id.
@@ -341,13 +453,14 @@ impl<'a> DreamerRunnerStore<'a> {
             return Ok(DreamerAdmissionOutcome::Empty);
         };
 
-        budget.remaining_units -= input.reserve_units;
-        budget.reserved_units = budget
-            .reserved_units
-            .checked_add(input.reserve_units)
-            .ok_or(Error::ArithmeticOverflow("dreamer budget reserved units"))?;
-        budget.updated_at = input.now;
-        put_budget_record_in_txn(self.vault, &mut wtxn, &budget)?;
+        let reservation = DreamerBudgetReservation {
+            budget_id: input.budget_id,
+            job_id: job.id,
+            reserved_units: input.reserve_units,
+            created_at: input.now,
+            updated_at: input.now,
+        };
+        reserve_budget_for_child_in_txn(self.vault, &mut wtxn, &mut budget, &reservation)?;
 
         if let Some(milestone) = input.started_milestone {
             apply_milestone_claim_in_txn(self.vault, &mut wtxn, job.id, milestone)?;
@@ -357,8 +470,125 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn.commit()?;
 
         Ok(DreamerAdmissionOutcome::Admitted(Box::new(
-            DreamerAdmittedJob { status, budget },
+            DreamerAdmittedJob {
+                status,
+                budget,
+                reservation,
+            },
         )))
+    }
+
+    /// Reserves wake-budget units for a known child job.
+    ///
+    /// `admit_next` is the normal spawn path because it co-commits queue
+    /// leasing and reservation. This method exists for runner call sites that
+    /// already have a child id and still need the same private counter rules.
+    pub fn reserve_budget(
+        &self,
+        input: ReserveDreamerBudget,
+    ) -> Result<DreamerBudgetReserveOutcome> {
+        validate_budget_id(&input.budget_id)?;
+        if input.reserve_units == 0 {
+            return Err(invalid_dreamer_runner("dreamer reserve_units must be > 0"));
+        }
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let reservation_key = budget_reservation_key(&input.budget_id, input.child_job)?;
+        if let Some(raw) = self.vault.store.vault_meta.get(&wtxn, &reservation_key)? {
+            let reservation = decode_budget_reservation(raw)?;
+            if reservation.budget_id != input.budget_id || reservation.job_id != input.child_job {
+                return Err(invalid_dreamer_runner(
+                    "dreamer budget reservation key/body mismatch",
+                ));
+            }
+            return Ok(DreamerBudgetReserveOutcome::AlreadyReserved(reservation));
+        }
+
+        let mut budget = read_or_initialize_budget_in_txn(
+            self.vault,
+            &wtxn,
+            &input.budget_id,
+            input.budget_total_units,
+            input.now,
+        )?;
+        if input.reserve_units > budget.remaining_units {
+            wtxn.commit()?;
+            return Ok(DreamerBudgetReserveOutcome::BudgetExhausted(budget));
+        }
+
+        let reservation = DreamerBudgetReservation {
+            budget_id: input.budget_id,
+            job_id: input.child_job,
+            reserved_units: input.reserve_units,
+            created_at: input.now,
+            updated_at: input.now,
+        };
+        reserve_budget_for_child_in_txn(self.vault, &mut wtxn, &mut budget, &reservation)?;
+        wtxn.commit()?;
+
+        Ok(DreamerBudgetReserveOutcome::Reserved(Box::new(
+            DreamerReservedBudget {
+                budget,
+                reservation,
+            },
+        )))
+    }
+
+    /// Settles a child reservation with actual usage and refunds any unspent
+    /// reservation.
+    pub fn settle_budget(
+        &self,
+        input: SettleDreamerBudget,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
+        validate_budget_id(&input.budget_id)?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let reservation_key = budget_reservation_key(&input.budget_id, input.child_job)?;
+        let Some(raw_reservation) = self.vault.store.vault_meta.get(&wtxn, &reservation_key)?
+        else {
+            return Ok(DreamerBudgetSettlementOutcome::NoReservation);
+        };
+        let reservation = decode_budget_reservation(raw_reservation)?;
+        if reservation.budget_id != input.budget_id || reservation.job_id != input.child_job {
+            return Err(invalid_dreamer_runner(
+                "dreamer budget reservation key/body mismatch",
+            ));
+        }
+
+        let budget_key = budget_key(&input.budget_id)?;
+        let Some(raw_budget) = self.vault.store.vault_meta.get(&wtxn, &budget_key)? else {
+            return Err(invalid_dreamer_runner(
+                "dreamer budget reservation missing counter",
+            ));
+        };
+        let mut budget = decode_budget_record(raw_budget)?;
+        if budget.budget_id != input.budget_id {
+            return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
+        }
+
+        let settlement =
+            settle_budget_for_child(&mut budget, reservation, input.actual_units, input.now)?;
+        put_budget_record_in_txn(self.vault, &mut wtxn, &settlement.budget)?;
+        self.vault
+            .store
+            .vault_meta
+            .delete(&mut wtxn, &reservation_key)?;
+        wtxn.commit()?;
+
+        Ok(DreamerBudgetSettlementOutcome::Settled(settlement))
+    }
+
+    /// Refunds a child reservation when the child aborts before spending any
+    /// budget units.
+    pub fn abort_budget_reservation(
+        &self,
+        input: AbortDreamerBudgetReservation,
+    ) -> Result<DreamerBudgetSettlementOutcome> {
+        self.settle_budget(SettleDreamerBudget {
+            budget_id: input.budget_id,
+            child_job: input.child_job,
+            actual_units: 0,
+            now: input.now,
+        })
     }
 
     /// Reads one Dreamer job by queue id.
@@ -378,6 +608,27 @@ impl<'a> DreamerRunnerStore<'a> {
             return Ok(None);
         };
         decode_budget_record(raw).map(Some)
+    }
+
+    /// Reads the remaining units in a private Dreamer budget row.
+    pub fn remaining_budget(&self, budget_id: &str) -> Result<Option<u64>> {
+        self.budget(budget_id)
+            .map(|budget| budget.map(|record| record.remaining_units))
+    }
+
+    /// Reads a private child reservation row.
+    pub fn budget_reservation(
+        &self,
+        budget_id: &str,
+        child_job: JobId,
+    ) -> Result<Option<DreamerBudgetReservation>> {
+        validate_budget_id(budget_id)?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        let key = budget_reservation_key(budget_id, child_job)?;
+        let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
+            return Ok(None);
+        };
+        decode_budget_reservation(raw).map(Some)
     }
 
     /// Reads a private Dreamer run-tree row.
@@ -579,6 +830,89 @@ fn put_budget_record_in_txn(
     Ok(())
 }
 
+fn reserve_budget_for_child_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    budget: &mut DreamerBudgetRecord,
+    reservation: &DreamerBudgetReservation,
+) -> Result<()> {
+    validate_budget_reservation(reservation)?;
+    if reservation.budget_id != budget.budget_id {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation targets a different counter",
+        ));
+    }
+    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.job_id)?;
+    if vault
+        .store
+        .vault_meta
+        .get(&*wtxn, &reservation_key)?
+        .is_some()
+    {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation already exists",
+        ));
+    }
+    if reservation.reserved_units > budget.remaining_units {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation exceeds remaining units",
+        ));
+    }
+
+    budget.remaining_units -= reservation.reserved_units;
+    budget.reserved_units = budget
+        .reserved_units
+        .checked_add(reservation.reserved_units)
+        .ok_or(Error::ArithmeticOverflow("dreamer budget reserved units"))?;
+    budget.updated_at = reservation.updated_at;
+    put_budget_record_in_txn(vault, wtxn, budget)?;
+
+    let encoded = encode_budget_reservation(reservation)?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &reservation_key, &encoded)?;
+    Ok(())
+}
+
+fn settle_budget_for_child(
+    budget: &mut DreamerBudgetRecord,
+    reservation: DreamerBudgetReservation,
+    actual_units: u64,
+    now: u64,
+) -> Result<DreamerBudgetSettlement> {
+    validate_budget_reservation(&reservation)?;
+    if reservation.budget_id != budget.budget_id {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation targets a different counter",
+        ));
+    }
+    if reservation.reserved_units > budget.reserved_units {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation exceeds reserved units",
+        ));
+    }
+
+    budget.reserved_units -= reservation.reserved_units;
+    let refunded_units = reservation.reserved_units.saturating_sub(actual_units);
+    let over_reserved_units = actual_units.saturating_sub(reservation.reserved_units);
+    budget.remaining_units = budget
+        .remaining_units
+        .checked_add(refunded_units)
+        .ok_or(Error::ArithmeticOverflow("dreamer budget refund units"))?;
+    budget.remaining_units = budget.remaining_units.saturating_sub(over_reserved_units);
+    budget.updated_at = now;
+    validate_budget_record(budget)?;
+
+    Ok(DreamerBudgetSettlement {
+        budget: budget.clone(),
+        reservation,
+        actual_units,
+        refunded_units,
+        over_reserved_units,
+    })
+}
+
 fn apply_milestone_claim_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -718,6 +1052,109 @@ fn decode_budget_record(bytes: &[u8]) -> Result<DreamerBudgetRecord> {
         updated_at: updated_at.ok_or(invalid_dreamer_runner("missing dreamer updated_at"))?,
     };
     validate_budget_record(&record)?;
+    Ok(record)
+}
+
+fn encode_budget_reservation(record: &DreamerBudgetReservation) -> Result<Vec<u8>> {
+    validate_budget_reservation(record)?;
+    let value = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_BUDGET_ID),
+            Value::from(record.budget_id.as_str()),
+        ),
+        (Value::from(KEY_JOB_ID), encode_job_id(record.job_id)),
+        (
+            Value::from(KEY_RESERVED_UNITS),
+            Value::from(record.reserved_units),
+        ),
+        (Value::from(KEY_CREATED_AT), Value::from(record.created_at)),
+        (Value::from(KEY_UPDATED_AT), Value::from(record.updated_at)),
+    ]);
+    encode_value(
+        &value,
+        "dreamer budget reservation MessagePack encode failed",
+    )
+}
+
+fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetReservation> {
+    let value = decode_value(bytes)?;
+    let entries = expect_map(
+        &value,
+        "dreamer budget reservation must be a MessagePack map",
+    )?;
+    let mut schema_version = None;
+    let mut budget_id = None;
+    let mut job_id = None;
+    let mut reserved_units = None;
+    let mut created_at = None;
+    let mut updated_at = None;
+    let mut seen = [false; DREAMER_BUDGET_RESERVATION_KEYS.len()];
+
+    for (key, value) in entries {
+        let key = expect_key(key, "dreamer budget reservation keys must be strings")?;
+        let index = pinned_key_index(key, &DREAMER_BUDGET_RESERVATION_KEYS).ok_or(
+            invalid_dreamer_runner("dreamer budget reservation key is not pinned"),
+        )?;
+        if seen[index] {
+            return Err(invalid_dreamer_runner(
+                "duplicate dreamer budget reservation key",
+            ));
+        }
+        seen[index] = true;
+
+        match DREAMER_BUDGET_RESERVATION_KEYS[index] {
+            KEY_SCHEMA_VERSION => {
+                schema_version = Some(expect_u64(
+                    value,
+                    "dreamer budget reservation schema_version must be an integer",
+                )?);
+            }
+            KEY_BUDGET_ID => {
+                let parsed = expect_string(value, "dreamer budget_id must be a string")?;
+                validate_budget_id(&parsed)?;
+                budget_id = Some(parsed);
+            }
+            KEY_JOB_ID => {
+                job_id = Some(decode_job_id(value)?);
+            }
+            KEY_RESERVED_UNITS => {
+                reserved_units = Some(expect_u64(
+                    value,
+                    "dreamer reserved_units must be an integer",
+                )?);
+            }
+            KEY_CREATED_AT => {
+                created_at = Some(expect_u64(value, "dreamer created_at must be an integer")?);
+            }
+            KEY_UPDATED_AT => {
+                updated_at = Some(expect_u64(value, "dreamer updated_at must be an integer")?);
+            }
+            _ => unreachable!("index resolved from DREAMER_BUDGET_RESERVATION_KEYS"),
+        }
+    }
+
+    let schema_version = schema_version.ok_or(invalid_dreamer_runner(
+        "missing dreamer budget reservation schema_version",
+    ))?;
+    if schema_version != DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION {
+        return Err(invalid_dreamer_runner(
+            "unsupported dreamer budget reservation schema_version",
+        ));
+    }
+
+    let record = DreamerBudgetReservation {
+        budget_id: budget_id.ok_or(invalid_dreamer_runner("missing dreamer budget_id"))?,
+        job_id: job_id.ok_or(invalid_dreamer_runner("missing dreamer job_id"))?,
+        reserved_units: reserved_units
+            .ok_or(invalid_dreamer_runner("missing dreamer reserved_units"))?,
+        created_at: created_at.ok_or(invalid_dreamer_runner("missing dreamer created_at"))?,
+        updated_at: updated_at.ok_or(invalid_dreamer_runner("missing dreamer updated_at"))?,
+    };
+    validate_budget_reservation(&record)?;
     Ok(record)
 }
 
@@ -937,6 +1374,20 @@ fn budget_key(budget_id: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+fn budget_reservation_key(budget_id: &str, job_id: JobId) -> Result<Vec<u8>> {
+    validate_budget_id(budget_id)?;
+    let budget_id_len = u16::try_from(budget_id.len())
+        .map_err(|_| invalid_dreamer_runner("dreamer budget_id exceeds 128 bytes"))?;
+    let mut out = Vec::with_capacity(
+        DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX.len() + 2 + budget_id.len() + 16,
+    );
+    out.extend_from_slice(DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX);
+    out.extend_from_slice(&budget_id_len.to_be_bytes());
+    out.extend_from_slice(budget_id.as_bytes());
+    out.extend_from_slice(job_id.as_bytes());
+    Ok(out)
+}
+
 fn run_tree_key(job_id: JobId) -> Vec<u8> {
     let mut out = Vec::with_capacity(DREAMER_PRIVATE_RUN_TREE_PREFIX.len() + 16);
     out.extend_from_slice(DREAMER_PRIVATE_RUN_TREE_PREFIX);
@@ -990,6 +1441,7 @@ fn validate_park_reason(reason: &str) -> Result<()> {
 }
 
 fn validate_budget_record(record: &DreamerBudgetRecord) -> Result<()> {
+    validate_budget_id(&record.budget_id)?;
     if record.remaining_units > record.total_units || record.reserved_units > record.total_units {
         return Err(invalid_dreamer_runner(
             "dreamer budget counters exceed total",
@@ -1002,6 +1454,21 @@ fn validate_budget_record(record: &DreamerBudgetRecord) -> Result<()> {
     if used > record.total_units {
         return Err(invalid_dreamer_runner(
             "dreamer budget counters exceed total",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_budget_reservation(record: &DreamerBudgetReservation) -> Result<()> {
+    validate_budget_id(&record.budget_id)?;
+    if record.reserved_units == 0 {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation must reserve > 0 units",
+        ));
+    }
+    if record.updated_at < record.created_at {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation updated_at precedes created_at",
         ));
     }
     Ok(())
@@ -1171,9 +1638,17 @@ mod tests {
         assert_eq!(admitted.status.job.attempt_count, 1);
         assert_eq!(admitted.budget.remaining_units, 6);
         assert_eq!(admitted.budget.reserved_units, 4);
+        assert_eq!(admitted.reservation.budget_id, "wake");
+        assert_eq!(admitted.reservation.job_id, queued.job.id);
+        assert_eq!(admitted.reservation.reserved_units, 4);
 
         let stored_budget = runner.budget("wake")?.expect("budget row");
         assert_eq!(stored_budget, admitted.budget);
+        assert_eq!(runner.remaining_budget("wake")?, Some(6));
+        assert_eq!(
+            runner.budget_reservation("wake", queued.job.id)?,
+            Some(admitted.reservation)
+        );
         let stored_claim = vault
             .get_claim(&claim_id)?
             .expect("started milestone claim");
@@ -1247,6 +1722,10 @@ mod tests {
             runner.budget("wake")?.is_none(),
             "denied admission must not commit an initialized budget row"
         );
+        assert!(
+            runner.budget_reservation("wake", queued.job.id)?.is_none(),
+            "denied admission must not commit a child reservation row"
+        );
         let status = runner.status(queued.job.id)?.expect("queued job");
         assert_eq!(status.job.state, JobState::Queued);
         assert_eq!(status.job.attempt_count, 0);
@@ -1298,6 +1777,13 @@ mod tests {
                 .store
                 .vault_meta
                 .get(&rtxn, &budget_key("wake")?)?
+                .is_some()
+        );
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, &budget_reservation_key("wake", queued.job.id)?)?
                 .is_some()
         );
         assert!(
@@ -1406,6 +1892,10 @@ mod tests {
             map_get_bytes(&entities, "dreamer:budget:wake").is_none(),
             "private runner keys must not be emitted into the sync entity map"
         );
+        assert!(
+            map_get_bytes(&entities, "dreamer:budget_reservation:wake").is_none(),
+            "private child budget reservations must not be emitted into the sync entity map"
+        );
 
         let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
         let doc_b = LoroDoc::from_snapshot(&snapshot).unwrap();
@@ -1444,6 +1934,14 @@ mod tests {
             vault_b
                 .store
                 .vault_meta
+                .get(&rtxn, &budget_reservation_key("wake", queued.job.id)?)?
+                .is_none(),
+            "private budget reservation rows must not sync"
+        );
+        assert!(
+            vault_b
+                .store
+                .vault_meta
                 .get(&rtxn, &run_tree_key(queued.job.id))?
                 .is_none(),
             "private run-tree rows must not sync"
@@ -1464,19 +1962,37 @@ mod tests {
     fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> {
         let (_dir, vault) = open_vault();
         let runner = DreamerRunnerStore::new(&vault);
+        let config = DreamerWakeBudgetConfig::default();
+        config.validate()?;
+        assert_eq!(
+            config.child_reserve_units,
+            DEFAULT_DREAMER_CHILD_RESERVE_UNITS
+        );
         let first = enqueue_job(&runner, "first", 10)?;
         let second = enqueue_job(&runner, "second", 11)?;
-        let barrier = Barrier::new(2);
+        let third = enqueue_job(&runner, "third", 12)?;
+        let barrier = Barrier::new(3);
 
-        let (left, right) = thread::scope(|scope| {
+        let (left, middle, right) = thread::scope(|scope| {
             let left = scope.spawn(|| {
                 barrier.wait();
                 runner.admit_next(AdmitDreamerJob {
                     lease_owner: "left-worker".to_owned(),
                     now: 20,
                     budget_id: "wake".to_owned(),
-                    budget_total_units: 5,
-                    reserve_units: 3,
+                    budget_total_units: config.child_reserve_units * 2,
+                    reserve_units: config.child_reserve_units,
+                    started_milestone: None,
+                })
+            });
+            let middle = scope.spawn(|| {
+                barrier.wait();
+                runner.admit_next(AdmitDreamerJob {
+                    lease_owner: "middle-worker".to_owned(),
+                    now: 20,
+                    budget_id: "wake".to_owned(),
+                    budget_total_units: config.child_reserve_units * 2,
+                    reserve_units: config.child_reserve_units,
                     started_milestone: None,
                 })
             });
@@ -1486,24 +2002,25 @@ mod tests {
                     lease_owner: "right-worker".to_owned(),
                     now: 20,
                     budget_id: "wake".to_owned(),
-                    budget_total_units: 5,
-                    reserve_units: 3,
+                    budget_total_units: config.child_reserve_units * 2,
+                    reserve_units: config.child_reserve_units,
                     started_milestone: None,
                 })
             });
             (
                 left.join().expect("left join"),
+                middle.join().expect("middle join"),
                 right.join().expect("right join"),
             )
         });
 
-        let outcomes = [left?, right?];
+        let outcomes = [left?, middle?, right?];
         assert_eq!(
             outcomes
                 .iter()
                 .filter(|outcome| matches!(outcome, DreamerAdmissionOutcome::Admitted(_)))
                 .count(),
-            1
+            2
         );
         assert_eq!(
             outcomes
@@ -1513,21 +2030,152 @@ mod tests {
             1
         );
         let budget = runner.budget("wake")?.expect("committed budget");
-        assert_eq!(budget.remaining_units, 2);
-        assert_eq!(budget.reserved_units, 3);
+        assert_eq!(budget.remaining_units, 0);
+        assert_eq!(budget.reserved_units, config.child_reserve_units * 2);
 
         let first_status = runner.status(first.job.id)?.expect("first status");
         let second_status = runner.status(second.job.id)?.expect("second status");
-        let leased = [first_status.job.state, second_status.job.state]
-            .into_iter()
-            .filter(|state| *state == JobState::Leased)
-            .count();
-        let queued = [first_status.job.state, second_status.job.state]
-            .into_iter()
-            .filter(|state| *state == JobState::Queued)
-            .count();
-        assert_eq!(leased, 1);
+        let third_status = runner.status(third.job.id)?.expect("third status");
+        let leased = [
+            first_status.job.state,
+            second_status.job.state,
+            third_status.job.state,
+        ]
+        .into_iter()
+        .filter(|state| *state == JobState::Leased)
+        .count();
+        let queued = [
+            first_status.job.state,
+            second_status.job.state,
+            third_status.job.state,
+        ]
+        .into_iter()
+        .filter(|state| *state == JobState::Queued)
+        .count();
+        assert_eq!(leased, 2);
         assert_eq!(queued, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "settle", 10)?;
+
+        let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+            lease_owner: "dreamer-worker".to_owned(),
+            now: 20,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 20,
+            reserve_units: 8,
+            started_milestone: None,
+        })?
+        else {
+            panic!("expected admitted Dreamer job");
+        };
+        assert_eq!(admitted.reservation.job_id, queued.job.id);
+        assert_eq!(admitted.budget.remaining_units, 12);
+        assert_eq!(admitted.budget.reserved_units, 8);
+
+        let DreamerBudgetSettlementOutcome::Settled(settlement) =
+            runner.settle_budget(SettleDreamerBudget {
+                budget_id: "wake".to_owned(),
+                child_job: queued.job.id,
+                actual_units: 5,
+                now: 30,
+            })?
+        else {
+            panic!("expected settlement");
+        };
+        assert_eq!(settlement.actual_units, 5);
+        assert_eq!(settlement.refunded_units, 3);
+        assert_eq!(settlement.over_reserved_units, 0);
+        assert_eq!(settlement.budget.remaining_units, 15);
+        assert_eq!(settlement.budget.reserved_units, 0);
+        assert_eq!(
+            runner.budget("wake")?.expect("settled budget"),
+            settlement.budget
+        );
+        assert!(runner.budget_reservation("wake", queued.job.id)?.is_none());
+
+        let second = enqueue_job(&runner, "settle-over-reserve", 40)?;
+        let DreamerBudgetReserveOutcome::Reserved(reserved) =
+            runner.reserve_budget(ReserveDreamerBudget {
+                budget_id: "wake".to_owned(),
+                child_job: second.job.id,
+                budget_total_units: 20,
+                reserve_units: 8,
+                now: 50,
+            })?
+        else {
+            panic!("expected explicit reserve");
+        };
+        assert_eq!(reserved.budget.remaining_units, 7);
+        assert_eq!(reserved.budget.reserved_units, 8);
+
+        let DreamerBudgetSettlementOutcome::Settled(over) =
+            runner.settle_budget(SettleDreamerBudget {
+                budget_id: "wake".to_owned(),
+                child_job: second.job.id,
+                actual_units: 10,
+                now: 60,
+            })?
+        else {
+            panic!("expected over-reserve settlement");
+        };
+        assert_eq!(over.refunded_units, 0);
+        assert_eq!(over.over_reserved_units, 2);
+        assert_eq!(over.budget.remaining_units, 5);
+        assert_eq!(over.budget.reserved_units, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_abort_refunds_unspent_child_reservation() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "abort", 10)?;
+
+        let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+            lease_owner: "dreamer-worker".to_owned(),
+            now: 20,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10,
+            reserve_units: 8,
+            started_milestone: None,
+        })?
+        else {
+            panic!("expected admitted Dreamer job");
+        };
+        assert_eq!(admitted.budget.remaining_units, 2);
+        assert_eq!(admitted.budget.reserved_units, 8);
+
+        let DreamerBudgetSettlementOutcome::Settled(aborted) =
+            runner.abort_budget_reservation(AbortDreamerBudgetReservation {
+                budget_id: "wake".to_owned(),
+                child_job: queued.job.id,
+                now: 30,
+            })?
+        else {
+            panic!("expected abort refund");
+        };
+        assert_eq!(aborted.actual_units, 0);
+        assert_eq!(aborted.refunded_units, 8);
+        assert_eq!(aborted.over_reserved_units, 0);
+        assert_eq!(aborted.budget.remaining_units, 10);
+        assert_eq!(aborted.budget.reserved_units, 0);
+        assert!(runner.budget_reservation("wake", queued.job.id)?.is_none());
+        assert_eq!(
+            runner.abort_budget_reservation(AbortDreamerBudgetReservation {
+                budget_id: "wake".to_owned(),
+                child_job: queued.job.id,
+                now: 40,
+            })?,
+            DreamerBudgetSettlementOutcome::NoReservation
+        );
 
         Ok(())
     }
