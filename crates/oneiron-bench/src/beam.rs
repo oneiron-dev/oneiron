@@ -33,9 +33,15 @@ const CONTRACT_RUN_JSONL: &str = include_str!("../fixtures/beam_128k_contract.ru
 const EVAL_CONTRACT_VERSION: &str = "oneiron-eval.contract.v1";
 const JSONL_CONTRACT_SOURCE_KIND: &str = "jsonl";
 const ONEIRON_CONTEXT_PACK_ARM_KIND: &str = "context_pack_http";
+const VANILLA_RAG_CONTRACT_ARM_ID: &str = "vanilla-rag";
+const VANILLA_RAG_CONTRACT_ARM_KIND: &str = "vanilla-rag";
+const VANILLA_RAG_CONFIG_VERSION: &str = "vanilla-rag-v1";
+const VANILLA_RAG_FUSION: &str = "rrf(vector,bm25f)";
+const VANILLA_RAG_CHUNKING: &str = "one-run-jsonl-corpus-item-per-chunk";
+const VANILLA_RAG_EMBEDDER_ID: &str = "oneiron-eval-contract-v1";
 const DEFAULT_JSONL_RETRIEVAL_LIMIT: usize = 8;
 const BEAM_CONTRACT_EMBEDDING_DIMENSIONS: usize = 4;
-const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::types::ENTITY_TYPE_SUMMARY;
+const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::types::ENTITY_TYPE_TURN;
 
 type BeamResult<T> = Result<T, BeamError>;
 
@@ -73,6 +79,16 @@ pub(crate) enum BeamError {
     PendingEmbeddings {
         case_id: String,
         pending_vectors: usize,
+    },
+    #[error("vanilla-rag arm for case `{case_id}` requires a query embedding")]
+    MissingQueryEmbedding { case_id: String },
+    #[error(
+        "vanilla-rag arm returned {actual} results for case `{case_id}`; expected at least {expected}"
+    )]
+    VanillaRagExpectation {
+        case_id: String,
+        expected: usize,
+        actual: usize,
     },
     #[error(
         "deterministic arm returned {actual} results for case `{case_id}`; expected at least {expected}"
@@ -114,6 +130,8 @@ struct FixtureRecord {
     fields: serde_json::Value,
     #[serde(default)]
     text: Vec<TextField>,
+    #[serde(default)]
+    embedding: Option<ContractEmbeddingState>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +158,8 @@ pub(crate) struct FixtureCase {
     expected_min_results: usize,
     #[serde(default)]
     pending_vector_count: usize,
+    #[serde(default)]
+    query_embedding: Option<ContractEmbeddingState>,
     #[serde(default)]
     fixture_class: FixtureClass,
     #[serde(default)]
@@ -243,6 +263,7 @@ struct RunOutputs {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ArmKind {
     Deterministic,
+    VanillaRag,
     BackboneSolo,
     Agentic,
     Chat,
@@ -252,10 +273,15 @@ impl ArmKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Deterministic => "deterministic",
+            Self::VanillaRag => "vanilla_rag",
             Self::BackboneSolo => "backbone_solo",
             Self::Agentic => "agentic",
             Self::Chat => "chat",
         }
+    }
+
+    const fn is_completed(self) -> bool {
+        matches!(self, Self::Deterministic | Self::VanillaRag)
     }
 }
 
@@ -414,6 +440,7 @@ struct LoadedDataset {
     cases: Vec<FixtureCase>,
     contract_records: BTreeMap<String, RunContractRecord>,
     source_id_by_entity_id: BTreeMap<String, String>,
+    query_vector_by_case_id: BTreeMap<String, Vec<f32>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -458,6 +485,8 @@ struct RunContractRecord {
     arm: ContractArm,
     budget: ContractBudget,
     question: String,
+    #[serde(default, alias = "queryEmbedding")]
+    query_embedding: Option<ContractEmbeddingState>,
     corpus: Vec<ContractCorpusRecord>,
     #[serde(default)]
     gold: Option<ContractGold>,
@@ -516,7 +545,24 @@ struct ContractPack {
     #[serde(skip_serializing_if = "Option::is_none")]
     token_count: Option<u64>,
     corpus_digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<ContractPackConfig>,
     contexts: Vec<ContractPackContext>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContractPackConfig {
+    kind: &'static str,
+    version: &'static str,
+    top_k: usize,
+    chunking: &'static str,
+    fusion: &'static str,
+    signals: Vec<&'static str>,
+    embedder_id: &'static str,
+    vector_dimensions: usize,
+    token_budget_source: &'static str,
+    structure: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -722,7 +768,12 @@ struct EmptyContextReport {
 
 trait BeamArmAdapter {
     fn kind(&self) -> ArmKind;
-    fn run(&self, vault: &Vault, case: &FixtureCase) -> BeamResult<ArmReport>;
+    fn run(
+        &self,
+        vault: &Vault,
+        loaded: &LoadedDataset,
+        case: &FixtureCase,
+    ) -> BeamResult<ArmReport>;
 }
 
 trait BeamScorer {
@@ -780,7 +831,12 @@ impl BeamArmAdapter for DeterministicContextPackArm {
         ArmKind::Deterministic
     }
 
-    fn run(&self, vault: &Vault, case: &FixtureCase) -> BeamResult<ArmReport> {
+    fn run(
+        &self,
+        vault: &Vault,
+        _loaded: &LoadedDataset,
+        case: &FixtureCase,
+    ) -> BeamResult<ArmReport> {
         if case.pending_vector_count > 0 {
             return Err(BeamError::PendingEmbeddings {
                 case_id: case.case_id.clone(),
@@ -808,6 +864,52 @@ impl BeamArmAdapter for DeterministicContextPackArm {
     }
 }
 
+struct VanillaRagArm;
+
+impl BeamArmAdapter for VanillaRagArm {
+    fn kind(&self) -> ArmKind {
+        ArmKind::VanillaRag
+    }
+
+    fn run(
+        &self,
+        vault: &Vault,
+        loaded: &LoadedDataset,
+        case: &FixtureCase,
+    ) -> BeamResult<ArmReport> {
+        if case.pending_vector_count > 0 {
+            return Err(BeamError::PendingEmbeddings {
+                case_id: case.case_id.clone(),
+                pending_vectors: case.pending_vector_count,
+            });
+        }
+        let query_vector = loaded
+            .query_vector_by_case_id
+            .get(case.case_id.as_str())
+            .ok_or_else(|| BeamError::MissingQueryEmbedding {
+                case_id: case.case_id.clone(),
+            })?;
+
+        let pack = run_vanilla_rag_context_pack(vault, case, query_vector)?;
+        let report = context_pack_report(&pack, case);
+
+        if report.result_count < case.expected_min_results {
+            return Err(BeamError::VanillaRagExpectation {
+                case_id: case.case_id.clone(),
+                expected: case.expected_min_results,
+                actual: report.result_count,
+            });
+        }
+
+        Ok(ArmReport {
+            arm: self.kind(),
+            outcome: ArmOutcome::Completed {
+                context_pack: Box::new(report),
+            },
+        })
+    }
+}
+
 struct NotReadyArm {
     kind: ArmKind,
 }
@@ -817,7 +919,12 @@ impl BeamArmAdapter for NotReadyArm {
         self.kind
     }
 
-    fn run(&self, _vault: &Vault, _case: &FixtureCase) -> BeamResult<ArmReport> {
+    fn run(
+        &self,
+        _vault: &Vault,
+        _loaded: &LoadedDataset,
+        _case: &FixtureCase,
+    ) -> BeamResult<ArmReport> {
         Ok(ArmReport {
             arm: self.kind,
             outcome: ArmOutcome::NotReady {
@@ -1071,7 +1178,7 @@ fn run_loaded_cases(
                     run_id: manifest.run_id.clone(),
                     competitor_id: competitor.competitor_id.clone(),
                 })?;
-            let arm_report = adapter_for(competitor.arm).run(vault, case)?;
+            let arm_report = adapter_for(competitor.arm).run(vault, loaded, case)?;
             if let Some(row) =
                 contract_context_pack_record(manifest, loaded, case, competitor, &arm_report)?
             {
@@ -1590,13 +1697,13 @@ fn validate_competitor_card(
             "model-scored competitor rows must not use char_count_estimate token accounting",
         ));
     }
-    if arm == ArmKind::Deterministic {
+    if arm.is_completed() {
         match token_accounting {
             Some(accounting) if accounting.source == TokenAccountingSource::TokenizerCount => {}
             Some(_) => {
                 return Err(invalid_manifest(
                     manifest,
-                    "deterministic competitor rows must declare tokenizer_count tokenAccounting",
+                    "completed competitor rows must declare tokenizer_count tokenAccounting",
                 ));
             }
             None => {
@@ -1695,8 +1802,20 @@ fn load_fixture_dataset(vault: &Vault, fixture: &BeamFixture) -> BeamResult<Load
             text_fields_indexed += fields.len();
             batch = batch.text(&id, &fields);
         }
+        if let Some(embedding) = &record.embedding {
+            let vector = decode_fixture_vector(fixture, "record embedding", embedding)?;
+            batch = batch.vector(&id, &vector);
+        }
     }
     batch.commit()?;
+
+    let mut query_vector_by_case_id = BTreeMap::new();
+    for case in &fixture.cases {
+        if let Some(embedding) = &case.query_embedding {
+            let vector = decode_fixture_vector(fixture, "case queryEmbedding", embedding)?;
+            query_vector_by_case_id.insert(case.case_id.clone(), vector);
+        }
+    }
 
     Ok(LoadedDataset {
         report: DatasetLoadReport {
@@ -1711,6 +1830,7 @@ fn load_fixture_dataset(vault: &Vault, fixture: &BeamFixture) -> BeamResult<Load
         cases: fixture.cases.clone(),
         contract_records: BTreeMap::new(),
         source_id_by_entity_id: BTreeMap::new(),
+        query_vector_by_case_id,
     })
 }
 
@@ -1726,6 +1846,7 @@ fn load_run_jsonl_dataset(
     let selected: BTreeSet<&str> = manifest.case_ids.iter().map(String::as_str).collect();
     let mut contract_records = BTreeMap::new();
     let mut source_id_by_entity_id = BTreeMap::new();
+    let mut query_vector_by_case_id = BTreeMap::new();
     let mut seen_corpus = BTreeSet::new();
     let mut cases = Vec::with_capacity(manifest.case_ids.len());
     let mut case_seen = BTreeSet::new();
@@ -1807,6 +1928,17 @@ fn load_run_jsonl_dataset(
         }
 
         let mut pending_for_case = 0;
+        match &record.query_embedding {
+            Some(ContractEmbeddingState::Ready(vector)) => {
+                let vector = decode_contract_vector(path, line, vector)?;
+                query_vector_by_case_id.insert(record.question_id.clone(), vector);
+            }
+            Some(ContractEmbeddingState::Pending { .. }) => {
+                pending_for_case += 1;
+                pending_vectors_total += 1;
+            }
+            None => {}
+        }
         for item in &record.corpus {
             let entity_id = contract_corpus_entity_id(&record, item)?;
             let entity_hex = entity_id.to_hex();
@@ -1849,6 +1981,7 @@ fn load_run_jsonl_dataset(
                 token_budget: record.budget.limit,
                 expected_min_results,
                 pending_vector_count: pending_for_case,
+                query_embedding: None,
                 fixture_class: FixtureClass::EvidenceSupported,
                 temporal_search: None,
                 temporal_evidence_ids: Vec::new(),
@@ -1887,6 +2020,7 @@ fn load_run_jsonl_dataset(
         cases,
         contract_records,
         source_id_by_entity_id,
+        query_vector_by_case_id,
     })
 }
 
@@ -2053,43 +2187,47 @@ fn decode_contract_vector(
     line: usize,
     vector: &ContractVector,
 ) -> BeamResult<Vec<f32>> {
+    decode_contract_vector_value(vector).map_err(|reason| invalid_run_jsonl(path, line, reason))
+}
+
+fn decode_fixture_vector(
+    fixture: &BeamFixture,
+    owner: &str,
+    embedding: &ContractEmbeddingState,
+) -> BeamResult<Vec<f32>> {
+    let ContractEmbeddingState::Ready(vector) = embedding else {
+        return Err(invalid_fixture(
+            fixture,
+            format!("{owner} must be ready before fixture ingest"),
+        ));
+    };
+
+    decode_contract_vector_value(vector)
+        .map_err(|reason| invalid_fixture(fixture, format!("{owner} {reason}")))
+}
+
+fn decode_contract_vector_value(vector: &ContractVector) -> Result<Vec<f32>, String> {
     if vector.encoding != "f32-le-base64" {
-        return Err(invalid_run_jsonl(
-            path,
-            line,
-            format!(
-                "vector encoding must be f32-le-base64, got `{}`",
-                vector.encoding
-            ),
+        return Err(format!(
+            "vector encoding must be f32-le-base64, got `{}`",
+            vector.encoding
         ));
     }
     if vector.dimensions != BEAM_CONTRACT_EMBEDDING_DIMENSIONS {
-        return Err(invalid_run_jsonl(
-            path,
-            line,
-            format!(
-                "vector dimensions must be {BEAM_CONTRACT_EMBEDDING_DIMENSIONS} for this engine path, got {}",
-                vector.dimensions
-            ),
+        return Err(format!(
+            "vector dimensions must be {BEAM_CONTRACT_EMBEDDING_DIMENSIONS} for this engine path, got {}",
+            vector.dimensions
         ));
     }
-    let bytes = decode_base64_standard(&vector.data)
-        .map_err(|reason| invalid_run_jsonl(path, line, reason))?;
-    let expected_bytes = vector.dimensions.checked_mul(4).ok_or_else(|| {
-        invalid_run_jsonl(
-            path,
-            line,
-            "vector dimensions overflow byte-size calculation",
-        )
-    })?;
+    let bytes = decode_base64_standard(&vector.data)?;
+    let expected_bytes = vector
+        .dimensions
+        .checked_mul(4)
+        .ok_or_else(|| "vector dimensions overflow byte-size calculation".to_owned())?;
     if bytes.len() != expected_bytes {
-        return Err(invalid_run_jsonl(
-            path,
-            line,
-            format!(
-                "vector data decoded to {} bytes, expected {expected_bytes}",
-                bytes.len()
-            ),
+        return Err(format!(
+            "vector data decoded to {} bytes, expected {expected_bytes}",
+            bytes.len()
         ));
     }
     Ok(bytes
@@ -2105,7 +2243,7 @@ fn contract_context_pack_record(
     competitor: &CompetitorConfig,
     arm_report: &ArmReport,
 ) -> BeamResult<Option<ContextPackContractRecord>> {
-    if manifest.outputs.is_none() || competitor.arm != ArmKind::Deterministic {
+    if manifest.outputs.is_none() || !competitor.arm.is_completed() {
         return Ok(None);
     }
     let ArmOutcome::Completed { context_pack } = &arm_report.outcome else {
@@ -2154,16 +2292,46 @@ fn contract_context_pack_record(
         run_id: record.run_id.clone(),
         question_id: record.question_id.clone(),
         dataset: record.dataset.clone(),
-        arm: record.arm.clone(),
+        arm: contract_output_arm(record, competitor.arm),
         budget: record.budget.clone(),
         question: record.question.clone(),
         pack: ContractPack {
             token_count: Some(context_pack.serialized_tokens),
             corpus_digest: contract_corpus_digest(record),
+            config: contract_pack_config(competitor.arm, case),
             contexts,
         },
         gold: record.gold.clone(),
     }))
+}
+
+fn contract_output_arm(record: &RunContractRecord, arm: ArmKind) -> ContractArm {
+    match arm {
+        ArmKind::Deterministic => record.arm.clone(),
+        ArmKind::VanillaRag => ContractArm {
+            id: VANILLA_RAG_CONTRACT_ARM_ID.to_owned(),
+            kind: VANILLA_RAG_CONTRACT_ARM_KIND.to_owned(),
+        },
+        ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => record.arm.clone(),
+    }
+}
+
+fn contract_pack_config(arm: ArmKind, case: &FixtureCase) -> Option<ContractPackConfig> {
+    match arm {
+        ArmKind::VanillaRag => Some(ContractPackConfig {
+            kind: VANILLA_RAG_CONTRACT_ARM_KIND,
+            version: VANILLA_RAG_CONFIG_VERSION,
+            top_k: case.limit,
+            chunking: VANILLA_RAG_CHUNKING,
+            fusion: VANILLA_RAG_FUSION,
+            signals: vec!["vector", "bm25f"],
+            embedder_id: VANILLA_RAG_EMBEDDER_ID,
+            vector_dimensions: BEAM_CONTRACT_EMBEDDING_DIMENSIONS,
+            token_budget_source: "run_record.budget.limit",
+            structure: "flat_l0_no_claims_no_ppr_no_graph",
+        }),
+        ArmKind::Deterministic | ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => None,
+    }
 }
 
 fn write_contract_pack_rows(path: &Path, rows: &[ContextPackContractRecord]) -> BeamResult<()> {
@@ -2255,6 +2423,7 @@ fn base64_value(byte: u8) -> Option<u8> {
 fn adapter_for(kind: ArmKind) -> Box<dyn BeamArmAdapter> {
     match kind {
         ArmKind::Deterministic => Box::new(DeterministicContextPackArm),
+        ArmKind::VanillaRag => Box::new(VanillaRagArm),
         ArmKind::BackboneSolo | ArmKind::Agentic | ArmKind::Chat => Box::new(NotReadyArm { kind }),
     }
 }
@@ -2297,6 +2466,42 @@ struct BudgetedContextPack {
     temporal_result_ids: BTreeSet<String>,
 }
 
+fn run_deterministic_context_pack(
+    vault: &Vault,
+    case: &FixtureCase,
+) -> BeamResult<BudgetedContextPack> {
+    run_budgeted_context_pack(|| configured_context_pack_builder(vault, case), vault, case)
+}
+
+fn run_vanilla_rag_context_pack(
+    vault: &Vault,
+    case: &FixtureCase,
+    query_vector: &[f32],
+) -> BeamResult<BudgetedContextPack> {
+    run_budgeted_context_pack(
+        || configured_vanilla_rag_context_pack_builder(vault, case, query_vector),
+        vault,
+        case,
+    )
+}
+
+fn configured_vanilla_rag_context_pack_builder<'a>(
+    vault: &'a Vault,
+    case: &FixtureCase,
+    query_vector: &'a [f32],
+) -> ContextPackBuilder<'a> {
+    vault
+        .context_pack()
+        .search_text(&case.query, case.limit)
+        .search_vector(query_vector, case.limit)
+        .field_profile(FieldProfile::Standard)
+        .format(BEAM_CONTEXT_PACK_FORMAT)
+        .merge_neighbors(false)
+        .include_stats(true)
+        .token_budget(case.token_budget)
+        .limit(case.limit)
+}
+
 #[derive(Default)]
 struct SerializedContextPackIds {
     results: HashSet<String>,
@@ -2318,15 +2523,17 @@ struct ActiveSerializedContextPackSection {
     row_id: Option<String>,
 }
 
-fn run_deterministic_context_pack(
+fn run_budgeted_context_pack<'a, F>(
+    build_context_pack: F,
     vault: &Vault,
     case: &FixtureCase,
-) -> BeamResult<BudgetedContextPack> {
-    let pack = configured_context_pack_builder(vault, case).run()?;
+) -> BeamResult<BudgetedContextPack>
+where
+    F: Fn() -> ContextPackBuilder<'a>,
+{
+    let pack = build_context_pack().run()?;
     let serialized_start = Instant::now();
-    let serialized_with_stats = configured_context_pack_builder(vault, case)
-        .run_serialized_with_stats()?
-        .value;
+    let serialized_with_stats = build_context_pack().run_serialized_with_stats()?.value;
     let serialized_elapsed_us = serialized_start.elapsed().as_micros() as u64;
     let serialized = serialized_with_stats.bytes;
     let serialized_text = std::str::from_utf8(&serialized)?;
@@ -3058,6 +3265,7 @@ mod tests {
             manifest.arms,
             vec![
                 ArmKind::Deterministic,
+                ArmKind::VanillaRag,
                 ArmKind::BackboneSolo,
                 ArmKind::Agentic,
                 ArmKind::Chat
@@ -3311,13 +3519,13 @@ neighbors:
         fixture.cases[0].expected_min_results = 0;
         let tempdir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
-        load_dataset(&vault, &manifest, Some(&fixture)).expect("fixture loads");
+        let loaded = load_dataset(&vault, &manifest, Some(&fixture)).expect("fixture loads");
         let raw_pack = configured_context_pack_builder(&vault, &fixture.cases[0])
             .run()
             .expect("raw context pack");
 
         let arm = DeterministicContextPackArm
-            .run(&vault, &fixture.cases[0])
+            .run(&vault, &loaded, &fixture.cases[0])
             .expect("deterministic arm reports");
         let ArmOutcome::Completed { context_pack } = arm.outcome else {
             panic!("deterministic arm should complete");
@@ -3337,6 +3545,7 @@ neighbors:
             token_budget: 8,
             expected_min_results: 1,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
             temporal_evidence_ids: Vec::new(),
@@ -3412,6 +3621,60 @@ neighbors:
     }
 
     #[test]
+    fn vanilla_rag_arm_runs_beam_128k_fixture_end_to_end() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let vanilla = find_arm(&report, ArmKind::VanillaRag);
+
+        let ArmOutcome::Completed { context_pack } = &vanilla.outcome else {
+            panic!("vanilla-rag arm should complete");
+        };
+
+        assert_eq!(context_pack.token_budget, BEAM_128K_TOKEN_BUDGET);
+        assert!(context_pack.result_count >= 1);
+        assert!(
+            context_pack
+                .stats
+                .signals_used
+                .iter()
+                .any(|signal| signal == "vector")
+        );
+        assert!(
+            context_pack
+                .stats
+                .signals_used
+                .iter()
+                .any(|signal| signal == "text")
+        );
+        assert!(
+            context_pack
+                .results
+                .iter()
+                .any(|entity| { entity.id == "10101010101010101010101010101010" })
+        );
+    }
+
+    #[test]
+    fn vanilla_rag_and_deterministic_share_real_token_budget() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let deterministic = completed_context_pack(&report, ArmKind::Deterministic);
+        let vanilla = completed_context_pack(&report, ArmKind::VanillaRag);
+
+        assert_eq!(deterministic.token_budget, vanilla.token_budget);
+        assert_eq!(
+            deterministic.query_cost.target_tokens,
+            vanilla.query_cost.target_tokens
+        );
+        assert_eq!(deterministic.tokenizer_id, vanilla.tokenizer_id);
+        assert_eq!(deterministic.stats.tokenizer_id, vanilla.stats.tokenizer_id);
+        assert!(deterministic.serialized_tokens <= deterministic.token_budget as u64);
+        assert!(vanilla.serialized_tokens <= vanilla.token_budget as u64);
+        assert_eq!(
+            vanilla.query_cost.token_source,
+            TokenAccountingSource::TokenizerCount
+        );
+    }
+
+    #[test]
     fn report_records_real_query_tokens_target_tokens_and_cost_boundaries() {
         let report = run_builtin_smoke().expect("BEAM smoke report");
         let report_json = serde_json::to_value(&report).expect("report serializes");
@@ -3477,6 +3740,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 0,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
             temporal_evidence_ids: Vec::new(),
@@ -3623,7 +3887,7 @@ neighbors:
 
             assert!(
                 err.to_string()
-                    .contains("deterministic competitor rows must declare tokenizer_count")
+                    .contains("completed competitor rows must declare tokenizer_count")
             );
         }
     }
@@ -4172,6 +4436,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 0,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class: FixtureClass::LowConfidence,
             temporal_search: None,
             temporal_evidence_ids: Vec::new(),
@@ -4248,6 +4513,7 @@ neighbors:
             token_budget: 4096,
             expected_min_results: 1,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
             temporal_evidence_ids: Vec::new(),
@@ -4303,21 +4569,32 @@ neighbors:
             .lines()
             .map(|line| serde_json::from_str(line).expect("pack row JSON"))
             .collect();
+        let deterministic = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == ONEIRON_CONTEXT_PACK_ARM_KIND)
+            .expect("deterministic context-pack row");
+        let vanilla = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == VANILLA_RAG_CONTRACT_ARM_KIND)
+            .expect("vanilla-rag row");
 
         assert_eq!(report.dataset.source_kind, "jsonl");
         assert_eq!(report.dataset.pending_vectors, 0);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["contract_version"], EVAL_CONTRACT_VERSION);
-        assert_eq!(rows[0]["record_type"], "context_pack");
-        assert_eq!(rows[0]["arm"]["id"], "oneiron");
-        assert_eq!(rows[0]["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(deterministic["contract_version"], EVAL_CONTRACT_VERSION);
+        assert_eq!(deterministic["record_type"], "context_pack");
+        assert_eq!(deterministic["arm"]["id"], "oneiron");
+        assert_eq!(deterministic["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
         assert_eq!(
-            rows[0]["gold"]["labels"]["ability"],
+            deterministic["gold"]["labels"]["ability"],
             "information_extraction"
         );
-        assert_eq!(rows[0]["gold"]["labels"]["wedge_bucket"], "needle_short");
+        assert_eq!(
+            deterministic["gold"]["labels"]["wedge_bucket"],
+            "needle_short"
+        );
         assert!(
-            rows[0]["pack"]["contexts"]
+            deterministic["pack"]["contexts"]
                 .as_array()
                 .expect("contexts array")
                 .iter()
@@ -4326,6 +4603,28 @@ neighbors:
                         .as_str()
                         .expect("context text")
                         .contains("contract launch code is tulip"))
+        );
+        assert_eq!(vanilla["arm"]["id"], VANILLA_RAG_CONTRACT_ARM_ID);
+        assert_eq!(vanilla["arm"]["kind"], VANILLA_RAG_CONTRACT_ARM_KIND);
+        assert_eq!(
+            vanilla["pack"]["config"]["kind"],
+            VANILLA_RAG_CONTRACT_ARM_KIND
+        );
+        assert_eq!(vanilla["pack"]["config"]["topK"], 5);
+        assert_eq!(
+            vanilla["pack"]["config"]["fusion"],
+            serde_json::json!(VANILLA_RAG_FUSION)
+        );
+        assert_eq!(
+            deterministic["pack"]["corpusDigest"], vanilla["pack"]["corpusDigest"],
+            "purity gate: comparator rows must share the exact same ingested corpus"
+        );
+        assert!(
+            vanilla["pack"]["contexts"]
+                .as_array()
+                .expect("contexts array")
+                .iter()
+                .any(|context| context["id"] == "turn-1")
         );
     }
 
@@ -4353,17 +4652,99 @@ neighbors:
 
         run_manifest(&manifest, None).expect("contract run succeeds");
         let packs_jsonl = std::fs::read_to_string(&packs_jsonl_path).expect("packs.jsonl exists");
-        let row: serde_json::Value = serde_json::from_str(
-            packs_jsonl
-                .lines()
-                .next()
-                .expect("one emitted context_pack row"),
-        )
-        .expect("pack row JSON");
+        let rows: Vec<serde_json::Value> = packs_jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("pack row JSON"))
+            .collect();
+        let deterministic = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == ONEIRON_CONTEXT_PACK_ARM_KIND)
+            .expect("deterministic context-pack row");
+        let vanilla = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == VANILLA_RAG_CONTRACT_ARM_KIND)
+            .expect("vanilla-rag row");
 
-        assert_eq!(row["arm"]["id"], "oneiron");
-        assert_eq!(row["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
-        assert_eq!(row["gold"]["labels"]["wedge_bucket"], "needle_short");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(deterministic["arm"]["id"], "oneiron");
+        assert_eq!(deterministic["arm"]["kind"], ONEIRON_CONTEXT_PACK_ARM_KIND);
+        assert_eq!(
+            deterministic["gold"]["labels"]["wedge_bucket"],
+            "needle_short"
+        );
+        assert_eq!(vanilla["arm"]["id"], VANILLA_RAG_CONTRACT_ARM_ID);
+        assert_eq!(vanilla["gold"]["labels"]["wedge_bucket"], "needle_short");
+    }
+
+    #[test]
+    fn purity_gate_keeps_gold_unreachable_from_arm_assembly() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let run_jsonl_path = tempdir.path().join("run.jsonl");
+        let packs_jsonl_path = tempdir.path().join("packs.jsonl");
+        let secret = "PURE_RECALL_GOLD_ONLY";
+        let mut row: serde_json::Value =
+            serde_json::from_str(CONTRACT_RUN_JSONL.trim()).expect("contract row JSON");
+        row["question_id"] = serde_json::json!("purity_gate_gold_unreachable");
+        row["question"] = serde_json::json!("What does the purity probe note say?");
+        row["corpus"] = serde_json::json!([
+            {
+                "id": "visible-turn",
+                "text": "The purity probe note says the visible answer is amber.",
+                "metadata": {"case": "purity"},
+                "embedding": {
+                    "encoding": "f32-le-base64",
+                    "dimensions": 4,
+                    "data": "AACAPwAAAAAAAAAAAAAAAA=="
+                }
+            }
+        ]);
+        row["gold"]["answers"] = serde_json::json!([secret]);
+        std::fs::write(&run_jsonl_path, format!("{row}\n")).expect("write run.jsonl");
+
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(CONTRACT_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["dataset"]["path"] = serde_json::json!(run_jsonl_path);
+        manifest_json["caseIds"] = serde_json::json!(["purity_gate_gold_unreachable"]);
+        manifest_json["outputs"]["packsJsonl"] = serde_json::json!(packs_jsonl_path);
+        let manifest =
+            parse_manifest_json(&manifest_json.to_string()).expect("contract manifest parses");
+
+        run_manifest(&manifest, None).expect("purity run succeeds");
+        let packs_jsonl = std::fs::read_to_string(&packs_jsonl_path).expect("packs.jsonl exists");
+        let rows: Vec<serde_json::Value> = packs_jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("pack row JSON"))
+            .collect();
+        let deterministic = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == ONEIRON_CONTEXT_PACK_ARM_KIND)
+            .expect("deterministic context-pack row");
+        let vanilla = rows
+            .iter()
+            .find(|row| row["arm"]["kind"] == VANILLA_RAG_CONTRACT_ARM_KIND)
+            .expect("vanilla-rag row");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            deterministic["pack"]["corpusDigest"],
+            vanilla["pack"]["corpusDigest"]
+        );
+        for row in rows {
+            assert_eq!(row["gold"]["answers"][0], secret);
+            let contexts = row["pack"]["contexts"].as_array().expect("contexts array");
+            assert!(contexts.iter().any(|context| {
+                context["text"]
+                    .as_str()
+                    .expect("context text")
+                    .contains("visible answer is amber")
+            }));
+            assert!(contexts.iter().all(|context| {
+                !context["text"]
+                    .as_str()
+                    .expect("context text")
+                    .contains(secret)
+            }));
+        }
     }
 
     #[test]
@@ -4557,7 +4938,7 @@ neighbors:
             .collect();
 
         assert_eq!(report.dataset.records_loaded, 2);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 4);
         for row in rows {
             let expected_prefix = if row["question_id"] == "case_a" {
                 "a-"
@@ -4610,6 +4991,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 1,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class: FixtureClass::EvidenceSupported,
             temporal_search: None,
             temporal_evidence_ids: Vec::new(),
@@ -4629,6 +5011,7 @@ neighbors:
             cases: vec![case.clone()],
             contract_records: BTreeMap::from([(case.case_id.clone(), record)]),
             source_id_by_entity_id: BTreeMap::from([(entity_id.to_owned(), "turn-1".to_owned())]),
+            query_vector_by_case_id: BTreeMap::new(),
         };
         let mut budgeted_text_by_entity_id = BTreeMap::new();
         budgeted_text_by_entity_id.insert(entity_id.to_owned(), "budgeted emitted txt".to_owned());
@@ -4731,6 +5114,14 @@ neighbors:
             .iter()
             .find(|arm| arm.arm == kind)
             .expect("arm report exists")
+    }
+
+    fn completed_context_pack(report: &BeamReport, kind: ArmKind) -> &ContextPackReport {
+        let arm = find_arm(report, kind);
+        let ArmOutcome::Completed { context_pack } = &arm.outcome else {
+            panic!("{} arm should complete", kind.as_str());
+        };
+        context_pack
     }
 
     fn eval004_fixture(
@@ -4875,6 +5266,7 @@ neighbors:
             token_budget: 128,
             expected_min_results: 0,
             pending_vector_count: 0,
+            query_embedding: None,
             fixture_class,
             temporal_search: (fixture_class == FixtureClass::TemporalStaleness)
                 .then_some(FixtureTimeRange { start: 0, end: 1 }),

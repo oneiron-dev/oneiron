@@ -12,7 +12,8 @@
     "beam_128k_contract_context_pack_smoke"
   ],
   "arms": [
-    "deterministic"
+    "deterministic",
+    "vanilla_rag"
   ],
   "competitors": [
     {
@@ -34,6 +35,28 @@
         "tokenAccounting": {
           "source": "tokenizer_count",
           "notes": "Local deterministic context-pack query and serialized output counted with the offline o200k_base tokenizer."
+        }
+      }
+    },
+    {
+      "competitorId": "vanilla-rag",
+      "arm": "vanilla_rag",
+      "card": {
+        "displayName": "Vanilla RAG",
+        "publicParityStatus": "public_parity",
+        "judge": {
+          "judgeId": "beam-fixture-judge",
+          "version": "v1",
+          "notes": "Fixture-scale oneiron-eval vanilla-RAG contract smoke; no external benchmark claims."
+        },
+        "comparator": {
+          "comparatorId": "beam-fixed-comparator",
+          "version": "beam-comparator-card-v1",
+          "baselineCompetitorId": "deterministic-context-pack"
+        },
+        "tokenAccounting": {
+          "source": "tokenizer_count",
+          "notes": "Local vanilla-RAG query and serialized output counted with the offline o200k_base tokenizer under the same token budget."
         }
       }
     }
