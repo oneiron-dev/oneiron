@@ -111,6 +111,34 @@ impl EntityMetadataHeader {
     }
 }
 
+fn authority_observation_secs_for_write(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    candidate_secs: u64,
+) -> Result<u64> {
+    let floor_key = crate::authority::authority_first_seen_clock_sync_key();
+    let previous_floor = store
+        .sync_state
+        .get(wtxn, floor_key)?
+        .and_then(crate::authority::decode_authority_first_seen_secs)
+        .unwrap_or(0);
+    let observed_secs = previous_floor.max(candidate_secs);
+    if observed_secs != previous_floor {
+        let encoded = crate::authority::encode_authority_first_seen_secs(observed_secs);
+        store.sync_state.put(wtxn, floor_key, &encoded)?;
+    }
+    Ok(observed_secs)
+}
+
+fn mark_authority_first_seen_backfill_complete(store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    store.sync_state.put(
+        wtxn,
+        crate::authority::authority_first_seen_backfill_sync_key(),
+        &[1],
+    )?;
+    Ok(())
+}
+
 /// Builder for atomic multi-database write batches.
 #[must_use = "BatchBuilder performs no writes until `.commit()` is called"]
 pub struct BatchBuilder<'a> {
@@ -2502,12 +2530,17 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
-    if let Some(key) = authority_first_seen_key
-        && store.sync_state.get(wtxn, key.as_str())?.is_none()
-    {
-        let first_seen =
-            crate::authority::encode_authority_first_seen_secs(crate::unix_seconds_now());
-        store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
+    if let Some(key) = authority_first_seen_key {
+        let observed_secs = authority_observation_secs_for_write(
+            store,
+            wtxn,
+            crate::unix_seconds_now().max(learned_at),
+        )?;
+        if store.sync_state.get(wtxn, key.as_str())?.is_none() {
+            let first_seen = crate::authority::encode_authority_first_seen_secs(observed_secs);
+            store.sync_state.put(wtxn, key.as_str(), &first_seen)?;
+        }
+        mark_authority_first_seen_backfill_complete(store, wtxn)?;
     }
 
     let type_key = Store::encode_type_key(entity_type, &id);
@@ -6142,6 +6175,62 @@ mod tests {
             "missing local first-seen data must fail closed instead of trusting entity metadata"
         );
         assert!(!missing_sidecar_fold.roster.contains_key(&enroll_key));
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let owner = authority_test_key(84);
+        let genesis = authority_genesis_fixture(84);
+        let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 85, 1);
+        let enroll_hash = crate::authority::authority_entry_hash(&enroll)?;
+        let enroll_sidecar = crate::authority::authority_first_seen_sync_key(&enroll_hash);
+        let enroll_key = authority_key_from_signing(&authority_test_key(85));
+
+        vault.put_authority_log_entry(&EntityId::now(), &genesis, test_time_range(1, 1), 1)?;
+        vault.put_authority_log_entry(&EntityId::now(), &enroll, test_time_range(2, 2), 2)?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, enroll_sidecar.as_str())?;
+            vault.store.sync_state.delete(
+                wtxn,
+                crate::authority::authority_first_seen_backfill_sync_key(),
+            )?;
+            Ok(())
+        })?;
+
+        let backfilled_fold = vault.authority_fold()?;
+        assert!(backfilled_fold.roster.contains_key(&enroll_key));
+        assert_eq!(
+            authority_first_seen_for_test(&vault, &enroll_sidecar)?,
+            Some(2),
+            "legacy sidecar migration should preserve the stored learned-at observation"
+        );
+
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .sync_state
+                .delete(wtxn, enroll_sidecar.as_str())?;
+            Ok(())
+        })?;
+        let missing_after_marker = vault.authority_fold()?;
+        assert!(
+            !missing_after_marker.roster.contains_key(&enroll_key),
+            "after migration, a missing sidecar must still fail closed"
+        );
+        assert_eq!(
+            missing_after_marker
+                .pending_widens
+                .get(&enroll_hash)
+                .and_then(|pending| pending.first_seen_at_secs),
+            None
+        );
         Ok(())
     }
 
