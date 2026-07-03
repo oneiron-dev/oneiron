@@ -120,8 +120,10 @@ pub use crate::ingest::{
     NormalizedIngestRecord,
 };
 pub use crate::job_queue::{
-    ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
-    FailOutcome, JobId, JobQueue, JobRecord, JobState, RetryJob, RetryOutcome,
+    ClaimJob, ClaimOutcome, CleanupJobLeases, CompleteJob, CompleteOutcome, EnqueueJob,
+    EnqueueOutcome, FailJob, FailOutcome, JobId, JobQueue, JobQueueCleanupMetricsSnapshot,
+    JobQueueCleanupReport, JobQueueRetryReason, JobQueueRetryReasonCount, JobRecord, JobState,
+    RetryJob, RetryOutcome, job_queue_cleanup_metrics_snapshot,
 };
 pub use crate::llm::{
     BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
