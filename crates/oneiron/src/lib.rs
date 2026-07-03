@@ -14,6 +14,7 @@ pub mod codebase;
 pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
+pub mod dreamer_runner;
 pub mod error;
 pub mod federation;
 pub(crate) mod fusion;
@@ -109,6 +110,15 @@ pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
 pub use crate::deletion::{
     DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
+};
+pub use crate::dreamer_runner::{
+    AdmitDreamerJob, DREAMER_JOB_PAYLOAD_KEYS, DREAMER_JOB_PAYLOAD_SCHEMA_VERSION,
+    DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
+    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND, DreamerAdmissionOutcome,
+    DreamerAdmittedJob, DreamerBudgetRecord, DreamerJobPayload, DreamerJobStatus,
+    DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord, DreamerRunTreeRecord,
+    DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome, ParkDreamerJob,
+    decode_dreamer_job_payload, encode_dreamer_job_payload,
 };
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::federation::{
