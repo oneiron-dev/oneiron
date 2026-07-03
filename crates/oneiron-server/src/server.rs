@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
+use oneiron::DreamerJobProgressProducer;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::schema::{
@@ -39,6 +40,8 @@ pub struct SyncServer {
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
     pub(crate) ephemeral_store: EphemeralStore,
+    /// Producer state for Dreamer live job-progress rows on the ephemeral lane.
+    pub(crate) dreamer_progress: Mutex<DreamerJobProgressProducer>,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
@@ -199,6 +202,7 @@ impl SyncServer {
             reassert_manager,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
+            dreamer_progress: Mutex::new(DreamerJobProgressProducer::new()),
             config,
         })
     }
@@ -320,7 +324,11 @@ impl SyncServer {
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {
-        self.ephemeral_store.remove_outdated();
+        let now_ms = unix_seconds_now().saturating_mul(1_000);
+        self.dreamer_progress
+            .lock()
+            .await
+            .remove_outdated(&self.ephemeral_store, now_ms);
 
         match self.expire_leases_once().await {
             Ok(report) => {
