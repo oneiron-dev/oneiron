@@ -60,10 +60,10 @@ use crate::provenance::{
 use crate::store::{
     DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, RetrievalAction, RetrievalOutcome,
     RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY,
-    Store, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
-    TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
-    lmdb_database_open_guard,
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, Store, TEXT_ANALYZER_MANIFEST_HASH_KEY,
+    TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION,
+    TEXT_INDEX_SCHEMA_VERSION_KEY, lmdb_database_open_guard,
 };
 use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
@@ -4739,6 +4739,14 @@ impl Vault {
     /// Returns one published retrieval telemetry row by id.
     pub fn retrieval_run(&self, run_id: RetrievalRunId) -> Result<Option<RetrievalRunRecord>> {
         self.store.retrieval_run(run_id)
+    }
+
+    /// Returns the published trace keyed by a content-addressed fork hash.
+    pub fn retrieval_trace_by_fork_hash(
+        &self,
+        fork_hash: RetrievalTraceForkHash,
+    ) -> Result<Option<RetrievalTrace>> {
+        self.store.retrieval_trace_by_fork_hash(fork_hash)
     }
 
     /// Idempotently writes or replaces a retrieval outcome row for one run.
