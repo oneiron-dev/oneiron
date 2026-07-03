@@ -11,7 +11,7 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, claim_sensitivity_band,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
     sensitivity_band_from_value,
 };
 use crate::error::{Error, Result};
@@ -51,6 +51,8 @@ const GRANT_EFFECTOR_KEY: &str = "effector";
 const GRANT_SCOPE_KEY: &str = "scope";
 const GRANT_BUDGET_KEY: &str = "budget";
 const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
+pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";
+const SCOPED_READ_EFFECTOR_ONEIRON_READ: &str = "oneiron.read";
 const SIGNATURE_ALG_KEY: &str = "alg";
 const SIGNATURE_KEY_ID_KEY: &str = "key_id";
 const SIGNATURE_SIG_KEY: &str = "sig";
@@ -856,6 +858,136 @@ impl PolicyManifestResolution {
             resolved = resolved.restrict(pack.axes_for_predicate(predicate));
         }
         resolved
+    }
+}
+
+pub(crate) fn scoped_read_claim_allowed(
+    policy: &PolicyManifestResolution,
+    actor_key: &ScopedReadActorKey,
+    body: &ClaimBody,
+) -> bool {
+    let diagnostics = policy.diagnostics();
+    if diagnostics.loaded_manifest_forces_fail_closed() {
+        return false;
+    }
+    if diagnostics.manifest_count == 0 {
+        return true;
+    }
+    if policy.is_fail_closed() {
+        return false;
+    }
+
+    let mut saw_core_read_grant = false;
+    for grant in policy.scoped_grants().iter().filter(|grant| {
+        grant.effector.trim() == SCOPED_READ_EFFECTOR_CORE_READ
+            || grant.effector.trim() == SCOPED_READ_EFFECTOR_ONEIRON_READ
+    }) {
+        saw_core_read_grant = true;
+        if !scoped_read_actor_matches(grant, actor_key) {
+            continue;
+        }
+        if scoped_read_scope_matches_claim(grant.scope.as_ref(), body) {
+            return true;
+        }
+    }
+
+    !saw_core_read_grant
+}
+
+fn scoped_read_actor_matches(grant: &PolicyScopedGrant, actor_key: &ScopedReadActorKey) -> bool {
+    if let Some(actor_ref) = grant.actor_ref.as_deref()
+        && actor_ref != actor_key.actor_ref()
+    {
+        return false;
+    }
+    if let Some(actor_class) = grant.actor_class.as_deref()
+        && Some(actor_class) != actor_key.actor_class()
+    {
+        return false;
+    }
+    true
+}
+
+fn scoped_read_scope_matches_claim(scope: Option<&Value>, body: &ClaimBody) -> bool {
+    let Some(scope) = scope else {
+        return true;
+    };
+    match scope {
+        Value::Nil => true,
+        Value::Map(entries) if entries.is_empty() => true,
+        Value::Map(entries) => {
+            for (key, value) in entries {
+                let Some(key) = key.as_str() else {
+                    return false;
+                };
+                let matches = match key {
+                    "world" | "world_ref" | "worldRef" => {
+                        scoped_read_world_matches_claim(value, body.world)
+                    }
+                    "claim_scope" | "claimScope" | "scope" => {
+                        scoped_read_claim_scope_matches(value, body.scope.as_ref())
+                    }
+                    "facet" | "facet_ref" | "facetRef" => scoped_read_claim_scope_field_matches(
+                        value,
+                        body.scope.as_ref(),
+                        &["facet", "facet_ref", "facetRef"],
+                    ),
+                    _ => false,
+                };
+                if !matches {
+                    return false;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn scoped_read_world_matches_claim(value: &Value, claim_world: Option<EntityId>) -> bool {
+    if matches!(value, Value::Nil) {
+        return claim_world.is_none();
+    }
+    if value.as_str().is_some_and(|text| text == "base") {
+        return claim_world.is_none();
+    }
+    let Some(grant_world) = scoped_read_entity_id_from_value(value) else {
+        return false;
+    };
+    match claim_world {
+        None => true,
+        Some(claim_world) => claim_world == grant_world,
+    }
+}
+
+fn scoped_read_claim_scope_matches(value: &Value, claim_scope: Option<&Value>) -> bool {
+    match (value, claim_scope) {
+        (Value::Nil, None) => true,
+        (_, Some(claim_scope)) => claim_scope == value,
+        _ => false,
+    }
+}
+
+fn scoped_read_claim_scope_field_matches(
+    value: &Value,
+    claim_scope: Option<&Value>,
+    field_names: &[&str],
+) -> bool {
+    let Some(Value::Map(entries)) = claim_scope else {
+        return false;
+    };
+    entries.iter().any(|(key, candidate)| {
+        key.as_str().is_some_and(|key| field_names.contains(&key)) && candidate == value
+    })
+}
+
+fn scoped_read_entity_id_from_value(value: &Value) -> Option<EntityId> {
+    match value {
+        Value::Binary(bytes) => {
+            let bytes: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
+            EntityId::from_bytes(bytes).ok()
+        }
+        _ => EntityId::from_hex(value.as_str()?).ok(),
     }
 }
 
@@ -2039,15 +2171,15 @@ fn parse_version(value: &str) -> Option<[u64; 3]> {
 mod tests {
     use super::*;
     use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
         claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
     };
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
     use crate::types::{
         ClaimCandidate, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
-        EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
-        WriteActor, WriteProvenance,
+        EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, ScoredEntity,
+        TimeRange, WriteActor, WriteProvenance,
     };
 
     fn test_id(seed: u8) -> EntityId {
@@ -2428,6 +2560,37 @@ mod tests {
         body
     }
 
+    fn core_read_scoped_grant_entry(actor_ref: &str, scope: Value) -> (Value, Value) {
+        (
+            Value::from(POLICY_SCOPED_GRANTS_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+                (
+                    Value::from(GRANT_EFFECTOR_KEY),
+                    Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+                ),
+                (Value::from(GRANT_SCOPE_KEY), scope),
+            ])]),
+        )
+    }
+
+    fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
+        let data = crate::claim::encode_claim_body(body)?;
+        let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(crate::types::ENTITY_TYPE_CLAIM);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&data);
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key = Store::encode_type_key(crate::types::ENTITY_TYPE_CLAIM, id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+    }
+
     #[cfg(feature = "sync")]
     fn source_trust_claim_data(source: ClaimSource) -> Vec<u8> {
         crate::claim::encode_claim_body(&source_trust_claim(source)).expect("claim encode")
@@ -2477,6 +2640,143 @@ mod tests {
             candidate = candidate.with_scope(scope);
         }
         candidate
+    }
+
+    #[test]
+    fn scoped_read_actor_key_rejects_unkeyed_bulk_bypass() {
+        assert!(ScopedReadActorKey::new("").is_none());
+        assert!(ScopedReadActorKey::new("   ").is_none());
+        assert_eq!(
+            ScopedReadActorKey::new(" reader ")
+                .expect("trimmed actor key")
+                .actor_ref(),
+            "reader"
+        );
+    }
+
+    #[test]
+    fn scoped_read_core_read_world_scope_contains_actor_readable_claims() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let world = test_id(0x31);
+        let other_world = test_id(0x32);
+        let data = encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "reader",
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        )]);
+        put_policy_manifest_bytes(&vault, 0x61, &data)?;
+        let policy = resolve(&vault)?;
+        let actor_key = ScopedReadActorKey::new("reader").expect("actor key");
+        assert_eq!(policy.scoped_grants().len(), 1);
+        assert_eq!(
+            policy.scoped_grants()[0].actor_ref.as_deref(),
+            Some("reader")
+        );
+        assert_eq!(
+            policy.scoped_grants()[0].effector,
+            SCOPED_READ_EFFECTOR_CORE_READ
+        );
+        assert!(scoped_read_entity_id_from_value(&Value::from(world.to_hex())).is_some());
+
+        let base_id = test_id(0xA0);
+        let allowed_id = test_id(0xA1);
+        let denied_id = test_id(0xA2);
+
+        let base = source_trust_claim(ClaimSource::UserStated);
+        let mut allowed = source_trust_claim(ClaimSource::UserStated);
+        allowed.world = Some(world);
+        let mut denied = source_trust_claim(ClaimSource::UserStated);
+        denied.world = Some(other_world);
+        put_claim_body(&vault, &base_id, &base)?;
+        put_claim_body(&vault, &allowed_id, &allowed)?;
+        put_claim_body(&vault, &denied_id, &denied)?;
+
+        assert!(scoped_read_claim_allowed(&policy, &actor_key, &base));
+        assert!(scoped_read_claim_allowed(&policy, &actor_key, &allowed));
+        assert!(!scoped_read_claim_allowed(&policy, &actor_key, &denied));
+
+        let scoped_read = vault.scoped_read(actor_key);
+        let ids: Vec<_> = scoped_read
+            .filter_scored_entities(vec![
+                ScoredEntity {
+                    id: base_id,
+                    score: 1.0,
+                },
+                ScoredEntity {
+                    id: allowed_id,
+                    score: 0.9,
+                },
+                ScoredEntity {
+                    id: denied_id,
+                    score: 0.8,
+                },
+            ])?
+            .into_iter()
+            .map(|result| result.id)
+            .collect();
+        assert_eq!(ids, vec![base_id, allowed_id]);
+
+        let other_actor =
+            vault.scoped_read(ScopedReadActorKey::new("other-reader").expect("actor key"));
+        assert!(
+            other_actor
+                .filter_scored_entities(vec![ScoredEntity {
+                    id: allowed_id,
+                    score: 1.0,
+                }])?
+                .is_empty(),
+            "a core:read grant for one actor must not create a vault-wide read lane"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_read_without_core_grants_preserves_claim_surfaceable_gate() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x62, &encode_policy_manifest(vec![]))?;
+
+        let live_id = test_id(0xB0);
+        let proposed_id = test_id(0xB1);
+        let stale_id = test_id(0xB2);
+
+        let live = source_trust_claim(ClaimSource::UserStated);
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let mut stale = source_trust_claim(ClaimSource::UserStated);
+        stale.stale = true;
+
+        assert!(crate::claim::claim_surfaceable(&live));
+        assert!(!crate::claim::claim_surfaceable(&proposed));
+        assert!(!crate::claim::claim_surfaceable(&stale));
+
+        put_claim_body(&vault, &live_id, &live)?;
+        put_claim_body(&vault, &proposed_id, &proposed)?;
+        put_claim_body(&vault, &stale_id, &stale)?;
+
+        let scoped_read = vault.scoped_read(ScopedReadActorKey::new("reader").expect("actor key"));
+        let visible: Vec<_> = scoped_read
+            .filter_scored_entities(vec![
+                ScoredEntity {
+                    id: live_id,
+                    score: 1.0,
+                },
+                ScoredEntity {
+                    id: proposed_id,
+                    score: 0.9,
+                },
+                ScoredEntity {
+                    id: stale_id,
+                    score: 0.8,
+                },
+            ])?
+            .into_iter()
+            .map(|result| result.id)
+            .collect();
+        assert_eq!(visible, vec![live_id]);
+        Ok(())
     }
 
     fn claim_candidate_write_parts(

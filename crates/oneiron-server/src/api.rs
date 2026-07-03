@@ -1501,6 +1501,31 @@ fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), 
     check_auth(headers, config).map_err(|_| ApiError::unauthorized())
 }
 
+const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
+
+fn scoped_read_for_core_auth<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
+    scoped_read_for_actor_ref(vault, actor_ref)
+}
+
+fn scoped_read_for_legacy_api(
+    vault: &oneiron::Vault,
+) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
+    scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)
+}
+
+fn scoped_read_for_actor_ref<'a>(
+    vault: &'a oneiron::Vault,
+    actor_ref: &str,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    let actor_key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
+        .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
+    Ok(vault.scoped_read(actor_key))
+}
+
 fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
     let Query(params) = query.map_err(query_rejection_error)?;
     Ok(params)
@@ -4150,8 +4175,8 @@ async fn search_vector(
         )
     })?;
 
-    let results = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let results = scoped_read
         .search_vector(&query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
@@ -4159,7 +4184,7 @@ async fn search_vector(
         .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
 
     let total = results.len();
-    let response = search_response(&server.vault, results, view, params.limit)?;
+    let response = search_response(&scoped_read, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -4249,8 +4274,8 @@ async fn search_text(
 
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
-    let results = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let results = scoped_read
         .search_text(&params.query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
@@ -4258,7 +4283,7 @@ async fn search_text(
         .map_err(|_| ApiError::internal_server_error("text search failed"))?;
 
     let total = results.len();
-    let response = search_response(&server.vault, results, view, params.limit)?;
+    let response = search_response(&scoped_read, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -4281,14 +4306,23 @@ fn search_meta(count_mode: CountMode, estimated_total: usize) -> ResponseMeta {
 }
 
 fn search_response(
-    vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     results: Vec<oneiron::ScoredEntity>,
     view: View,
     page_limit: usize,
 ) -> Result<Vec<Value>, ApiError> {
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        match projection::project_search_result(vault, result, view) {
+        if !scoped_read
+            .is_entity_readable(&result.id)
+            .map_err(|error| {
+                tracing::error!(error = %error, "scoped search read failed");
+                ApiError::internal_server_error("scoped search read failed")
+            })?
+        {
+            continue;
+        }
+        match projection::project_search_result(scoped_read.vault(), result, view) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
             Ok(None) => continue,
@@ -4406,8 +4440,8 @@ async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let blob = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let blob = scoped_read
         .get(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity failed");
@@ -5818,8 +5852,9 @@ async fn core_query(
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let results = run_core_query(
-        &server.vault,
+        &scoped_read,
         query,
         req.query_vector.as_deref(),
         fetch_limit,
@@ -5829,7 +5864,7 @@ async fn core_query(
         core_engine_error("core query failed", error)
     })?;
     let total = results.len();
-    let response = search_response(&server.vault, results, view, req.limit)?;
+    let response = search_response(&scoped_read, results, view, req.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -5859,7 +5894,9 @@ async fn core_hydrate(
     let (short_id, content_hash) = parse_short_ref_request(&req)?;
     let content_hash_hex = format!("{content_hash:02x}");
     let view = req.view.unwrap_or(View::Full);
-    let Some(response) = hydrate_short_id_response(&server, short_id.clone(), content_hash, view)?
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let Some(response) =
+        hydrate_short_id_response(&scoped_read, short_id.clone(), content_hash, view)?
     else {
         return Err(ApiError::not_found(
             "short_id",
@@ -5903,11 +5940,12 @@ async fn core_batch_short_id_hydrate(
     }
 
     let view = req.view.unwrap_or(View::Full);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let mut results = Vec::with_capacity(req.refs.len());
     for reference in req.refs {
         let item = match parse_short_ref(&reference) {
             Ok((short_id, content_hash)) => {
-                match hydrate_short_id_response(&server, short_id, content_hash, view)? {
+                match hydrate_short_id_response(&scoped_read, short_id, content_hash, view)? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
                         outcome: match result.status {
@@ -5981,13 +6019,15 @@ async fn core_memory_timeline(
     let id = parse_entity_id_param(&id_hex, "id")?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
-    let timeline = server.vault.memory_timeline(&id).map_err(|error| {
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
         tracing::error!(error = %error, id = %id.to_hex(), "core memory timeline failed");
         core_engine_error("core memory timeline failed", error)
     })?;
 
-    if timeline.records.len() == 1
-        && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing
+    if timeline.records.is_empty()
+        || (timeline.records.len() == 1
+            && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing)
     {
         return Err(ApiError::not_found("entity", Some(&id.to_hex())).into());
     }
@@ -6291,14 +6331,13 @@ fn core_memory_delete_reason(
 }
 
 fn hydrate_short_id_response(
-    server: &SyncServer,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let content_hash_hex = format!("{content_hash:02x}");
-    let result = server
-        .vault
+    let result = scoped_read
         .hydrate_short_id(&short_id, content_hash)
         .map_err(|error| {
             tracing::error!(error = %error, short_id, content_hash = content_hash_hex, "core short hydrate failed");
@@ -6418,6 +6457,7 @@ async fn core_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
@@ -6455,6 +6495,7 @@ async fn core_context_pack(
     Ok(Json(
         run_context_pack_builder(
             &server.vault,
+            &scoped_read,
             builder,
             projection,
             "core context-pack failed",
@@ -7259,6 +7300,7 @@ async fn advance_eiri_session_rag_state(
 
 async fn run_context_pack_builder(
     vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
     error_context: &'static str,
@@ -7271,7 +7313,13 @@ async fn run_context_pack_builder(
             core_engine_error(error_context, error)
         })?;
     let run_id = pack.run_id;
-    let pack = pack.value;
+    let mut pack = pack.value;
+    scoped_read
+        .filter_context_pack(&mut pack)
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack scoped read failed");
+            core_engine_error("core context-pack scoped read failed", error)
+        })?;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let memory_board = eiri_context
@@ -7313,15 +7361,15 @@ async fn run_context_pack_builder(
 }
 
 fn run_core_query(
-    vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     query: Option<&str>,
     vector: Option<&[f32]>,
     limit: usize,
 ) -> oneiron::Result<Vec<oneiron::ScoredEntity>> {
     match (query, vector) {
-        (Some(query), Some(vector)) => vault.query().search(query, vector, None, limit).run(),
-        (Some(query), None) => vault.search_text(query, limit),
-        (None, Some(vector)) => vault.search_vector(vector, limit),
+        (Some(query), Some(vector)) => scoped_read.search(query, vector, limit),
+        (Some(query), None) => scoped_read.search_text(query, limit),
+        (None, Some(vector)) => scoped_read.search_vector(vector, limit),
         (None, None) => Ok(Vec::new()),
     }
 }
@@ -8646,6 +8694,7 @@ async fn context_pack(
         .unwrap_or(View::Standard);
     let projection =
         context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
         req.context_version.as_deref(),
@@ -8688,6 +8737,7 @@ async fn context_pack(
     Ok(Json(
         run_context_pack_builder(
             &server.vault,
+            &scoped_read,
             builder,
             projection,
             "context-pack failed",
@@ -8816,13 +8866,16 @@ mod tests {
     fn search_response_drops_stale_hydrated_hits() {
         let dir = tempfile::tempdir().unwrap();
         let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let scoped_read = vault.scoped_read(
+            oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"),
+        );
         let stale_hit = oneiron::ScoredEntity {
             id: oneiron::EntityId::now(),
             score: 0.75,
         };
 
         for view in [View::Summary, View::Full] {
-            let response = search_response(&vault, vec![stale_hit], view, 10).unwrap();
+            let response = search_response(&scoped_read, vec![stale_hit], view, 10).unwrap();
             assert!(
                 response.is_empty(),
                 "{view:?} should skip missing search hits"
