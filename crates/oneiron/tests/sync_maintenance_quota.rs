@@ -15,9 +15,9 @@ use oneiron::sync::window::forward_rematerialize;
 use oneiron::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, AuthorityVaultId,
-    DeviceAuthority, ENTITY_TYPE_AUTHORITY_LOG, EntityId, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER,
-    TimeRange, Vault, VaultConfig, authority_entry_hash, authority_transcript,
-    encode_authority_log_entry_body, genesis_vault_id,
+    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, ENTITY_TYPE_AUTHORITY_LOG, EntityId,
+    ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, TimeRange, Vault, VaultConfig, authority_entry_hash,
+    authority_transcript, encode_authority_log_entry_body, genesis_vault_id,
 };
 
 const WINDOW: &str = "2026-03";
@@ -138,7 +138,7 @@ fn genesis_entry(seed: u8) -> (SigningKey, AuthorityLogEntry, AuthorityVaultId) 
                 device: device(key.clone(), ROLE_OWNER | ROLE_ADMIN),
                 genesis_nonce: [seed.wrapping_add(10); 32],
                 tier_floor: AuthorityTier::Software,
-                pending_widen_delay_secs: 0,
+                pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             },
             key,
             LEARNED_AT,
