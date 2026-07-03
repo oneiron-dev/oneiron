@@ -1138,12 +1138,37 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InspectorAtom {
     pub title: LensText,
     #[serde(default, deserialize_with = "deserialize_limited_vec")]
     pub sections: Vec<SectionAtom>,
+}
+
+impl<'de> Deserialize<'de> for InspectorAtom {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct InspectorAtomWire {
+            title: LensText,
+            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            sections: Vec<SectionAtom>,
+        }
+
+        let wire = InspectorAtomWire::deserialize(deserializer)?;
+        let atom = Self {
+            title: wire.title,
+            sections: wire.sections,
+        };
+        atom.validate().map_err(de::Error::custom)?;
+        let mut budget = LensBudget::default();
+        atom.count_collection_items(&mut budget)
+            .map_err(de::Error::custom)?;
+        Ok(atom)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1592,11 +1617,7 @@ impl LensAtom {
                 budget.add_collection("self.ui action args", atom.action.args.len())
             }
             Self::InspectorSheet(atom) | Self::InspectorRail(atom) | Self::InspectorTrail(atom) => {
-                budget.add_collection("inspector sections", atom.sections.len())?;
-                for section in &atom.sections {
-                    budget.add_collection("lens section lines", section.lines.len())?;
-                }
-                Ok(())
+                atom.count_collection_items(budget)
             }
             Self::SelfUi(control) => control.count_collection_items(budget),
         }
@@ -1693,6 +1714,14 @@ impl InspectorAtom {
         validate_lens_collection_len("inspector sections", self.sections.len())?;
         for section in &self.sections {
             section.validate()?;
+        }
+        Ok(())
+    }
+
+    fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
+        budget.add_collection("inspector sections", self.sections.len())?;
+        for section in &self.sections {
+            budget.add_collection("lens section lines", section.lines.len())?;
         }
         Ok(())
     }
@@ -1969,6 +1998,15 @@ mod tests {
                 }],
                 status: None,
                 seal: None,
+            })
+            .collect()
+    }
+
+    fn sections_at_collection_limit_with_one_line_each() -> Vec<SectionAtom> {
+        (0..MAX_LENS_COLLECTION_ITEMS)
+            .map(|index| SectionAtom {
+                title: text(&format!("section-{index}")),
+                lines: vec![text(&format!("line-{index}"))],
             })
             .collect()
     }
@@ -2604,6 +2642,16 @@ mod tests {
         assert!(
             serde_json::from_value::<CollectionAtom>(encoded).is_err(),
             "standalone collection props should enforce aggregate collection totals"
+        );
+
+        let atom = InspectorAtom {
+            title: text("too-many-total-items"),
+            sections: sections_at_collection_limit_with_one_line_each(),
+        };
+        let encoded = serde_json::to_value(&atom).expect("inspector encodes");
+        assert!(
+            serde_json::from_value::<InspectorAtom>(encoded).is_err(),
+            "standalone inspector props should enforce aggregate collection totals"
         );
     }
 
