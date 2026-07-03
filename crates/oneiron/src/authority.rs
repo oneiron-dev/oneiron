@@ -532,6 +532,11 @@ struct FoldState {
     pending_widen_delay_secs: u64,
     pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
     vetoed_widens: BTreeSet<AuthorityEntryHash>,
+    /// Delayed software rotations that revoked old owner/admin keys.
+    ///
+    /// These keys are retained only to validate vetoes against widens that were
+    /// concurrent with, or older than, the delayed rotation that revoked them.
+    delayed_rotation_veto_revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     seqs: BTreeMap<AuthorityKey, u64>,
 }
 
@@ -643,6 +648,7 @@ struct FoldContext<'a> {
     now_secs: Option<u64>,
     enforce_seen_time_delay: bool,
     vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
+    entry_ancestors: Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -706,6 +712,7 @@ fn fold_authority_log_inner(
             now_secs,
             enforce_seen_time_delay,
             vetoed_widens: &vetoed_widens,
+            entry_ancestors: None,
         },
     );
     for _ in 0..=entries.len() {
@@ -720,6 +727,7 @@ fn fold_authority_log_inner(
                 now_secs,
                 enforce_seen_time_delay,
                 vetoed_widens: &vetoed_widens,
+                entry_ancestors: None,
             },
         );
     }
@@ -746,6 +754,11 @@ fn fold_authority_log_once(
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
         }
     }
+    let entry_ancestors = entry_ancestor_index(&by_hash);
+    let context = FoldContext {
+        entry_ancestors: Some(&entry_ancestors),
+        ..context
+    };
     let mut equivocation_groups =
         BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
     let mut equivocation_by_hash = BTreeMap::<AuthorityEntryHash, (AuthorityKey, u64)>::new();
@@ -776,7 +789,7 @@ fn fold_authority_log_once(
                         issues: group_issues,
                     } => {
                         if let Some((winner_hash, state)) = winner {
-                            states.insert(winner_hash, state);
+                            states.insert(winner_hash, *state);
                         }
                         issues.extend(group_issues);
                         for group_hash in group {
@@ -863,7 +876,7 @@ enum EntryFold {
 
 enum EquivocationResolution {
     Resolved {
-        winner: Option<(AuthorityEntryHash, FoldState)>,
+        winner: Option<(AuthorityEntryHash, Box<FoldState>)>,
         issues: Vec<AuthorityFoldIssue>,
     },
     Waiting,
@@ -903,7 +916,7 @@ fn resolve_equivocation_group(
         issues.push(AuthorityFoldIssue::InvalidEntry(loser));
     }
     EquivocationResolution::Resolved {
-        winner: Some(winner),
+        winner: Some((winner.0, Box::new(winner.1))),
         issues,
     }
 }
@@ -917,6 +930,26 @@ fn entry_waits_on_pending_parent(
         .parent_hashes
         .iter()
         .any(|parent| !states.contains_key(parent) && pending.contains(parent))
+}
+
+fn entry_ancestor_index(
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
+    let mut index = BTreeMap::new();
+    for hash in by_hash.keys().copied() {
+        let mut ancestors = BTreeSet::new();
+        let mut stack = by_hash[&hash].parent_hashes.clone();
+        while let Some(parent) = stack.pop() {
+            if !ancestors.insert(parent) {
+                continue;
+            }
+            if let Some(parent_entry) = by_hash.get(&parent) {
+                stack.extend(parent_entry.parent_hashes.iter().copied());
+            }
+        }
+        index.insert(hash, ancestors);
+    }
+    index
 }
 
 fn compare_fork_rank(
@@ -976,6 +1009,7 @@ fn fold_entry_state(
             pending_widen_delay_secs: *pending_widen_delay_secs,
             pending_widens: BTreeMap::new(),
             vetoed_widens: context.vetoed_widens.clone(),
+            delayed_rotation_veto_revocations: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
         upsert_device(&mut state, device);
@@ -1007,6 +1041,25 @@ fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
     let signer = entry.signer_key().clone();
+    if let AuthorityOp::VetoPendingWiden { pending_widen_hash } = &entry.op {
+        let participants = match veto_participant_keys(&state, entry, *pending_widen_hash, context)
+        {
+            Ok(participants) => participants,
+            Err(issue) => return EntryFold::Invalid(issue),
+        };
+        if !has_veto_authority_consent(&state, &participants, *pending_widen_hash, context) {
+            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+        }
+        if let Some(prior_seq) = state.seqs.get(&signer).copied()
+            && entry.seq <= prior_seq
+        {
+            return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
+        }
+        state.vetoed_widens.insert(*pending_widen_hash);
+        state.pending_widens.remove(pending_widen_hash);
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
+    }
     if state
         .roster
         .get(&signer)
@@ -1038,12 +1091,6 @@ fn fold_entry_state(
     if op_reuses_existing_device_key(&state, &entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    if let AuthorityOp::VetoPendingWiden { pending_widen_hash } = &entry.op {
-        state.vetoed_widens.insert(*pending_widen_hash);
-        state.pending_widens.remove(pending_widen_hash);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
     if context.vetoed_widens.contains(&hash)
         && op_can_be_pending_widen(&state, &entry.op)
         && !op_has_instant_widen_authority(&state, &entry.op, &participants)
@@ -1059,12 +1106,39 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    apply_op(&mut state, &entry.op);
+    let applied_delayed_widen = context.enforce_seen_time_delay
+        && op_can_be_pending_widen(&state, &entry.op)
+        && !op_has_instant_widen_authority(&state, &entry.op, &participants);
+    apply_op(&mut state, &entry.op, hash, applied_delayed_widen);
     if !state_has_authority_consent(&state) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     state.seqs.insert(signer, entry.seq);
     EntryFold::Ready(state)
+}
+
+fn veto_participant_keys(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    pending_widen_hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
+    let mut participants = BTreeSet::new();
+    for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
+        let key = &signature.public_key;
+        let active_member = state
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked && device.roles != 0);
+        if !active_member && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
+        {
+            return Err(AuthorityFoldIssue::SignerNotInAncestry(
+                authority_entry_hash(entry).unwrap_or([0; 32]),
+            ));
+        }
+        participants.insert(key.clone());
+    }
+    Ok(participants)
 }
 
 fn active_participant_keys(
@@ -1095,6 +1169,42 @@ fn has_authority_consent(state: &FoldState, participants: &BTreeSet<AuthorityKey
             .get(key)
             .is_some_and(folded_device_can_authority_consent)
     })
+}
+
+fn has_veto_authority_consent(
+    state: &FoldState,
+    participants: &BTreeSet<AuthorityKey>,
+    pending_widen_hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    participants.iter().any(|key| {
+        state
+            .roster
+            .get(key)
+            .is_some_and(folded_device_can_authority_consent)
+            || delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
+    })
+}
+
+fn delayed_rotation_veto_allowed(
+    state: &FoldState,
+    key: &AuthorityKey,
+    pending_widen_hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    let Some(revocations) = state.delayed_rotation_veto_revocations.get(key) else {
+        return false;
+    };
+    let Some(entry_ancestors) = context.entry_ancestors else {
+        return false;
+    };
+    let Some(target_ancestors) = entry_ancestors.get(&pending_widen_hash) else {
+        return false;
+    };
+
+    revocations
+        .iter()
+        .all(|revocation| !target_ancestors.contains(revocation))
 }
 
 fn state_has_authority_consent(state: &FoldState) -> bool {
@@ -1242,6 +1352,13 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .vetoed_widens
         .extend(right.vetoed_widens.iter().copied());
+    for (key, revocations) in &right.delayed_rotation_veto_revocations {
+        merged
+            .delayed_rotation_veto_revocations
+            .entry(key.clone())
+            .or_default()
+            .extend(revocations.iter().copied());
+    }
     for vetoed in &merged.vetoed_widens {
         merged.pending_widens.remove(vetoed);
     }
@@ -1267,7 +1384,12 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
 }
 
-fn apply_op(state: &mut FoldState, op: &AuthorityOp) {
+fn apply_op(
+    state: &mut FoldState,
+    op: &AuthorityOp,
+    entry_hash: AuthorityEntryHash,
+    applied_delayed_widen: bool,
+) {
     match op {
         AuthorityOp::Genesis { .. } => {}
         AuthorityOp::EnrollDevice { device } => upsert_device(state, device),
@@ -1277,6 +1399,21 @@ fn apply_op(state: &mut FoldState, op: &AuthorityOp) {
             old_key,
             new_device,
         } => {
+            // Vetoes signed during a delayed rotation can be parented after the
+            // pending rotation entry; keep the old key as veto-only authority
+            // once that delayed rotation lands and revokes it.
+            if applied_delayed_widen
+                && state
+                    .roster
+                    .get(old_key)
+                    .is_some_and(folded_device_can_authority_consent)
+            {
+                state
+                    .delayed_rotation_veto_revocations
+                    .entry(old_key.clone())
+                    .or_default()
+                    .insert(entry_hash);
+            }
             revoke_key(state, old_key);
             upsert_device(state, new_device);
         }
@@ -2168,6 +2305,36 @@ mod tests {
         )
     }
 
+    fn rotate_entry(
+        vault_id: AuthorityVaultId,
+        parent: &AuthorityLogEntry,
+        signer: &SigningKey,
+        old_key: AuthorityKey,
+        new_seed: u8,
+        seq: u64,
+    ) -> AuthorityLogEntry {
+        let signer_key = authority_key_from_ed(signer);
+        let new = ed_key(new_seed);
+        sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                seq,
+                vec![authority_entry_hash(parent).unwrap()],
+                AuthorityOp::RotateKey {
+                    old_key,
+                    new_device: device(
+                        authority_key_from_ed(&new),
+                        ROLE_OWNER | ROLE_ADMIN,
+                        AuthorityTier::Software,
+                    ),
+                },
+                signer_key,
+                889,
+            ),
+            signer,
+        )
+    }
+
     fn veto_entry(
         vault_id: AuthorityVaultId,
         parent: &AuthorityLogEntry,
@@ -2205,6 +2372,7 @@ mod tests {
                 now_secs: None,
                 enforce_seen_time_delay: false,
                 vetoed_widens: &vetoed_widens,
+                entry_ancestors: None,
             },
         )
     }
@@ -2441,6 +2609,7 @@ mod tests {
             pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             pending_widens: BTreeMap::new(),
             vetoed_widens: BTreeSet::new(),
+            delayed_rotation_veto_revocations: BTreeMap::new(),
             seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         };
         let entry = cosign_ed(
@@ -2481,6 +2650,7 @@ mod tests {
             pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
             pending_widens: BTreeMap::new(),
             vetoed_widens: BTreeSet::new(),
+            delayed_rotation_veto_revocations: BTreeMap::new(),
             seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         };
         (owner, owner_key, parent, state)
@@ -2973,6 +3143,91 @@ mod tests {
             assert!(fold.vetoed_widens.contains(&pending_hash));
             assert!(fold.pending_widens.is_empty());
         }
+    }
+
+    #[test]
+    fn veto_child_of_delayed_rotation_survives_when_old_key_lands_revoked() {
+        let owner = ed_key(73);
+        let owner_key = authority_key_from_ed(&owner);
+        let genesis = genesis_entry(73, 100, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let rotation = rotate_entry(vault_id, &genesis, &owner, owner_key.clone(), 74, 1);
+        let rotation_hash = authority_entry_hash(&rotation).unwrap();
+        let malicious_widen = enroll_device_entry(
+            vault_id,
+            &genesis,
+            &owner,
+            EnrollSpec {
+                seed: 75,
+                roles: ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 2,
+                ts: 2,
+            },
+        );
+        let malicious_hash = authority_entry_hash(&malicious_widen).unwrap();
+        let veto = veto_entry(vault_id, &rotation, &owner, malicious_hash, 3);
+        let veto_hash = authority_entry_hash(&veto).unwrap();
+        let first_seen = BTreeMap::from([(rotation_hash, 0), (malicious_hash, 0)]);
+
+        let fold = fold_authority_log_with_seen_times(
+            &[veto, malicious_widen, rotation, genesis],
+            &first_seen,
+            100,
+        );
+
+        assert!(fold.valid_entries.contains(&veto_hash));
+        assert!(fold.vetoed_widens.contains(&malicious_hash));
+        assert!(
+            !fold
+                .roster
+                .contains_key(&authority_key_from_ed(&ed_key(75)))
+        );
+        assert!(
+            fold.roster
+                .get(&owner_key)
+                .is_some_and(|device| device.revoked)
+        );
+    }
+
+    #[test]
+    fn delayed_rotation_veto_key_cannot_veto_descendant_widen() {
+        let owner = ed_key(76);
+        let owner_key = authority_key_from_ed(&owner);
+        let new_owner = ed_key(77);
+        let genesis = genesis_entry(76, 100, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let rotation = rotate_entry(vault_id, &genesis, &owner, owner_key, 77, 1);
+        let rotation_hash = authority_entry_hash(&rotation).unwrap();
+        let future_widen = enroll_device_entry(
+            vault_id,
+            &rotation,
+            &new_owner,
+            EnrollSpec {
+                seed: 78,
+                roles: ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 0,
+                ts: 2,
+            },
+        );
+        let future_hash = authority_entry_hash(&future_widen).unwrap();
+        let veto = veto_entry(vault_id, &rotation, &owner, future_hash, 2);
+        let veto_hash = authority_entry_hash(&veto).unwrap();
+        let first_seen = BTreeMap::from([(rotation_hash, 0), (future_hash, 0)]);
+
+        let fold = fold_authority_log_with_seen_times(
+            &[veto, future_widen, rotation, genesis],
+            &first_seen,
+            100,
+        );
+
+        assert!(!fold.valid_entries.contains(&veto_hash));
+        assert!(!fold.vetoed_widens.contains(&future_hash));
+        assert!(
+            fold.roster
+                .contains_key(&authority_key_from_ed(&ed_key(78)))
+        );
     }
 
     #[test]
