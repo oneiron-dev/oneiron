@@ -754,11 +754,7 @@ pub(crate) fn authority_observation_secs_for_domain(
             observed
         }
         None => {
-            let observed = if previous_floor == 0 {
-                candidate_wall_secs
-            } else {
-                previous_floor
-            };
+            let observed = candidate_wall_secs.max(previous_floor);
             clocks.insert(
                 clock_domain,
                 AuthorityLocalClock {
@@ -970,12 +966,15 @@ fn resolve_equivocation_group(
     pending: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> EquivocationResolution {
-    let mut ready = Vec::<(AuthorityEntryHash, FoldState)>::new();
+    let mut ready = Vec::<(AuthorityEntryHash, FoldState, FoldState)>::new();
     let mut issues = Vec::new();
     for hash in group {
         let entry = &by_hash[hash];
         match fold_entry_state(entry, *hash, states, context) {
-            EntryFold::Ready(state) => ready.push((*hash, state)),
+            EntryFold::Ready(state) => {
+                let rank_state = equivocation_rank_state(entry, *hash, &state);
+                ready.push((*hash, state, rank_state));
+            }
             EntryFold::Invalid(issue) => issues.push(issue),
             EntryFold::Waiting if entry_waits_on_pending_parent(entry, states, pending) => {
                 return EquivocationResolution::Waiting;
@@ -993,7 +992,7 @@ fn resolve_equivocation_group(
 
     ready.sort_by(compare_fork_rank);
     let winner = ready.remove(0);
-    for (loser, _) in ready {
+    for (loser, _, _) in ready {
         issues.push(AuthorityFoldIssue::InvalidEntry(loser));
     }
     EquivocationResolution::Resolved {
@@ -1033,11 +1032,24 @@ fn entry_ancestor_index(
     index
 }
 
+fn equivocation_rank_state(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    state: &FoldState,
+) -> FoldState {
+    let mut rank_state = state.clone();
+    if rank_state.pending_widens.contains_key(&hash) {
+        rank_state.pending_widens.remove(&hash);
+        apply_op(&mut rank_state, &entry.op, hash, true);
+    }
+    rank_state
+}
+
 fn compare_fork_rank(
-    (left_hash, left): &(AuthorityEntryHash, FoldState),
-    (right_hash, right): &(AuthorityEntryHash, FoldState),
+    (left_hash, _, left_rank): &(AuthorityEntryHash, FoldState, FoldState),
+    (right_hash, _, right_rank): &(AuthorityEntryHash, FoldState, FoldState),
 ) -> Ordering {
-    fork_rank(left, *left_hash).cmp(&fork_rank(right, *right_hash))
+    fork_rank(left_rank, *left_hash).cmp(&fork_rank(right_rank, *right_hash))
 }
 
 fn fork_rank(
@@ -1149,10 +1161,7 @@ fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.enforce_seen_time_delay
-        && !state.pending_widens.is_empty()
-        && op_can_be_pending_widen(&state, &entry.op)
-    {
+    if context.enforce_seen_time_delay && !state.pending_widens.is_empty() {
         return EntryFold::Waiting;
     }
     if state
@@ -2503,6 +2512,31 @@ mod tests {
         )
     }
 
+    fn set_ceiling_entry(
+        vault_id: AuthorityVaultId,
+        parent: &AuthorityLogEntry,
+        signer: &SigningKey,
+        seq: u64,
+        ts: u64,
+    ) -> AuthorityLogEntry {
+        let signer_key = authority_key_from_ed(signer);
+        sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                seq,
+                vec![authority_entry_hash(parent).unwrap()],
+                AuthorityOp::SetCeiling {
+                    authority_key: signer_key.clone(),
+                    actor_class: "agent".to_string(),
+                    ceiling: 1,
+                },
+                signer_key,
+                ts,
+            ),
+            signer,
+        )
+    }
+
     fn rotate_entry(
         vault_id: AuthorityVaultId,
         parent: &AuthorityLogEntry,
@@ -2657,6 +2691,19 @@ mod tests {
         assert_eq!(
             jumped, first,
             "wall-clock jumps after first observation must not skip the local delay"
+        );
+    }
+
+    #[test]
+    fn reopened_authority_clock_advances_wall_time_past_stored_floor() {
+        let domain = 0x1325_0002;
+        let observed = authority_observation_secs_for_domain(domain, 1_000, 2_500);
+        let backward = authority_observation_secs_for_domain(domain, observed, 10);
+
+        assert_eq!(observed, 2_500);
+        assert_eq!(
+            backward, observed,
+            "wall-clock rollback after reopening must not move the floor backward"
         );
     }
 
@@ -3190,7 +3237,7 @@ mod tests {
             2,
         );
 
-        let fold = fold_authority_log(&[revoke.clone(), enroll, genesis]);
+        let fold = fold_authority_log_without_seen_time_delay(&[revoke.clone(), enroll, genesis]);
         assert!(fold.issues.iter().any(|issue| matches!(
         issue,
         AuthorityFoldIssue::MissingQuorum(hash)
@@ -3255,6 +3302,53 @@ mod tests {
         assert!(fold.issues.iter().any(|issue| matches!(
             issue,
             AuthorityFoldIssue::EquivocationDetected { signer: key, seq: 2 }
+                if *key == authority_key_from_ed(&owner)
+        )));
+    }
+
+    #[test]
+    fn pending_widen_equivocation_rank_uses_eventual_state() {
+        let owner = ed_key(42);
+        let genesis = genesis_entry(42, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let mut chosen = None;
+        for seed in 43..96 {
+            let pending = enroll_device_entry(
+                vault_id,
+                &genesis,
+                &owner,
+                EnrollSpec {
+                    seed,
+                    roles: ROLE_AGENT,
+                    tier: AuthorityTier::Software,
+                    seq: 1,
+                    ts: u64::from(seed),
+                },
+            );
+            let ceiling = set_ceiling_entry(vault_id, &genesis, &owner, 1, u64::from(seed) + 100);
+            let pending_hash = authority_entry_hash(&pending).unwrap();
+            let ceiling_hash = authority_entry_hash(&ceiling).unwrap();
+            if pending_hash < ceiling_hash {
+                chosen = Some((pending, pending_hash, ceiling, ceiling_hash));
+                break;
+            }
+        }
+        let (pending, pending_hash, ceiling, ceiling_hash) =
+            chosen.expect("test seeds must include a pending hash below the ceiling hash");
+        let first_seen = BTreeMap::from([(pending_hash, 0)]);
+
+        let fold = fold_authority_log_with_seen_times(
+            &[pending, ceiling, genesis],
+            &first_seen,
+            DEFAULT_PENDING_WIDEN_DELAY_SECS - 1,
+        );
+
+        assert!(fold.valid_entries.contains(&ceiling_hash));
+        assert!(!fold.valid_entries.contains(&pending_hash));
+        assert!(fold.pending_widens.is_empty());
+        assert!(fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::EquivocationDetected { signer: key, seq: 1 }
                 if *key == authority_key_from_ed(&owner)
         )));
     }
@@ -3674,6 +3768,53 @@ mod tests {
         );
         assert!(after.valid_entries.contains(&child_hash));
         assert!(after.roster.contains_key(&authority_key_from_ed(&child)));
+    }
+
+    #[test]
+    fn non_widen_child_of_pending_widen_waits_for_parent_seen_time_eligibility() {
+        let owner = ed_key(100);
+        let delay = DEFAULT_PENDING_WIDEN_DELAY_SECS;
+        let genesis = genesis_entry(100, delay, 1);
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let pending_admin = enroll_device_entry(
+            vault_id,
+            &genesis,
+            &owner,
+            EnrollSpec {
+                seed: 101,
+                roles: ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 1,
+                ts: 2,
+            },
+        );
+        let pending_hash = authority_entry_hash(&pending_admin).unwrap();
+        let child_ceiling = set_ceiling_entry(vault_id, &pending_admin, &owner, 2, 3);
+        let child_hash = authority_entry_hash(&child_ceiling).unwrap();
+        let first_seen = BTreeMap::from([(pending_hash, 0)]);
+
+        let before = fold_authority_log_with_seen_times(
+            &[
+                child_ceiling.clone(),
+                pending_admin.clone(),
+                genesis.clone(),
+            ],
+            &first_seen,
+            delay - 1,
+        );
+        assert!(!before.valid_entries.contains(&child_hash));
+        assert!(before.pending_widens.contains_key(&pending_hash));
+
+        let after = fold_authority_log_with_seen_times(
+            &[child_ceiling, pending_admin, genesis],
+            &first_seen,
+            delay,
+        );
+        assert!(!after.valid_entries.contains(&child_hash));
+        assert!(after.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::MissingQuorum(hash) if *hash == child_hash
+        )));
     }
 
     #[test]
