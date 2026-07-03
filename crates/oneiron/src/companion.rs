@@ -71,6 +71,7 @@ pub const COMPANION_TASK_JOB_KIND: &str = "companion_task";
 pub const COMPANION_TASK_PAYLOAD_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for companion task payloads.
 pub const COMPANION_TASK_PAYLOAD_KEYS: [&str; 4] = ["schema_version", "task", "scope", "subject"];
+const ERR_INVALID_COMPANION_TASK_PAYLOAD: &str = "invalid companion task payload";
 
 const KEY_TASK_SCHEMA_VERSION: &str = COMPANION_TASK_PAYLOAD_KEYS[0];
 const KEY_TASK: &str = COMPANION_TASK_PAYLOAD_KEYS[1];
@@ -1136,17 +1137,23 @@ impl<'a> CompanionQueue<'a> {
 
     /// Claims the oldest queued companion task without leasing unrelated jobs.
     pub fn claim(&self, input: ClaimCompanionTask) -> Result<ClaimCompanionTaskOutcome> {
-        match self.jobs.claim_kind(
-            COMPANION_TASK_JOB_KIND,
-            ClaimJob {
-                lease_owner: input.lease_owner,
-                now: input.now,
-            },
-        )? {
-            ClaimOutcome::Empty => Ok(ClaimCompanionTaskOutcome::Empty),
-            ClaimOutcome::Claimed(record) => decode_companion_task_status(record)
-                .map(Box::new)
-                .map(ClaimCompanionTaskOutcome::Claimed),
+        loop {
+            match self.jobs.claim_kind(
+                COMPANION_TASK_JOB_KIND,
+                ClaimJob {
+                    lease_owner: input.lease_owner.clone(),
+                    now: input.now,
+                },
+            )? {
+                ClaimOutcome::Empty => return Ok(ClaimCompanionTaskOutcome::Empty),
+                ClaimOutcome::Claimed(record) => match decode_companion_task_status(record.clone())
+                {
+                    Ok(status) => return Ok(ClaimCompanionTaskOutcome::Claimed(Box::new(status))),
+                    Err(_) => {
+                        self.fail_undecodable_claimed_task(&record, &input.lease_owner, input.now)?;
+                    }
+                },
+            }
         }
     }
 
@@ -1217,6 +1224,23 @@ impl<'a> CompanionQueue<'a> {
     fn ensure_companion_job_id(&self, id: JobId) -> Result<()> {
         let _ = self.status(id)?;
         Ok(())
+    }
+
+    fn fail_undecodable_claimed_task(
+        &self,
+        record: &JobRecord,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<()> {
+        match self.jobs.fail(FailJob {
+            id: record.id,
+            lease_owner: lease_owner.to_owned(),
+            attempt_count: record.attempt_count,
+            reason: ERR_INVALID_COMPANION_TASK_PAYLOAD.to_owned(),
+            now,
+        })? {
+            FailOutcome::Failed(_) | FailOutcome::AlreadyFailed(_) => Ok(()),
+        }
     }
 }
 
@@ -2313,6 +2337,60 @@ mod tests {
                 .expect("generic job persisted")
                 .state,
             JobState::Leased
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let companion_queue = CompanionQueue::new(&vault);
+        let generic_queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(invalid_task) = generic_queue.enqueue(EnqueueJob {
+            kind: COMPANION_TASK_JOB_KIND.to_owned(),
+            payload: b"not-msgpack".to_vec(),
+            dedupe_key: Some("companion:invalid".to_owned()),
+            run_id: Some("run-invalid".to_owned()),
+            now: 70,
+        })?
+        else {
+            panic!("expected invalid companion task enqueue");
+        };
+
+        assert_eq!(
+            companion_queue.claim(ClaimCompanionTask {
+                lease_owner: "companion-worker".to_owned(),
+                now: 80,
+            })?,
+            ClaimCompanionTaskOutcome::Empty
+        );
+
+        let failed = generic_queue
+            .get(invalid_task.id)?
+            .expect("invalid companion task persisted");
+        assert_eq!(failed.state, JobState::Failed);
+        assert_eq!(failed.lease_owner, None);
+        assert_eq!(failed.attempt_count, 1);
+        assert_eq!(
+            failed.last_error.as_deref(),
+            Some(ERR_INVALID_COMPANION_TASK_PAYLOAD)
+        );
+
+        assert_eq!(
+            companion_queue.claim(ClaimCompanionTask {
+                lease_owner: "companion-worker".to_owned(),
+                now: 81,
+            })?,
+            ClaimCompanionTaskOutcome::Empty
+        );
+        assert_eq!(
+            generic_queue
+                .get(invalid_task.id)?
+                .expect("invalid companion task still persisted")
+                .attempt_count,
+            1
         );
 
         Ok(())
