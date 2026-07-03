@@ -376,16 +376,39 @@ impl<'a> JobQueue<'a> {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.enqueue_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+
+        Ok(outcome)
+    }
+
+    /// Enqueues a job into a caller-owned write transaction.
+    ///
+    /// The caller owns commit/abort. This is used by higher-level private
+    /// runner stores that need to co-commit their own local indexes with the
+    /// generic job row.
+    pub(crate) fn enqueue_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueJob,
+    ) -> Result<EnqueueOutcome> {
+        validate_kind(&input.kind)?;
+        validate_optional_dedupe(input.dedupe_key.as_deref())?;
+        validate_optional_run_id(input.run_id.as_deref())?;
+
+        let dedupe_blake3_key = input
+            .dedupe_key
+            .as_deref()
+            .map(|dedupe_key| DedupeIndexKeys::new(&input.kind, dedupe_key));
         if let (Some(dedupe_key), Some(index_key)) =
             (input.dedupe_key.as_deref(), dedupe_blake3_key.as_ref())
             && let Some(record) = self.read_existing_dedupe_in_write_txn(
-                &mut wtxn,
+                wtxn,
                 &index_key.blake3[..],
                 &input.kind,
                 dedupe_key,
             )?
         {
-            wtxn.commit()?;
             return Ok(EnqueueOutcome::Existing(record));
         }
 
@@ -407,17 +430,16 @@ impl<'a> JobQueue<'a> {
         let encoded = encode_record(&record)?;
         self.store
             .job_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
         let ready_key = ready_key(ready_at(&record), record.id);
         self.store
             .job_ready
-            .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
+            .put(wtxn, &ready_key, record.id.as_bytes())?;
         if let Some(index_key) = dedupe_blake3_key.as_ref() {
             self.store
                 .job_dedupe
-                .put(&mut wtxn, &index_key.blake3[..], record.id.as_bytes())?;
+                .put(wtxn, &index_key.blake3[..], record.id.as_bytes())?;
         }
-        wtxn.commit()?;
 
         Ok(EnqueueOutcome::Enqueued(record))
     }
@@ -436,6 +458,22 @@ impl<'a> JobQueue<'a> {
         validate_kind(kind)?;
         validate_lease_owner(&input.lease_owner)?;
         self.claim_kind_with_read_scan(kind, input)
+    }
+
+    /// Claims the oldest queued job with the requested kind in a caller-owned
+    /// write transaction.
+    ///
+    /// The caller owns commit/abort. This path intentionally uses the
+    /// write-transaction scan so higher-level stores can co-commit the lease
+    /// with their own local state.
+    pub(crate) fn claim_kind_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        input: ClaimJob,
+    ) -> Result<ClaimOutcome> {
+        validate_kind(kind)?;
+        self.claim_matching_in_txn(wtxn, input, Some(kind))
     }
 
     fn claim_kind_with_read_scan(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
@@ -589,11 +627,25 @@ impl<'a> JobQueue<'a> {
         validate_lease_owner(&input.lease_owner)?;
 
         let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.claim_matching_in_txn(&mut wtxn, input, kind_filter)?;
+        wtxn.commit()?;
+
+        Ok(outcome)
+    }
+
+    fn claim_matching_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: ClaimJob,
+        kind_filter: Option<&str>,
+    ) -> Result<ClaimOutcome> {
+        validate_lease_owner(&input.lease_owner)?;
+
         let mut stale_ready_keys = Vec::new();
         let mut ready_replacements = Vec::new();
         let mut stale_missing_record_ids = HashSet::new();
         let mut claimed = None;
-        for row in self.store.job_ready.iter(&wtxn)? {
+        for row in self.store.job_ready.iter(&*wtxn)? {
             let (key, value) = row?;
             let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
                 stale_ready_keys.push(key.to_vec());
@@ -607,7 +659,7 @@ impl<'a> JobQueue<'a> {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             }
-            let Some(raw_record) = self.store.job_records.get(&wtxn, id.as_bytes())? else {
+            let Some(raw_record) = self.store.job_records.get(&*wtxn, id.as_bytes())? else {
                 stale_missing_record_ids.insert(id);
                 stale_ready_keys.push(key.to_vec());
                 continue;
@@ -645,25 +697,21 @@ impl<'a> JobQueue<'a> {
             break;
         }
 
-        self.delete_dedupe_entries_for_ids(&mut wtxn, &stale_missing_record_ids)?;
+        self.delete_dedupe_entries_for_ids(wtxn, &stale_missing_record_ids)?;
         for key in stale_ready_keys {
-            self.store.job_ready.delete(&mut wtxn, &key)?;
+            self.store.job_ready.delete(wtxn, &key)?;
         }
         for (key, id) in ready_replacements {
-            self.store.job_ready.put(&mut wtxn, &key, id.as_bytes())?;
+            self.store.job_ready.put(wtxn, &key, id.as_bytes())?;
         }
 
         let Some((ready_key, id, record)) = claimed else {
-            wtxn.commit()?;
             return Ok(ClaimOutcome::Empty);
         };
 
-        self.store.job_ready.delete(&mut wtxn, &ready_key)?;
+        self.store.job_ready.delete(wtxn, &ready_key)?;
         let encoded = encode_record(&record)?;
-        self.store
-            .job_records
-            .put(&mut wtxn, id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
+        self.store.job_records.put(wtxn, id.as_bytes(), &encoded)?;
 
         Ok(ClaimOutcome::Claimed(record))
     }
