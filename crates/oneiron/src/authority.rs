@@ -733,18 +733,20 @@ struct AuthorityLocalClock {
     last_secs: u64,
 }
 
+fn authority_local_clocks() -> &'static Mutex<BTreeMap<usize, AuthorityLocalClock>> {
+    static LOCAL_CLOCKS: OnceLock<Mutex<BTreeMap<usize, AuthorityLocalClock>>> = OnceLock::new();
+    LOCAL_CLOCKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
 pub(crate) fn authority_observation_secs_for_domain(
     clock_domain: usize,
     previous_floor: u64,
     candidate_wall_secs: u64,
 ) -> u64 {
-    static LOCAL_CLOCKS: OnceLock<Mutex<BTreeMap<usize, AuthorityLocalClock>>> = OnceLock::new();
-
     let now = Instant::now();
-    let mut clocks = LOCAL_CLOCKS
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
+    let mut clocks = authority_local_clocks()
         .lock()
-        .expect("authority local clock mutex poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     match clocks.get_mut(&clock_domain) {
         Some(clock) => {
             let elapsed = now.saturating_duration_since(clock.last_instant).as_secs();
@@ -765,6 +767,13 @@ pub(crate) fn authority_observation_secs_for_domain(
             observed
         }
     }
+}
+
+pub(crate) fn release_authority_clock_domain(clock_domain: usize) {
+    let mut clocks = authority_local_clocks()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clocks.remove(&clock_domain);
 }
 
 pub(crate) fn encode_authority_first_seen_secs(secs: u64) -> [u8; 8] {
@@ -2692,6 +2701,7 @@ mod tests {
             jumped, first,
             "wall-clock jumps after first observation must not skip the local delay"
         );
+        release_authority_clock_domain(domain);
     }
 
     #[test]
@@ -2705,6 +2715,29 @@ mod tests {
             backward, observed,
             "wall-clock rollback after reopening must not move the floor backward"
         );
+        release_authority_clock_domain(domain);
+    }
+
+    #[test]
+    fn authority_clock_domain_release_drops_process_local_state() {
+        let domain = 0x1325_0003;
+        let first = authority_observation_secs_for_domain(domain, 0, 5_000);
+        let clamped = authority_observation_secs_for_domain(domain, 0, 10);
+
+        assert_eq!(first, 5_000);
+        assert_eq!(
+            clamped, first,
+            "active clock domains must keep their monotonic local floor"
+        );
+
+        release_authority_clock_domain(domain);
+        let reset = authority_observation_secs_for_domain(domain, 0, 10);
+
+        assert_eq!(
+            reset, 10,
+            "released clock domains must not keep process-local state"
+        );
+        release_authority_clock_domain(domain);
     }
 
     #[test]
