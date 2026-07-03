@@ -291,11 +291,17 @@ impl<'a> JobQueue<'a> {
         let mut claimed = None;
         for row in self.store.job_ready.iter(&wtxn)? {
             let (key, value) = row?;
-            let (key_ready_at, key_id) = decode_ready_key(key)?;
+            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+                stale_ready_keys.push(key.to_vec());
+                continue;
+            };
             if key_ready_at > input.now {
                 break;
             }
-            let id = JobId::from_bytes(value)?;
+            let Ok(id) = JobId::from_bytes(value) else {
+                stale_ready_keys.push(key.to_vec());
+                continue;
+            };
             if id != key_id {
                 stale_ready_keys.push(key.to_vec());
                 continue;
@@ -1068,6 +1074,51 @@ mod tests {
                 .store
                 .job_ready
                 .get(&rtxn, &stale_ready_key)?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("first", None, 10))? else {
+            panic!("expected enqueue");
+        };
+        let malformed_key = vec![0];
+        let malformed_value_key = ready_key(5, JobId::now());
+        {
+            let mut wtxn = vault.store.env.write_txn()?;
+            vault
+                .store
+                .job_ready
+                .put(&mut wtxn, &malformed_key, job.id.as_bytes())?;
+            vault
+                .store
+                .job_ready
+                .put(&mut wtxn, &malformed_value_key, b"bad")?;
+            wtxn.commit()?;
+        }
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim past malformed ready rows");
+        };
+        assert_eq!(claimed.id, job.id);
+
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(vault.store.job_ready.get(&rtxn, &malformed_key)?.is_none());
+        assert!(
+            vault
+                .store
+                .job_ready
+                .get(&rtxn, &malformed_value_key)?
                 .is_none()
         );
 
