@@ -129,13 +129,16 @@ pub use crate::deletion::{
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 pub use crate::dreamer_runner::{
-    AdmitDreamerJob, DREAMER_JOB_PAYLOAD_KEYS, DREAMER_JOB_PAYLOAD_SCHEMA_VERSION,
-    DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
-    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND, DreamerAdmissionOutcome,
-    DreamerAdmittedJob, DreamerBudgetRecord, DreamerJobPayload, DreamerJobStatus,
-    DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord, DreamerRunTreeRecord,
-    DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome, ParkDreamerJob,
-    decode_dreamer_job_payload, encode_dreamer_job_payload,
+    AbortDreamerBudgetReservation, AdmitDreamerJob, DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
+    DREAMER_JOB_PAYLOAD_KEYS, DREAMER_JOB_PAYLOAD_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE,
+    DREAMER_MILESTONE_VALUE_KEYS, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND,
+    DreamerAdmissionOutcome, DreamerAdmittedJob, DreamerBudgetRecord, DreamerBudgetReservation,
+    DreamerBudgetReserveOutcome, DreamerBudgetSettlement, DreamerBudgetSettlementOutcome,
+    DreamerJobPayload, DreamerJobStatus, DreamerMilestoneClaim, DreamerMilestoneKind,
+    DreamerParkedJobRecord, DreamerReservedBudget, DreamerRunTreeRecord, DreamerRunnerStore,
+    DreamerWakeBudgetConfig, EnqueueDreamerJob, EnqueueDreamerJobOutcome, ParkDreamerJob,
+    ReserveDreamerBudget, SettleDreamerBudget, decode_dreamer_job_payload,
+    encode_dreamer_job_payload,
 };
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::federation::{
