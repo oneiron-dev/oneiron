@@ -1501,6 +1501,31 @@ fn check_api_auth(headers: &HeaderMap, config: &SyncServerConfig) -> Result<(), 
     check_auth(headers, config).map_err(|_| ApiError::unauthorized())
 }
 
+const LEGACY_SCOPED_READ_ACTOR_REF: &str = "legacy-shared-secret";
+
+fn scoped_read_for_core_auth<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
+    scoped_read_for_actor_ref(vault, actor_ref)
+}
+
+fn scoped_read_for_legacy_api(
+    vault: &oneiron::Vault,
+) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
+    scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)
+}
+
+fn scoped_read_for_actor_ref<'a>(
+    vault: &'a oneiron::Vault,
+    actor_ref: &str,
+) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
+    let actor_key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
+        .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
+    Ok(vault.scoped_read(actor_key))
+}
+
 fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
     let Query(params) = query.map_err(query_rejection_error)?;
     Ok(params)
@@ -4150,8 +4175,8 @@ async fn search_vector(
         )
     })?;
 
-    let results = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let results = scoped_read
         .search_vector(&query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "vector search failed");
@@ -4159,7 +4184,7 @@ async fn search_vector(
         .map_err(|_| ApiError::internal_server_error("vector search failed"))?;
 
     let total = results.len();
-    let response = search_response(&server.vault, results, view, params.limit)?;
+    let response = search_response(&scoped_read, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -4249,8 +4274,8 @@ async fn search_text(
 
     let count_mode = params.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, params.limit);
-    let results = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let results = scoped_read
         .search_text(&params.query, fetch_limit)
         .inspect_err(|e| {
             tracing::error!(error = %e, "text search failed");
@@ -4258,7 +4283,7 @@ async fn search_text(
         .map_err(|_| ApiError::internal_server_error("text search failed"))?;
 
     let total = results.len();
-    let response = search_response(&server.vault, results, view, params.limit)?;
+    let response = search_response(&scoped_read, results, view, params.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -4281,14 +4306,14 @@ fn search_meta(count_mode: CountMode, estimated_total: usize) -> ResponseMeta {
 }
 
 fn search_response(
-    vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     results: Vec<oneiron::ScoredEntity>,
     view: View,
     page_limit: usize,
 ) -> Result<Vec<Value>, ApiError> {
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        match projection::project_search_result(vault, result, view) {
+        match project_scoped_search_result(scoped_read, result, view) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
             Ok(None) => continue,
@@ -4299,6 +4324,34 @@ fn search_response(
         }
     }
     Ok(response)
+}
+
+fn project_scoped_search_result(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::ScoredEntity,
+    view: View,
+) -> oneiron::Result<Option<Value>> {
+    let id_hex = result.id.to_hex();
+    match view {
+        View::Standard => Ok(Some(json!({
+            "id": id_hex,
+            "score": result.score,
+        }))),
+        View::Summary | View::Full => {
+            let Some((entity_type, learned_at, body)) = scoped_read.get_entity_parts(&result.id)?
+            else {
+                return Ok(None);
+            };
+            let mut value =
+                projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
+            if matches!(view, View::Full)
+                && let Value::Object(object) = &mut value
+            {
+                object.insert("score".to_owned(), json!(result.score));
+            }
+            Ok(Some(value))
+        }
+    }
 }
 
 // ─── Entity Routes ────────────────────────────────────────────────────────────
@@ -4406,8 +4459,8 @@ async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let blob = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let blob = scoped_read
         .get(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get entity failed");
@@ -4500,13 +4553,14 @@ async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let edges = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let edges = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?
+        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
 
     let response: Vec<Value> = edges
         .into_iter()
@@ -5818,8 +5872,9 @@ async fn core_query(
     let view = req.view.unwrap_or(View::Summary);
     let count_mode = req.count_mode.for_search_response();
     let fetch_limit = search_fetch_limit(count_mode, req.limit);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let results = run_core_query(
-        &server.vault,
+        &scoped_read,
         query,
         req.query_vector.as_deref(),
         fetch_limit,
@@ -5829,7 +5884,7 @@ async fn core_query(
         core_engine_error("core query failed", error)
     })?;
     let total = results.len();
-    let response = search_response(&server.vault, results, view, req.limit)?;
+    let response = search_response(&scoped_read, results, view, req.limit)?;
     let meta = search_meta(count_mode, total);
 
     Ok(Json(PaginatedResponse::new(response, None, meta)))
@@ -5859,7 +5914,9 @@ async fn core_hydrate(
     let (short_id, content_hash) = parse_short_ref_request(&req)?;
     let content_hash_hex = format!("{content_hash:02x}");
     let view = req.view.unwrap_or(View::Full);
-    let Some(response) = hydrate_short_id_response(&server, short_id.clone(), content_hash, view)?
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let Some(response) =
+        hydrate_short_id_response(&scoped_read, short_id.clone(), content_hash, view)?
     else {
         return Err(ApiError::not_found(
             "short_id",
@@ -5903,11 +5960,12 @@ async fn core_batch_short_id_hydrate(
     }
 
     let view = req.view.unwrap_or(View::Full);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let mut results = Vec::with_capacity(req.refs.len());
     for reference in req.refs {
         let item = match parse_short_ref(&reference) {
             Ok((short_id, content_hash)) => {
-                match hydrate_short_id_response(&server, short_id, content_hash, view)? {
+                match hydrate_short_id_response(&scoped_read, short_id, content_hash, view)? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
                         outcome: match result.status {
@@ -5981,13 +6039,15 @@ async fn core_memory_timeline(
     let id = parse_entity_id_param(&id_hex, "id")?;
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
-    let timeline = server.vault.memory_timeline(&id).map_err(|error| {
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
         tracing::error!(error = %error, id = %id.to_hex(), "core memory timeline failed");
         core_engine_error("core memory timeline failed", error)
     })?;
 
-    if timeline.records.len() == 1
-        && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing
+    if timeline.records.is_empty()
+        || (timeline.records.len() == 1
+            && timeline.records[0].state == oneiron::MemoryTimelineRecordState::Missing)
     {
         return Err(ApiError::not_found("entity", Some(&id.to_hex())).into());
     }
@@ -6291,14 +6351,13 @@ fn core_memory_delete_reason(
 }
 
 fn hydrate_short_id_response(
-    server: &SyncServer,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     short_id: String,
     content_hash: u8,
     view: View,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let content_hash_hex = format!("{content_hash:02x}");
-    let result = server
-        .vault
+    let result = scoped_read
         .hydrate_short_id(&short_id, content_hash)
         .map_err(|error| {
             tracing::error!(error = %error, short_id, content_hash = content_hash_hex, "core short hydrate failed");
@@ -6418,6 +6477,13 @@ async fn core_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
+    let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let candidate_limit = scoped_read
+        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack scoped read setup failed");
+            core_engine_error("core context-pack scoped read setup failed", error)
+        })?;
     let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
@@ -6435,7 +6501,7 @@ async fn core_context_pack(
     let mut builder = server
         .vault
         .context_pack()
-        .limit(req.limit)
+        .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
         .edge_hop(edge_hop)
@@ -6443,20 +6509,33 @@ async fn core_context_pack(
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
     if let Some(query) = query {
-        builder = builder.search_text(query, req.limit);
+        builder = builder.search_text(query, candidate_limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
-        builder = builder.search_vector(vector, req.limit);
+        builder = builder.search_vector(vector, candidate_limit);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    builder = apply_context_pack_budget(builder, req.budget.as_ref(), 0, req.limit, max_neighbors)?;
+    let (builder, retrieval_budget) = apply_context_pack_budget(
+        builder,
+        req.budget.as_ref(),
+        0,
+        candidate_limit,
+        req.limit,
+        max_neighbors,
+    )?;
 
     Ok(Json(
         run_context_pack_builder(
             &server.vault,
+            &scoped_read,
             builder,
             projection,
+            ContextPackResponseLimits {
+                results: req.limit,
+                neighbors: max_neighbors,
+                retrieval: retrieval_budget,
+            },
             "core context-pack failed",
             eiri_context,
         )
@@ -6909,52 +6988,112 @@ fn apply_context_pack_budget<'a>(
     mut builder: oneiron::ContextPackBuilder<'a>,
     budget: Option<&ContextPackBudgetControls>,
     top_level_max_item_tokens: usize,
-    limit: usize,
+    scoped_candidate_limit: usize,
+    result_limit: usize,
     default_selected_edges: usize,
-) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
+) -> Result<
+    (
+        oneiron::ContextPackBuilder<'a>,
+        oneiron::ContextPackRetrievalBudget,
+    ),
+    ApiError,
+> {
     let max_item_tokens = budget
         .and_then(|budget| budget.max_item_tokens)
         .unwrap_or(top_level_max_item_tokens);
     if max_item_tokens > 0 {
         builder = builder.max_item_tokens(max_item_tokens);
     }
-    let Some(budget) = budget else {
-        return Ok(builder);
-    };
-    if let Some(token_budget) = budget.token_budget {
-        builder = builder.token_budget(token_budget);
-    }
-    if let Some(max_field_chars) = budget.max_field_chars {
-        builder = builder.max_field_chars(max_field_chars);
-    }
-    if let Some(retrieval) = budget.retrieval.as_ref() {
-        if retrieval.selected_edges.is_some_and(|selected_edges| {
-            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-        }) {
-            return Err(ApiError::bad_request(
-                format!(
-                    "selected_edges must be less than or equal to {}",
-                    oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-                ),
-                Some("budget.retrieval.selected_edges"),
-            ));
+    if let Some(budget) = budget {
+        if let Some(token_budget) = budget.token_budget {
+            builder = builder.token_budget(token_budget);
         }
-        let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
-            limit,
-            oneiron::TokenAllocation::default(),
-            default_selected_edges,
-        );
-        let selected_edges = retrieval.selected_edges.unwrap_or(defaults.selected_edges);
-        builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
-            retrieval.claims.unwrap_or(defaults.claims),
-            retrieval.turns.unwrap_or(defaults.turns),
-            retrieval.summaries.unwrap_or(defaults.summaries),
-            retrieval.facets.unwrap_or(defaults.facets),
-            retrieval.other.unwrap_or(defaults.other),
-            selected_edges,
+        if let Some(max_field_chars) = budget.max_field_chars {
+            builder = builder.max_field_chars(max_field_chars);
+        }
+    }
+    let retrieval = budget.and_then(|budget| budget.retrieval.as_ref());
+    if let Some(retrieval) = retrieval
+        && retrieval.selected_edges.is_some_and(|selected_edges| {
+            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+        })
+    {
+        return Err(ApiError::bad_request(
+            format!(
+                "selected_edges must be less than or equal to {}",
+                oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+            ),
+            Some("budget.retrieval.selected_edges"),
         ));
     }
-    Ok(builder)
+    let (response_budget, internal_budget) = resolve_context_pack_retrieval_budgets(
+        retrieval,
+        result_limit,
+        scoped_candidate_limit,
+        default_selected_edges,
+    );
+    builder = builder.retrieval_budget(internal_budget);
+    Ok((builder, response_budget))
+}
+
+fn resolve_context_pack_retrieval_budgets(
+    retrieval: Option<&ContextPackRetrievalBudgetControls>,
+    result_limit: usize,
+    scoped_candidate_limit: usize,
+    default_selected_edges: usize,
+) -> (
+    oneiron::ContextPackRetrievalBudget,
+    oneiron::ContextPackRetrievalBudget,
+) {
+    let selected_edges = retrieval
+        .and_then(|retrieval| retrieval.selected_edges)
+        .unwrap_or(default_selected_edges);
+    let mut response_budget = oneiron::ContextPackRetrievalBudget::from_limit(
+        result_limit,
+        oneiron::TokenAllocation::default(),
+        selected_edges,
+    );
+    if let Some(retrieval) = retrieval {
+        if let Some(claims) = retrieval.claims {
+            response_budget.claims = claims;
+        }
+        if let Some(turns) = retrieval.turns {
+            response_budget.turns = turns;
+        }
+        if let Some(summaries) = retrieval.summaries {
+            response_budget.summaries = summaries;
+        }
+        if let Some(facets) = retrieval.facets {
+            response_budget.facets = facets;
+        }
+        if let Some(other) = retrieval.other {
+            response_budget.other = other;
+        }
+    }
+    let internal_budget =
+        widen_context_pack_retrieval_budget(response_budget, scoped_candidate_limit);
+    (response_budget, internal_budget)
+}
+
+fn widen_context_pack_retrieval_budget(
+    budget: oneiron::ContextPackRetrievalBudget,
+    scoped_candidate_limit: usize,
+) -> oneiron::ContextPackRetrievalBudget {
+    let widen = |bucket: usize| {
+        if bucket == 0 {
+            0
+        } else {
+            bucket.max(scoped_candidate_limit)
+        }
+    };
+    oneiron::ContextPackRetrievalBudget::new(
+        widen(budget.claims),
+        widen(budget.turns),
+        widen(budget.summaries),
+        widen(budget.facets),
+        widen(budget.other),
+        budget.selected_edges,
+    )
 }
 
 fn resolve_eiri_context_v4_request(
@@ -7257,19 +7396,90 @@ async fn advance_eiri_session_rag_state(
         .advance(scope_key, key, session_id, pack, evidence)
 }
 
+#[derive(Clone, Copy)]
+struct ContextPackResponseLimits {
+    results: usize,
+    neighbors: usize,
+    retrieval: oneiron::ContextPackRetrievalBudget,
+}
+
+fn apply_context_pack_response_limits(
+    pack: &mut oneiron::ContextPack,
+    limits: ContextPackResponseLimits,
+) {
+    apply_context_pack_response_retrieval_budget(pack, limits.retrieval);
+    pack.results.truncate(limits.results);
+    pack.neighbors.truncate(limits.neighbors);
+    scrub_context_pack_visible_stats(pack);
+}
+
+fn apply_context_pack_response_retrieval_budget(
+    pack: &mut oneiron::ContextPack,
+    budget: oneiron::ContextPackRetrievalBudget,
+) {
+    let mut claims = 0_usize;
+    let mut turns = 0_usize;
+    let mut summaries = 0_usize;
+    let mut facets = 0_usize;
+    let mut other = 0_usize;
+    pack.results.retain(|entity| {
+        let (count, limit) = match entity.entity_type {
+            oneiron::types::ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
+            oneiron::types::ENTITY_TYPE_TURN => (&mut turns, budget.turns),
+            oneiron::types::ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
+            oneiron::types::ENTITY_TYPE_FACET => (&mut facets, budget.facets),
+            _ => (&mut other, budget.other),
+        };
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    });
+}
+
+fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
+    pack.stats.candidates_considered = pack.results.len();
+    pack.stats.entities_hydrated = pack.results.len();
+    pack.stats.neighbors_hydrated = pack.neighbors.len();
+
+    if pack.results.is_empty() && pack.neighbors.is_empty() {
+        if let Some(empty) = pack.empty.as_mut() {
+            empty.total_in_scope = 0;
+        } else {
+            pack.empty = Some(oneiron::EmptyContext {
+                reason: oneiron::EmptyReason::FilterMatchedNone,
+                total_in_scope: 0,
+                hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
+            });
+        }
+    } else {
+        pack.empty = None;
+    }
+}
+
 async fn run_context_pack_builder(
     vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
+    response_limits: ContextPackResponseLimits,
     error_context: &'static str,
     eiri_context: Option<EiriContextV4Request>,
 ) -> Result<CoreContextPackResponse, ApiError> {
-    let pack = builder
-        .run_projected_json_with_telemetry(&projection)
+    let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
+        tracing::error!(error = %error, "{error_context}");
+        core_engine_error(error_context, error)
+    })?;
+    scoped_read
+        .filter_context_pack(&mut pack.value)
         .map_err(|error| {
-            tracing::error!(error = %error, "{error_context}");
-            core_engine_error(error_context, error)
+            pack.discard_telemetry();
+            tracing::error!(error = %error, "core context-pack scoped read failed");
+            core_engine_error("core context-pack scoped read failed", error)
         })?;
+    apply_context_pack_response_limits(&mut pack.value, response_limits);
+    let pack = pack.finish_projected_json(&projection);
     let run_id = pack.run_id;
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
@@ -7313,15 +7523,15 @@ async fn run_context_pack_builder(
 }
 
 fn run_core_query(
-    vault: &oneiron::Vault,
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
     query: Option<&str>,
     vector: Option<&[f32]>,
     limit: usize,
 ) -> oneiron::Result<Vec<oneiron::ScoredEntity>> {
     match (query, vector) {
-        (Some(query), Some(vector)) => vault.query().search(query, vector, None, limit).run(),
-        (Some(query), None) => vault.search_text(query, limit),
-        (None, Some(vector)) => vault.search_vector(vector, limit),
+        (Some(query), Some(vector)) => scoped_read.search(query, vector, limit),
+        (Some(query), None) => scoped_read.search_text(query, limit),
+        (None, Some(vector)) => scoped_read.search_vector(vector, limit),
         (None, None) => Ok(Vec::new()),
     }
 }
@@ -8646,6 +8856,13 @@ async fn context_pack(
         .unwrap_or(View::Standard);
     let projection =
         context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let candidate_limit = scoped_read
+        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
+        .map_err(|error| {
+            tracing::error!(error = %error, "context-pack scoped read setup failed");
+            core_engine_error("context-pack scoped read setup failed", error)
+        })?;
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
         req.context_version.as_deref(),
@@ -8662,7 +8879,7 @@ async fn context_pack(
     let mut builder = server
         .vault
         .context_pack()
-        .limit(req.limit)
+        .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
         .edge_hop(edge_hop)
@@ -8670,17 +8887,18 @@ async fn context_pack(
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
     if let Some(query) = query {
-        builder = builder.search_text(query, req.limit);
+        builder = builder.search_text(query, candidate_limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
-        builder = builder.search_vector(vector, req.limit);
+        builder = builder.search_vector(vector, candidate_limit);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    builder = apply_context_pack_budget(
+    let (builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
         req.max_item_tokens,
+        candidate_limit,
         req.limit,
         max_neighbors,
     )?;
@@ -8688,8 +8906,14 @@ async fn context_pack(
     Ok(Json(
         run_context_pack_builder(
             &server.vault,
+            &scoped_read,
             builder,
             projection,
+            ContextPackResponseLimits {
+                results: req.limit,
+                neighbors: max_neighbors,
+                retrieval: retrieval_budget,
+            },
             "context-pack failed",
             eiri_context,
         )
@@ -8816,16 +9040,75 @@ mod tests {
     fn search_response_drops_stale_hydrated_hits() {
         let dir = tempfile::tempdir().unwrap();
         let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let scoped_read = vault.scoped_read(
+            oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"),
+        );
         let stale_hit = oneiron::ScoredEntity {
             id: oneiron::EntityId::now(),
             score: 0.75,
         };
 
         for view in [View::Summary, View::Full] {
-            let response = search_response(&vault, vec![stale_hit], view, 10).unwrap();
+            let response = search_response(&scoped_read, vec![stale_hit], view, 10).unwrap();
             assert!(
                 response.is_empty(),
                 "{view:?} should skip missing search hits"
+            );
+        }
+    }
+
+    #[test]
+    fn search_response_rechecks_projected_claim_body() {
+        #[derive(serde::Serialize)]
+        struct ClaimSeed<'a> {
+            pred: &'a str,
+            val: &'a str,
+            conf: f32,
+            #[serde(with = "serde_bytes")]
+            subj: &'a [u8],
+            appr: &'static str,
+            life: &'static str,
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let claim_id = seeded_test_entity_id(0x0012_6901);
+        let subject = seeded_test_entity_id(0x0012_6902);
+        let body = rmp_serde::to_vec_named(&ClaimSeed {
+            pred: "profile.projected",
+            val: "hidden after update",
+            conf: 0.9,
+            subj: subject.as_bytes(),
+            appr: "proposed",
+            life: "active",
+        })
+        .expect("encode proposed claim");
+        vault
+            .put_entity(
+                &claim_id,
+                oneiron::types::ENTITY_TYPE_CLAIM,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &body,
+            )
+            .expect("seed proposed claim");
+
+        let scoped_read = vault.scoped_read(
+            oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"),
+        );
+        let stale_hit = oneiron::ScoredEntity {
+            id: claim_id,
+            score: 0.75,
+        };
+
+        for view in [View::Summary, View::Full] {
+            let response = search_response(&scoped_read, vec![stale_hit], view, 10).unwrap();
+            assert!(
+                response.is_empty(),
+                "{view:?} should re-check the exact projected body through ScopedRead"
             );
         }
     }
@@ -8988,6 +9271,100 @@ mod tests {
             },
             empty: None,
         }
+    }
+
+    #[test]
+    fn context_pack_scoped_budget_preserves_default_response_split() {
+        let (response, internal) = resolve_context_pack_retrieval_budgets(None, 5, 100, 7);
+        let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
+            5,
+            oneiron::TokenAllocation::default(),
+            7,
+        );
+
+        assert_eq!(response, defaults);
+        assert_eq!(internal.selected_edges, 7);
+        assert_eq!(internal.claims, 100);
+        assert_eq!(internal.turns, 100);
+        assert_eq!(internal.summaries, 100);
+        assert_eq!(internal.facets, 100);
+        assert_eq!(internal.other, 100);
+    }
+
+    #[test]
+    fn context_pack_scoped_budget_preserves_explicit_zero_buckets() {
+        let controls = ContextPackRetrievalBudgetControls {
+            claims: Some(0),
+            turns: Some(2),
+            selected_edges: Some(3),
+            ..Default::default()
+        };
+
+        let (response, internal) =
+            resolve_context_pack_retrieval_budgets(Some(&controls), 10, 50, 9);
+
+        assert_eq!(response.claims, 0);
+        assert_eq!(internal.claims, 0);
+        assert_eq!(response.turns, 2);
+        assert_eq!(internal.turns, 50);
+        assert_eq!(response.selected_edges, 3);
+        assert_eq!(internal.selected_edges, 3);
+    }
+
+    #[test]
+    fn context_pack_response_limits_scrub_stats_after_scoped_truncation() {
+        let mut pack = synthetic_context_pack(0);
+        let claim_a = seeded_test_entity_id(0x0012_6501);
+        let claim_b = seeded_test_entity_id(0x0012_6502);
+        let turn = seeded_test_entity_id(0x0012_6503);
+        let neighbor = seeded_test_entity_id(0x0012_6504);
+        let entity = |id: oneiron::EntityId, entity_type: u8| oneiron::ContextEntity {
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            entity_type,
+            score: 1.0,
+            fields: None,
+            edges: None,
+            vector: None,
+        };
+        pack.results = vec![
+            entity(claim_a, oneiron::types::ENTITY_TYPE_CLAIM),
+            entity(claim_b, oneiron::types::ENTITY_TYPE_CLAIM),
+            entity(turn, ENTITY_TYPE_TURN),
+        ];
+        pack.neighbors = vec![
+            entity(neighbor, oneiron::types::ENTITY_TYPE_SUMMARY),
+            entity(
+                seeded_test_entity_id(0x0012_6505),
+                oneiron::types::ENTITY_TYPE_SUMMARY,
+            ),
+        ];
+        pack.stats.candidates_considered = 99;
+        pack.stats.entities_hydrated = 88;
+        pack.stats.neighbors_hydrated = 77;
+
+        apply_context_pack_response_limits(
+            &mut pack,
+            ContextPackResponseLimits {
+                results: 10,
+                neighbors: 1,
+                retrieval: oneiron::ContextPackRetrievalBudget::new(1, 1, 0, 0, 0, 0),
+            },
+        );
+
+        assert_eq!(
+            pack.results
+                .iter()
+                .map(|entity| entity.id)
+                .collect::<Vec<_>>(),
+            vec![claim_a, turn]
+        );
+        assert_eq!(pack.neighbors.len(), 1);
+        assert_eq!(pack.stats.candidates_considered, 2);
+        assert_eq!(pack.stats.entities_hydrated, 2);
+        assert_eq!(pack.stats.neighbors_hydrated, 1);
+        assert!(pack.empty.is_none());
     }
 
     fn seed_active_claim(
@@ -12205,7 +12582,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_core_memory_timeline_orders_supersession_chain() {
+    async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
         let (_dir, server) = test_server();
         let subject = seeded_test_entity_id(0x1261_0100);
         let old = seeded_test_entity_id(0x1261_0101);
@@ -12240,21 +12617,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body:#}");
         assert_eq!(body["anchor_id"], Value::from(new.to_hex()));
         let records = body["records"].as_array().expect("timeline records");
-        assert_eq!(records.len(), 2, "{body:#}");
-        assert_eq!(records[0]["id"], Value::from(old.to_hex()));
-        assert_eq!(records[0]["state"], Value::from("superseded"));
-        assert_eq!(records[0]["occurred_start"], Value::from(100_u64));
-        assert_eq!(records[0]["occurred_end"], Value::from(777_u64));
-        assert_eq!(
-            records[0]["superseded_by"],
-            Value::Array(vec![Value::from(new.to_hex())])
-        );
-        assert_eq!(records[1]["id"], Value::from(new.to_hex()));
-        assert_eq!(records[1]["state"], Value::from("live"));
-        assert_eq!(
-            records[1]["supersedes"],
-            Value::Array(vec![Value::from(old.to_hex())])
-        );
+        assert_eq!(records.len(), 1, "{body:#}");
+        assert_eq!(records[0]["id"], Value::from(new.to_hex()));
+        assert_eq!(records[0]["state"], Value::from("live"));
+        assert_eq!(records[0]["supersedes"], Value::Array(vec![]));
     }
 
     #[tokio::test]

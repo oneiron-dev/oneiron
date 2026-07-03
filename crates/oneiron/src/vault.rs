@@ -4706,6 +4706,63 @@ impl Vault {
         }
     }
 
+    pub(crate) fn scoped_read_search_candidate_limit(
+        &self,
+        requested: usize,
+        include_text: bool,
+        include_vector: bool,
+    ) -> Result<usize> {
+        if requested == 0 {
+            return Ok(0);
+        }
+
+        let rtxn = self.store.env.read_txn()?;
+        let mut limit = requested;
+        let mut hybrid_union_limit = 0usize;
+        if include_text {
+            let indexed_docs = usize::try_from(crate::bm25::read_total_docs(&self.store, &rtxn)?)
+                .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_docs);
+            limit = limit.max(indexed_docs);
+        }
+        if include_vector {
+            let indexed_vectors = crate::hnsw::hnsw_entity_count(&self.store, &rtxn)?;
+            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_vectors);
+            limit = limit.max(indexed_vectors);
+        }
+        if include_text && include_vector {
+            limit = limit.max(hybrid_union_limit);
+        }
+        Ok(limit)
+    }
+
+    pub(crate) fn claim_facet_refs_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+        prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+        prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+
+        let mut facets = Vec::new();
+        for entry in self.store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
+            if facets.len() >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_facet_refs"));
+            }
+            let (key, _) = entry?;
+            require_key_len(key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+            let target = EntityId::from_bytes(
+                key[ENTITY_ID_LEN + 1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
+            facets.push(target);
+        }
+        Ok(facets)
+    }
+
     /// Deletes a directed edge and its reverse index entry.
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         let key_out = Store::encode_edge_key(src, kind, tgt);
@@ -6775,7 +6832,8 @@ mod tests {
     }
 
     fn resolve_policy_manifest(vault: &Vault) -> Result<crate::gate::PolicyManifestResolution> {
-        vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))
+        let rtxn = vault.store.env.read_txn()?;
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)
     }
 
     fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
