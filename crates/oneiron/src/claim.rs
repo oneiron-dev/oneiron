@@ -37,7 +37,11 @@ use crate::affect::{
     validate_affect_trigger_claim_structure,
 };
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId};
+use crate::types::{
+    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeKind, EmptyContext,
+    EmptyReason, EntityId, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
+    ScoredEntity,
+};
 
 // Test-only MessagePack decode counter: AC 9 of the D19 unit pins "body
 // decoded ONCE per result for gate + projection" — tests assert exact
@@ -109,6 +113,242 @@ const LEXICAL_HINT_KIND: &str = "prospective_query";
 const LEXICAL_HINT_VALUE_KEY_KIND: &str = "kind";
 const LEXICAL_HINT_VALUE_KEY_QUERY: &str = "query";
 const LEXICAL_HINT_VALUE_KEY_TARGET: &str = "target";
+
+/// Actor key bound to a scoped read lane over the `core:read` surface.
+///
+/// The fields are private and construction rejects blank actor refs, so a
+/// [`ScopedRead`] cannot be built as an unkeyed bulk read handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedReadActorKey {
+    actor_ref: String,
+    actor_class: Option<String>,
+}
+
+impl ScopedReadActorKey {
+    #[must_use]
+    pub fn new(actor_ref: impl Into<String>) -> Option<Self> {
+        Self::from_parts(actor_ref.into(), None)
+    }
+
+    #[must_use]
+    pub fn with_actor_class(
+        actor_ref: impl Into<String>,
+        actor_class: impl Into<String>,
+    ) -> Option<Self> {
+        Self::from_parts(actor_ref.into(), Some(actor_class.into()))
+    }
+
+    fn from_parts(actor_ref: String, actor_class: Option<String>) -> Option<Self> {
+        if actor_ref.trim().is_empty() {
+            return None;
+        }
+        let actor_class = actor_class
+            .and_then(|class| (!class.trim().is_empty()).then(|| class.trim().to_owned()));
+        Some(Self {
+            actor_ref: actor_ref.trim().to_owned(),
+            actor_class,
+        })
+    }
+
+    #[must_use]
+    pub fn actor_ref(&self) -> &str {
+        &self.actor_ref
+    }
+
+    #[must_use]
+    pub fn actor_class(&self) -> Option<&str> {
+        self.actor_class.as_deref()
+    }
+}
+
+/// Actor-keyed read lane for the core read surface.
+///
+/// All methods preserve the existing claim surface admission gate and
+/// then layer policy scoped-grant matching for type-0 CLAIM entities.
+pub struct ScopedRead<'a> {
+    vault: &'a crate::vault::Vault,
+    actor_key: ScopedReadActorKey,
+}
+
+impl crate::vault::Vault {
+    #[must_use]
+    pub fn scoped_read(&self, actor_key: ScopedReadActorKey) -> ScopedRead<'_> {
+        ScopedRead {
+            vault: self,
+            actor_key,
+        }
+    }
+}
+
+impl<'a> ScopedRead<'a> {
+    #[must_use]
+    pub fn vault(&self) -> &'a crate::Vault {
+        self.vault
+    }
+
+    #[must_use]
+    pub fn actor_key(&self) -> &ScopedReadActorKey {
+        &self.actor_key
+    }
+
+    pub fn search(&self, query: &str, vector: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        let results = self
+            .vault
+            .query()
+            .search(query, vector, None, limit)
+            .run()?;
+        self.filter_scored_entities(results)
+    }
+
+    pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
+        let results = self.vault.search_text(query, limit)?;
+        self.filter_scored_entities(results)
+    }
+
+    pub fn search_vector(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredEntity>> {
+        let results = self.vault.search_vector(query, limit)?;
+        self.filter_scored_entities(results)
+    }
+
+    pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        if !self.is_entity_actor_readable(id)? {
+            return Ok(None);
+        }
+        self.vault.get(id)
+    }
+
+    pub fn hydrate_short_id(
+        &self,
+        short_id: &str,
+        content_hash: u8,
+    ) -> Result<Option<crate::HydratedShortId>> {
+        let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
+            return Ok(None);
+        };
+        if result.body.is_none() {
+            return if result.entity_type == ENTITY_TYPE_CLAIM || result.entity_type == 0 {
+                Ok(None)
+            } else {
+                Ok(Some(result))
+            };
+        }
+        if self.is_entity_actor_readable(&result.id)? {
+            Ok(Some(result))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
+        let mut timeline = self.vault.memory_timeline(anchor)?;
+        timeline.records = self.filter_memory_timeline_records(timeline.records)?;
+        Ok(timeline)
+    }
+
+    pub fn filter_scored_entities(&self, results: Vec<ScoredEntity>) -> Result<Vec<ScoredEntity>> {
+        let mut kept = Vec::with_capacity(results.len());
+        for result in results {
+            if self.is_entity_readable(&result.id)? {
+                kept.push(result);
+            }
+        }
+        Ok(kept)
+    }
+
+    pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<()> {
+        let previous_count = pack.results.len() + pack.neighbors.len();
+        let (results, result_suppressed) =
+            self.filter_context_entities(std::mem::take(&mut pack.results))?;
+        let (neighbors, neighbor_suppressed) =
+            self.filter_context_entities(std::mem::take(&mut pack.neighbors))?;
+        pack.results = results;
+        pack.neighbors = neighbors;
+        pack.stats.claims_suppressed += result_suppressed + neighbor_suppressed;
+
+        if previous_count > 0 && pack.results.is_empty() && pack.neighbors.is_empty() {
+            pack.empty = Some(EmptyContext {
+                reason: EmptyReason::FilterMatchedNone,
+                total_in_scope: 0,
+                hint: "scoped_read returned no actor-readable entities".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
+        match self.vault.get_entity_type(id)? {
+            None => Ok(false),
+            Some(ENTITY_TYPE_CLAIM) => self.is_claim_readable(id),
+            Some(_) => Ok(true),
+        }
+    }
+
+    fn is_claim_readable(&self, id: &EntityId) -> Result<bool> {
+        if self.vault.is_deleted_shell(id)? {
+            return Ok(false);
+        }
+        let Some(body) = self.vault.get_claim(id)? else {
+            return Ok(false);
+        };
+        if !claim_surfaceable(&body) {
+            return Ok(false);
+        }
+        self.vault.scoped_read_claim_allowed(&self.actor_key, &body)
+    }
+
+    fn filter_context_entities(
+        &self,
+        entities: Vec<ContextEntity>,
+    ) -> Result<(Vec<ContextEntity>, usize)> {
+        let mut kept = Vec::with_capacity(entities.len());
+        let mut claims_suppressed = 0;
+        for entity in entities {
+            if self.is_entity_readable(&entity.id)? {
+                kept.push(entity);
+            } else if entity.entity_type == ENTITY_TYPE_CLAIM {
+                claims_suppressed += 1;
+            }
+        }
+        Ok((kept, claims_suppressed))
+    }
+
+    fn filter_memory_timeline_records(
+        &self,
+        records: Vec<MemoryTimelineRecord>,
+    ) -> Result<Vec<MemoryTimelineRecord>> {
+        let mut kept = Vec::with_capacity(records.len());
+        for record in records {
+            let readable = match (record.state, record.entity_type) {
+                (MemoryTimelineRecordState::Missing, _) => false,
+                (_, Some(ENTITY_TYPE_CLAIM)) => self.is_entity_actor_readable(&record.id)?,
+                (_, Some(_)) => true,
+                (_, None) => false,
+            };
+            if readable {
+                kept.push(record);
+            }
+        }
+        Ok(kept)
+    }
+
+    fn is_entity_actor_readable(&self, id: &EntityId) -> Result<bool> {
+        match self.vault.get_entity_type(id)? {
+            None => Ok(false),
+            Some(ENTITY_TYPE_CLAIM) => self.is_claim_actor_readable(id),
+            Some(_) => Ok(true),
+        }
+    }
+
+    fn is_claim_actor_readable(&self, id: &EntityId) -> Result<bool> {
+        if self.vault.is_deleted_shell(id)? {
+            return Ok(false);
+        }
+        let Some(body) = self.vault.get_claim(id)? else {
+            return Ok(false);
+        };
+        self.vault.scoped_read_claim_allowed(&self.actor_key, &body)
+    }
+}
 
 pub(crate) const COMPANION_EXPRESSION_PROFESSIONAL: &str = "professional";
 pub(crate) const COMPANION_EXPRESSION_WARM: &str = "warm";

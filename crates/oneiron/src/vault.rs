@@ -38,8 +38,8 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    claim_consolidatable, claim_generated_origin, encode_claim_body, is_reserved_predicate,
-    validate_claim_body_bytes,
+    ScopedReadActorKey, claim_consolidatable, claim_generated_origin, encode_claim_body,
+    is_reserved_predicate, validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -4704,6 +4704,19 @@ impl Vault {
             actor,
             actor_class,
         }
+    }
+
+    pub(crate) fn scoped_read_claim_allowed(
+        &self,
+        actor_key: &ScopedReadActorKey,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        self.with_write_txn(|wtxn| {
+            let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+            Ok(crate::gate::scoped_read_claim_allowed(
+                &policy, actor_key, body,
+            ))
+        })
     }
 
     /// Deletes a directed edge and its reverse index entry.
