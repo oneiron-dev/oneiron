@@ -7830,6 +7830,10 @@ fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'static str {
         oneiron::RetrievalSignal::Phonetic => "phonetic",
         oneiron::RetrievalSignal::Temporal => "temporal",
         oneiron::RetrievalSignal::Ppr => "ppr",
+        oneiron::RetrievalSignal::Recency => "recency",
+        oneiron::RetrievalSignal::Salience => "salience",
+        oneiron::RetrievalSignal::Confidence => "confidence",
+        oneiron::RetrievalSignal::Gravity => "gravity",
     }
 }
 
