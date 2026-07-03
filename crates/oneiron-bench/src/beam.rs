@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+use crate::retrieval_trace_export;
 use oneiron::{
     ContextPack, ContextPackBuilder, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats,
     Signal, TimeRange, Vault, VaultConfig,
@@ -856,6 +857,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        [sub, rest @ ..] if sub == "trace-export" => retrieval_trace_export::run(rest),
         [sub] => {
             eprintln!("unknown BEAM subcommand: {sub}");
             print_help();
@@ -885,7 +887,9 @@ const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                          subcommands:\n\
                            smoke    run the built-in BEAM 128K deterministic context-pack smoke fixture\n\
                                     aligned with ONEIRON-ARCH-0042\n\
-                           run      run a BEAM run manifest and emit declared packs.jsonl outputs";
+                           run      run a BEAM run manifest and emit declared packs.jsonl outputs\n\
+                           trace-export\n\
+                                    export RetrievalTrace records to JSONL by fork hash (ONE-1311)";
 
 pub(crate) fn run_manifest_path(path: &Path) -> BeamResult<BeamReport> {
     let manifest_json = std::fs::read_to_string(path)?;
