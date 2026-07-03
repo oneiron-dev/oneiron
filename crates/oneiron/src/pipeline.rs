@@ -3,15 +3,18 @@ use std::time::Instant;
 
 use heed::types::Bytes;
 use heed::{Database, RoTxn};
+use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::affect::coping::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeRecord, decode_coping_outcome_claim,
     validate_coping_outcome_claim_structure,
 };
+use crate::analyzer::AnalyzerChannel;
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
+use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
@@ -574,8 +577,9 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Overrides the clock used to resolve natural-language temporal query
-    /// hints. Production callers normally use the default wall clock; tests
-    /// and replay fixtures can inject a frozen Unix timestamp.
+    /// hints and time-dependent retrieval scoring. Production callers normally
+    /// use the default wall clock; tests and replay fixtures can inject a
+    /// frozen Unix timestamp.
     pub fn with_temporal_now(mut self, now: u64) -> Self {
         self.temporal_now = Some(now);
         self
@@ -811,10 +815,13 @@ impl<'a> PipelineBuilder<'a> {
         }
 
         let recency = if self.temporal_search.is_none() && self.recency_blend_enabled {
-            Some(started_at)
+            Some(temporal_now)
         } else {
             None
         };
+        let explicit_time_dependent_now = (recency.is_some() || self.temporal_search.is_some())
+            .then_some(self.temporal_now)
+            .flatten();
 
         let (
             scores,
@@ -1089,6 +1096,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &scoped_config,
+                    temporal_now,
                     &mut metadata_cache,
                 )?;
                 add_signal_score_components(
@@ -1391,7 +1399,21 @@ impl<'a> PipelineBuilder<'a> {
             let retrieval_trace = if capture_retrieval_trace {
                 let final_scores = retrieval_trace_top_scores(&scores, trace_candidate_limit);
                 let blended_scores = blended_trace_scores.unwrap_or_default();
+                let candidate_set = retrieval_trace_candidate_set(
+                    &trace_ranked_lists,
+                    fused_trace_scores.as_deref().unwrap_or(&[]),
+                    &blended_scores,
+                    &final_scores,
+                );
+                let fork_hash = retrieval_trace_fork_hash(
+                    &self,
+                    &bm25_config,
+                    explicit_time_dependent_now,
+                    occurred_range,
+                    &candidate_set,
+                );
                 Some(RetrievalTrace {
+                    fork_hash,
                     per_channel: trace_channels,
                     fused: retrieval_trace_stage_record(
                         RetrievalTraceStage::Fused,
@@ -1712,6 +1734,330 @@ fn retrieval_score_breakdown(
             components: components.get(&scored.id).cloned().unwrap_or_default(),
         })
         .collect()
+}
+
+fn retrieval_trace_fork_hash(
+    builder: &PipelineBuilder<'_>,
+    bm25_config: &Bm25Config,
+    explicit_time_dependent_now_secs: Option<u64>,
+    resolved_occurred_range: Option<(u64, u64)>,
+    candidate_set: &[[u8; ENTITY_ID_LEN]],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v0");
+
+    fork_hash_vector_query(&mut hasher, builder.vector_search.as_ref());
+    fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
+    fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
+    fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
+    fork_hash_entity_seeds(&mut hasher, builder.ppr_search.as_ref());
+    fork_hash_entity_seeds(&mut hasher, builder.ppr_expand.as_ref());
+
+    fork_hash_bm25_config(&mut hasher, bm25_config);
+    fork_hash_bool(&mut hasher, builder.recency_blend_enabled);
+    fork_hash_opt_u64(&mut hasher, explicit_time_dependent_now_secs);
+    fork_hash_bool(&mut hasher, builder.apply_salience);
+    fork_hash_bool(&mut hasher, builder.apply_confidence);
+    fork_hash_bool(&mut hasher, builder.apply_gravity);
+    fork_hash_bool(&mut hasher, builder.apply_contiguity);
+    fork_hash_type_filter(&mut hasher, builder.type_filter.as_deref());
+    fork_hash_opt_u64(&mut hasher, builder.since_filter);
+    fork_hash_opt_range(&mut hasher, resolved_occurred_range);
+    fork_hash_opt_range(&mut hasher, builder.learned_range);
+    fork_hash_repo_ref(&mut hasher, builder.repo_ref_filter.as_ref());
+    fork_hash_opt_str(&mut hasher, builder.project_id_filter.as_deref());
+    fork_hash_facet_filter(&mut hasher, builder.facet_filter);
+    fork_hash_world_scope(&mut hasher, builder.world_scope);
+    fork_hash_context_pack_budget(&mut hasher, builder.context_pack_budget);
+    fork_hash_len(&mut hasher, builder.result_limit);
+    fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
+    fork_hash_recency_weight_table(&mut hasher);
+    fork_hash_scoring_constants(&mut hasher);
+    fork_hash_candidate_set(&mut hasher, candidate_set);
+
+    hasher.finalize().into()
+}
+
+fn fork_hash_vector_query(hasher: &mut Sha256, query: Option<&(Vec<f32>, usize)>) {
+    let Some((vector, limit)) = query else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_len(hasher, *limit);
+    fork_hash_len(hasher, vector.len());
+    for value in vector {
+        fork_hash_f32(hasher, *value);
+    }
+}
+
+fn fork_hash_text_query(hasher: &mut Sha256, query: Option<&(String, usize)>) {
+    let Some((query, limit)) = query else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_len(hasher, *limit);
+    fork_hash_str(hasher, query);
+}
+
+fn fork_hash_phonetic_query(hasher: &mut Sha256, codes: Option<&[String]>) {
+    let Some(codes) = codes else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    let mut codes = codes.to_vec();
+    codes.sort();
+    codes.dedup();
+    fork_hash_len(hasher, codes.len());
+    for code in &codes {
+        fork_hash_str(hasher, code);
+    }
+}
+
+fn fork_hash_temporal_query(hasher: &mut Sha256, config: Option<&TemporalSearchConfig>) {
+    let Some(config) = config else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_u64(hasher, config.anchor_start);
+    fork_hash_u64(hasher, config.anchor_end);
+    fork_hash_opt_u64(hasher, config.learned_start);
+    fork_hash_opt_u64(hasher, config.learned_end);
+    fork_hash_u64(hasher, config.sigma_secs);
+    fork_hash_temporal_anchor_mode(hasher, config.anchor_mode);
+    fork_hash_bool(hasher, config.adaptive);
+    fork_hash_len(hasher, config.limit);
+}
+
+fn fork_hash_temporal_anchor_mode(hasher: &mut Sha256, mode: TemporalAnchorMode) {
+    fork_hash_str(
+        hasher,
+        match mode {
+            TemporalAnchorMode::Auto => "auto",
+            TemporalAnchorMode::Occurred => "occurred",
+            TemporalAnchorMode::Learned => "learned",
+            TemporalAnchorMode::Both => "both",
+        },
+    );
+}
+
+fn fork_hash_entity_seeds(hasher: &mut Sha256, seeds: Option<&(Vec<EntityId>, u32)>) {
+    let Some((seeds, depth)) = seeds else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_u32(hasher, *depth);
+    let mut seed_bytes: Vec<[u8; ENTITY_ID_LEN]> =
+        seeds.iter().map(|seed| *seed.as_bytes()).collect();
+    seed_bytes.sort_unstable();
+    seed_bytes.dedup();
+    fork_hash_len(hasher, seed_bytes.len());
+    for seed in seed_bytes {
+        fork_hash_raw_bytes(hasher, &seed);
+    }
+}
+
+fn fork_hash_bm25_config(hasher: &mut Sha256, config: &Bm25Config) {
+    fork_hash_f64(hasher, config.k1);
+    match config.formula {
+        Bm25Formula::Okapi => fork_hash_str(hasher, "okapi"),
+        Bm25Formula::Plus { delta } => {
+            fork_hash_str(hasher, "plus");
+            fork_hash_f64(hasher, delta);
+        }
+    }
+    let channels = AnalyzerChannel::ALL_RESERVED;
+    fork_hash_len(hasher, channels.len());
+    for channel in channels {
+        let field = config.field(channel);
+        fork_hash_str(hasher, channel.as_str());
+        fork_hash_f64(hasher, field.weight);
+        fork_hash_f64(hasher, field.b);
+        fork_hash_str(hasher, field.length_policy.manifest_tag());
+    }
+}
+
+fn fork_hash_type_filter(hasher: &mut Sha256, types: Option<&[u8]>) {
+    let Some(types) = types else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    let mut types = types.to_vec();
+    types.sort_unstable();
+    types.dedup();
+    fork_hash_len(hasher, types.len());
+    for entity_type in types {
+        fork_hash_u8(hasher, entity_type);
+    }
+}
+
+fn fork_hash_repo_ref(hasher: &mut Sha256, repo_ref: Option<&RepoRef>) {
+    let Some(repo_ref) = repo_ref else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_str(hasher, &repo_ref.canonical());
+}
+
+fn fork_hash_facet_filter(hasher: &mut Sha256, filter: Option<(EntityId, FacetMode)>) {
+    let Some((facet_id, mode)) = filter else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_raw_bytes(hasher, facet_id.as_bytes());
+    match mode {
+        FacetMode::Strict => fork_hash_str(hasher, "strict"),
+        FacetMode::Prefer { boost } => {
+            fork_hash_str(hasher, "prefer");
+            fork_hash_f32(hasher, boost);
+        }
+    }
+}
+
+fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
+    match scope {
+        WorldScope::All => fork_hash_str(hasher, "all"),
+        WorldScope::Base => fork_hash_str(hasher, "base"),
+        WorldScope::World(id) => {
+            fork_hash_str(hasher, "world");
+            fork_hash_raw_bytes(hasher, id.as_bytes());
+        }
+    }
+}
+
+fn fork_hash_context_pack_budget(hasher: &mut Sha256, budget: Option<ContextPackRetrievalBudget>) {
+    let Some(budget) = budget else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_len(hasher, budget.claims);
+    fork_hash_len(hasher, budget.turns);
+    fork_hash_len(hasher, budget.summaries);
+    fork_hash_len(hasher, budget.facets);
+    fork_hash_len(hasher, budget.other);
+    fork_hash_len(hasher, budget.selected_edges);
+}
+
+fn fork_hash_recency_weight_table(hasher: &mut Sha256) {
+    fork_hash_len(hasher, RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE.len());
+    for (entity_type, half_life_days) in RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE {
+        fork_hash_u8(hasher, *entity_type);
+        fork_hash_f32(hasher, *half_life_days);
+    }
+    fork_hash_f32(hasher, DEFAULT_RECENCY_HALF_LIFE_DAYS);
+}
+
+fn fork_hash_scoring_constants(hasher: &mut Sha256) {
+    fork_hash_f32(hasher, RETRIEVAL_TRACE_RRF_K);
+    fork_hash_f32(hasher, PPR_DAMPING);
+    fork_hash_f64(hasher, RECENCY_DECAY_TAU_SECS);
+    fork_hash_f64(hasher, ALPHA_BASE);
+    fork_hash_f64(hasher, ALPHA_RANGE);
+    fork_hash_f64(hasher, ALPHA_TAU_SECS);
+    fork_hash_f64(hasher, TEMPORAL_FLOOR);
+    fork_hash_f32(hasher, COSINE_GHOST_VECTOR_THRESHOLD);
+}
+
+fn retrieval_trace_candidate_set(
+    ranked_lists: &[Vec<ScoredEntity>],
+    fused_scores: &[ScoredEntity],
+    blended_scores: &[ScoredEntity],
+    final_scores: &[ScoredEntity],
+) -> Vec<[u8; ENTITY_ID_LEN]> {
+    let mut candidates = Vec::<[u8; ENTITY_ID_LEN]>::new();
+    for ranked in ranked_lists {
+        candidates.extend(ranked.iter().map(|scored| *scored.id.as_bytes()));
+    }
+    candidates.extend(fused_scores.iter().map(|scored| *scored.id.as_bytes()));
+    candidates.extend(blended_scores.iter().map(|scored| *scored.id.as_bytes()));
+    candidates.extend(final_scores.iter().map(|scored| *scored.id.as_bytes()));
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+fn fork_hash_candidate_set(hasher: &mut Sha256, candidates: &[[u8; ENTITY_ID_LEN]]) {
+    fork_hash_len(hasher, candidates.len());
+    for candidate in candidates {
+        fork_hash_raw_bytes(hasher, candidate);
+    }
+}
+
+fn fork_hash_opt_range(hasher: &mut Sha256, range: Option<(u64, u64)>) {
+    let Some((start, end)) = range else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_u64(hasher, start);
+    fork_hash_u64(hasher, end);
+}
+
+fn fork_hash_opt_str(hasher: &mut Sha256, value: Option<&str>) {
+    let Some(value) = value else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_str(hasher, value);
+}
+
+fn fork_hash_opt_u64(hasher: &mut Sha256, value: Option<u64>) {
+    let Some(value) = value else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_u64(hasher, value);
+}
+
+fn fork_hash_str(hasher: &mut Sha256, value: &str) {
+    fork_hash_bytes(hasher, value.as_bytes());
+}
+
+fn fork_hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    fork_hash_len(hasher, bytes.len());
+    fork_hash_raw_bytes(hasher, bytes);
+}
+
+fn fork_hash_raw_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update(bytes);
+}
+
+fn fork_hash_bool(hasher: &mut Sha256, value: bool) {
+    hasher.update([u8::from(value)]);
+}
+
+fn fork_hash_u8(hasher: &mut Sha256, value: u8) {
+    hasher.update([value]);
+}
+
+fn fork_hash_u32(hasher: &mut Sha256, value: u32) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn fork_hash_u64(hasher: &mut Sha256, value: u64) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn fork_hash_len(hasher: &mut Sha256, value: usize) {
+    fork_hash_u64(hasher, value as u64);
+}
+
+fn fork_hash_f32(hasher: &mut Sha256, value: f32) {
+    hasher.update(value.to_bits().to_le_bytes());
+}
+
+fn fork_hash_f64(hasher: &mut Sha256, value: f64) {
+    hasher.update(value.to_bits().to_le_bytes());
 }
 
 fn scoped_text_channel_limit(
@@ -2230,6 +2576,7 @@ fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    now: u64,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
     if config.limit == 0 {
@@ -2245,7 +2592,6 @@ fn execute_temporal(
     }
 
     let sigma_initial = resolve_sigma_secs(config.sigma_secs);
-    let now = crate::unix_seconds_now();
     let anchor_mid = midpoint(config.anchor_start, config.anchor_end);
     let learned_anchor = learned_anchor_range(config)?;
     let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
@@ -4005,6 +4351,255 @@ mod tests {
             .any(|candidate| candidate.result_id == *id.as_bytes())
     }
 
+    fn captured_retrieval_trace(
+        vault: &Vault,
+        builder: PipelineBuilder<'_>,
+    ) -> Result<RetrievalTrace> {
+        captured_retrieval_run_trace(vault, builder).map(|(_, trace)| trace)
+    }
+
+    fn captured_retrieval_run_trace(
+        vault: &Vault,
+        builder: PipelineBuilder<'_>,
+    ) -> Result<(RetrievalRunId, RetrievalTrace)> {
+        let results = builder.capture_retrieval_trace(true).run_with_telemetry()?;
+        let run_id = results
+            .run_id
+            .ok_or(Error::InvariantViolation("trace test missing run id"))?;
+        let run = vault
+            .retrieval_run(run_id)?
+            .ok_or(Error::InvariantViolation("trace test missing run"))?;
+        let trace = run
+            .trace
+            .ok_or(Error::InvariantViolation("trace test missing trace"))?;
+        Ok((run_id, trace))
+    }
+
+    #[test]
+    fn retrieval_trace_fork_hash_replay_key_is_stable_for_same_inputs() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let first = entity_id(0xD3);
+        let second = entity_id(0xD4);
+        put_text_and_vector(&vault, first, "forkhash stable alpha", [1.0, 0.0, 0.0, 0.0])?;
+        put_text_and_vector(&vault, second, "forkhash stable beta", [0.9, 0.1, 0.0, 0.0])?;
+
+        let (first_run_id, first_trace) = captured_retrieval_run_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash stable", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .limit(10),
+        )?;
+        let (second_run_id, second_trace) = captured_retrieval_run_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash stable", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .limit(10),
+        )?;
+
+        assert_eq!(first_trace.fork_hash, second_trace.fork_hash);
+        assert_eq!(
+            rmp_serde::to_vec_named(&first_trace).expect("trace msgpack encode"),
+            rmp_serde::to_vec_named(&second_trace).expect("trace msgpack encode")
+        );
+        assert_eq!(
+            vault
+                .retrieval_trace_by_fork_hash(first_trace.fork_hash)?
+                .expect("trace by fork hash"),
+            second_trace
+        );
+        vault.store.delete_retrieval_run(second_run_id)?;
+        assert_eq!(
+            vault
+                .retrieval_trace_by_fork_hash(first_trace.fork_hash)?
+                .expect("trace by fork hash after latest delete"),
+            first_trace
+        );
+        vault.store.delete_retrieval_run(first_run_id)?;
+        assert!(
+            vault
+                .retrieval_trace_by_fork_hash(first_trace.fork_hash)?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_fork_hash_canonicalizes_phonetic_query_codes() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0xDA);
+        vault
+            .batch()
+            .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+            .phonetic(&id, &["ALFA", "BETA"])
+            .commit()?;
+
+        let first = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_phonetic(&["BETA", "ALFA", "ALFA"])
+                .limit(10),
+        )?;
+        let second = captured_retrieval_trace(
+            &vault,
+            vault.query().search_phonetic(&["ALFA", "BETA"]).limit(10),
+        )?;
+
+        assert_eq!(first.fork_hash, second.fork_hash);
+        assert_eq!(
+            rmp_serde::to_vec_named(&first).expect("trace msgpack encode"),
+            rmp_serde::to_vec_named(&second).expect("trace msgpack encode")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_fork_hash_uses_effective_trace_candidate_set() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let live = entity_id(0xDB);
+        vault
+            .batch()
+            .put(
+                &live,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &claim_body_bytes(
+                    crate::claim::ClaimApprovalStatus::Auto,
+                    crate::claim::ClaimLifecycleStatus::Active,
+                    false,
+                ),
+            )
+            .phonetic(&live, &["EFFECTIVE"])
+            .commit()?;
+
+        let before = captured_retrieval_trace(
+            &vault,
+            vault.query().search_phonetic(&["EFFECTIVE"]).limit(10),
+        )?;
+
+        let hidden = entity_id(0xDC);
+        vault
+            .batch()
+            .put(
+                &hidden,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &claim_body_bytes(
+                    crate::claim::ClaimApprovalStatus::Auto,
+                    crate::claim::ClaimLifecycleStatus::Retracted,
+                    false,
+                ),
+            )
+            .phonetic(&hidden, &["EFFECTIVE"])
+            .commit()?;
+
+        let after = captured_retrieval_trace(
+            &vault,
+            vault.query().search_phonetic(&["EFFECTIVE"]).limit(10),
+        )?;
+
+        assert_eq!(
+            rmp_serde::to_vec_named(&before).expect("trace msgpack encode"),
+            rmp_serde::to_vec_named(&after).expect("trace msgpack encode"),
+            "a D19-suppressed raw posting must not enter the emitted trace"
+        );
+        assert_eq!(
+            before.fork_hash, after.fork_hash,
+            "fork hash must follow the emitted trace candidate set, not raw pre-gate postings"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_fork_hash_changes_for_query_config_flags_weights_and_candidates()
+    -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let first = entity_id(0xD5);
+        let second = entity_id(0xD6);
+        put_text_and_vector(&vault, first, "forkhash alpha base", [1.0, 0.0, 0.0, 0.0])?;
+        put_text_and_vector(
+            &vault,
+            second,
+            "forkhash alpha neighbor",
+            [0.8, 0.2, 0.0, 0.0],
+        )?;
+
+        let base = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash alpha", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .limit(10),
+        )?;
+        let query_changed = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash base", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .limit(10),
+        )?;
+        let config_changed = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash alpha", 1)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+                .limit(1),
+        )?;
+        let flags_changed = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash alpha", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .boost_salience()
+                .limit(10),
+        )?;
+        let weights_changed = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash alpha", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .rank_profile(
+                    crate::types::Bm25RankProfile::default()
+                        .with_channel_weight(crate::analyzer::AnalyzerChannel::Surface, 0.5),
+                )
+                .limit(10),
+        )?;
+
+        let added_candidate = entity_id(0xD7);
+        put_text_and_vector(
+            &vault,
+            added_candidate,
+            "forkhash alpha extra",
+            [0.7, 0.3, 0.0, 0.0],
+        )?;
+        let candidates_changed = captured_retrieval_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("forkhash alpha", 10)
+                .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+                .limit(10),
+        )?;
+
+        assert_ne!(base.fork_hash, query_changed.fork_hash);
+        assert_ne!(base.fork_hash, config_changed.fork_hash);
+        assert_ne!(base.fork_hash, flags_changed.fork_hash);
+        assert_ne!(base.fork_hash, weights_changed.fork_hash);
+        assert_ne!(base.fork_hash, candidates_changed.fork_hash);
+        Ok(())
+    }
+
     #[test]
     fn retrieval_trace_filters_d19_suppressed_claims() -> Result<()> {
         let (_dir, vault) = open_test_vault();
@@ -5645,7 +6240,7 @@ mod tests {
         };
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let results = execute_temporal(&vault.store, &rtxn, &config, &mut metadata_cache)?;
+        let results = execute_temporal(&vault.store, &rtxn, &config, now, &mut metadata_cache)?;
 
         let scored = results
             .iter()
@@ -5784,8 +6379,10 @@ mod tests {
 
             let rtxn = vault.store.env.read_txn()?;
             let mut metadata_cache = EntityMetadataCache::default();
-            let results_a = execute_temporal(&vault.store, &rtxn, &cfg_a, &mut metadata_cache)?;
-            let results_b = execute_temporal(&vault.store, &rtxn, &cfg_b, &mut metadata_cache)?;
+            let results_a =
+                execute_temporal(&vault.store, &rtxn, &cfg_a, anchor, &mut metadata_cache)?;
+            let results_b =
+                execute_temporal(&vault.store, &rtxn, &cfg_b, anchor, &mut metadata_cache)?;
 
             let score_a = results_a
                 .iter()
