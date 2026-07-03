@@ -29,6 +29,7 @@ clap = { version = "4", features = ["derive", "env"] }
 tower-http = { version = "0.6", features = ["cors"] }
 anyhow = "1"
 serde_bytes = "0.11"
+blake3 = { workspace = true }
 subtle = "2"
 thiserror = { workspace = true }
 utoipa = "5.5.0"
