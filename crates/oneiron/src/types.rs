@@ -773,7 +773,10 @@ pub(crate) const WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY: &str = "actor_class";
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY: &str = "provenance";
 pub(crate) const WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY: &str = "candidate_evidence";
 
-fn write_envelope_evidence(envelope: &WriteEnvelope, candidate_evidence: Option<Value>) -> Value {
+pub(crate) fn write_envelope_evidence(
+    envelope: &WriteEnvelope,
+    candidate_evidence: Option<Value>,
+) -> Value {
     let actor = envelope.actor();
     let mut entries = vec![
         (
