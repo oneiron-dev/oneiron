@@ -197,9 +197,10 @@ pub use crate::skill::{
     decode_skill_record, encode_skill_record,
 };
 pub use crate::store::{
-    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord,
-    RetrievalTraceForkHash, RetrievalTraceStage, RetrievalTraceStageRecord,
+    PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction, RetrievalRunId,
+    RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
+    RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
+    RetrievalTraceStageRecord,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
