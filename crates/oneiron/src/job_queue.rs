@@ -146,6 +146,7 @@ pub enum ClaimOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteJob {
     pub id: JobId,
+    pub lease_owner: String,
     pub now: u64,
 }
 
@@ -161,6 +162,7 @@ pub enum CompleteOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailJob {
     pub id: JobId,
+    pub lease_owner: String,
     pub reason: String,
     pub now: u64,
 }
@@ -178,6 +180,7 @@ pub enum FailOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryJob {
     pub id: JobId,
+    pub lease_owner: String,
     pub backoff_until: u64,
     pub last_error: Option<String>,
     pub now: u64,
@@ -353,17 +356,27 @@ impl<'a> JobQueue<'a> {
     /// Marks a leased job complete. Completing an already-completed job is an
     /// idempotent success; all other states are rejected.
     pub fn complete(&self, input: CompleteJob) -> Result<CompleteOutcome> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            let Some(raw_record) = self.store.job_records.get(&rtxn, input.id.as_bytes())? else {
+                return Err(invalid_transition("complete", "missing"));
+            };
+            let record = decode_record(raw_record, input.id)?;
+            if record.state == JobState::Completed {
+                return Ok(CompleteOutcome::AlreadyCompleted(record));
+            }
+        }
+
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("complete", "missing"));
         };
         let mut record = decode_record(raw_record, input.id)?;
         match record.state {
-            JobState::Completed => {
-                wtxn.commit()?;
-                Ok(CompleteOutcome::AlreadyCompleted(record))
-            }
+            JobState::Completed => Ok(CompleteOutcome::AlreadyCompleted(record)),
             JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease_owner(&record, &input.lease_owner, "complete")?;
                 record.state = JobState::Completed;
                 record.lease_owner = None;
                 record.backoff_until = None;
@@ -384,7 +397,16 @@ impl<'a> JobQueue<'a> {
     /// Marks a leased job terminally failed. Failing an already-failed job is
     /// an idempotent success; all other states are rejected.
     pub fn fail(&self, input: FailJob) -> Result<FailOutcome> {
-        validate_failure_reason(&input.reason)?;
+        {
+            let rtxn = self.store.env.read_txn()?;
+            let Some(raw_record) = self.store.job_records.get(&rtxn, input.id.as_bytes())? else {
+                return Err(invalid_transition("fail", "missing"));
+            };
+            let record = decode_record(raw_record, input.id)?;
+            if record.state == JobState::Failed {
+                return Ok(FailOutcome::AlreadyFailed(record));
+            }
+        }
 
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
@@ -392,11 +414,11 @@ impl<'a> JobQueue<'a> {
         };
         let mut record = decode_record(raw_record, input.id)?;
         match record.state {
-            JobState::Failed => {
-                wtxn.commit()?;
-                Ok(FailOutcome::AlreadyFailed(record))
-            }
+            JobState::Failed => Ok(FailOutcome::AlreadyFailed(record)),
             JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease_owner(&record, &input.lease_owner, "fail")?;
+                validate_failure_reason(&input.reason)?;
                 record.state = JobState::Failed;
                 record.lease_owner = None;
                 record.backoff_until = None;
@@ -418,8 +440,6 @@ impl<'a> JobQueue<'a> {
     /// attempt. The original payload, run id, and advisory dedupe key stay on
     /// the same durable row.
     pub fn retry(&self, input: RetryJob) -> Result<RetryOutcome> {
-        validate_optional_failure_reason(input.last_error.as_deref())?;
-
         let mut wtxn = self.store.env.write_txn()?;
         let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
@@ -427,6 +447,9 @@ impl<'a> JobQueue<'a> {
         let mut record = decode_record(raw_record, input.id)?;
         match record.state {
             JobState::Leased => {
+                validate_lease_owner(&input.lease_owner)?;
+                validate_transition_lease_owner(&record, &input.lease_owner, "retry")?;
+                validate_optional_failure_reason(input.last_error.as_deref())?;
                 record.state = JobState::Queued;
                 record.lease_owner = None;
                 record.backoff_until = Some(input.backoff_until);
@@ -626,6 +649,17 @@ fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     }
     if lease_owner.len() > MAX_LEASE_OWNER_LEN {
         return Err(Error::InvalidJobQueueRecord(ERR_LEASE_OWNER_TOO_LONG));
+    }
+    Ok(())
+}
+
+fn validate_transition_lease_owner(
+    record: &JobRecord,
+    lease_owner: &str,
+    action: &'static str,
+) -> Result<()> {
+    if record.lease_owner.as_deref() != Some(lease_owner) {
+        return Err(invalid_transition(action, "leased_by_other"));
     }
     Ok(())
 }
@@ -1054,6 +1088,7 @@ mod tests {
         let queued_complete = queue
             .complete(CompleteJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 now: 11,
             })
             .unwrap_err();
@@ -1068,8 +1103,18 @@ mod tests {
         };
         assert_eq!(claimed.id, job.id);
 
+        let wrong_owner_complete = queue
+            .complete(CompleteJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_complete, "complete", "leased_by_other");
+
         let CompleteOutcome::Completed(completed) = queue.complete(CompleteJob {
             id: job.id,
+            lease_owner: "worker-a".to_owned(),
             now: 30,
         })?
         else {
@@ -1086,6 +1131,7 @@ mod tests {
 
         let CompleteOutcome::AlreadyCompleted(again) = queue.complete(CompleteJob {
             id: job.id,
+            lease_owner: String::new(),
             now: 40,
         })?
         else {
@@ -1096,6 +1142,7 @@ mod tests {
         let completed_fail = queue
             .fail(FailJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 reason: "boom".to_owned(),
                 now: 50,
             })
@@ -1105,6 +1152,7 @@ mod tests {
         let completed_retry = queue
             .retry(RetryJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 backoff_until: 60,
                 last_error: Some("retryable".to_owned()),
                 now: 50,
@@ -1136,6 +1184,7 @@ mod tests {
         let queued_fail = queue
             .fail(FailJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 reason: "boom".to_owned(),
                 now: 11,
             })
@@ -1151,8 +1200,19 @@ mod tests {
         };
         assert_eq!(claimed.id, job.id);
 
+        let wrong_owner_fail = queue
+            .fail(FailJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                reason: "fatal".to_owned(),
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_fail, "fail", "leased_by_other");
+
         let FailOutcome::Failed(failed) = queue.fail(FailJob {
             id: job.id,
+            lease_owner: "worker-a".to_owned(),
             reason: "fatal".to_owned(),
             now: 30,
         })?
@@ -1169,7 +1229,8 @@ mod tests {
 
         let FailOutcome::AlreadyFailed(again) = queue.fail(FailJob {
             id: job.id,
-            reason: "different".to_owned(),
+            lease_owner: String::new(),
+            reason: "x".repeat(MAX_FAILURE_REASON_LEN + 1),
             now: 40,
         })?
         else {
@@ -1181,6 +1242,7 @@ mod tests {
         let failed_complete = queue
             .complete(CompleteJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 now: 50,
             })
             .unwrap_err();
@@ -1217,6 +1279,7 @@ mod tests {
         let err = queue
             .fail(FailJob {
                 id: job.id,
+                lease_owner: "worker-a".to_owned(),
                 reason: String::new(),
                 now: 30,
             })
@@ -1269,8 +1332,20 @@ mod tests {
         assert_eq!(claimed.id, job.id);
         assert_eq!(claimed.attempt_count, 1);
 
+        let wrong_owner_retry = queue
+            .retry(RetryJob {
+                id: job.id,
+                lease_owner: "worker-b".to_owned(),
+                backoff_until: 100,
+                last_error: Some("rate limited".to_owned()),
+                now: 25,
+            })
+            .unwrap_err();
+        assert_invalid_transition(wrong_owner_retry, "retry", "leased_by_other");
+
         let RetryOutcome::Retried(retried) = queue.retry(RetryJob {
             id: job.id,
+            lease_owner: "worker-a".to_owned(),
             backoff_until: 100,
             last_error: Some("rate limited".to_owned()),
             now: 30,
