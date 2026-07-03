@@ -164,6 +164,7 @@ pub enum ErrorKind {
     InvariantViolation,
     InvalidKey,
     InvalidFederationGrantBody,
+    InvalidAuthorityLogBody,
     InvalidAccessGrantBody,
     CorruptedIndex,
     ContextPackValidation,
@@ -397,6 +398,8 @@ pub enum Error {
     /// A FEDERATION_GRANT (type 124) body failed structural validation.
     #[error("invalid federation grant body: {0}")]
     InvalidFederationGrantBody(&'static str),
+    #[error("invalid authority log body: {0}")]
+    InvalidAuthorityLogBody(&'static str),
     /// Index metadata or neighbor storage is internally inconsistent.
     #[error("corrupted index: {0}")]
     CorruptedIndex(&'static str),
@@ -871,6 +874,7 @@ impl Error {
             Self::InvariantViolation(_) => ErrorKind::InvariantViolation,
             Self::InvalidKey => ErrorKind::InvalidKey,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
+            Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,

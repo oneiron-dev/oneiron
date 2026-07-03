@@ -3449,7 +3449,7 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 
 /// ONE-1293 fail-closed gate over the maintenance-band type-byte realignment:
 /// vaults written under storage ABI v4 have POLICY_MANIFEST at 122 and
-/// FEDERATION_GRANT at 123, while v5 reserves 122 for AUTHORITY_LOG and moves
+/// FEDERATION_GRANT at 123, while v5 allocates 122 for AUTHORITY_LOG and moves
 /// those kinds to 123/124. There is NO silent migration.
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
@@ -6137,7 +6137,8 @@ fn all_entity_type_prefixes() {
     // = core (band 1–63); COMPANION_REGISTER = companion pack (band
     // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = productivity pack
     // (band 80–99); REDACTION_AUDIT/MODEL/POLICY_MANIFEST/
-    // FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE = maintenance (band 120+).
+    // AUTHORITY_LOG/FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE =
+    // maintenance (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6318,6 +6319,13 @@ fn all_entity_type_prefixes() {
             TypeByteBand::InducedDynamicMaintenance,
         ),
         (
+            "AUTHORITY_LOG",
+            122,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
+        (
             "POLICY_MANIFEST",
             123,
             None,
@@ -6449,7 +6457,7 @@ fn type_byte_band_allocation_matches_contract() {
     // is_structural_kind: false for the semantic byte 0 and for every
     // maintenance-band allocation; true for every REGISTERED core (1..=16)
     // and pack (64/80/81/82/83) kind. The pinned maintenance allocation is:
-    // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG reserved;
+    // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG;
     // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
     // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
     // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved.
@@ -6464,7 +6472,7 @@ fn type_byte_band_allocation_matches_contract() {
     );
     assert!(
         !is_structural_kind(122),
-        "AUTHORITY_LOG byte 122 is reserved but not a StructuralKind"
+        "AUTHORITY_LOG is NOT a StructuralKind (ONE-1324: fold-verified authority log)"
     );
     assert!(
         !is_structural_kind(123),
@@ -6508,9 +6516,7 @@ fn type_byte_band_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
     // with the same typed error.
-    for byte in [
-        17_u8, 63, 79, 84, 99, 100, 119, 122, 125, 126, 127, 130, 255,
-    ] {
+    for byte in [17_u8, 63, 79, 84, 99, 100, 119, 125, 126, 127, 130, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6522,8 +6528,7 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     for (byte, name) in [
-        (122_u8, "AUTHORITY_LOG"),
-        (125, "CONNECTION_RECORD"),
+        (125_u8, "CONNECTION_RECORD"),
         (126, "DIAGNOSTIC"),
         (127, "FEDERATION_KEY_ENVELOPE"),
         (130, "SUSPICIOUS_WAKE"),
@@ -8871,6 +8876,10 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
     for (kind_byte, payload) in [
         (ENTITY_TYPE_REDACTION_AUDIT, b"forged-receipt".as_slice()),
         (ENTITY_TYPE_MODEL, b"forged-model".as_slice()),
+        (
+            ENTITY_TYPE_AUTHORITY_LOG,
+            b"forged-authority-log".as_slice(),
+        ),
         (ENTITY_TYPE_POLICY_MANIFEST, b"forged-policy".as_slice()),
         (ENTITY_TYPE_FEDERATION_GRANT, b"forged-grant".as_slice()),
         (ENTITY_TYPE_ACCESS_GRANT, b"forged-access-grant".as_slice()),
@@ -8941,15 +8950,15 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
 fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    // 121 left this list when ONE-1138 registered MODEL; 123 left it when
-    // GATE-001 registered POLICY_MANIFEST; 124 left it when FED-001
-    // registered FEDERATION_GRANT; 128 left it when EIRI-004 registered
-    // ACCESS_GRANT. Public puts of those bytes now fail
+    // 121 left this list when ONE-1138 registered MODEL; 122 left it when
+    // ONE-1324 registered AUTHORITY_LOG; 123 left it when GATE-001 registered
+    // POLICY_MANIFEST; 124 left it when FED-001 registered FEDERATION_GRANT;
+    // 128 left it when EIRI-004 registered ACCESS_GRANT. Public puts now fail
     // MaintenanceKindNotWritable — covered by the D5 gate test. Reserved
     // unregistered maintenance bytes stay InvalidEntityType:
-    // 122 AUTHORITY_LOG; 125 CONNECTION_RECORD; 126 DIAGNOSTIC;
-    // 127 FEDERATION_KEY_ENVELOPE; 130 SUSPICIOUS_WAKE.
-    for unknown in [99_u8, 122, 125, 126, 127, 130, 200] {
+    // 125 CONNECTION_RECORD; 126 DIAGNOSTIC; 127 FEDERATION_KEY_ENVELOPE;
+    // 130 SUSPICIOUS_WAKE.
+    for unknown in [99_u8, 125, 126, 127, 130, 200] {
         let id = EntityId::now();
         let err = vault
             .put_entity(&id, unknown, test_time_range(1, 1), 2, b"unknown-type")

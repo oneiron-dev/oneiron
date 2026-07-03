@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod access_grant;
 pub mod affect;
 pub mod analyzer;
+pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod claim;
@@ -56,6 +57,16 @@ pub use crate::affect::{
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
+};
+pub use crate::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityAttestation,
+    AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DeviceAuthority, FoldedDevice,
+    ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    fold_authority_log, genesis_vault_id, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::bm25::Bm25Formula;
@@ -152,19 +163,20 @@ pub use crate::types::{
     CompanionRecordKind, CompanionRegister, CompanionScope, CompanionScopeResolution,
     CompanionScopeResolutionSource, CompanionSubject, ContextEntity, ContextPack,
     ContextPackRetrievalBudget, DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4,
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
-    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
-    EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
-    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity,
-    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
-    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
-    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
-    WriteActor, WriteEnvelope, WriteProvenance, companion_value_from_json, companion_value_to_json,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CODE_ARTIFACT,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PSYCH_PROFILE,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
+    EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
+    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
+    EmptyContext, EmptyReason, EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
+    NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
+    PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
+    StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand, UnprocessedItem, Vad,
+    VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, companion_value_from_json, companion_value_to_json,
     decode_companion_record_body, encode_companion_record_body,
 };
 pub use crate::types::{
