@@ -222,6 +222,7 @@ const STRUCTURAL_KIND_REGISTRY_RECORD_HEADER_LEN: usize = 6;
 const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
+const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
 const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
@@ -347,8 +348,29 @@ pub struct RetrievalTraceStageRecord {
     pub candidates: Vec<RetrievalScoreBreakdown>,
 }
 
+/// SHA-256 replay key for a content-addressed [`RetrievalTrace`].
+///
+/// The hash is stored as the raw 32-byte digest, not hex. It is computed by
+/// the retrieval pipeline with the same domain-separated SHA-256 style as the
+/// gate policy frontier hash: length-prefixed UTF-8 strings/bytes, little-endian
+/// integers, one-byte booleans, and IEEE-754 `to_bits()` bytes for floats.
+pub type RetrievalTraceForkHash = [u8; 32];
+
+/// Opt-in per-stage retrieval trace.
+///
+/// `fork_hash` is the content-addressed replay key for fork-and-diff eval. Its
+/// canonical input snapshot is: query inputs for all enabled retrieval channels,
+/// normalized retrieval config and flags, the BM25 rank-profile snapshot, the
+/// pinned recency half-life table, an explicitly supplied replay clock when
+/// present for time-dependent scoring, and the candidate set canonicalized as
+/// sorted, deduplicated `EntityId` bytes. Implicit wall-clock seconds are not
+/// hashed. Legacy traces missing the field decode to the all-zero sentinel, which
+/// is treated as unknown and is not indexed. The trace remains typed msgpack-native;
+/// JSONL/parquet export belongs outside the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalTrace {
+    #[serde(default)]
+    pub fork_hash: RetrievalTraceForkHash,
     pub per_channel: Vec<RetrievalTraceChannelRecord>,
     pub fused: RetrievalTraceStageRecord,
     pub blended: RetrievalTraceStageRecord,
@@ -1314,6 +1336,14 @@ impl Store {
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         if published {
             self.vault_meta.delete(&mut wtxn, &provisional_key)?;
+            if let Some(trace) = &record.trace {
+                put_retrieval_trace_fork_index(
+                    &self.vault_meta,
+                    &mut wtxn,
+                    &trace.fork_hash,
+                    record.run_id,
+                )?;
+            }
         } else {
             self.vault_meta.put(&mut wtxn, &provisional_key, b"1")?;
         }
@@ -1332,6 +1362,7 @@ impl Store {
         let provisional_key = retrieval_run_provisional_key(run_id);
         let outcome_prefix = retrieval_outcome_run_prefix(run_id);
         let mut wtxn = self.env.write_txn()?;
+        delete_retrieval_trace_fork_indexes_for_run(&self.vault_meta, &mut wtxn, &key, run_id)?;
         let mut outcome_keys = Vec::new();
         for row in self.vault_meta.prefix_iter(&wtxn, &outcome_prefix)? {
             let (key, _) = row?;
@@ -1391,6 +1422,14 @@ impl Store {
         record.empty_reason = empty_reason;
         let value = encode_retrieval_run(&record)?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
+        if let Some(trace) = &record.trace {
+            put_retrieval_trace_fork_index(
+                &self.vault_meta,
+                &mut wtxn,
+                &trace.fork_hash,
+                record.run_id,
+            )?;
+        }
         self.vault_meta.delete(&mut wtxn, &provisional_key)?;
         wtxn.commit()?;
         Ok(())
@@ -1498,6 +1537,47 @@ impl Store {
         Ok(Some(record))
     }
 
+    pub(crate) fn retrieval_trace_by_fork_hash(
+        &self,
+        fork_hash: RetrievalTraceForkHash,
+    ) -> Result<Option<RetrievalTrace>> {
+        if is_unknown_retrieval_trace_fork_hash(&fork_hash) {
+            return Ok(None);
+        }
+        let rtxn = self.env.read_txn()?;
+        let prefix = retrieval_trace_fork_prefix(&fork_hash);
+        let mut latest = None::<RetrievalRunRecord>;
+        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
+            let (key, _) = row?;
+            let run_id = retrieval_run_id_from_fork_key(key)?;
+            if self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
+            {
+                continue;
+            }
+            let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
+                return Err(Error::CorruptedIndex("retrieval trace fork index"));
+            };
+            let record = decode_retrieval_run(value)?;
+            let Some(trace) = &record.trace else {
+                return Err(Error::CorruptedIndex("retrieval trace fork index"));
+            };
+            if record.run_id != run_id || trace.fork_hash != fork_hash {
+                return Err(Error::CorruptedIndex("retrieval trace fork index"));
+            }
+            let replace = latest.as_ref().is_none_or(|current| {
+                (record.started_at, record.run_id.as_bytes())
+                    > (current.started_at, current.run_id.as_bytes())
+            });
+            if replace {
+                latest = Some(record);
+            }
+        }
+        Ok(latest.and_then(|record| record.trace))
+    }
+
     pub fn retrieval_outcomes(
         &self,
         run_id: RetrievalRunId,
@@ -1544,10 +1624,83 @@ fn retrieval_run_id_from_key(key: &[u8]) -> Result<RetrievalRunId> {
     let bytes = key
         .strip_prefix(RETRIEVAL_RUN_KEY_PREFIX)
         .ok_or(Error::CorruptedIndex("retrieval run telemetry"))?;
+    retrieval_run_id_from_value(bytes)
+}
+
+fn retrieval_run_id_from_value(bytes: &[u8]) -> Result<RetrievalRunId> {
     let bytes: [u8; 16] = bytes
         .try_into()
         .map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
     Ok(RetrievalRunId { bytes })
+}
+
+fn retrieval_trace_fork_prefix(fork_hash: &RetrievalTraceForkHash) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32);
+    key.extend_from_slice(RETRIEVAL_TRACE_FORK_KEY_PREFIX);
+    key.extend_from_slice(fork_hash);
+    key
+}
+
+fn retrieval_trace_fork_key(fork_hash: &RetrievalTraceForkHash, run_id: RetrievalRunId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32 + 16);
+    key.extend_from_slice(&retrieval_trace_fork_prefix(fork_hash));
+    key.extend_from_slice(&run_id.as_bytes());
+    key
+}
+
+fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> bool {
+    fork_hash.iter().all(|byte| *byte == 0)
+}
+
+fn put_retrieval_trace_fork_index(
+    vault_meta: &Database<Bytes, Bytes>,
+    wtxn: &mut RwTxn<'_>,
+    fork_hash: &RetrievalTraceForkHash,
+    run_id: RetrievalRunId,
+) -> Result<()> {
+    if !is_unknown_retrieval_trace_fork_hash(fork_hash) {
+        vault_meta.put(wtxn, &retrieval_trace_fork_key(fork_hash, run_id), b"1")?;
+    }
+    Ok(())
+}
+
+fn delete_retrieval_trace_fork_indexes_for_run(
+    vault_meta: &Database<Bytes, Bytes>,
+    wtxn: &mut RwTxn<'_>,
+    run_key: &[u8],
+    run_id: RetrievalRunId,
+) -> Result<()> {
+    if let Some(raw) = vault_meta.get(wtxn, run_key)?
+        && let Ok(record) = decode_retrieval_run(raw)
+        && record.run_id == run_id
+        && let Some(trace) = record.trace
+        && !is_unknown_retrieval_trace_fork_hash(&trace.fork_hash)
+    {
+        vault_meta.delete(wtxn, &retrieval_trace_fork_key(&trace.fork_hash, run_id))?;
+        return Ok(());
+    }
+
+    let run_id_bytes = run_id.as_bytes();
+    let expected_len = RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32 + 16;
+    let mut keys = Vec::new();
+    for row in vault_meta.prefix_iter(wtxn, RETRIEVAL_TRACE_FORK_KEY_PREFIX)? {
+        let (key, _) = row?;
+        if key.len() == expected_len && key.ends_with(&run_id_bytes) {
+            keys.push(key.to_vec());
+        }
+    }
+    for key in keys {
+        vault_meta.delete(wtxn, &key)?;
+    }
+    Ok(())
+}
+
+fn retrieval_run_id_from_fork_key(key: &[u8]) -> Result<RetrievalRunId> {
+    let suffix = key
+        .strip_prefix(RETRIEVAL_TRACE_FORK_KEY_PREFIX)
+        .and_then(|bytes| bytes.get(32..))
+        .ok_or(Error::CorruptedIndex("retrieval trace fork index"))?;
+    retrieval_run_id_from_value(suffix)
 }
 
 fn retrieval_run_provisional_key(run_id: RetrievalRunId) -> Vec<u8> {
@@ -2989,6 +3142,7 @@ mod tests {
             None,
         )
         .with_trace(Some(RetrievalTrace {
+            fork_hash: [0xD0; 32],
             per_channel: Vec::new(),
             fused: RetrievalTraceStageRecord {
                 stage: RetrievalTraceStage::Fused,
@@ -3025,6 +3179,236 @@ mod tests {
         assert_eq!(trace.final_stage.candidates.len(), 1);
         assert_eq!(trace.reranked.candidates[1].result_id, *dropped.as_bytes());
         assert_eq!(trace.final_stage.candidates[0].result_id, *kept.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let kept = entity_id(0xD3);
+        let score_breakdown = vec![RetrievalScoreBreakdown {
+            result_id: *kept.as_bytes(),
+            final_rank: 1,
+            final_score: 2.0,
+            components: vec![RetrievalScoreComponent {
+                signal: RetrievalSignal::Text,
+                rank: 1,
+                score: 2.0,
+            }],
+        }];
+        let fork_hash = [0xD3; 32];
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::ContextPack,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            score_breakdown.clone(),
+            0,
+            0,
+            None,
+        )
+        .with_trace(Some(RetrievalTrace {
+            fork_hash,
+            per_channel: Vec::new(),
+            fused: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Fused,
+                candidates: score_breakdown.clone(),
+            },
+            blended: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Blended,
+                candidates: score_breakdown.clone(),
+            },
+            reranked: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Reranked,
+                candidates: score_breakdown.clone(),
+            },
+            final_stage: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Final,
+                candidates: score_breakdown,
+            },
+        }));
+
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&record)?;
+        assert!(
+            vault.retrieval_trace_by_fork_hash(fork_hash)?.is_none(),
+            "provisional context-pack traces must not be fork-hash visible"
+        );
+
+        vault.store.finalize_context_pack_retrieval_run(
+            run_id,
+            10,
+            0,
+            &[*kept.as_bytes()],
+            None,
+        )?;
+
+        assert_eq!(
+            vault
+                .retrieval_trace_by_fork_hash(fork_hash)?
+                .expect("finalized trace should be fork-hash visible")
+                .fork_hash,
+            fork_hash
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_zero_retrieval_trace_fork_hash_is_not_indexed() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let id = entity_id(0xD4);
+        let score_breakdown = vec![RetrievalScoreBreakdown {
+            result_id: *id.as_bytes(),
+            final_rank: 1,
+            final_score: 1.0,
+            components: vec![RetrievalScoreComponent {
+                signal: RetrievalSignal::Text,
+                rank: 1,
+                score: 1.0,
+            }],
+        }];
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            score_breakdown.clone(),
+            0,
+            0,
+            None,
+        )
+        .with_trace(Some(RetrievalTrace {
+            fork_hash: [0; 32],
+            per_channel: Vec::new(),
+            fused: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Fused,
+                candidates: score_breakdown.clone(),
+            },
+            blended: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Blended,
+                candidates: score_breakdown.clone(),
+            },
+            reranked: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Reranked,
+                candidates: score_breakdown.clone(),
+            },
+            final_stage: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Final,
+                candidates: score_breakdown,
+            },
+        }));
+
+        vault.store.record_retrieval_run(&record)?;
+
+        assert!(
+            vault.retrieval_trace_by_fork_hash([0; 32])?.is_none(),
+            "all-zero fork hash is the legacy unknown sentinel, not an index key"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn delete_retrieval_run_removes_fork_index_when_run_row_is_corrupt() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let id = entity_id(0xD5);
+        let score_breakdown = vec![RetrievalScoreBreakdown {
+            result_id: *id.as_bytes(),
+            final_rank: 1,
+            final_score: 1.0,
+            components: vec![RetrievalScoreComponent {
+                signal: RetrievalSignal::Text,
+                rank: 1,
+                score: 1.0,
+            }],
+        }];
+        let fork_hash = [0xD5; 32];
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            score_breakdown.clone(),
+            0,
+            0,
+            None,
+        )
+        .with_trace(Some(RetrievalTrace {
+            fork_hash,
+            per_channel: Vec::new(),
+            fused: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Fused,
+                candidates: score_breakdown.clone(),
+            },
+            blended: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Blended,
+                candidates: score_breakdown.clone(),
+            },
+            reranked: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Reranked,
+                candidates: score_breakdown.clone(),
+            },
+            final_stage: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Final,
+                candidates: score_breakdown,
+            },
+        }));
+
+        vault.store.record_retrieval_run(&record)?;
+        assert!(vault.retrieval_trace_by_fork_hash(fork_hash)?.is_some());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .vault_meta
+            .put(&mut wtxn, &retrieval_run_key(run_id), b"not-msgpack")?;
+        wtxn.commit()?;
+
+        vault.store.delete_retrieval_run(run_id)?;
+        assert!(
+            vault.retrieval_trace_by_fork_hash(fork_hash)?.is_none(),
+            "delete must self-heal stale fork-index rows even when the run row is undecodable"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn delete_retrieval_run_removes_fork_index_when_run_has_no_trace() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let fork_hash = [0xD6; 32];
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            Vec::new(),
+            0,
+            0,
+            None,
+        );
+
+        vault.store.record_retrieval_run(&record)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &retrieval_trace_fork_key(&fork_hash, run_id),
+            b"1",
+        )?;
+        wtxn.commit()?;
+
+        vault.store.delete_retrieval_run(run_id)?;
+        assert!(
+            vault.retrieval_trace_by_fork_hash(fork_hash)?.is_none(),
+            "delete must self-heal stale fork-index rows when the run row has no trace"
+        );
         Ok(())
     }
 

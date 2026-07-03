@@ -85,6 +85,16 @@ pub enum AnalyzerChannel {
 }
 
 impl AnalyzerChannel {
+    pub const ALL_RESERVED: [AnalyzerChannel; 7] = [
+        AnalyzerChannel::Surface,
+        AnalyzerChannel::Stem,
+        AnalyzerChannel::NormalizedOverlay,
+        AnalyzerChannel::CjkNgram,
+        AnalyzerChannel::Shingle,
+        AnalyzerChannel::Synonym,
+        AnalyzerChannel::Phonetic,
+    ];
+
     pub const ALL_V1: [AnalyzerChannel; 4] = [
         AnalyzerChannel::Surface,
         AnalyzerChannel::Stem,
@@ -281,15 +291,7 @@ mod tests {
 
     #[test]
     fn channel_field_id_roundtrip() {
-        for ch in [
-            AnalyzerChannel::Surface,
-            AnalyzerChannel::Stem,
-            AnalyzerChannel::NormalizedOverlay,
-            AnalyzerChannel::CjkNgram,
-            AnalyzerChannel::Shingle,
-            AnalyzerChannel::Synonym,
-            AnalyzerChannel::Phonetic,
-        ] {
+        for ch in AnalyzerChannel::ALL_RESERVED {
             assert_eq!(AnalyzerChannel::from_field_id(ch.field_id()), Some(ch));
         }
     }
