@@ -476,6 +476,69 @@ impl<'a> JobQueue<'a> {
         self.claim_matching_in_txn(wtxn, input, Some(kind))
     }
 
+    /// Repairs ready/dedupe rows while checking whether a queued job of this
+    /// kind is currently claimable, without leasing it.
+    pub(crate) fn repair_kind_ready_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        now: u64,
+    ) -> Result<bool> {
+        validate_kind(kind)?;
+
+        let mut scan = ClaimKindReadScan::default();
+        for row in self.store.job_ready.iter(&*wtxn)? {
+            let (key, value) = row?;
+            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            let Ok(id) = JobId::from_bytes(value) else {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            if id != key_id {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            }
+            let Some(raw_record) = self.store.job_records.get(&*wtxn, id.as_bytes())? else {
+                scan.stale_missing_record_ids.insert(id);
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            };
+            let record = decode_record(raw_record, id)?;
+            if record.state != JobState::Queued {
+                scan.stale_ready_keys.push(key.to_vec());
+                continue;
+            }
+            let record_ready_at = ready_at(&record);
+            if record_ready_at != key_ready_at {
+                scan.stale_ready_keys.push(key.to_vec());
+                if record_ready_at > now {
+                    scan.ready_replacements
+                        .push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+                if record.kind != kind {
+                    scan.ready_replacements
+                        .push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+            } else if record_ready_at > now || record.kind != kind {
+                continue;
+            }
+            scan.candidate = Some(ClaimKindCandidate {
+                ready_key: key.to_vec(),
+                id,
+            });
+            break;
+        }
+
+        let has_candidate = scan.candidate.is_some();
+        self.apply_claim_kind_read_repairs(wtxn, scan)?;
+        Ok(has_candidate)
+    }
+
     fn claim_kind_with_read_scan(&self, kind: &str, input: ClaimJob) -> Result<ClaimOutcome> {
         for _ in 0..CLAIM_KIND_WRITE_RETRY_LIMIT {
             let scan = self.scan_claim_kind_ready_rows(kind, input.now)?;
