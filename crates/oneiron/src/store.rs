@@ -100,6 +100,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::str;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 use heed::types::{Bytes, Str};
@@ -809,6 +810,8 @@ pub struct Store {
     pub(crate) job_ready: Database<Bytes, Bytes>,
     /// Advisory dedupe index keys mapped to job ids.
     pub(crate) job_dedupe: Database<Bytes, Bytes>,
+    /// Process-local clock domain for monotonic authority first-seen windows.
+    pub(crate) authority_clock_domain: usize,
     /// True only for the open call that created a previously absent LMDB root.
     created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
@@ -816,6 +819,14 @@ pub struct Store {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     _registered_path: RegisteredPath,
+}
+
+static NEXT_AUTHORITY_CLOCK_DOMAIN: AtomicUsize = AtomicUsize::new(1);
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        crate::authority::release_authority_clock_domain(self.authority_clock_domain);
+    }
 }
 
 impl Store {
@@ -961,6 +972,8 @@ impl Store {
             job_records,
             job_ready,
             job_dedupe,
+            authority_clock_domain: NEXT_AUTHORITY_CLOCK_DOMAIN
+                .fetch_add(1, AtomicOrdering::Relaxed),
             created_new_vault: is_new_vault,
             _registered_path: registered_path,
         })

@@ -61,11 +61,13 @@ pub use crate::analyzer::{
 pub use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityAttestation,
     AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash, AuthorityFold,
-    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DeviceAuthority, FoldedDevice,
-    ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
-    fold_authority_log, genesis_vault_id, validate_authority_log_entry_body_bytes,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden,
+    AuthoritySignature, AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId,
+    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FoldedDevice,
+    MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, fold_authority_log,
+    fold_authority_log_with_seen_times, genesis_vault_id, validate_authority_log_entry_body_bytes,
     verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
