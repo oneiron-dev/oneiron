@@ -1,0 +1,469 @@
+{
+  "cases": [
+    {
+      "name": "nav_valid_search",
+      "tool": "oneiron.nav",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222",
+            "facet_ref": "33333333333333333333333333333333"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "navigate_context",
+          "approval_ref": "approval:one-1215",
+          "consent_receipt_ref": "consent:one-1215",
+          "require_human_approval": false
+        },
+        "mode": "search",
+        "query": "launch plan",
+        "limit": 5
+      }
+    },
+    {
+      "name": "read_valid_entity",
+      "tool": "oneiron.read",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222",
+            "facet_ref": "33333333333333333333333333333333"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context",
+          "approval_ref": "approval:one-1215",
+          "consent_receipt_ref": "consent:one-1215",
+          "require_human_approval": false
+        },
+        "target": {
+          "entity_ref": "44444444444444444444444444444444"
+        }
+      }
+    },
+    {
+      "name": "edit_valid_remember",
+      "tool": "oneiron.edit",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222",
+            "facet_ref": "33333333333333333333333333333333"
+          }
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory",
+          "approval_ref": "approval:one-1215",
+          "consent_receipt_ref": "consent:one-1215",
+          "require_human_approval": true
+        },
+        "verb": "remember",
+        "idempotency_key": "mcp-fixture-remember-1",
+        "dry_run": true,
+        "entity": {
+          "id": "55555555555555555555555555555555",
+          "entity_type": 1,
+          "body": {
+            "txt": "Fixture memory for MCP schema validation",
+            "spkr": "agent"
+          },
+          "text": [
+            {
+              "field": "body",
+              "value": "Fixture memory for MCP schema validation"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "ask_valid_preserves_metadata",
+      "tool": "oneiron.ask",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222",
+            "facet_ref": "33333333333333333333333333333333"
+          }
+        },
+        "context_pack": {
+          "schema_version": "context_pack_ref.v1",
+          "context_version": "v4",
+          "pack_ref": "context-pack:one-1215",
+          "retrieval_run_id": "retrieval:one-1215",
+          "result_ids": [
+            "77777777777777777777777777777777"
+          ],
+          "budget_ref": "budget:standard"
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question",
+          "approval_ref": "approval:one-1215",
+          "consent_receipt_ref": "consent:one-1215",
+          "require_human_approval": false
+        },
+        "query": "What context supports the launch plan?",
+        "effort": "standard",
+        "citation_mode": "claim_refs"
+      }
+    },
+    {
+      "name": "routed_ask_valid_preserves_metadata",
+      "tool": "oneiron.ask_routed",
+      "valid": true,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {
+            "world_ref": "22222222222222222222222222222222",
+            "facet_ref": "33333333333333333333333333333333"
+          }
+        },
+        "context_pack": {
+          "schema_version": "context_pack_ref.v1",
+          "context_version": "v4",
+          "pack_ref": "context-pack:one-1215",
+          "retrieval_run_id": "retrieval:one-1215",
+          "result_ids": [
+            "77777777777777777777777777777777"
+          ],
+          "budget_ref": "budget:standard"
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question",
+          "approval_ref": "approval:one-1215",
+          "consent_receipt_ref": "consent:one-1215",
+          "require_human_approval": false
+        },
+        "query": "What context supports the launch plan?",
+        "route": {
+          "model_tier": "routed-small",
+          "model_id": "model:test-route",
+          "substrate_ref": "substrate:foreign-mcp",
+          "reasoning_effort": "minimal",
+          "max_latency_ms": 1500
+        },
+        "effort": "minimal",
+        "citation_mode": "claim_refs_and_spans"
+      }
+    },
+    {
+      "name": "edit_invalid_unknown_field",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "remember",
+        "idempotency_key": "mcp-fixture-invalid-extra",
+        "entity": {
+          "entity_type": 1,
+          "body": {
+            "txt": "This should not execute"
+          }
+        },
+        "extra": true
+      }
+    },
+    {
+      "name": "edit_invalid_remember_occurrence_range",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "remember",
+        "idempotency_key": "mcp-fixture-invalid-occurrence-range",
+        "entity": {
+          "entity_type": 1,
+          "occurred_start": 20,
+          "occurred_end": 10,
+          "body": {
+            "txt": "This impossible range should not execute"
+          }
+        }
+      }
+    },
+    {
+      "name": "ask_invalid_missing_context_pack",
+      "tool": "oneiron.ask",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question"
+        },
+        "query": "What context supports the launch plan?"
+      }
+    },
+    {
+      "name": "routed_ask_invalid_context_pack_version",
+      "tool": "oneiron.ask_routed",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "context_pack": {
+          "schema_version": "context_pack_ref.v2",
+          "pack_ref": "context-pack:one-1215"
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question"
+        },
+        "query": "What context supports the launch plan?",
+        "route": {
+          "model_tier": "routed-small"
+        }
+      }
+    },
+    {
+      "name": "read_invalid_ambiguous_target",
+      "tool": "oneiron.read",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context"
+        },
+        "target": {
+          "entity_ref": "44444444444444444444444444444444",
+          "short_ref": "abc123:4f"
+        }
+      }
+    },
+    {
+      "name": "read_invalid_short_ref_shape",
+      "tool": "oneiron.read",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context"
+        },
+        "target": {
+          "short_ref": "not-a-ref"
+        }
+      }
+    },
+    {
+      "name": "edit_invalid_delete_reason",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "delete",
+        "idempotency_key": "mcp-fixture-invalid-delete-reason",
+        "id": "44444444444444444444444444444444",
+        "reason": "gdpr_delete"
+      }
+    },
+    {
+      "name": "edit_invalid_delete_missing_reason",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "delete",
+        "idempotency_key": "mcp-fixture-missing-delete-reason",
+        "id": "44444444444444444444444444444444"
+      }
+    },
+    {
+      "name": "edit_invalid_hard_delete_missing_reason",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "hard_delete",
+        "idempotency_key": "mcp-fixture-missing-hard-delete-reason",
+        "id": "44444444444444444444444444444444"
+      }
+    },
+    {
+      "name": "ask_invalid_blank_query",
+      "tool": "oneiron.ask",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "context_pack": {
+          "schema_version": "context_pack_ref.v1",
+          "pack_ref": "context-pack:one-1215"
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question"
+        },
+        "query": "   "
+      }
+    },
+    {
+      "name": "read_invalid_context_pack_missing_handle",
+      "tool": "oneiron.read",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context"
+        },
+        "target": {
+          "context_pack": {
+            "schema_version": "context_pack_ref.v1"
+          }
+        }
+      }
+    },
+    {
+      "name": "nav_invalid_actor_class_mismatch",
+      "tool": "oneiron.nav",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "human",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "navigate_context"
+        },
+        "mode": "list"
+      }
+    }
+  ]
+}
