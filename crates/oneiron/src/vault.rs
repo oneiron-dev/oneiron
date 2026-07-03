@@ -71,18 +71,18 @@ use crate::store::{
 };
 use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification,
-    CompanionRecord, CompanionRecordKey, CompanionRegister, EDGE_KEY_LEN, ENTITY_ID_LEN,
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ClaimCandidate,
+    CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionRegister,
+    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
     ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
     EntityClassification, EntityId, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
     ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
-    VadAnnotationSource, VaultConfig, bytes_to_hex_lower, decode_companion_record_body,
-    decode_edge_value_for_kind, edge_value_layout_for_kind, encode_companion_record_body,
-    entity_type_registry_entry,
+    VadAnnotationSource, VaultConfig, WriteEnvelope, bytes_to_hex_lower,
+    decode_companion_record_body, decode_edge_value_for_kind, edge_value_layout_for_kind,
+    encode_companion_record_body, entity_type_registry_entry,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -2453,6 +2453,37 @@ impl Vault {
             &self.analyzer,
             &mut wtxn,
             ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
+        &self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::ClaimCandidate {
+                id: *id,
+                candidate: Box::new(candidate),
+                envelope: envelope.clone(),
+                occurred,
+                learned_at,
+                internal_lexical_query_hint: false,
+            }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
