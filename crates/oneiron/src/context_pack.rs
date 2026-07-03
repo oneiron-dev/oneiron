@@ -286,6 +286,11 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
+        self.pipeline = self.pipeline.capture_retrieval_trace(enabled);
+        self
+    }
+
     pub fn boost_salience(mut self) -> Self {
         self.pipeline = self.pipeline.boost_salience();
         self
@@ -4552,6 +4557,46 @@ mod tests {
         assert_eq!(runs[0].result_ids, vec![*live.as_bytes()]);
         assert_eq!(runs[0].score_breakdown.len(), 1);
         assert_eq!(runs[0].score_breakdown[0].result_id, *live.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_trace_finalization_updates_final_stage() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let kept = EntityId::from_bytes_unchecked([0x75; 16]);
+        let dropped = EntityId::from_bytes_unchecked([0x76; 16]);
+        put_claim_text_entity(&vault, &kept, "tracebudget", "test.kept", "kept")?;
+        put_claim_text_entity(&vault, &dropped, "tracebudget", "test.dropped", "dropped")?;
+
+        let pack_with_telemetry = vault
+            .context_pack()
+            .search_text("tracebudget", 10)
+            .limit(2)
+            .retrieval_budget(ContextPackRetrievalBudget::new(1, 0, 0, 0, 0, 0))
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()?;
+        let run_id = pack_with_telemetry
+            .run_id
+            .expect("context-pack trace telemetry run id");
+        assert_eq!(pack_with_telemetry.value.results.len(), 1);
+        assert_eq!(pack_with_telemetry.value.results[0].id, kept);
+
+        let run = vault
+            .retrieval_run(run_id)?
+            .expect("context-pack trace telemetry record");
+        let trace = run.trace.expect("context-pack trace");
+        assert_eq!(
+            trace.reranked.stage,
+            crate::store::RetrievalTraceStage::Reranked
+        );
+        assert_eq!(
+            trace.final_stage.stage,
+            crate::store::RetrievalTraceStage::Final
+        );
+        assert_eq!(trace.final_stage.candidates.len(), 1);
+        assert_eq!(trace.final_stage.candidates[0].result_id, *kept.as_bytes());
+        assert!(!run.result_ids.contains(dropped.as_bytes()));
         Ok(())
     }
 

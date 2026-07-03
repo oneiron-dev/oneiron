@@ -18,7 +18,8 @@ use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, Store,
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord,
+    RetrievalTraceStage, RetrievalTraceStageRecord, Store,
 };
 use crate::types::{
     ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
@@ -40,6 +41,7 @@ const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
+const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
 /// Default recency half-life in days (ARCH-0004 `RECENCY_DECAY`,
 /// 28-day default). The recency signal's source timestamp is the
@@ -396,6 +398,7 @@ pub struct PipelineBuilder<'a> {
     temporal_adaptive_default: bool,
     temporal_now: Option<u64>,
     telemetry_action: RetrievalAction,
+    capture_retrieval_trace: bool,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -427,6 +430,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_adaptive_default: true,
             temporal_now: None,
             telemetry_action: RetrievalAction::Pipeline,
+            capture_retrieval_trace: false,
         }
     }
 
@@ -441,6 +445,12 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn context_pack_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {
         self.context_pack_budget = Some(budget);
+        self
+    }
+
+    /// Enables opt-in per-stage retrieval trace capture for this run.
+    pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
+        self.capture_retrieval_trace = enabled;
         self
     }
 
@@ -774,6 +784,8 @@ impl<'a> PipelineBuilder<'a> {
         }
         let no_data_fallback_eligible = self.no_data_fallback_eligible();
         let mut ppr_expand_executed = false;
+        let capture_retrieval_trace = self.capture_retrieval_trace;
+        let trace_candidate_limit = self.result_limit;
 
         // Resolve the rank profile before anything else: an invalid
         // profile is a caller bug and fails closed even when no text
@@ -813,9 +825,15 @@ impl<'a> PipelineBuilder<'a> {
             total_in_scope,
             empty_reason,
             signal_components,
+            retrieval_trace,
         ) = {
             let mut ranked_lists = Vec::new();
             let mut signal_components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
+            let mut trace_channels = Vec::<RetrievalTraceChannelRecord>::new();
+            let mut trace_ranked_lists = Vec::<Vec<ScoredEntity>>::new();
+            let mut trace_claim_gate = ClaimStatusGateCache::default();
+            let mut fused_trace_scores = None;
+            let mut blended_trace_scores = None;
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
@@ -934,6 +952,23 @@ impl<'a> PipelineBuilder<'a> {
                     RetrievalSignal::Vector,
                     &vector_results,
                 );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &vector_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Vector,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
                 vector_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(vector_results);
             }
@@ -994,6 +1029,23 @@ impl<'a> PipelineBuilder<'a> {
                     RetrievalSignal::Text,
                     &text_results,
                 );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &text_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Text,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
                 text_channel_index = Some(ranked_lists.len());
                 ranked_lists.push(text_results);
             }
@@ -1005,6 +1057,23 @@ impl<'a> PipelineBuilder<'a> {
                     RetrievalSignal::Phonetic,
                     &phonetic_results,
                 );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &phonetic_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Phonetic,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
                 ranked_lists.push(phonetic_results);
             }
 
@@ -1027,6 +1096,23 @@ impl<'a> PipelineBuilder<'a> {
                     RetrievalSignal::Temporal,
                     &temporal_results,
                 );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &temporal_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Temporal,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
                 ranked_lists.push(temporal_results);
             }
 
@@ -1048,6 +1134,23 @@ impl<'a> PipelineBuilder<'a> {
                     RetrievalSignal::Ppr,
                     &ppr_results,
                 );
+                if capture_retrieval_trace {
+                    let trace_results = filter_retrieval_trace_scores(
+                        &ppr_results,
+                        &self.vault.store,
+                        &rtxn,
+                        filter_config,
+                        &mut metadata_cache,
+                        &mut trace_claim_gate,
+                        trace_candidate_limit,
+                    )?;
+                    trace_channels.push(retrieval_trace_channel_record(
+                        RetrievalSignal::Ppr,
+                        &trace_results,
+                        trace_candidate_limit,
+                    ));
+                    trace_ranked_lists.push(trace_results);
+                }
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
@@ -1074,6 +1177,12 @@ impl<'a> PipelineBuilder<'a> {
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
             };
+            if capture_retrieval_trace {
+                fused_trace_scores = Some(retrieval_trace_fused_scores(
+                    &trace_ranked_lists,
+                    trace_candidate_limit,
+                ));
+            }
             let (mut scores, mut cosine_ghosts_dampened) = blended_retrieval_scores(
                 &ranked_lists,
                 vector_channel_index,
@@ -1164,8 +1273,31 @@ impl<'a> PipelineBuilder<'a> {
                         RetrievalSignal::Ppr,
                         &ppr_results,
                     );
+                    if capture_retrieval_trace {
+                        let trace_results = filter_retrieval_trace_scores(
+                            &ppr_results,
+                            &self.vault.store,
+                            &rtxn,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut trace_claim_gate,
+                            trace_candidate_limit,
+                        )?;
+                        trace_channels.push(retrieval_trace_channel_record(
+                            RetrievalSignal::Ppr,
+                            &trace_results,
+                            trace_candidate_limit,
+                        ));
+                        trace_ranked_lists.push(trace_results);
+                    }
                     blend_allowed_ids.extend(ppr_results.iter().map(|scored| scored.id));
                     ranked_lists.push(ppr_results);
+                    if capture_retrieval_trace {
+                        fused_trace_scores = Some(retrieval_trace_fused_scores(
+                            &trace_ranked_lists,
+                            trace_candidate_limit,
+                        ));
+                    }
                     let (blended, dampened) = blended_retrieval_scores(
                         &ranked_lists,
                         vector_channel_index,
@@ -1228,6 +1360,10 @@ impl<'a> PipelineBuilder<'a> {
             if before_world > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::FilterMatchedNone);
             }
+            if capture_retrieval_trace {
+                blended_trace_scores =
+                    Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
+            }
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
@@ -1252,6 +1388,39 @@ impl<'a> PipelineBuilder<'a> {
                 empty_reason = Some(EmptyReason::NoData);
             }
             let pending_vectors = pending_vectors_for_scores(&self.vault.store, &rtxn, &scores)?;
+            let retrieval_trace = if capture_retrieval_trace {
+                let final_scores = retrieval_trace_top_scores(&scores, trace_candidate_limit);
+                let blended_scores = blended_trace_scores.unwrap_or_default();
+                Some(RetrievalTrace {
+                    per_channel: trace_channels,
+                    fused: retrieval_trace_stage_record(
+                        RetrievalTraceStage::Fused,
+                        &fused_trace_scores.unwrap_or_default(),
+                        &signal_components,
+                        trace_candidate_limit,
+                    ),
+                    blended: retrieval_trace_stage_record(
+                        RetrievalTraceStage::Blended,
+                        &blended_scores,
+                        &signal_components,
+                        trace_candidate_limit,
+                    ),
+                    reranked: retrieval_trace_stage_record(
+                        RetrievalTraceStage::Reranked,
+                        &final_scores,
+                        &signal_components,
+                        trace_candidate_limit,
+                    ),
+                    final_stage: retrieval_trace_stage_record(
+                        RetrievalTraceStage::Final,
+                        &final_scores,
+                        &signal_components,
+                        trace_candidate_limit,
+                    ),
+                })
+            } else {
+                None
+            };
             (
                 scores,
                 pending_vectors,
@@ -1261,6 +1430,7 @@ impl<'a> PipelineBuilder<'a> {
                 total_in_scope,
                 empty_reason,
                 signal_components,
+                retrieval_trace,
             )
         };
 
@@ -1296,7 +1466,8 @@ impl<'a> PipelineBuilder<'a> {
             total_in_scope,
             claims_suppressed,
             empty_reason.map(|reason| format!("{reason:?}")),
-        );
+        )
+        .with_trace(retrieval_trace);
         let write_result = if telemetry_action == RetrievalAction::ContextPack {
             self.vault
                 .store
@@ -1456,12 +1627,83 @@ fn add_signal_score_components(
     }
 }
 
+fn retrieval_trace_channel_record(
+    signal: RetrievalSignal,
+    scores: &[ScoredEntity],
+    limit: usize,
+) -> RetrievalTraceChannelRecord {
+    RetrievalTraceChannelRecord {
+        stage: RetrievalTraceStage::PerChannel,
+        signal,
+        candidates: scores
+            .iter()
+            .take(limit)
+            .enumerate()
+            .map(|(rank, scored)| RetrievalScoreBreakdown {
+                result_id: *scored.id.as_bytes(),
+                final_rank: (rank + 1).min(u32::MAX as usize) as u32,
+                final_score: scored.score,
+                components: vec![RetrievalScoreComponent {
+                    signal,
+                    rank: (rank + 1).min(u32::MAX as usize) as u32,
+                    score: scored.score,
+                }],
+            })
+            .collect(),
+    }
+}
+
+fn retrieval_trace_fused_scores(
+    ranked_lists: &[Vec<ScoredEntity>],
+    limit: usize,
+) -> Vec<ScoredEntity> {
+    let mut scores = HashMap::<EntityId, f32>::new();
+    for ranked in ranked_lists {
+        for (rank, scored) in ranked.iter().take(limit).enumerate() {
+            let rank = (rank + 1).min(u32::MAX as usize) as f32;
+            *scores.entry(scored.id).or_default() += 1.0 / (RETRIEVAL_TRACE_RRF_K + rank);
+        }
+    }
+
+    let mut scores: Vec<ScoredEntity> = scores
+        .into_iter()
+        .map(|(id, score)| ScoredEntity { id, score })
+        .collect();
+    fusion::sort_scored_entities_desc(&mut scores);
+    retrieval_trace_top_scores(&scores, limit)
+}
+
+fn retrieval_trace_top_scores(scores: &[ScoredEntity], limit: usize) -> Vec<ScoredEntity> {
+    scores.iter().take(limit).copied().collect()
+}
+
+fn retrieval_trace_stage_record(
+    stage: RetrievalTraceStage,
+    scores: &[ScoredEntity],
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    limit: usize,
+) -> RetrievalTraceStageRecord {
+    RetrievalTraceStageRecord {
+        stage,
+        candidates: retrieval_score_breakdown(scores, components, limit),
+    }
+}
+
 fn telemetry_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
 ) -> Vec<RetrievalScoreBreakdown> {
+    retrieval_score_breakdown(scores, components, scores.len())
+}
+
+fn retrieval_score_breakdown(
+    scores: &[ScoredEntity],
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    limit: usize,
+) -> Vec<RetrievalScoreBreakdown> {
     scores
         .iter()
+        .take(limit)
         .enumerate()
         .map(|(rank, scored)| RetrievalScoreBreakdown {
             result_id: *scored.id.as_bytes(),
@@ -1514,6 +1756,38 @@ fn truncate_widened_text_results_to_scope(
 
     *scores = filtered;
     Ok(())
+}
+
+fn filter_retrieval_trace_scores(
+    scores: &[ScoredEntity],
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    filters: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+    limit: usize,
+) -> Result<Vec<ScoredEntity>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut filtered = Vec::with_capacity(limit.min(scores.len()));
+    for scored in scores.iter().copied() {
+        if pipeline_candidate_matches_filters_and_gate(
+            store,
+            rtxn,
+            &scored.id,
+            filters,
+            metadata_cache,
+            claim_gate,
+        )? {
+            filtered.push(scored);
+            if filtered.len() == limit {
+                break;
+            }
+        }
+    }
+    Ok(filtered)
 }
 
 fn scoped_vector_channel_limit(
@@ -3065,6 +3339,37 @@ mod tests {
             .commit()
     }
 
+    fn put_codebase_vector(
+        vault: &Vault,
+        id: EntityId,
+        project_id: &str,
+        repo_ref: RepoRef,
+        vector: [f32; 4],
+    ) -> Result<()> {
+        let canonical_repo_ref = repo_ref.canonical();
+        let commit_hash = canonical_repo_ref
+            .split_once('#')
+            .map(|(_, commit_hash)| commit_hash.to_owned());
+        let body = crate::code_artifact::CodeArtifactBody::new(
+            "Summarize the codebase snapshot.",
+            [0xA5; crate::code_artifact::CODE_ARTIFACT_SUMMARY_HASH_LEN],
+            canonical_repo_ref,
+        );
+        vault.put_code_artifact(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+        let snapshot = crate::codebase::CodebaseSnapshot::new(
+            project_id,
+            repo_ref,
+            commit_hash,
+            vec![crate::codebase::CodebaseFileEntry::new(
+                "src/lib.rs",
+                [0xC0; crate::codebase::CODEBASE_CONTENT_HASH_LEN],
+                1,
+            )],
+        )?;
+        vault.put_codebase_snapshot(&id, &snapshot)?;
+        vault.batch().vector(&id, &vector).commit()
+    }
+
     fn put_text_and_vector_with_time(
         vault: &Vault,
         id: EntityId,
@@ -3577,6 +3882,307 @@ mod tests {
         assert_eq!(runs[0].run_id, run_id);
         assert!(runs[0].result_ids.is_empty());
         assert_eq!(runs[0].empty_reason.as_deref(), Some("NoData"));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_capture_is_flag_off_by_default() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0xB0);
+        put_text_and_vector(&vault, id, "trace default off", [1.0, 0.0, 0.0, 0.0])?;
+
+        let results = vault
+            .query()
+            .search_text("trace default", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .run_with_telemetry()?;
+        assert_eq!(results.value.len(), 1);
+        let run_id = results.run_id.expect("trace default off run id");
+
+        let runs = vault.retrieval_runs(1)?;
+        assert_eq!(runs[0].run_id, run_id);
+        assert_eq!(runs[0].trace, None);
+        assert_eq!(runs[0].result_ids, vec![*id.as_bytes()]);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_capture_records_all_pipeline_stages() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let text_id = entity_id(0xB1);
+        let vector_id = entity_id(0xB2);
+
+        put_text_and_vector(&vault, text_id, "trace stage fixture", [1.0, 0.0, 0.0, 0.0])?;
+        put_text_and_vector(
+            &vault,
+            vector_id,
+            "trace stage neighbor",
+            [0.8, 0.2, 0.0, 0.0],
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("trace stage fixture", 10)
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()?;
+        assert!(!results.value.is_empty());
+        let run_id = results.run_id.expect("trace capture run id");
+
+        let run = vault
+            .retrieval_run(run_id)?
+            .expect("trace capture telemetry run");
+        let trace = run.trace.expect("trace should be captured");
+
+        assert!(trace.per_channel.len() >= 2);
+        assert!(
+            trace
+                .per_channel
+                .iter()
+                .any(|channel| channel.signal == RetrievalSignal::Text)
+        );
+        assert!(
+            trace
+                .per_channel
+                .iter()
+                .any(|channel| channel.signal == RetrievalSignal::Vector)
+        );
+        for channel in &trace.per_channel {
+            assert_eq!(channel.stage, RetrievalTraceStage::PerChannel);
+            assert!(!channel.candidates.is_empty());
+            assert!(channel.candidates.iter().all(|candidate| {
+                candidate.final_score.is_finite()
+                    && candidate
+                        .components
+                        .iter()
+                        .any(|component| component.signal == channel.signal)
+            }));
+        }
+
+        for stage in [
+            &trace.fused,
+            &trace.blended,
+            &trace.reranked,
+            &trace.final_stage,
+        ] {
+            assert!(!stage.candidates.is_empty());
+            assert!(
+                stage
+                    .candidates
+                    .iter()
+                    .all(|candidate| candidate.final_score.is_finite())
+            );
+        }
+        assert_eq!(trace.fused.stage, RetrievalTraceStage::Fused);
+        assert!(
+            trace
+                .fused
+                .candidates
+                .iter()
+                .all(|candidate| candidate.final_score > 0.0 && candidate.final_score < 1.0),
+            "fused trace should carry rank-fusion scores, not neutral blend placeholders"
+        );
+        assert_eq!(trace.blended.stage, RetrievalTraceStage::Blended);
+        assert_eq!(trace.reranked.stage, RetrievalTraceStage::Reranked);
+        assert_eq!(trace.final_stage.stage, RetrievalTraceStage::Final);
+        assert_eq!(trace.reranked.candidates, trace.final_stage.candidates);
+        assert_eq!(
+            trace
+                .final_stage
+                .candidates
+                .iter()
+                .map(|candidate| candidate.result_id)
+                .collect::<Vec<_>>(),
+            run.result_ids
+        );
+        Ok(())
+    }
+
+    fn trace_candidates_contain(candidates: &[RetrievalScoreBreakdown], id: EntityId) -> bool {
+        candidates
+            .iter()
+            .any(|candidate| candidate.result_id == *id.as_bytes())
+    }
+
+    #[test]
+    fn retrieval_trace_filters_d19_suppressed_claims() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let live = entity_id(0xC3);
+        let retracted = entity_id(0xC4);
+        put_status_claim(
+            &vault,
+            live,
+            "tracegate tracegate",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            retracted,
+            "tracegate tracegate tracegate",
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+
+        let results = vault
+            .query()
+            .search_text("tracegate", 10)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()?;
+        assert!(results.value.iter().any(|scored| scored.id == live));
+        assert!(!results.value.iter().any(|scored| scored.id == retracted));
+        let run = vault
+            .retrieval_run(results.run_id.expect("trace run id"))?
+            .expect("trace run");
+        let trace = run.trace.expect("trace captured");
+
+        let text_channel = trace
+            .per_channel
+            .iter()
+            .find(|channel| channel.signal == RetrievalSignal::Text)
+            .expect("text trace channel");
+        assert!(trace_candidates_contain(&text_channel.candidates, live));
+        assert!(!trace_candidates_contain(
+            &text_channel.candidates,
+            retracted
+        ));
+        for stage in [
+            &trace.fused,
+            &trace.blended,
+            &trace.reranked,
+            &trace.final_stage,
+        ] {
+            assert!(!trace_candidates_contain(&stage.candidates, retracted));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_filters_scoped_vector_candidates() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let out_of_scope = entity_id(0xC5);
+        let in_scope = entity_id(0xC6);
+        let repo_a =
+            RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")?;
+        let repo_b =
+            RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+        put_codebase_vector(
+            &vault,
+            out_of_scope,
+            "project.alpha",
+            repo_a,
+            [1.0, 0.0, 0.0, 0.0],
+        )?;
+        put_codebase_vector(
+            &vault,
+            in_scope,
+            "project.beta",
+            repo_b,
+            [0.0, 1.0, 0.0, 0.0],
+        )?;
+
+        let results = vault
+            .query()
+            .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+            .filter_project_id("project.beta")
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()?;
+        assert_eq!(results.value.len(), 1);
+        assert_eq!(results.value[0].id, in_scope);
+        let run = vault
+            .retrieval_run(results.run_id.expect("trace run id"))?
+            .expect("trace run");
+        let trace = run.trace.expect("trace captured");
+
+        let vector_channel = trace
+            .per_channel
+            .iter()
+            .find(|channel| channel.signal == RetrievalSignal::Vector)
+            .expect("vector trace channel");
+        assert!(trace_candidates_contain(
+            &vector_channel.candidates,
+            in_scope
+        ));
+        assert!(!trace_candidates_contain(
+            &vector_channel.candidates,
+            out_of_scope
+        ));
+        for stage in [
+            &trace.fused,
+            &trace.blended,
+            &trace.reranked,
+            &trace.final_stage,
+        ] {
+            assert!(!trace_candidates_contain(&stage.candidates, out_of_scope));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_trace_fused_scores_are_bounded_by_trace_limit() {
+        let first = entity_id(0xC1);
+        let ignored = entity_id(0xC2);
+
+        let fused = retrieval_trace_fused_scores(
+            &[vec![
+                ScoredEntity {
+                    id: first,
+                    score: 1.0,
+                },
+                ScoredEntity {
+                    id: ignored,
+                    score: 0.9,
+                },
+            ]],
+            1,
+        );
+
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].id, first);
+    }
+
+    #[test]
+    fn retrieval_trace_is_decoupled_from_outcome_records() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let traced_id = entity_id(0xB3);
+        let outcome_only_id = entity_id(0xB4);
+        put_text(&vault, traced_id, "traceonlyalpha")?;
+        put_text(&vault, outcome_only_id, "outcomeonlybeta")?;
+
+        let traced = vault
+            .query()
+            .search_text("traceonlyalpha", 10)
+            .capture_retrieval_trace(true)
+            .run_with_telemetry()?;
+        assert_eq!(traced.value.len(), 1);
+        let traced_run_id = traced.run_id.expect("traced run id");
+        let traced_run = vault
+            .retrieval_run(traced_run_id)?
+            .expect("traced telemetry row");
+        assert!(traced_run.trace.is_some());
+        assert!(vault.retrieval_outcomes(traced_run_id)?.is_empty());
+
+        let outcome_only = vault
+            .query()
+            .search_text("outcomeonlybeta", 10)
+            .run_with_telemetry()?;
+        assert_eq!(outcome_only.value.len(), 1);
+        let outcome_run_id = outcome_only.run_id.expect("outcome-only run id");
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id: outcome_run_id,
+            key: "click".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+        let outcome_run = vault
+            .retrieval_run(outcome_run_id)?
+            .expect("outcome-only telemetry row");
+        assert!(outcome_run.trace.is_none());
+        assert_eq!(vault.retrieval_outcomes(outcome_run_id)?.len(), 1);
         Ok(())
     }
 
