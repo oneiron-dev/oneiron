@@ -13,12 +13,17 @@ use crate::claim::{
 pub mod companion;
 pub use companion::{
     COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, COMPANION_REGISTER_PACK_ID,
-    COMPANION_REGISTER_SHORT_ID_PREFIX, CompanionExportClassification, CompanionExpression,
-    CompanionExpressionRegister, CompanionProvenance, CompanionRecord, CompanionRecordKey,
-    CompanionRecordKind, CompanionRegister, CompanionScope, CompanionScopeResolution,
-    CompanionScopeResolutionSource, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
-    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
-    encode_companion_record_body,
+    COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_JOB_KIND, COMPANION_TASK_PAYLOAD_KEYS,
+    COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ClaimCompanionTask, ClaimCompanionTaskOutcome,
+    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
+    CompanionProvenance, CompanionQueue, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
+    CompanionRegister, CompanionScope, CompanionScopeResolution, CompanionScopeResolutionSource,
+    CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask,
+    CompleteCompanionTaskOutcome, ENTITY_TYPE_COMPANION_REGISTER, EnqueueCompanionTask,
+    EnqueueCompanionTaskOutcome, FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask,
+    RetryCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
+    decode_companion_record_body, decode_companion_task_payload, encode_companion_record_body,
+    encode_companion_task_payload,
 };
 
 #[path = "psych_profile.rs"]
