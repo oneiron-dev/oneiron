@@ -4,12 +4,12 @@
 //! 1. Phase 1: Root doc sync (send snapshot to new client)
 //! 2. Phase 2: Default windows (current + previous) via VV exchange + updates
 //! 3. Phase 3: Historical windows via BulkTransfer (oldest first) + BulkTransferDone
-//! 4. Ongoing: bidirectional incremental sync via WindowSync + Awareness
+//! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
 use std::collections::HashSet;
 use std::io::Read;
 use std::sync::Arc;
-use std::time::Instant as StdInstant;
+use std::time::{Instant as StdInstant, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
@@ -22,8 +22,9 @@ use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, VersionVector};
 use oneiron::sync::export_updates_since;
 use oneiron::sync::{
-    AllowBlock, FederationConnectionQuota, FederationQuotaConfig, SelectorVvRequest, WindowKey,
-    authorize_sync_selector, decode_selector_vv_request, filtered_window_doc,
+    AllowBlock, EphemeralStore, EphemeralWireState, FederationConnectionQuota,
+    FederationQuotaConfig, SelectorVvRequest, WindowKey, authorize_sync_selector,
+    decode_ephemeral_states, decode_selector_vv_request, filtered_window_doc,
 };
 use tokio::time::{Duration, Instant};
 
@@ -38,6 +39,12 @@ const HELLO_TIMEOUT_SECS: u64 = 10;
 /// Distinct from the lease ABI's internal vault id: federation grants reject
 /// zero as a shared-vault scope, and FED-001 fixtures pin the nonzero scope.
 const SERVER_SELECTOR_VAULT_ID: u64 = 7;
+/// Clock skew tolerated for Loro `EphemeralStore` LWW timestamps from clients.
+const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
+/// Hard cap on records decoded from one ephemeral frame, independent of bytes.
+const MAX_EPHEMERAL_RECORDS_PER_FRAME: usize = 1024;
+/// Flat ephemeral keys are control-plane identifiers, not arbitrary blobs.
+const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
@@ -251,6 +258,14 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         }
     }
 
+    // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
+    if let Some(msg) = encode_late_join_ephemeral_snapshot(&server, conn_id)
+        && ws_sink.send(WsMessage::Binary(msg.into())).await.is_err()
+    {
+        tracing::warn!(conn_id, "failed to send ephemeral snapshot");
+        return;
+    }
+
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let federation_quota = FederationQuotaConfig::new(
@@ -417,11 +432,6 @@ async fn handle_connection(socket: WebSocket, server: Arc<SyncServer>, conn_id: 
         }
     }
 
-    // Cleanup
-    {
-        let mut awareness = server.awareness.write().await;
-        awareness.remove(&conn_id);
-    }
     outbound_handle.abort();
     tracing::info!(conn_id, "connection closed");
 }
@@ -488,6 +498,171 @@ fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }
 
+fn encode_late_join_ephemeral_snapshot(server: &SyncServer, conn_id: u32) -> Option<Vec<u8>> {
+    server.ephemeral_store.remove_outdated();
+    let snapshot = server.ephemeral_store.encode_all();
+    match decode_ephemeral_states(&snapshot) {
+        Ok(states) if states.is_empty() => return None,
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(
+                conn_id,
+                error = protocol::transport_err_msg(e),
+                "failed to decode ephemeral snapshot"
+            );
+            return None;
+        }
+    }
+    if snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
+        tracing::warn!(
+            conn_id,
+            size = snapshot.len(),
+            max = server.config.max_ephemeral_snapshot_bytes,
+            "ephemeral snapshot exceeds cap; skipping late-join snapshot"
+        );
+        return None;
+    }
+
+    match protocol::encode_ephemeral(&snapshot).into_result() {
+        Ok(msg) => Some(msg),
+        Err(e) => {
+            tracing::warn!(
+                conn_id,
+                error = protocol::transport_err_msg(e),
+                "failed to encode ephemeral snapshot"
+            );
+            None
+        }
+    }
+}
+
+fn validate_ephemeral_payload(
+    server: &SyncServer,
+    payload: &[u8],
+) -> Result<Vec<EphemeralWireState>, ProtocolError> {
+    if payload.len() > server.config.max_ephemeral_payload_bytes {
+        return Err(ProtocolError::FrameTooLarge {
+            size: payload.len(),
+            max: server.config.max_ephemeral_payload_bytes,
+        });
+    }
+
+    let states = decode_ephemeral_states(payload)
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+    if states.len() > MAX_EPHEMERAL_RECORDS_PER_FRAME {
+        return Err(ProtocolError::InvalidPayload(
+            "too many ephemeral records in one frame",
+        ));
+    }
+
+    let max_timestamp = ephemeral_now_ms().saturating_add(MAX_EPHEMERAL_FUTURE_SKEW_MS);
+    for state in &states {
+        if state.key.is_empty() {
+            return Err(ProtocolError::InvalidPayload("empty ephemeral key"));
+        }
+        if state.key.len() > MAX_EPHEMERAL_KEY_BYTES {
+            return Err(ProtocolError::InvalidPayload("ephemeral key too long"));
+        }
+        if state.timestamp > max_timestamp {
+            return Err(ProtocolError::InvalidPayload(
+                "ephemeral timestamp too far in future",
+            ));
+        }
+    }
+
+    Ok(states)
+}
+
+fn ensure_ephemeral_hub_budget(
+    server: &SyncServer,
+    payload: &[u8],
+    states: &[EphemeralWireState],
+) -> Result<(), ProtocolError> {
+    let current_snapshot = server.ephemeral_store.encode_all();
+    if current_snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
+        return Err(ProtocolError::FrameTooLarge {
+            size: current_snapshot.len(),
+            max: server.config.max_ephemeral_snapshot_bytes,
+        });
+    }
+
+    let candidate = EphemeralStore::new(server.config.ephemeral_timeout_ms);
+    if !current_snapshot.is_empty() {
+        candidate
+            .apply(&current_snapshot)
+            .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral hub snapshot"))?;
+    }
+    candidate
+        .apply(payload)
+        .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral payload"))?;
+    candidate.remove_outdated();
+
+    let candidate_snapshot = candidate.encode_all();
+    if candidate_snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
+        return Err(ProtocolError::FrameTooLarge {
+            size: candidate_snapshot.len(),
+            max: server.config.max_ephemeral_snapshot_bytes,
+        });
+    }
+
+    let mut seen = HashSet::new();
+    for state in states {
+        if !seen.insert(state.key.as_str()) {
+            continue;
+        }
+
+        let canonical = candidate.encode(&state.key);
+        if canonical.len() > server.config.max_ephemeral_payload_bytes {
+            return Err(ProtocolError::FrameTooLarge {
+                size: canonical.len(),
+                max: server.config.max_ephemeral_payload_bytes,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn canonical_ephemeral_frames(
+    server: &SyncServer,
+    states: &[EphemeralWireState],
+) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    let mut seen = HashSet::new();
+    let mut frames = Vec::new();
+    for state in states {
+        if !seen.insert(state.key.clone()) {
+            continue;
+        }
+
+        let canonical = server.ephemeral_store.encode(&state.key);
+        let canonical_states = decode_ephemeral_states(&canonical)
+            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+        if canonical_states.is_empty() {
+            continue;
+        }
+        if canonical.len() > server.config.max_ephemeral_payload_bytes {
+            return Err(ProtocolError::FrameTooLarge {
+                size: canonical.len(),
+                max: server.config.max_ephemeral_payload_bytes,
+            });
+        }
+        let encoded = protocol::encode_ephemeral(&canonical)
+            .into_result()
+            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+        frames.push(encoded);
+    }
+
+    Ok(frames)
+}
+
+fn ephemeral_now_ms() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    millis.min(i64::MAX as u128) as i64
+}
+
 /// Dispatches a parsed SyncMessage to the appropriate handler.
 async fn handle_sync_message(
     server: &SyncServer,
@@ -505,12 +680,18 @@ async fn handle_sync_message(
             );
             Ok(())
         }
-        SyncMessage::Awareness(state) => {
-            let mut awareness = server.awareness.write().await;
-            awareness.insert(conn_id, state.clone());
-            // Broadcast awareness to other connections
-            let encoded = protocol::encode_awareness(&state);
-            let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
+        SyncMessage::Ephemeral(payload) => {
+            server.ephemeral_store.remove_outdated();
+            let states = validate_ephemeral_payload(server, &payload)?;
+            ensure_ephemeral_hub_budget(server, &payload, &states)?;
+            server
+                .ephemeral_store
+                .apply(&payload)
+                .map_err(|_| ProtocolError::InvalidPayload("invalid ephemeral payload"))?;
+            server.ephemeral_store.remove_outdated();
+            for encoded in canonical_ephemeral_frames(server, &states)? {
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
+            }
             Ok(())
         }
         SyncMessage::LeaseRequest {
@@ -1029,6 +1210,29 @@ mod tests {
                 config.federation_flood_pause_secs,
             ),
         )
+    }
+
+    #[test]
+    fn oversized_late_join_ephemeral_snapshot_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+        let server = SyncServer::new(
+            vault,
+            SyncServerConfig {
+                max_ephemeral_snapshot_bytes: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        server.ephemeral_store.set("presence:device-a", "online");
+
+        let snapshot = encode_late_join_ephemeral_snapshot(&server, 1);
+
+        assert!(
+            snapshot.is_none(),
+            "oversized hub snapshots should be skipped, not connection-fatal"
+        );
     }
 
     fn test_selector_conn_state_with_config(config: &SyncServerConfig) -> ConnState {
@@ -2008,11 +2212,11 @@ mod tests {
         // before root `leases` payloads flow, while the current full-window
         // and selector-capable versions stay distinct for broadcast filtering.
         assert_eq!(
-            validate_protocol_hello(&[3, 4]),
+            validate_protocol_hello(&[3, 6]),
             Ok(protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
         );
         assert_eq!(
-            validate_protocol_hello(&[3, 5]),
+            validate_protocol_hello(&[3, 7]),
             Ok(protocol::PROTOCOL_VERSION)
         );
 
@@ -2020,12 +2224,14 @@ mod tests {
             ("v1_peer", &[3, 1]),
             ("old_full_window_v2_peer", &[3, 2]),
             ("old_selector_v3_peer", &[3, 3]),
-            ("future_version", &[3, 6]),
+            ("old_full_window_v4_peer", &[3, 4]),
+            ("old_selector_v5_peer", &[3, 5]),
+            ("future_version", &[3, 8]),
             ("zero_version", &[3, 0]),
-            ("wrong_tag", &[2, 5]),
+            ("wrong_tag", &[2, 7]),
             ("empty", &[]),
             ("tag_only", &[3]),
-            ("trailing_bytes", &[3, 5, 0]),
+            ("trailing_bytes", &[3, 7, 0]),
         ];
         for (case_name, frame) in cases {
             assert_eq!(

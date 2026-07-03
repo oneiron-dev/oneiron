@@ -43,7 +43,7 @@ pub mod transport;
 pub mod types;
 pub mod window;
 
-pub use client::{SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
@@ -51,7 +51,8 @@ pub use lease::{
     decode_lease_record, encode_lease_record, lease_key, lease_key_prefix, lease_pop_transcript,
     mirror_leases_from_root, vault_id_hex, verify_lease_pop,
 };
-pub use loro::Subscription;
+pub use loro::awareness::{EphemeralEventTrigger, EphemeralStore, EphemeralStoreEvent};
+pub use loro::{LoroValue, Subscription};
 pub use loro_support::export_updates_since;
 pub use manager::WindowManager;
 pub use quarantine::{
@@ -79,10 +80,11 @@ pub use selector::{
     encode_sync_selector, filtered_window_doc,
 };
 pub use transport::{
-    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES, PROTOCOL_VERSION,
-    TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_PROTOCOL_HELLO, TAG_WINDOW_SYNC, TransportError,
-    decode_bulk_transfer, decode_bulk_transfer_done, decode_protocol_hello, decode_window_sync,
-    encode_bulk_transfer, encode_bulk_transfer_done, encode_legacy_full_window_protocol_hello,
-    encode_protocol_hello, encode_window_sync,
+    EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,
+    PROTOCOL_VERSION, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_EPHEMERAL, TAG_PROTOCOL_HELLO,
+    TAG_WINDOW_SYNC, TransportError, decode_bulk_transfer, decode_bulk_transfer_done,
+    decode_ephemeral_states, decode_protocol_hello, decode_window_sync, encode_bulk_transfer,
+    encode_bulk_transfer_done, encode_ephemeral, encode_ephemeral_states,
+    encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{SyncConfig, WindowKey};

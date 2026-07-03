@@ -10,11 +10,10 @@ use oneiron::sync::schema::{
     add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
 };
 use oneiron::sync::server_state;
-use oneiron::sync::{self, WindowKey, WindowManager};
-use tokio::sync::{Mutex, RwLock, broadcast};
+use oneiron::sync::{self, EphemeralStore, WindowKey, WindowManager};
+use tokio::sync::{Mutex, broadcast};
 
 use crate::config::SyncServerConfig;
-use crate::protocol::AwarenessState;
 use crate::usage::UsageLedger;
 
 /// User id passed to the shared window loader. The server vault is
@@ -38,8 +37,8 @@ pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
-    /// Per-connection awareness state.
-    pub(crate) awareness: RwLock<HashMap<u32, AwarenessState>>,
+    /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
+    pub(crate) ephemeral_store: EphemeralStore,
     /// Broadcast channel for fan-out to all connected clients.
     pub(crate) broadcast_tx: broadcast::Sender<BroadcastPayload>,
     /// Monotonic connection ID counter. 0 = reserved for bridge/local writes.
@@ -134,6 +133,8 @@ impl SyncServer {
         vault: Arc<oneiron::Vault>,
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
+        config.validate()?;
+
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
             None => {
@@ -191,7 +192,7 @@ impl SyncServer {
             usage_ledger: UsageLedger::new(vault.clone()),
             vault,
             root_doc,
-            awareness: RwLock::new(HashMap::new()),
+            ephemeral_store: EphemeralStore::new(config.ephemeral_timeout_ms),
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
@@ -319,6 +320,8 @@ impl SyncServer {
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {
+        self.ephemeral_store.remove_outdated();
+
         match self.expire_leases_once().await {
             Ok(report) => {
                 if report.skipped {
@@ -964,6 +967,22 @@ mod tests {
         );
         assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
         assert!(read_window_list(&server.root_doc).is_empty());
+    }
+
+    #[test]
+    fn server_rejects_non_positive_ephemeral_timeout() {
+        let (_dir, vault) = test_vault();
+        let result = SyncServer::new(
+            vault,
+            SyncServerConfig {
+                ephemeral_timeout_ms: 0,
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(error) if error
+                    .to_string()
+                    .contains("ephemeral_timeout_ms must be positive")));
     }
 
     #[test]

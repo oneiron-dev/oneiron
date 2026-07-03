@@ -52,6 +52,7 @@ use crate::sync::types::parse_window_key_str;
 /// (ARCH-0023b Fig. 2: "Max 5 rounds before force re-bootstrap").
 const MAX_CONVERGENCE_ROUNDS: u32 = 5;
 const FULL_RESYNC_MARKER_PREFIX: &str = "fr:w:";
+const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
 
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
@@ -776,6 +777,9 @@ impl SyncConnection {
         let debounce_ms = self.config.client_config.sync_debounce_ms as u64;
         let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut debounce_deadline: Option<Instant> = None;
+        let mut ephemeral_housekeeping =
+            tokio::time::interval(Duration::from_secs(EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS));
+        ephemeral_housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             // Compute sleep future for debounce timer
@@ -889,6 +893,11 @@ impl SyncConnection {
                         flush_to_queue(&self.queue, &mut debounce_buffer);
                         return LoopExit::Disconnected(err);
                     }
+                }
+
+                // Loro's Rust EphemeralStore has no internal timer.
+                _ = ephemeral_housekeeping.tick() => {
+                    client.remove_outdated_ephemeral();
                 }
 
                 // Shutdown signal
