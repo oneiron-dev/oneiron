@@ -378,7 +378,7 @@ pub struct PipelineBuilder<'a> {
     temporal_search: Option<TemporalSearchConfig>,
     ppr_search: Option<(Vec<EntityId>, u32)>,
     ppr_expand: Option<(Vec<EntityId>, u32)>,
-    recency_half_life: Option<f32>,
+    recency_blend_enabled: bool,
     apply_salience: bool,
     apply_confidence: bool,
     apply_gravity: bool,
@@ -409,7 +409,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_search: None,
             ppr_search: None,
             ppr_expand: None,
-            recency_half_life: None,
+            recency_blend_enabled: false,
             apply_salience: false,
             apply_confidence: false,
             apply_gravity: false,
@@ -597,8 +597,13 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Enables the recency signal for the retrieval blend.
+    ///
+    /// `half_life_days` is retained as a compatibility toggle: finite
+    /// positive values enable recency, but the actual decay half-life comes
+    /// from the per-entity-type RET-010c contract table.
     pub fn boost_recency(mut self, half_life_days: f32) -> Self {
-        self.recency_half_life = Some(half_life_days);
+        self.recency_blend_enabled = half_life_days.is_finite() && half_life_days > 0.0;
         self
     }
 
@@ -793,10 +798,8 @@ impl<'a> PipelineBuilder<'a> {
             self.vault.ensure_text_index_trusted()?;
         }
 
-        let recency = if self.temporal_search.is_none() {
-            self.recency_half_life
-                .filter(|half_life_days| half_life_days.is_finite() && *half_life_days > 0.0)
-                .map(|_| started_at)
+        let recency = if self.temporal_search.is_none() && self.recency_blend_enabled {
+            Some(started_at)
         } else {
             None
         };
@@ -1071,7 +1074,7 @@ impl<'a> PipelineBuilder<'a> {
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
             };
-            let (mut scores, _) = blended_retrieval_scores(
+            let (mut scores, mut cosine_ghosts_dampened) = blended_retrieval_scores(
                 &ranked_lists,
                 vector_channel_index,
                 text_channel_index,
@@ -1098,6 +1101,7 @@ impl<'a> PipelineBuilder<'a> {
             if before_status_gate > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
+            let mut blend_allowed_ids = score_id_set(&scores);
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
                 let mut seen = HashSet::<EntityId>::new();
@@ -1160,8 +1164,9 @@ impl<'a> PipelineBuilder<'a> {
                         RetrievalSignal::Ppr,
                         &ppr_results,
                     );
+                    blend_allowed_ids.extend(ppr_results.iter().map(|scored| scored.id));
                     ranked_lists.push(ppr_results);
-                    let (blended, _) = blended_retrieval_scores(
+                    let (blended, dampened) = blended_retrieval_scores(
                         &ranked_lists,
                         vector_channel_index,
                         text_channel_index,
@@ -1170,20 +1175,10 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         blend_config,
                     )?;
-                    scores = blended;
+                    scores = filter_blended_scores_to_allowed_ids(blended, &blend_allowed_ids);
+                    cosine_ghosts_dampened = dampened;
                 }
             }
-
-            let (blended_scores, cosine_ghosts_dampened) = blended_retrieval_scores(
-                &ranked_lists,
-                vector_channel_index,
-                text_channel_index,
-                &self.vault.store,
-                &rtxn,
-                &mut metadata_cache,
-                blend_config,
-            )?;
-            filter_blended_scores_to_allowed(&mut scores, blended_scores);
 
             let before_filters = scores.len();
             apply_filters(
@@ -1577,10 +1572,9 @@ fn blended_retrieval_scores(
     } else {
         HashSet::new()
     };
+    let needs_claim_body = config.salience || config.confidence;
     let mut dampened = 0;
     for input in &mut inputs {
-        let raw = store.entities.get(rtxn, input.id.as_bytes())?;
-
         if let Some(now_secs) = config.recency_now_secs
             && let Some(meta) = metadata_cache.get(store, rtxn, &input.id)?
         {
@@ -1591,7 +1585,7 @@ fn blended_retrieval_scores(
             input.recency = 2.0_f64.powf(-age_secs / seconds_per_half_life) as f32;
         }
 
-        if let Some(raw) = raw {
+        if needs_claim_body && let Some(raw) = store.entities.get(rtxn, input.id.as_bytes())? {
             if config.salience
                 && let Some(salience) = fusion::decode_msgpack_float(raw, crate::claim::KEY_SAL)
             {
@@ -1617,14 +1611,18 @@ fn blended_retrieval_scores(
     Ok((fusion::linear_log_blend(&inputs), dampened))
 }
 
-fn filter_blended_scores_to_allowed(scores: &mut Vec<ScoredEntity>, blended: Vec<ScoredEntity>) {
-    let allowed: HashSet<EntityId> = scores.iter().map(|scored| scored.id).collect();
-    scores.clear();
-    for scored in blended {
-        if allowed.contains(&scored.id) {
-            scores.push(scored);
-        }
-    }
+fn score_id_set(scores: &[ScoredEntity]) -> HashSet<EntityId> {
+    scores.iter().map(|scored| scored.id).collect()
+}
+
+fn filter_blended_scores_to_allowed_ids(
+    blended: Vec<ScoredEntity>,
+    allowed: &HashSet<EntityId>,
+) -> Vec<ScoredEntity> {
+    blended
+        .into_iter()
+        .filter(|scored| allowed.contains(&scored.id))
+        .collect()
 }
 
 fn cosine_ghost_set(
@@ -6654,6 +6652,59 @@ mod tests {
         assert!(
             !surfaced.contains_key(&dead),
             "expansion-introduced retracted claim must be gated"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ppr_reblend_keeps_original_dead_claims_filtered() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+
+        let live_seed = entity_id(83);
+        let dead_indexed = entity_id(84);
+        let expanded = entity_id(85);
+        put_status_claim(
+            &vault,
+            live_seed,
+            "reblendneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            dead_indexed,
+            "reblendneedle",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Retracted,
+            false,
+        )?;
+        put_status_claim(
+            &vault,
+            expanded,
+            "expandedclaim",
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+            false,
+        )?;
+        vault.put_edge(&live_seed, EdgeKind::Supports, &expanded, 0.9)?;
+
+        let surfaced = to_score_map(
+            &vault
+                .query()
+                .search_text("reblendneedle", 10)
+                .expand_ppr(&[], 2)
+                .run()?,
+        );
+
+        assert!(surfaced.contains_key(&live_seed), "live seed surfaces");
+        assert!(
+            surfaced.contains_key(&expanded),
+            "gated PPR expansion result surfaces"
+        );
+        assert!(
+            !surfaced.contains_key(&dead_indexed),
+            "dead claim from the original ranked lists must not re-enter after PPR reblend"
         );
         Ok(())
     }

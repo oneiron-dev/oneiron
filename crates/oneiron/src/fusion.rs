@@ -83,14 +83,19 @@ pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEnti
     z_normalize(&mut confidence);
     z_normalize(&mut gravity);
 
+    let recency_weight = retrieval_blend_weight(RetrievalBlendSignal::Recency);
+    let salience_weight = retrieval_blend_weight(RetrievalBlendSignal::Salience);
+    let confidence_weight = retrieval_blend_weight(RetrievalBlendSignal::Confidence);
+    let gravity_weight = retrieval_blend_weight(RetrievalBlendSignal::Gravity);
+
     let mut scores: Vec<ScoredEntity> = inputs
         .iter()
         .enumerate()
         .map(|(index, input)| {
-            let log_score = retrieval_blend_weight(RetrievalBlendSignal::Recency) * recency[index]
-                + retrieval_blend_weight(RetrievalBlendSignal::Salience) * salience[index]
-                + retrieval_blend_weight(RetrievalBlendSignal::Confidence) * confidence[index]
-                + retrieval_blend_weight(RetrievalBlendSignal::Gravity) * gravity[index];
+            let log_score = recency_weight * recency[index]
+                + salience_weight * salience[index]
+                + confidence_weight * confidence[index]
+                + gravity_weight * gravity[index];
             ScoredEntity {
                 id: input.id,
                 score: log_score.exp(),

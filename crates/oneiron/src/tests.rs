@@ -10993,11 +10993,11 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         "preference.food",
         ClaimSubject::Entity(subject),
         rmpv::Value::from("matcha"),
-        0.8,
+        0.1,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     );
-    body.salience = Some(0.5);
+    body.salience = Some(0.9);
     vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
 
     let other_claim = EntityId::now();
@@ -11005,38 +11005,80 @@ fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result
         "preference.food",
         ClaimSubject::Entity(subject),
         rmpv::Value::from("matcha"),
-        0.1,
+        0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     );
-    other_body.salience = Some(0.0);
+    other_body.salience = Some(0.3);
     vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
+
+    let third_claim = EntityId::now();
+    let mut third_body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.4,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    third_body.salience = Some(0.0);
+    vault.put_claim(&third_claim, &third_body, test_time_range(10, 10), 11)?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
         .text(&other_claim, &[("body", "matcha preference")])
+        .text(&third_claim, &[("body", "matcha preference")])
         .commit()?;
 
     let baseline = vault.query().search_text("matcha", 10).run()?;
-    assert_eq!(baseline.len(), 2);
+    assert_eq!(baseline.len(), 3);
+
+    fn z_score(value: f32, values: &[f32]) -> f32 {
+        let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
+        let variance = values
+            .iter()
+            .map(|candidate| {
+                let delta = f64::from(*candidate) - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / values.len() as f64;
+        ((f64::from(value) - mean) / variance.sqrt()) as f32
+    }
+
+    fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
+        scores
+            .iter()
+            .find(|scored| scored.id == id)
+            .expect("expected scored entity")
+            .score
+    }
 
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_salience()
         .run()?;
-    assert_eq!(sal_boosted.len(), 2);
+    assert_eq!(sal_boosted.len(), 3);
     assert_eq!(sal_boosted[0].id, claim);
-    assert!(sal_boosted[0].score > sal_boosted[1].score);
+    let expected_salience_score = (0.30_f32 * z_score(0.9, &[0.9, 0.3, 0.0])).exp();
+    assert!(
+        (score_for(&sal_boosted, claim) - expected_salience_score).abs() < 1e-6,
+        "salience blend must read the pinned `sal` key"
+    );
 
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_confidence()
         .run()?;
-    assert_eq!(conf_boosted.len(), 2);
-    assert_eq!(conf_boosted[0].id, claim);
-    assert!(conf_boosted[0].score > conf_boosted[1].score);
+    assert_eq!(conf_boosted.len(), 3);
+    assert_eq!(conf_boosted[0].id, other_claim);
+    let expected_confidence_score = (0.20_f32 * z_score(0.9, &[0.1, 0.9, 0.4])).exp();
+    assert!(
+        (score_for(&conf_boosted, other_claim) - expected_confidence_score).abs() < 1e-6,
+        "confidence blend must read the pinned `conf` key"
+    );
 
     // The SAME stored body projects through the CLAIM Full profile.
     let full = vault
