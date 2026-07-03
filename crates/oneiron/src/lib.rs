@@ -9,6 +9,7 @@ pub(crate) mod bm25;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
+pub mod code_run;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
@@ -90,6 +91,12 @@ pub use crate::code_revision::{
     CODE_REVISION_FORK_KEYS, CODE_REVISION_RECORD_KEYS, CodeRevision, CodeRevisionFork,
     CodeRevisionKind, decode_code_revision, decode_code_revision_fork, encode_code_revision,
     encode_code_revision_fork,
+};
+pub use crate::code_run::{
+    HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
+    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
+    SelfMemorySearchCall, SelfMemorySearchResult, SelfMemoryWriteFixtureCall,
+    SelfMemoryWriteResult,
 };
 pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,
