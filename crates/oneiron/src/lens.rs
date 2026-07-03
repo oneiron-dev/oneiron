@@ -49,6 +49,10 @@ const MAX_LENS_COLLECTION_ITEMS: usize = 4096;
 
 macro_rules! lens_token_type {
     ($name:ident, $context:literal) => {
+        lens_token_type!($name, $context, false);
+    };
+
+    ($name:ident, $context:literal, $reject_forbidden_capability:expr) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(String);
 
@@ -56,6 +60,9 @@ macro_rules! lens_token_type {
             pub fn new(value: impl Into<String>) -> Result<Self> {
                 let value = value.into();
                 validate_lens_token($context, &value)?;
+                if $reject_forbidden_capability {
+                    validate_lens_capability_name($context, &value)?;
+                }
                 Ok(Self(value))
             }
 
@@ -111,7 +118,7 @@ macro_rules! lens_token_type {
 lens_token_type!(LensAtomId, "lens atom id");
 lens_token_type!(LensHandleName, "lens handle name");
 lens_token_type!(SelfUiControlId, "self.ui control id");
-lens_token_type!(SelfUiActionId, "self.ui action id");
+lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1134,6 +1141,9 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
             action: wire.action,
         };
         atom.validate().map_err(de::Error::custom)?;
+        let mut budget = LensBudget::default();
+        atom.count_collection_items(&mut budget)
+            .map_err(de::Error::custom)?;
         Ok(atom)
     }
 }
@@ -1611,11 +1621,7 @@ impl LensAtom {
                 budget.add_collection("neighborhood graph edges", atom.edges.len())
             }
             Self::AsofScrubber(_) | Self::VoiceLine(_) => Ok(()),
-            Self::QuickFilter(atom) => {
-                budget.add_collection("quick filter options", atom.options.len())?;
-                budget.add_collection("quick filter selected values", atom.selected.len())?;
-                budget.add_collection("self.ui action args", atom.action.args.len())
-            }
+            Self::QuickFilter(atom) => atom.count_collection_items(budget),
             Self::InspectorSheet(atom) | Self::InspectorRail(atom) | Self::InspectorTrail(atom) => {
                 atom.count_collection_items(budget)
             }
@@ -1707,6 +1713,12 @@ impl QuickFilterAtom {
         }
         self.action.validate()
     }
+
+    fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
+        budget.add_collection("quick filter options", self.options.len())?;
+        budget.add_collection("quick filter selected values", self.selected.len())?;
+        budget.add_collection("self.ui action args", self.action.args.len())
+    }
 }
 
 impl InspectorAtom {
@@ -1775,6 +1787,7 @@ fn validate_lens_tree(root: &LensNode) -> Result<()> {
     let mut stack = vec![(root, 1usize)];
     let mut node_count = 0usize;
     let mut budget = LensBudget::default();
+    let mut seen_node_ids = HashSet::with_capacity(MAX_LENS_NODE_COUNT);
 
     while let Some((node, depth)) = stack.pop() {
         node_count += 1;
@@ -1782,6 +1795,11 @@ fn validate_lens_tree(root: &LensNode) -> Result<()> {
             return Err(Error::InvalidConfig(format!(
                 "generated lens tree must contain at most {MAX_LENS_NODE_COUNT} nodes"
             )));
+        }
+        if !seen_node_ids.insert(node.id.as_str()) {
+            return Err(Error::InvalidConfig(
+                "generated lens nodes must not contain duplicate ids".to_string(),
+            ));
         }
         if depth > MAX_LENS_TREE_DEPTH {
             return Err(Error::InvalidConfig(format!(
@@ -1885,6 +1903,10 @@ fn validate_lens_token(context: &str, value: &str) -> Result<()> {
         )));
     }
 
+    Ok(())
+}
+
+fn validate_lens_capability_name(context: &str, value: &str) -> Result<()> {
     if names_forbidden_lens_capability(value) {
         return Err(Error::InvalidConfig(format!(
             "{context} names a forbidden lens capability"
@@ -2007,6 +2029,15 @@ mod tests {
             .map(|index| SectionAtom {
                 title: text(&format!("section-{index}")),
                 lines: vec![text(&format!("line-{index}"))],
+            })
+            .collect()
+    }
+
+    fn options_at_collection_limit() -> Vec<SelfUiOption> {
+        (0..MAX_LENS_COLLECTION_ITEMS)
+            .map(|index| SelfUiOption {
+                value: option_value(&format!("option-{index}")),
+                label: text(&format!("Option {index}")),
             })
             .collect()
     }
@@ -2348,6 +2379,37 @@ mod tests {
     }
 
     #[test]
+    fn non_capability_tokens_allow_reserved_domain_values() {
+        let attempted = json!({
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "root": {
+                "id": "fetch",
+                "atom": {
+                    "kind": "quick_filter",
+                    "props": {
+                        "id": "network",
+                        "label": "Backend",
+                        "options": [{ "value": "storage", "label": "Storage" }],
+                        "selected": ["storage"],
+                        "action": {
+                            "command": "filter_backend",
+                            "args": [
+                                { "type": "token", "value": "storage" },
+                                { "type": "handle", "value": "network" }
+                            ]
+                        }
+                    }
+                }
+            }
+        });
+
+        assert!(
+            serde_json::from_value::<GeneratedLens>(attempted).is_ok(),
+            "reserved domain words should be allowed outside capability fields"
+        );
+    }
+
+    #[test]
     fn self_ui_rejects_selected_values_outside_options() {
         let attempted = json!({
             "kit_version": LENS_ATOM_KIT_VERSION,
@@ -2610,6 +2672,41 @@ mod tests {
     }
 
     #[test]
+    fn generated_lens_rejects_duplicate_node_ids() {
+        let mut root = LensNode::new(
+            id("root"),
+            LensAtom::Throbber(ThrobberAtom {
+                label: text("loading"),
+            }),
+        );
+        root.children = vec![
+            LensNode::new(
+                id("duplicate"),
+                LensAtom::Throbber(ThrobberAtom {
+                    label: text("first"),
+                }),
+            ),
+            LensNode::new(
+                id("duplicate"),
+                LensAtom::Throbber(ThrobberAtom {
+                    label: text("second"),
+                }),
+            ),
+        ];
+
+        assert!(
+            GeneratedLens::new(root.clone()).is_err(),
+            "generated lens trees should reject duplicate node ids"
+        );
+
+        let encoded = serde_json::to_value(&root).expect("node encodes");
+        assert!(
+            serde_json::from_value::<LensNode>(encoded).is_err(),
+            "standalone lens nodes should reject duplicate node ids"
+        );
+    }
+
+    #[test]
     fn generated_lens_rejects_aggregate_collection_budget() {
         let root = LensNode::new(
             id("root"),
@@ -2652,6 +2749,19 @@ mod tests {
         assert!(
             serde_json::from_value::<InspectorAtom>(encoded).is_err(),
             "standalone inspector props should enforce aggregate collection totals"
+        );
+
+        let atom = QuickFilterAtom {
+            id: control_id("filter"),
+            label: text("too-many-total-items"),
+            options: options_at_collection_limit(),
+            selected: vec![option_value("option-0")],
+            action: action("filter_status"),
+        };
+        let encoded = serde_json::to_value(&atom).expect("quick filter encodes");
+        assert!(
+            serde_json::from_value::<QuickFilterAtom>(encoded).is_err(),
+            "standalone quick filter props should enforce aggregate collection totals"
         );
     }
 
