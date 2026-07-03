@@ -4525,13 +4525,14 @@ async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let edges = server
-        .vault
+    let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let edges = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
             tracing::error!(error = %e, "get edges failed");
         })
-        .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
+        .map_err(|_| ApiError::internal_server_error("get edges failed"))?
+        .ok_or_else(|| ApiError::not_found("entity", Some(&id_hex)))?;
 
     let response: Vec<Value> = edges
         .into_iter()
@@ -6449,6 +6450,12 @@ async fn core_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref(), 0);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let candidate_limit = scoped_read
+        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack scoped read setup failed");
+            core_engine_error("core context-pack scoped read setup failed", error)
+        })?;
     let fallback_session_id = auth.principal_ref().unwrap_or(auth.principal());
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
@@ -6466,7 +6473,7 @@ async fn core_context_pack(
     let mut builder = server
         .vault
         .context_pack()
-        .limit(req.limit)
+        .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
         .edge_hop(edge_hop)
@@ -6474,14 +6481,20 @@ async fn core_context_pack(
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
     if let Some(query) = query {
-        builder = builder.search_text(query, req.limit);
+        builder = builder.search_text(query, candidate_limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
-        builder = builder.search_vector(vector, req.limit);
+        builder = builder.search_vector(vector, candidate_limit);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    builder = apply_context_pack_budget(builder, req.budget.as_ref(), 0, req.limit, max_neighbors)?;
+    builder = apply_context_pack_budget(
+        builder,
+        req.budget.as_ref(),
+        0,
+        candidate_limit,
+        max_neighbors,
+    )?;
 
     Ok(Json(
         run_context_pack_builder(
@@ -6489,6 +6502,10 @@ async fn core_context_pack(
             &scoped_read,
             builder,
             projection,
+            ContextPackResponseLimits {
+                results: req.limit,
+                neighbors: max_neighbors,
+            },
             "core context-pack failed",
             eiri_context,
         )
@@ -6941,7 +6958,7 @@ fn apply_context_pack_budget<'a>(
     mut builder: oneiron::ContextPackBuilder<'a>,
     budget: Option<&ContextPackBudgetControls>,
     top_level_max_item_tokens: usize,
-    limit: usize,
+    scoped_candidate_limit: usize,
     default_selected_edges: usize,
 ) -> Result<oneiron::ContextPackBuilder<'a>, ApiError> {
     let max_item_tokens = budget
@@ -6950,42 +6967,44 @@ fn apply_context_pack_budget<'a>(
     if max_item_tokens > 0 {
         builder = builder.max_item_tokens(max_item_tokens);
     }
-    let Some(budget) = budget else {
-        return Ok(builder);
-    };
-    if let Some(token_budget) = budget.token_budget {
-        builder = builder.token_budget(token_budget);
-    }
-    if let Some(max_field_chars) = budget.max_field_chars {
-        builder = builder.max_field_chars(max_field_chars);
-    }
-    if let Some(retrieval) = budget.retrieval.as_ref() {
-        if retrieval.selected_edges.is_some_and(|selected_edges| {
-            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-        }) {
-            return Err(ApiError::bad_request(
-                format!(
-                    "selected_edges must be less than or equal to {}",
-                    oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
-                ),
-                Some("budget.retrieval.selected_edges"),
-            ));
+    if let Some(budget) = budget {
+        if let Some(token_budget) = budget.token_budget {
+            builder = builder.token_budget(token_budget);
         }
-        let defaults = oneiron::ContextPackRetrievalBudget::from_limit(
-            limit,
-            oneiron::TokenAllocation::default(),
-            default_selected_edges,
-        );
-        let selected_edges = retrieval.selected_edges.unwrap_or(defaults.selected_edges);
-        builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
-            retrieval.claims.unwrap_or(defaults.claims),
-            retrieval.turns.unwrap_or(defaults.turns),
-            retrieval.summaries.unwrap_or(defaults.summaries),
-            retrieval.facets.unwrap_or(defaults.facets),
-            retrieval.other.unwrap_or(defaults.other),
-            selected_edges,
+        if let Some(max_field_chars) = budget.max_field_chars {
+            builder = builder.max_field_chars(max_field_chars);
+        }
+    }
+    let retrieval = budget.and_then(|budget| budget.retrieval.as_ref());
+    if let Some(retrieval) = retrieval
+        && retrieval.selected_edges.is_some_and(|selected_edges| {
+            selected_edges > oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+        })
+    {
+        return Err(ApiError::bad_request(
+            format!(
+                "selected_edges must be less than or equal to {}",
+                oneiron::context_pack::MAX_CONTEXT_NEIGHBORS
+            ),
+            Some("budget.retrieval.selected_edges"),
         ));
     }
+    let selected_edges = retrieval
+        .and_then(|retrieval| retrieval.selected_edges)
+        .unwrap_or(default_selected_edges);
+    let scoped_bucket = |configured: Option<usize>| {
+        configured
+            .unwrap_or(scoped_candidate_limit)
+            .max(scoped_candidate_limit)
+    };
+    builder = builder.retrieval_budget(oneiron::ContextPackRetrievalBudget::new(
+        scoped_bucket(retrieval.and_then(|retrieval| retrieval.claims)),
+        scoped_bucket(retrieval.and_then(|retrieval| retrieval.turns)),
+        scoped_bucket(retrieval.and_then(|retrieval| retrieval.summaries)),
+        scoped_bucket(retrieval.and_then(|retrieval| retrieval.facets)),
+        scoped_bucket(retrieval.and_then(|retrieval| retrieval.other)),
+        selected_edges,
+    ));
     Ok(builder)
 }
 
@@ -7289,28 +7308,37 @@ async fn advance_eiri_session_rag_state(
         .advance(scope_key, key, session_id, pack, evidence)
 }
 
+#[derive(Clone, Copy)]
+struct ContextPackResponseLimits {
+    results: usize,
+    neighbors: usize,
+}
+
 async fn run_context_pack_builder(
     vault: &oneiron::Vault,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     builder: oneiron::ContextPackBuilder<'_>,
     projection: oneiron::serialize::SerializeConfig,
+    response_limits: ContextPackResponseLimits,
     error_context: &'static str,
     eiri_context: Option<EiriContextV4Request>,
 ) -> Result<CoreContextPackResponse, ApiError> {
-    let pack = builder
-        .run_projected_json_with_telemetry(&projection)
-        .map_err(|error| {
-            tracing::error!(error = %error, "{error_context}");
-            core_engine_error(error_context, error)
-        })?;
-    let run_id = pack.run_id;
-    let mut pack = pack.value;
+    let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
+        tracing::error!(error = %error, "{error_context}");
+        core_engine_error(error_context, error)
+    })?;
     scoped_read
-        .filter_context_pack(&mut pack)
+        .filter_context_pack(&mut pack.value)
         .map_err(|error| {
+            pack.discard_telemetry();
             tracing::error!(error = %error, "core context-pack scoped read failed");
             core_engine_error("core context-pack scoped read failed", error)
         })?;
+    pack.value.results.truncate(response_limits.results);
+    pack.value.neighbors.truncate(response_limits.neighbors);
+    let pack = pack.finish_projected_json(&projection);
+    let run_id = pack.run_id;
+    let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
     let memory_board = eiri_context
@@ -8686,6 +8714,12 @@ async fn context_pack(
     let projection =
         context_pack_json_projection_config(view, req.budget.as_ref(), req.max_item_tokens);
     let scoped_read = scoped_read_for_legacy_api(&server.vault)?;
+    let candidate_limit = scoped_read
+        .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
+        .map_err(|error| {
+            tracing::error!(error = %error, "context-pack scoped read setup failed");
+            core_engine_error("context-pack scoped read setup failed", error)
+        })?;
     let eiri_context = resolve_eiri_context_v4_request(
         &server.vault,
         req.context_version.as_deref(),
@@ -8702,7 +8736,7 @@ async fn context_pack(
     let mut builder = server
         .vault
         .context_pack()
-        .limit(req.limit)
+        .limit(candidate_limit)
         .hydrate(hydrate)
         .include_edges(include_edges)
         .edge_hop(edge_hop)
@@ -8710,10 +8744,10 @@ async fn context_pack(
         .include_vectors(include_vectors)
         .field_profile(projection.profile);
     if let Some(query) = query {
-        builder = builder.search_text(query, req.limit);
+        builder = builder.search_text(query, candidate_limit);
     }
     if let Some(vector) = req.query_vector.as_deref() {
-        builder = builder.search_vector(vector, req.limit);
+        builder = builder.search_vector(vector, candidate_limit);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
@@ -8721,7 +8755,7 @@ async fn context_pack(
         builder,
         req.budget.as_ref(),
         req.max_item_tokens,
-        req.limit,
+        candidate_limit,
         max_neighbors,
     )?;
 
@@ -8731,6 +8765,10 @@ async fn context_pack(
             &scoped_read,
             builder,
             projection,
+            ContextPackResponseLimits {
+                results: req.limit,
+                neighbors: max_neighbors,
+            },
             "context-pack failed",
             eiri_context,
         )

@@ -185,6 +185,50 @@ struct ContextPackRun<'a> {
     store: &'a Store,
 }
 
+pub struct UnfinalizedContextPack<'a> {
+    pub value: ContextPack,
+    telemetry_run_id: Option<RetrievalRunId>,
+    store: &'a Store,
+}
+
+impl UnfinalizedContextPack<'_> {
+    pub fn discard_telemetry(&mut self) {
+        discard_failed_context_pack_telemetry(self.store, self.telemetry_run_id.take());
+    }
+
+    pub fn finish_projected_json(
+        mut self,
+        config: &SerializeConfig,
+    ) -> RetrievalWithTelemetry<ContextPack> {
+        let pre_projection_stats = self.value.stats.clone();
+        let pre_projection_had_results = !self.value.results.is_empty();
+        let mut pack = crate::serialize::project_pack_for_json_response(self.value, config);
+        refresh_projected_empty_context(&mut pack);
+        let surfaced_result_ids: Vec<[u8; 16]> = pack
+            .results
+            .iter()
+            .map(|entity| *entity.id.as_bytes())
+            .collect();
+        let telemetry_run_id = finalize_context_pack_telemetry(
+            self.store,
+            self.telemetry_run_id.take(),
+            pack.stats.query_time_us,
+            pack.stats.claims_suppressed,
+            &surfaced_result_ids,
+            projected_context_pack_empty_reason(
+                &pack,
+                &pre_projection_stats,
+                pre_projection_had_results,
+                &surfaced_result_ids,
+            ),
+        );
+        RetrievalWithTelemetry {
+            value: pack,
+            run_id: telemetry_run_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum PackQuarantineContainer {
@@ -550,32 +594,17 @@ impl<'a> ContextPackBuilder<'a> {
         self,
         config: &SerializeConfig,
     ) -> Result<RetrievalWithTelemetry<ContextPack>> {
+        Ok(self
+            .run_unfinalized_with_telemetry()?
+            .finish_projected_json(config))
+    }
+
+    pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
         let run = self.run_unfinalized()?;
-        let pre_projection_stats = run.pack.stats.clone();
-        let pre_projection_had_results = !run.pack.results.is_empty();
-        let mut pack = crate::serialize::project_pack_for_json_response(run.pack, config);
-        refresh_projected_empty_context(&mut pack);
-        let surfaced_result_ids: Vec<[u8; 16]> = pack
-            .results
-            .iter()
-            .map(|entity| *entity.id.as_bytes())
-            .collect();
-        let telemetry_run_id = finalize_context_pack_telemetry(
-            run.store,
-            run.telemetry_run_id,
-            pack.stats.query_time_us,
-            pack.stats.claims_suppressed,
-            &surfaced_result_ids,
-            projected_context_pack_empty_reason(
-                &pack,
-                &pre_projection_stats,
-                pre_projection_had_results,
-                &surfaced_result_ids,
-            ),
-        );
-        Ok(RetrievalWithTelemetry {
-            value: pack,
-            run_id: telemetry_run_id,
+        Ok(UnfinalizedContextPack {
+            value: run.pack,
+            telemetry_run_id: run.telemetry_run_id,
+            store: run.store,
         })
     }
 
@@ -1249,7 +1278,7 @@ fn projected_context_pack_empty_reason(
     context_pack_empty_reason(pack, surfaced_result_ids)
 }
 
-fn refresh_projected_empty_context(pack: &mut ContextPack) {
+pub fn refresh_projected_empty_context(pack: &mut ContextPack) {
     if !pack.results.is_empty() || !pack.neighbors.is_empty() {
         pack.empty = None;
         return;

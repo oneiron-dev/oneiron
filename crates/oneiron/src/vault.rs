@@ -38,8 +38,8 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    ScopedReadActorKey, claim_consolidatable, claim_generated_origin, encode_claim_body,
-    is_reserved_predicate, validate_claim_body_bytes,
+    claim_consolidatable, claim_generated_origin, encode_claim_body, is_reserved_predicate,
+    validate_claim_body_bytes,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -4706,23 +4706,6 @@ impl Vault {
         }
     }
 
-    pub(crate) fn scoped_read_claim_allowed(
-        &self,
-        actor_key: &ScopedReadActorKey,
-        id: &EntityId,
-        body: &ClaimBody,
-    ) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        let claim_facets = self.claim_facet_refs_in(&rtxn, id)?;
-        Ok(crate::gate::scoped_read_claim_allowed(
-            &policy,
-            actor_key,
-            body,
-            &claim_facets,
-        ))
-    }
-
     pub(crate) fn scoped_read_search_candidate_limit(
         &self,
         requested: usize,
@@ -4746,7 +4729,11 @@ impl Vault {
         Ok(limit)
     }
 
-    fn claim_facet_refs_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+    pub(crate) fn claim_facet_refs_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
         let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
         prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
         prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
