@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -52,12 +53,15 @@ pub(crate) struct RetrievalBlendInput {
 pub(crate) fn retrieval_candidates_from_ranked_lists(
     ranked_lists: &[Vec<ScoredEntity>],
 ) -> Vec<RetrievalBlendInput> {
-    let mut candidates: Vec<EntityId> = ranked_lists
-        .iter()
-        .flat_map(|ranked| ranked.iter().map(|scored| scored.id))
-        .collect();
+    let mut candidates = HashSet::<EntityId>::new();
+    for ranked in ranked_lists {
+        for scored in ranked {
+            candidates.insert(scored.id);
+        }
+    }
+
+    let mut candidates: Vec<EntityId> = candidates.into_iter().collect();
     candidates.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-    candidates.dedup();
 
     candidates
         .into_iter()
@@ -364,7 +368,11 @@ mod tests {
         ];
         let expected = determinism_harness_fingerprint(&ranked_lists);
 
-        let handles: Vec<_> = (0..8)
+        let worker_count = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1)
+            .min(8);
+        let handles: Vec<_> = (0..worker_count)
             .map(|worker| {
                 let expected = expected.clone();
                 let ranked_lists = if worker % 2 == 0 {
