@@ -14,6 +14,10 @@ use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
+use crate::authority::{
+    AuthorityOp, decode_authority_log_entry_body, genesis_vault_id,
+    validate_authority_log_entry_body_bytes,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
@@ -21,7 +25,7 @@ use crate::claim::{
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
-    CompanionExportClassification, CompanionScope, ENTITY_TYPE_CLAIM,
+    CompanionExportClassification, CompanionScope, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_WORLD, EdgeKind, EntityId, TypeByteBand, band_of, decode_companion_record_body,
 };
@@ -293,7 +297,7 @@ pub fn admit_federated_window_update(
         vault.with_write_txn(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
-    copy_admitted_entities(&policy, &remote, &admitted)?;
+    copy_admitted_entities(vault, &policy, &remote, &admitted)?;
     copy_binary_map(&remote.get_map("edges"), &admitted.get_map("edges"))?;
 
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
@@ -393,6 +397,7 @@ fn decode_selector_value(value: &Value) -> Result<SyncSelector> {
 
 #[cfg(feature = "sync")]
 fn copy_admitted_entities(
+    vault: &Vault,
     policy: &crate::gate::PolicyManifestResolution,
     source: &LoroDoc,
     target: &LoroDoc,
@@ -404,7 +409,7 @@ fn copy_admitted_entities(
         if result.is_err() {
             return;
         }
-        result = admit_federated_entity_blob(policy, key, value)
+        result = admit_federated_entity_blob(vault, policy, key, value)
             .and_then(|blob| map_insert_bytes(&target_entities, key, &blob));
     });
     result
@@ -412,6 +417,7 @@ fn copy_admitted_entities(
 
 #[cfg(feature = "sync")]
 fn admit_federated_entity_blob(
+    vault: &Vault,
     policy: &crate::gate::PolicyManifestResolution,
     key: &str,
     value: Option<&[u8]>,
@@ -425,6 +431,10 @@ fn admit_federated_entity_blob(
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
+        if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
+            admit_federated_authority_log(vault, &blob[ENTITY_METADATA_HEADER_LEN..])?;
+            return Ok(blob.to_vec());
+        }
         if band_of(header.entity_type) == TypeByteBand::InducedDynamicMaintenance {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
         }
@@ -440,6 +450,30 @@ fn admit_federated_entity_blob(
     admitted.extend_from_slice(&blob[..ENTITY_METADATA_HEADER_LEN]);
     admitted.extend_from_slice(&encoded);
     Ok(admitted)
+}
+
+#[cfg(feature = "sync")]
+fn admit_federated_authority_log(vault: &Vault, body: &[u8]) -> Result<()> {
+    validate_authority_log_entry_body_bytes(body)?;
+    let entry = decode_authority_log_entry_body(body)?;
+    let entry_vault_id = match &entry.op {
+        AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
+        _ => entry
+            .vault_id
+            .ok_or(Error::InvalidAuthorityLogBody("missing authority vault id"))?,
+    };
+    let local_vault_id = vault
+        .authority_fold()?
+        .vault_id
+        .ok_or(Error::InvalidAuthorityLogBody(
+            "missing local authority root",
+        ))?;
+    if entry_vault_id != local_vault_id {
+        return Err(Error::InvalidAuthorityLogBody(
+            "foreign authority log vault id",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "sync")]
@@ -908,9 +942,15 @@ fn selector_err(msg: &'static str) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::{Signer, SigningKey};
     use loro::{ExportMode, LoroDoc};
 
     use super::*;
+    use crate::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
+        AuthoritySignature, AuthoritySignatureSuite, AuthorityTier, DeviceAuthority, ROLE_ADMIN,
+        ROLE_OWNER, authority_transcript, encode_authority_log_entry_body,
+    };
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -945,6 +985,43 @@ mod tests {
         blob.extend_from_slice(&1_u64.to_be_bytes());
         blob.extend_from_slice(body);
         blob
+    }
+
+    fn authority_genesis_entry(seed: u8) -> AuthorityLogEntry {
+        let signing = SigningKey::from_bytes(&[seed; 32]);
+        let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let op = AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [seed.wrapping_add(1); 32],
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: 86_400,
+        };
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: None,
+            seq: 0,
+            parent_hashes: Vec::new(),
+            op,
+            signer: AuthoritySignature {
+                suite: AuthoritySignatureSuite::Ed25519,
+                public_key: key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: u64::from(seed),
+        };
+        let transcript = authority_transcript(&entry).unwrap();
+        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        entry
     }
 
     fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
@@ -1274,6 +1351,37 @@ mod tests {
             err,
             Error::MaintenanceKindNotWritable(ENTITY_TYPE_POLICY_MANIFEST)
         ));
+    }
+
+    #[test]
+    fn federated_admission_rejects_foreign_authority_log() {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(0xB2));
+        let local = authority_genesis_entry(0x51);
+        vault
+            .put_authority_log_entry(&entity_id(0x51), &local, TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+
+        let foreign = authority_genesis_entry(0x52);
+        let foreign_body = encode_authority_log_entry_body(&foreign).unwrap();
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("remote", &window_key);
+        insert_entity(
+            &doc,
+            entity_id(0x52),
+            ENTITY_TYPE_AUTHORITY_LOG,
+            &foreign_body,
+        );
+        doc.commit();
+        let update = doc.export(ExportMode::all_updates()).unwrap();
+
+        let err = admit_federated_window_update(
+            &vault,
+            &window_key,
+            &update,
+            FederationAdmissionRole::Member,
+        )
+        .expect_err("foreign authority roots must not enter admitted federation updates");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
     }
 
     #[test]
