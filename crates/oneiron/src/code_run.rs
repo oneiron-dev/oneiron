@@ -6,6 +6,7 @@
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
 use rmpv::Value;
+use xxhash_rust::xxh3::xxh3_128;
 
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
@@ -17,6 +18,7 @@ const SELF_SURFACE_NAME: &str = "self.*";
 const SELF_PROVENANCE_SURFACE_KEY: &str = "surface";
 const SELF_PROVENANCE_RUN_KEY: &str = "run";
 const SELF_PROVENANCE_CALL_KEY: &str = "call";
+const SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN: &[u8] = b"oneiron:self-memory-edge-operation:v1";
 
 /// Dispatcher for host-side `self.*` calls emitted by a first-party runtime.
 pub trait SelfDispatcher {
@@ -130,16 +132,16 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfMemoryPutClaimCall,
     ) -> Result<SelfDispatchOutcome> {
         let envelope = self.write_envelope(SelfEffect::MemoryPutClaim)?;
+        let gate_body = (*call.candidate).clone().into_claim_body(&envelope);
+        self.check_write_gate(call.id, &gate_body, &envelope, true)?;
         self.vault
-            .batch()
-            .claim_candidate(
+            .put_claim_candidate_without_lexical_query_reconcile(
                 &call.id,
                 *call.candidate,
                 &envelope,
                 call.occurred,
                 call.learned_at,
-            )
-            .commit()?;
+            )?;
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.id,
@@ -151,13 +153,41 @@ impl<'a> HostSelfDispatcher<'a> {
         call: SelfMemorySupersedeClaimCall,
     ) -> Result<SelfDispatchOutcome> {
         let envelope = self.write_envelope(SelfEffect::MemorySupersedeClaim)?;
-        let gate_body = self.operation_gate_body(
+        let claim_gate_body = self.operation_gate_body(
             SelfEffect::MemorySupersedeClaim,
-            ClaimSubject::Entity(call.new_id),
-            Value::Binary(call.old_id.as_bytes().to_vec()),
+            ClaimSubject::Entity(call.old_id),
+            Value::Binary(call.new_id.as_bytes().to_vec()),
             &envelope,
         );
-        self.check_write_gate(EntityId::now(), &gate_body, &envelope)?;
+        self.check_write_gate(call.old_id, &claim_gate_body, &envelope, false)?;
+
+        let supersedes_weight =
+            EdgeKind::Supersedes
+                .default_weight()
+                .ok_or(Error::InvariantViolation(
+                    "Supersedes edge missing default weight",
+                ))?;
+        let edge_gate_body = self.operation_gate_body(
+            SelfEffect::MemorySupersedeClaim,
+            ClaimSubject::Edge {
+                source: call.new_id,
+                kind: EdgeKind::Supersedes,
+                target: call.old_id,
+            },
+            Value::F32(supersedes_weight),
+            &envelope,
+        );
+        self.check_write_gate(
+            edge_operation_gate_id(
+                SelfEffect::MemorySupersedeClaim,
+                call.new_id,
+                EdgeKind::Supersedes,
+                call.old_id,
+            )?,
+            &edge_gate_body,
+            &envelope,
+            false,
+        )?;
         self.vault
             .supersede_claim(&call.new_id, &call.old_id, call.now)?;
 
@@ -167,6 +197,7 @@ impl<'a> HostSelfDispatcher<'a> {
     }
 
     fn dispatch_memory_put_edge(&self, call: SelfMemoryPutEdgeCall) -> Result<SelfDispatchOutcome> {
+        ensure_public_memory_edge_kind(call.kind)?;
         let envelope = self.write_envelope(SelfEffect::MemoryPutEdge)?;
         let gate_body = self.operation_gate_body(
             SelfEffect::MemoryPutEdge,
@@ -178,7 +209,12 @@ impl<'a> HostSelfDispatcher<'a> {
             Value::F32(call.weight),
             &envelope,
         );
-        self.check_write_gate(EntityId::now(), &gate_body, &envelope)?;
+        self.check_write_gate(
+            edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?,
+            &gate_body,
+            &envelope,
+            false,
+        )?;
         self.vault
             .put_edge(&call.src, call.kind, &call.tgt, call.weight)?;
 
@@ -203,7 +239,7 @@ impl<'a> HostSelfDispatcher<'a> {
             subject,
             value,
             1.0,
-            envelope.approval(),
+            ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         );
         body.evidence = Some(crate::types::write_envelope_evidence(envelope, None));
@@ -211,15 +247,32 @@ impl<'a> HostSelfDispatcher<'a> {
         body
     }
 
+    fn validate_write_actor_binding(&self, envelope: &WriteEnvelope) -> Result<()> {
+        crate::gate::validate_write_envelope(envelope)?;
+        let actor = envelope.actor();
+        let rtxn = self.vault.store.env.read_txn()?;
+        let actor_raw = self
+            .vault
+            .store
+            .entities
+            .get(&rtxn, actor.entity_ref().as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header = crate::batch::EntityMetadataHeader::parse(actor_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+    }
+
     fn check_write_gate(
         &self,
         id: EntityId,
         body: &ClaimBody,
         envelope: &WriteEnvelope,
+        can_resolve_pending_consent: bool,
     ) -> Result<()> {
+        self.validate_write_actor_binding(envelope)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &wtxn)?;
-        crate::gate::check_claim_policy_for_write(
+        let gate_result = crate::gate::check_claim_policy_for_write(
             &self.vault.store,
             &mut wtxn,
             &id,
@@ -230,10 +283,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 record_decision: true,
                 persist_pending_consent: false,
                 resolve_pending: false,
-                can_resolve_pending_consent: true,
+                can_resolve_pending_consent,
             },
-        )?;
-        wtxn.commit().map_err(Error::from)
+        );
+        wtxn.commit().map_err(Error::from)?;
+        gate_result
     }
 
     fn durable_wait(
@@ -275,6 +329,65 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
                 Some(call.label),
             )),
         }
+    }
+}
+
+fn edge_operation_gate_id(
+    effect: SelfEffect,
+    src: EntityId,
+    kind: EdgeKind,
+    tgt: EntityId,
+) -> Result<EntityId> {
+    let mut material = Vec::with_capacity(
+        SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN.len()
+            + effect.as_str().len()
+            + src.as_bytes().len()
+            + 1
+            + tgt.as_bytes().len(),
+    );
+    material.extend_from_slice(SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN);
+    material.extend_from_slice(effect.as_str().as_bytes());
+    material.extend_from_slice(src.as_bytes());
+    material.push(kind as u8);
+    material.extend_from_slice(tgt.as_bytes());
+
+    let bytes = xxh3_128(&material).to_le_bytes();
+    for tweak in 0..=u8::MAX {
+        let mut candidate = bytes;
+        candidate[0] ^= tweak;
+        if let Ok(id) = EntityId::from_bytes(candidate) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "edge operation gate id derivation failed",
+    ))
+}
+
+fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
+    match kind {
+        EdgeKind::Mentions
+        | EdgeKind::About
+        | EdgeKind::Supports
+        | EdgeKind::Opposes
+        | EdgeKind::ParticipatesIn
+        | EdgeKind::Attached
+        | EdgeKind::EmployedBy
+        | EdgeKind::HasFacet
+        | EdgeKind::FacetOf
+        | EdgeKind::InWorld
+        | EdgeKind::SetIn => Ok(()),
+        EdgeKind::AuthoredBy
+        | EdgeKind::ScopedTo
+        | EdgeKind::PartOf
+        | EdgeKind::Supersedes
+        | EdgeKind::BelongsTo
+        | EdgeKind::ClaimOf
+        | EdgeKind::ChildOf
+        | EdgeKind::AssignedTo
+        | EdgeKind::DerivedFrom => Err(Error::InvariantViolation(
+            "self.memory.put_edge rejects structural edge kinds",
+        )),
     }
 }
 
@@ -542,8 +655,9 @@ mod tests {
     use crate::{
         ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
         types::{
-            ENTITY_TYPE_PERSON, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-            WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
+            ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
+            WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+            WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
         },
     };
 
@@ -575,6 +689,136 @@ mod tests {
         id
     }
 
+    fn seed_machine(vault: &Vault, seed: u8) -> EntityId {
+        let id = EntityId::from_bytes([seed; 16]).expect("entity id");
+        vault
+            .put_entity(&id, ENTITY_TYPE_MACHINE, range(1), 1, b"machine")
+            .expect("seed machine");
+        id
+    }
+
+    fn seed_first_party_actor(vault: &Vault) -> EntityId {
+        let id = EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+            .expect("first-party actor id");
+        vault
+            .put_entity(&id, ENTITY_TYPE_PERSON, range(1), 1, b"first-party actor")
+            .expect("seed first-party actor");
+        id
+    }
+
+    fn clear_policy_manifests_for_test(vault: &Vault) -> Result<()> {
+        vault.with_write_txn(|wtxn| {
+            let mut ids = Vec::new();
+            for row in vault
+                .store
+                .type_index
+                .prefix_iter(wtxn, &[ENTITY_TYPE_POLICY_MANIFEST])?
+            {
+                let (key, _) = row?;
+                let id = EntityId::from_bytes(
+                    key[1..]
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("type index key"))?,
+                )
+                .map_err(|_| Error::CorruptedIndex("type index key"))?;
+                ids.push(id);
+            }
+            for id in ids {
+                crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn put_policy_manifest_bytes(vault: &Vault, seed: u8, data: &[u8]) -> Result<()> {
+        let id = EntityId::from_bytes([seed; 16])?;
+        let learned_at = 2_u64;
+        let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(&learned_at.to_be_bytes());
+        payload.extend_from_slice(data);
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &payload)?;
+        let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+        vault.store.type_index.put(&mut wtxn, &type_key, &[])?;
+        let temporal_key = crate::store::Store::encode_temporal_key(learned_at, &id);
+        vault
+            .store
+            .temporal_occurred_start
+            .put(&mut wtxn, &temporal_key, &[])?;
+        vault
+            .store
+            .temporal_learned
+            .put(&mut wtxn, &temporal_key, &[])?;
+        wtxn.commit().map_err(Error::from)
+    }
+
+    fn put_malformed_policy_manifest(vault: &Vault, seed: u8) -> Result<()> {
+        put_policy_manifest_bytes(vault, seed, b"not-msgpack")
+    }
+
+    fn install_self_memory_allow_policy(vault: &Vault, actor: EntityId) -> Result<()> {
+        clear_policy_manifests_for_test(vault)?;
+        let manifest = Value::Map(vec![
+            (Value::from("schema_version"), Value::from("1.1")),
+            (Value::from("pack_id"), Value::from("code-run-test")),
+            (Value::from("pack_version"), Value::from("v1")),
+            (
+                Value::from("min_engine_version"),
+                Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                Value::from("defaults"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+            (
+                Value::from("rules"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("prefix"), Value::from("self.memory.")),
+                    (
+                        Value::from("axes"),
+                        Value::Map(vec![
+                            (Value::from("criticality"), Value::from("normal")),
+                            (Value::from("sensitivity"), Value::from("normal")),
+                        ]),
+                    ),
+                ])]),
+            ),
+            (
+                Value::from("actor_ceilings"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("actor_ref"), Value::from(actor.to_hex())),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
+            ),
+            (
+                Value::from("source_trust"),
+                Value::Map(vec![(
+                    Value::from(ClaimSource::Generated.as_str()),
+                    Value::Map(vec![
+                        (Value::from("max_auto_sensitivity"), Value::from(0_u64)),
+                        (Value::from("receipted"), Value::Boolean(true)),
+                        (Value::from("warned"), Value::Boolean(true)),
+                    ]),
+                )]),
+            ),
+        ]);
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &manifest)
+            .map_err(|_| Error::InvariantViolation("failed to encode policy manifest fixture"))?;
+        put_policy_manifest_bytes(vault, 0xE8, &data)
+    }
+
     fn gate_decision_count(vault: &Vault) -> Result<usize> {
         Ok(vault.store.gate_decisions(100)?.len())
     }
@@ -591,6 +835,17 @@ mod tests {
                 .iter()
                 .all(|code| code.starts_with("gate."))
         );
+        Ok(())
+    }
+
+    fn assert_recent_gate_decision_ids(vault: &Vault, expected: &[EntityId]) -> Result<()> {
+        let decisions = vault.store.gate_decisions(expected.len())?;
+        let actual = decisions
+            .iter()
+            .map(|decision| decision.claim_id.expect("gate decision claim id"))
+            .collect::<Vec<_>>();
+        let expected = expected.iter().map(|id| *id.as_bytes()).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
         Ok(())
     }
 
@@ -778,7 +1033,8 @@ mod tests {
     #[test]
     fn code_run_public_write_traps_route_per_op_through_gate() -> Result<()> {
         let (_dir, vault) = open_test_vault();
-        let actor = seed_person(&vault, 0xA5);
+        let actor = seed_first_party_actor(&vault);
+        install_self_memory_allow_policy(&vault, actor)?;
         let subject = seed_person(&vault, 0xB5);
         let edge_target = seed_person(&vault, 0xC5);
         let old = EntityId::from_bytes([0xD5; 16]).expect("old claim id");
@@ -820,6 +1076,12 @@ mod tests {
         assert_latest_gate_decision(&vault, new)?;
 
         let before_supersede = gate_decision_count(&vault)?;
+        let supersedes_edge_gate_id = edge_operation_gate_id(
+            SelfEffect::MemorySupersedeClaim,
+            new,
+            EdgeKind::Supersedes,
+            old,
+        )?;
         let supersede_outcome = dispatcher.dispatch(SelfCall::MemorySupersedeClaim(
             SelfMemorySupersedeClaimCall::new(new, old, 20),
         ))?;
@@ -827,13 +1089,20 @@ mod tests {
             supersede_outcome,
             SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: new })
         );
-        assert_eq!(gate_decision_count(&vault)?, before_supersede + 1);
+        assert_eq!(gate_decision_count(&vault)?, before_supersede + 2);
+        assert_recent_gate_decision_ids(&vault, &[supersedes_edge_gate_id, old])?;
         let old_read = vault.get_claim(&old)?.expect("superseded claim");
         assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
         assert_eq!(old_read.valid_to, Some(20));
         assert_eq!(vault.targets(&new, EdgeKind::Supersedes, None)?, vec![old]);
 
         let before_edge = gate_decision_count(&vault)?;
+        let edge_gate_id = edge_operation_gate_id(
+            SelfEffect::MemoryPutEdge,
+            subject,
+            EdgeKind::Mentions,
+            edge_target,
+        )?;
         let edge_outcome = dispatcher.dispatch(SelfCall::MemoryPutEdge(
             SelfMemoryPutEdgeCall::new(subject, EdgeKind::Mentions, edge_target, 0.7),
         ))?;
@@ -846,6 +1115,7 @@ mod tests {
             })
         );
         assert_eq!(gate_decision_count(&vault)?, before_edge + 1);
+        assert_latest_gate_decision(&vault, edge_gate_id)?;
         assert_eq!(
             vault.targets(&subject, EdgeKind::Mentions, None)?,
             vec![edge_target]
@@ -854,6 +1124,134 @@ mod tests {
         let read_after_write = vault.get_claim(&new)?.expect("new claim after traps");
         assert_eq!(read_after_write.value, Value::from("matcha"));
         assert_eq!(read_after_write.lifecycle, ClaimLifecycleStatus::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_immediate_write_traps_reject_pending_gate() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_person(&vault, 0xA6);
+        let src = seed_person(&vault, 0xB6);
+        let tgt = seed_person(&vault, 0xC6);
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-pending-write",
+        )?;
+        let gate_id =
+            edge_operation_gate_id(SelfEffect::MemoryPutEdge, src, EdgeKind::Mentions, tgt)?;
+        let before = gate_decision_count(&vault)?;
+
+        let _err = dispatcher
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::Mentions,
+                tgt,
+                0.7,
+            )))
+            .expect_err("pending immediate write must not commit");
+
+        assert_eq!(gate_decision_count(&vault)?, before + 1);
+        let decisions = vault.store.gate_decisions(1)?;
+        let latest = decisions.first().expect("latest gate decision");
+        assert_eq!(latest.outcome, "pending");
+        assert_eq!(latest.claim_id, Some(*gate_id.as_bytes()));
+        assert!(
+            latest
+                .reason_codes
+                .iter()
+                .any(|code| code.starts_with("gate.pending."))
+        );
+        assert!(vault.targets(&src, EdgeKind::Mentions, None)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_write_traps_validate_bound_actor() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_machine(&vault, 0xA8);
+        let src = seed_person(&vault, 0xB8);
+        let tgt = seed_person(&vault, 0xC8);
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-invalid-actor",
+        )?;
+        let before = gate_decision_count(&vault)?;
+
+        let _err = dispatcher
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::Mentions,
+                tgt,
+                0.7,
+            )))
+            .expect_err("wrong actor class must reject before write");
+
+        assert_eq!(gate_decision_count(&vault)?, before);
+        assert!(vault.targets(&src, EdgeKind::Mentions, None)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_put_edge_rejects_structural_edge_kinds() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_first_party_actor(&vault);
+        let src = seed_person(&vault, 0xB9);
+        let tgt = seed_person(&vault, 0xC9);
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-structural-edge",
+        )?;
+        let before = gate_decision_count(&vault)?;
+
+        let _err = dispatcher
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::ClaimOf,
+                tgt,
+                1.0,
+            )))
+            .expect_err("structural edge kind must reject");
+
+        assert_eq!(gate_decision_count(&vault)?, before);
+        assert!(vault.targets(&src, EdgeKind::ClaimOf, None)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_write_gate_denial_persists_decision() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        put_malformed_policy_manifest(&vault, 0xE7)?;
+        let actor = seed_person(&vault, 0xA7);
+        let src = seed_person(&vault, 0xB7);
+        let tgt = seed_person(&vault, 0xC7);
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-denied-write",
+        )?;
+        let gate_id =
+            edge_operation_gate_id(SelfEffect::MemoryPutEdge, src, EdgeKind::Mentions, tgt)?;
+        let before = gate_decision_count(&vault)?;
+
+        let _err = dispatcher
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::Mentions,
+                tgt,
+                0.7,
+            )))
+            .expect_err("fail-closed policy must reject write");
+
+        assert_eq!(gate_decision_count(&vault)?, before + 1);
+        let decisions = vault.store.gate_decisions(1)?;
+        let latest = decisions.first().expect("latest gate decision");
+        assert_eq!(latest.outcome, "deny");
+        assert_eq!(latest.claim_id, Some(*gate_id.as_bytes()));
+        assert_eq!(latest.reason_codes, vec!["gate.deny.policy_fail_closed"]);
+        assert!(vault.targets(&src, EdgeKind::Mentions, None)?.is_empty());
         Ok(())
     }
 
