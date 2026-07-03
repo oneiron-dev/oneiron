@@ -4313,7 +4313,7 @@ fn search_response(
 ) -> Result<Vec<Value>, ApiError> {
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        match projection::project_search_result(scoped_read.vault(), result, view) {
+        match project_scoped_search_result(scoped_read, result, view) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
             Ok(None) => continue,
@@ -4324,6 +4324,34 @@ fn search_response(
         }
     }
     Ok(response)
+}
+
+fn project_scoped_search_result(
+    scoped_read: &oneiron::claim::ScopedRead<'_>,
+    result: oneiron::ScoredEntity,
+    view: View,
+) -> oneiron::Result<Option<Value>> {
+    let id_hex = result.id.to_hex();
+    match view {
+        View::Standard => Ok(Some(json!({
+            "id": id_hex,
+            "score": result.score,
+        }))),
+        View::Summary | View::Full => {
+            let Some((entity_type, learned_at, body)) = scoped_read.get_entity_parts(&result.id)?
+            else {
+                return Ok(None);
+            };
+            let mut value =
+                projection::project_entity_parts(&result.id, entity_type, learned_at, &body, view);
+            if matches!(view, View::Full)
+                && let Value::Object(object) = &mut value
+            {
+                object.insert("score".to_owned(), json!(result.score));
+            }
+            Ok(Some(value))
+        }
+    }
 }
 
 // ─── Entity Routes ────────────────────────────────────────────────────────────
@@ -9025,6 +9053,62 @@ mod tests {
             assert!(
                 response.is_empty(),
                 "{view:?} should skip missing search hits"
+            );
+        }
+    }
+
+    #[test]
+    fn search_response_rechecks_projected_claim_body() {
+        #[derive(serde::Serialize)]
+        struct ClaimSeed<'a> {
+            pred: &'a str,
+            val: &'a str,
+            conf: f32,
+            #[serde(with = "serde_bytes")]
+            subj: &'a [u8],
+            appr: &'static str,
+            life: &'static str,
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap();
+        let claim_id = seeded_test_entity_id(0x0012_6901);
+        let subject = seeded_test_entity_id(0x0012_6902);
+        let body = rmp_serde::to_vec_named(&ClaimSeed {
+            pred: "profile.projected",
+            val: "hidden after update",
+            conf: 0.9,
+            subj: subject.as_bytes(),
+            appr: "proposed",
+            life: "active",
+        })
+        .expect("encode proposed claim");
+        vault
+            .put_entity(
+                &claim_id,
+                oneiron::types::ENTITY_TYPE_CLAIM,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
+                &body,
+            )
+            .expect("seed proposed claim");
+
+        let scoped_read = vault.scoped_read(
+            oneiron::claim::ScopedReadActorKey::new("test-reader").expect("actor key"),
+        );
+        let stale_hit = oneiron::ScoredEntity {
+            id: claim_id,
+            score: 0.75,
+        };
+
+        for view in [View::Summary, View::Full] {
+            let response = search_response(&scoped_read, vec![stale_hit], view, 10).unwrap();
+            assert!(
+                response.is_empty(),
+                "{view:?} should re-check the exact projected body through ScopedRead"
             );
         }
     }

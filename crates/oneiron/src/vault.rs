@@ -4718,13 +4718,20 @@ impl Vault {
 
         let rtxn = self.store.env.read_txn()?;
         let mut limit = requested;
+        let mut hybrid_union_limit = 0usize;
         if include_text {
             let indexed_docs = usize::try_from(crate::bm25::read_total_docs(&self.store, &rtxn)?)
                 .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_docs);
             limit = limit.max(indexed_docs);
         }
         if include_vector {
-            limit = limit.max(crate::hnsw::hnsw_entity_count(&self.store, &rtxn)?);
+            let indexed_vectors = crate::hnsw::hnsw_entity_count(&self.store, &rtxn)?;
+            hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_vectors);
+            limit = limit.max(indexed_vectors);
+        }
+        if include_text && include_vector {
+            limit = limit.max(hybrid_union_limit);
         }
         Ok(limit)
     }

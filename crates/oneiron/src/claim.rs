@@ -220,6 +220,10 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        Ok(self.get_entity_parts(id)?.map(|(_, _, body)| body))
+    }
+
+    pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
         let rtxn = self.vault.store.env.read_txn()?;
         let Some(raw) = self.vault.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
@@ -228,12 +232,12 @@ impl<'a> ScopedRead<'a> {
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(Some(body.to_vec()));
+            return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
         }
         if !self.is_claim_raw_readable_in(&rtxn, id, raw)? {
             return Ok(None);
         }
-        Ok(Some(body.to_vec()))
+        Ok(Some((header.entity_type, header.learned_at, body.to_vec())))
     }
 
     pub fn hydrate_short_id(
@@ -281,13 +285,15 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn edges_out(&self, id: &EntityId) -> Result<Option<Vec<EdgeInfo>>> {
-        if !self.is_entity_readable(id)? {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
+        if !self.is_entity_readable_with_policy_in(&rtxn, &policy, id)? {
             return Ok(None);
         }
-        let edges = self.vault.edges_out(id)?;
+        let edges = self.edges_out_in(&rtxn, id)?;
         let mut kept = Vec::with_capacity(edges.len());
         for edge in edges {
-            if self.is_entity_readable(&edge.target)? {
+            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)? {
                 kept.push(edge);
             }
         }
@@ -307,11 +313,7 @@ impl<'a> ScopedRead<'a> {
         let rtxn = self.vault.store.env.read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
-        let loaded_manifest_forces_fail_closed = diagnostics.malformed_manifest_seen
-            || diagnostics.unsupported_schema_seen
-            || diagnostics.engine_version_floor_seen
-            || diagnostics.unknown_axis_seen;
-        if !loaded_manifest_forces_fail_closed && !policy.has_scoped_read_grants() {
+        if !diagnostics.loaded_manifest_forces_fail_closed() && !policy.has_scoped_read_grants() {
             return Ok(requested);
         }
         drop(rtxn);
@@ -329,9 +331,11 @@ impl<'a> ScopedRead<'a> {
         results: Vec<ScoredEntity>,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
         let mut kept = Vec::with_capacity(results.len());
         for result in results {
-            if self.is_entity_readable(&result.id)? {
+            if self.is_entity_readable_with_policy_in(&rtxn, &policy, &result.id)? {
                 kept.push(result);
                 if kept.len() == limit {
                     break;
@@ -342,13 +346,15 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<()> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
         let previous_count = pack.results.len() + pack.neighbors.len();
         let (results, result_suppressed) =
-            self.filter_context_entities(std::mem::take(&mut pack.results))?;
+            self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.results))?;
         let (mut neighbors, neighbor_suppressed) =
-            self.filter_context_entities(std::mem::take(&mut pack.neighbors))?;
+            self.filter_context_entities(&rtxn, &policy, std::mem::take(&mut pack.neighbors))?;
         let reachability_suppressed = if result_suppressed > 0 {
-            Self::retain_neighbors_reachable_from_results(&mut neighbors, &results)
+            self.retain_neighbors_reachable_from_results(&rtxn, &mut neighbors, &results)?
         } else {
             0
         };
@@ -373,13 +379,23 @@ impl<'a> ScopedRead<'a> {
     }
 
     fn is_entity_readable_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        let policy = self.policy_manifest_in(rtxn)?;
+        self.is_entity_readable_with_policy_in(rtxn, &policy, id)
+    }
+
+    fn is_entity_readable_with_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
         let Some(raw) = self.vault.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(false);
         };
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            self.is_claim_raw_readable_in(rtxn, id, raw)
+            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw)
         } else {
             Ok(true)
         }
@@ -391,11 +407,22 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
+        let policy = self.policy_manifest_in(rtxn)?;
+        self.is_claim_raw_readable_with_policy_in(rtxn, &policy, id, raw)
+    }
+
+    fn is_claim_raw_readable_with_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
         if raw.len() == ENTITY_METADATA_HEADER_LEN && self.vault.is_deleted_shell(id)? {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_in(rtxn, id, &body)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body)
     }
 
     fn is_claim_readable_with_body(&self, id: &EntityId, body: &ClaimBody) -> Result<bool> {
@@ -409,13 +436,23 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         body: &ClaimBody,
     ) -> Result<bool> {
+        let policy = self.policy_manifest_in(rtxn)?;
+        self.is_claim_readable_with_body_and_policy_in(rtxn, &policy, id, body)
+    }
+
+    fn is_claim_readable_with_body_and_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
         if !claim_surfaceable(body) {
             return Ok(false);
         }
-        let policy = self.policy_manifest_in(rtxn)?;
         let claim_facets = self.vault.claim_facet_refs_in(rtxn, id)?;
         Ok(crate::gate::scoped_read_claim_allowed(
-            &policy,
+            policy,
             &self.actor_key,
             body,
             &claim_facets,
@@ -424,13 +461,15 @@ impl<'a> ScopedRead<'a> {
 
     fn filter_context_entities(
         &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
         entities: Vec<ContextEntity>,
     ) -> Result<(Vec<ContextEntity>, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
         for mut entity in entities {
-            if self.is_entity_readable(&entity.id)? {
-                self.filter_context_entity_edges(&mut entity)?;
+            if self.is_entity_readable_with_policy_in(rtxn, policy, &entity.id)? {
+                self.filter_context_entity_edges(rtxn, policy, &mut entity)?;
                 kept.push(entity);
             } else if entity.entity_type == ENTITY_TYPE_CLAIM {
                 claims_suppressed += 1;
@@ -440,16 +479,28 @@ impl<'a> ScopedRead<'a> {
     }
 
     fn retain_neighbors_reachable_from_results(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
         neighbors: &mut Vec<ContextEntity>,
         results: &[ContextEntity],
-    ) -> usize {
-        let reachable_ids = results
-            .iter()
-            .filter_map(|entity| entity.edges.as_ref())
-            .flat_map(|edges| edges.iter())
-            .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
-            .map(|edge| edge.target)
-            .collect::<HashSet<_>>();
+    ) -> Result<usize> {
+        let mut reachable_ids = HashSet::new();
+        for entity in results {
+            if let Some(edges) = entity.edges.as_ref() {
+                reachable_ids.extend(
+                    edges
+                        .iter()
+                        .filter(|edge| context_pack_edge_can_reach_neighbor(edge))
+                        .map(|edge| edge.target),
+                );
+                continue;
+            }
+            for edge in self.edges_out_in(rtxn, &entity.id)? {
+                if context_pack_edge_can_reach_neighbor(&edge) {
+                    reachable_ids.insert(edge.target);
+                }
+            }
+        }
         let mut claims_suppressed = 0;
         neighbors.retain(|entity| {
             let keep = reachable_ids.contains(&entity.id);
@@ -458,16 +509,40 @@ impl<'a> ScopedRead<'a> {
             }
             keep
         });
-        claims_suppressed
+        Ok(claims_suppressed)
     }
 
-    fn filter_context_entity_edges(&self, entity: &mut ContextEntity) -> Result<()> {
+    fn edges_out_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
+        const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
+
+        let mut edges = Vec::new();
+        for entry in self
+            .vault
+            .store
+            .edges_out
+            .prefix_iter(rtxn, id.as_bytes())?
+        {
+            let (key, value) = entry?;
+            if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
+                return Err(Error::IndexOverflow("scoped read edge reachability"));
+            }
+            edges.push(crate::vault::parse_edge_record(key, value)?);
+        }
+        Ok(edges)
+    }
+
+    fn filter_context_entity_edges(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        entity: &mut ContextEntity,
+    ) -> Result<()> {
         let Some(edges) = entity.edges.as_mut() else {
             return Ok(());
         };
         let mut kept = Vec::with_capacity(edges.len());
         for edge in edges.drain(..) {
-            if self.is_entity_readable(&edge.target)? {
+            if self.is_entity_readable_with_policy_in(rtxn, policy, &edge.target)? {
                 kept.push(edge);
             }
         }
@@ -479,11 +554,15 @@ impl<'a> ScopedRead<'a> {
         &self,
         records: Vec<MemoryTimelineRecord>,
     ) -> Result<Vec<MemoryTimelineRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = self.policy_manifest_in(&rtxn)?;
         let mut kept = Vec::with_capacity(records.len());
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => self.is_entity_readable(&record.id)?,
+                (_, Some(ENTITY_TYPE_CLAIM)) => {
+                    self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
+                }
                 (_, Some(_)) => true,
                 (_, None) => false,
             };
