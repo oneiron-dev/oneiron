@@ -27,13 +27,14 @@ use super::quarantine::{
     remote_rejection_reason,
 };
 use super::queue::{SyncQueue, scrub_receiver_outbox_on_remote_hard_delete_in_txn};
+use super::quota;
 use super::types::LocalUpdate;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, DecodedEdgeValue, ENTITY_TYPE_COMPANION_REGISTER, EdgeKind,
-    EdgeProvenanceFlags, EntityId, Vad, decode_companion_record_body, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
+    CompanionExportClassification, DecodedEdgeValue, ENTITY_TYPE_AUTHORITY_LOG,
+    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, Vad,
+    decode_companion_record_body, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::{Error, Result, Vault};
 
@@ -1514,7 +1515,7 @@ fn materialize_entity_blob_in_txn(
     // receipt's bytes remain in the CRDT map, so the next forward
     // rematerialization re-admits it once the lease mirror catches up
     // (OD-10 lazy re-admission — no new scheduling machinery).
-    if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+    let quota_debit = if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
             if existing == blob {
@@ -1537,14 +1538,44 @@ fn materialize_entity_blob_in_txn(
             }
             return Err(crate::Error::RedactionReceiptDivergence { id });
         }
-        crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
+        let pubkey = crate::sync::lease::verify_new_receipt_origin_for_vault_in_txn(
             vault,
             wtxn,
             lease_vault_id,
             &id,
             blob,
         )?;
-    }
+        quota::try_accept_maintenance_ingest_peer_in_txn(
+            vault,
+            wtxn,
+            quota::peer_key_from_redaction_pubkey(&pubkey),
+            crate::unix_seconds_now(),
+        )?
+    } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
+        if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())?
+            && existing == blob
+        {
+            return Ok(false);
+        }
+        let validation = crate::batch::validate_replicated_authority_log_for_local_vault(
+            &vault.store,
+            wtxn,
+            data,
+        )?;
+        let peer_key = if validation.signer_known {
+            quota::peer_key_from_authority_key(&validation.signer_key)
+        } else {
+            quota::peer_key_from_unknown_authority_signer(validation.local_vault_id)
+        };
+        quota::try_accept_maintenance_ingest_peer_in_txn(
+            vault,
+            wtxn,
+            peer_key,
+            crate::unix_seconds_now(),
+        )?
+    } else {
+        None
+    };
 
     // Replicated put: Observer B mirrors whatever the unfiltered CRDT
     // entities map holds, including the engine-authored maintenance band
@@ -1560,7 +1591,7 @@ fn materialize_entity_blob_in_txn(
     // the callers via `remote_rejection_reason`, exactly like a rejected
     // receipt above), no longer a stored Claim that fails closed only at
     // read/supersede time.
-    vault
+    let apply_result = vault
         .batch_in()
         .put_replicated(
             &id,
@@ -1572,7 +1603,13 @@ fn materialize_entity_blob_in_txn(
             header.learned_at,
             data,
         )
-        .apply(wtxn)?;
+        .apply(wtxn);
+    if let Err(err) = apply_result {
+        if let Some(quota_debit) = quota_debit {
+            quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
+        }
+        return Err(err);
+    }
     Ok(true)
 }
 

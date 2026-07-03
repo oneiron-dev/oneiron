@@ -214,7 +214,12 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // once the lease mirror catches up (OD-10 lazy re-admission).
         | ErrorKind::ReceiptAttestationInvalid
         | ErrorKind::ReceiptLeaseUnknown
-        | ErrorKind::ReceiptLeaseRevoked => Some(reason_code_for(error)),
+        | ErrorKind::ReceiptLeaseRevoked
+        // ONE-1326: a known-key maintenance-band flood that passes origin
+        // validation but exceeds this device's local ingest budget is a
+        // remote-op rejection. Quarantine keeps evidence and lets a later
+        // rematerialization pass re-run the door when quota is under budget.
+        | ErrorKind::MaintenanceIngestQuotaExceeded => Some(reason_code_for(error)),
         _ => None,
     }
 }
