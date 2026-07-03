@@ -10979,9 +10979,9 @@ fn claim_body_keys_pin_d11_vocabulary() {
 }
 
 #[test]
-fn stored_claim_body_serves_fusion_boosts_and_context_pack_profiles() -> Result<()> {
-    // ONE body written through put_claim must BOTH fire the fusion boosts
-    // (sal/conf short keys) AND project through the context-pack CLAIM
+fn stored_claim_body_serves_fusion_signals_and_context_pack_profiles() -> Result<()> {
+    // ONE body written through put_claim must BOTH feed the retrieval blend
+    // signals (sal/conf short keys) AND project through the context-pack CLAIM
     // field profiles — the pre-fix engine read "salience"/"confidence" in
     // fusion and "sal"/"conf" in profiles, so no single body could do both.
     let (_dir, vault) = open_test_vault();
@@ -10993,49 +10993,91 @@ fn stored_claim_body_serves_fusion_boosts_and_context_pack_profiles() -> Result<
         "preference.food",
         ClaimSubject::Entity(subject),
         rmpv::Value::from("matcha"),
-        0.8,
+        0.1,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     );
-    body.salience = Some(0.5);
+    body.salience = Some(0.9);
     vault.put_claim(&claim, &body, test_time_range(10, 10), 11)?;
+
+    let other_claim = EntityId::now();
+    let mut other_body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    other_body.salience = Some(0.3);
+    vault.put_claim(&other_claim, &other_body, test_time_range(10, 10), 11)?;
+
+    let third_claim = EntityId::now();
+    let mut third_body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("matcha"),
+        0.4,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    third_body.salience = Some(0.0);
+    vault.put_claim(&third_claim, &third_body, test_time_range(10, 10), 11)?;
     vault
         .batch()
         .text(&claim, &[("body", "matcha preference")])
+        .text(&other_claim, &[("body", "matcha preference")])
+        .text(&third_claim, &[("body", "matcha preference")])
         .commit()?;
 
     let baseline = vault.query().search_text("matcha", 10).run()?;
-    assert_eq!(baseline.len(), 1);
-    let base_score = baseline[0].score;
+    assert_eq!(baseline.len(), 3);
 
-    // boost_salience alone: score × (1 + sal) = × 1.5. A key-swapped
-    // implementation (reading conf) would yield × 1.8 and fail.
+    fn z_score(value: f32, values: &[f32]) -> f32 {
+        let mean = values.iter().map(|value| f64::from(*value)).sum::<f64>() / values.len() as f64;
+        let variance = values
+            .iter()
+            .map(|candidate| {
+                let delta = f64::from(*candidate) - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / values.len() as f64;
+        ((f64::from(value) - mean) / variance.sqrt()) as f32
+    }
+
+    fn score_for(scores: &[ScoredEntity], id: EntityId) -> f32 {
+        scores
+            .iter()
+            .find(|scored| scored.id == id)
+            .expect("expected scored entity")
+            .score
+    }
+
     let sal_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_salience()
         .run()?;
-    assert_eq!(sal_boosted.len(), 1);
-    let expected_sal = base_score * 1.5;
+    assert_eq!(sal_boosted.len(), 3);
+    assert_eq!(sal_boosted[0].id, claim);
+    let expected_salience_score = (0.30_f32 * z_score(0.9, &[0.9, 0.3, 0.0])).exp();
     assert!(
-        (sal_boosted[0].score - expected_sal).abs() < 1e-5,
-        "salience boost drifted: got {}, expected {expected_sal}",
-        sal_boosted[0].score
+        (score_for(&sal_boosted, claim) - expected_salience_score).abs() < 1e-6,
+        "salience blend must read the pinned `sal` key"
     );
 
-    // boost_confidence alone: score × (0.5 + 0.5 × conf) = × 0.9. A
-    // key-swapped implementation (reading sal) would yield × 0.75 and fail.
     let conf_boosted = vault
         .query()
         .search_text("matcha", 10)
         .boost_confidence()
         .run()?;
-    assert_eq!(conf_boosted.len(), 1);
-    let expected_conf = base_score * 0.9;
+    assert_eq!(conf_boosted.len(), 3);
+    assert_eq!(conf_boosted[0].id, other_claim);
+    let expected_confidence_score = (0.20_f32 * z_score(0.9, &[0.1, 0.9, 0.4])).exp();
     assert!(
-        (conf_boosted[0].score - expected_conf).abs() < 1e-5,
-        "confidence boost drifted: got {}, expected {expected_conf}",
-        conf_boosted[0].score
+        (score_for(&conf_boosted, other_claim) - expected_confidence_score).abs() < 1e-6,
+        "confidence blend must read the pinned `conf` key"
     );
 
     // The SAME stored body projects through the CLAIM Full profile.
