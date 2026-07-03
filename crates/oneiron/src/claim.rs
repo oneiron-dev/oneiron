@@ -346,6 +346,9 @@ impl<'a> ScopedRead<'a> {
         let Some(body) = self.vault.get_claim(id)? else {
             return Ok(false);
         };
+        if !claim_surfaceable(&body) {
+            return Ok(false);
+        }
         self.vault.scoped_read_claim_allowed(&self.actor_key, &body)
     }
 }

@@ -4313,15 +4313,6 @@ fn search_response(
 ) -> Result<Vec<Value>, ApiError> {
     let mut response = Vec::with_capacity(results.len().min(page_limit));
     for result in results {
-        if !scoped_read
-            .is_entity_readable(&result.id)
-            .map_err(|error| {
-                tracing::error!(error = %error, "scoped search read failed");
-                ApiError::internal_server_error("scoped search read failed")
-            })?
-        {
-            continue;
-        }
         match projection::project_search_result(scoped_read.vault(), result, view) {
             Ok(Some(value)) if response.len() < page_limit => response.push(value),
             Ok(Some(_)) => continue,
@@ -12293,19 +12284,11 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body:#}");
         assert_eq!(body["anchor_id"], Value::from(new.to_hex()));
         let records = body["records"].as_array().expect("timeline records");
-        assert_eq!(records.len(), 2, "{body:#}");
-        assert_eq!(records[0]["id"], Value::from(old.to_hex()));
-        assert_eq!(records[0]["state"], Value::from("superseded"));
-        assert_eq!(records[0]["occurred_start"], Value::from(100_u64));
-        assert_eq!(records[0]["occurred_end"], Value::from(777_u64));
+        assert_eq!(records.len(), 1, "{body:#}");
+        assert_eq!(records[0]["id"], Value::from(new.to_hex()));
+        assert_eq!(records[0]["state"], Value::from("live"));
         assert_eq!(
-            records[0]["superseded_by"],
-            Value::Array(vec![Value::from(new.to_hex())])
-        );
-        assert_eq!(records[1]["id"], Value::from(new.to_hex()));
-        assert_eq!(records[1]["state"], Value::from("live"));
-        assert_eq!(
-            records[1]["supersedes"],
+            records[0]["supersedes"],
             Value::Array(vec![Value::from(old.to_hex())])
         );
     }
