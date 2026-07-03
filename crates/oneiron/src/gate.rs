@@ -14,6 +14,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
     sensitivity_band_from_value,
 };
+use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
@@ -42,6 +43,10 @@ const RULE_EXACT_KEY: &str = "exact";
 const RULE_AXES_KEY: &str = "axes";
 const ACTOR_CLASS_KEY: &str = "actor_class";
 const ACTOR_REF_KEY: &str = "actor_ref";
+const DREAMER_PROVENANCE_RUN_ID_KEY: &str = "run_id";
+const DREAMER_PROVENANCE_RUN_KEY: &str = "run";
+const DREAMER_PROVENANCE_RUNNER_KEY: &str = "runner";
+const DREAMER_PROVENANCE_SURFACE_KEY: &str = "surface";
 const ACTOR_CEILING_KEY: &str = "ceiling";
 const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
 const SOURCE_TRUST_AUTO_KEY: &str = "auto";
@@ -1527,6 +1532,7 @@ pub(crate) fn check_claim_policy_for_write(
                         .iter()
                         .map(|code| code.as_str().to_owned())
                         .collect(),
+                    dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
                 },
             )?;
         }
@@ -1592,6 +1598,50 @@ pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn pending_consent_dreamer_run_id(
+    envelope: Option<&WriteEnvelope>,
+    body: &ClaimBody,
+) -> Option<String> {
+    if body.approval != ClaimApprovalStatus::Proposed || body.source != Some(ClaimSource::Generated)
+    {
+        return None;
+    }
+
+    let envelope = envelope?;
+    if envelope.source() != ClaimSource::Generated
+        || envelope.actor().actor_class() != EdgeActorClass::Agent
+    {
+        return None;
+    }
+
+    dreamer_run_id_from_provenance(envelope.provenance().value())
+}
+
+fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    if !entries.iter().any(|(key, value)| {
+        key.as_str().is_some_and(|key| {
+            key == DREAMER_PROVENANCE_RUNNER_KEY || key == DREAMER_PROVENANCE_SURFACE_KEY
+        }) && value.as_str() == Some(DREAMER_RUNNER_JOB_KIND)
+    }) {
+        return None;
+    }
+
+    [DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY]
+        .into_iter()
+        .find_map(|run_key| {
+            entries.iter().find_map(|(key, value)| {
+                if key.as_str() != Some(run_key) {
+                    return None;
+                }
+                let run_id = value.as_str()?.trim();
+                (!run_id.is_empty()).then(|| run_id.to_owned())
+            })
+        })
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
@@ -2219,6 +2269,7 @@ mod tests {
         PackItemAccounting, PackStats, PackTokenStats, ScoredEntity, TimeRange, WriteActor,
         WriteProvenance,
     };
+    use std::time::Duration;
 
     fn test_id(seed: u8) -> EntityId {
         EntityId::from_bytes([seed; 16]).expect("valid test id")
@@ -3691,6 +3742,46 @@ mod tests {
         Ok((claim_candidate_from_body(body), envelope))
     }
 
+    fn dreamer_claim_candidate_write_parts(
+        vault: &crate::Vault,
+        body: &ClaimBody,
+        actor: EntityId,
+        run_id: &str,
+    ) -> Result<(ClaimCandidate, WriteEnvelope)> {
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"dreamer actor",
+        )?;
+        if let ClaimSubject::Entity(subject) = body.subject {
+            vault.put_entity(
+                &subject,
+                ENTITY_TYPE_PERSON,
+                test_time(1),
+                1,
+                b"dreamer subject",
+            )?;
+        }
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            ClaimSource::Generated,
+            WriteProvenance::new(Value::Map(vec![
+                (
+                    Value::from(DREAMER_PROVENANCE_RUNNER_KEY),
+                    Value::from(DREAMER_RUNNER_JOB_KIND),
+                ),
+                (
+                    Value::from(DREAMER_PROVENANCE_RUN_ID_KEY),
+                    Value::from(run_id),
+                ),
+            ]))?,
+            body.approval,
+        );
+        Ok((claim_candidate_from_body(body), envelope))
+    }
+
     fn gate_evaluator_input(
         actor_class: &str,
         actor_ref: Option<&str>,
@@ -4679,6 +4770,141 @@ mod tests {
         })?;
         assert_eq!(pending.claim_id, *id.as_bytes());
         assert_eq!(pending.reason_codes, vec!["gate.pending.actor_ceiling"]);
+        Ok(())
+    }
+
+    #[test]
+    fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xA0, &encode_policy_manifest(vec![]))?;
+
+        let run_a = "dreamer-run-a";
+        let run_b = "dreamer-run-b";
+        let run_a_first = test_id(0xA1);
+        let run_b_first = test_id(0xA2);
+        let default_id = test_id(0xA3);
+        let run_a_second = test_id(0xA4);
+        let run_b_second = test_id(0xA5);
+
+        let pending_body = |subject_seed: u8, value: &'static str, source: ClaimSource| {
+            let mut body = source_trust_claim(source);
+            body.subject = ClaimSubject::Entity(test_id(subject_seed));
+            body.value = Value::from(value);
+            body.approval = ClaimApprovalStatus::Proposed;
+            body
+        };
+
+        let body_a_first = pending_body(0xB1, "run-a-1", ClaimSource::Generated);
+        let body_b_first = pending_body(0xB2, "run-b-1", ClaimSource::Generated);
+        let body_default = pending_body(0xB3, "default", ClaimSource::UserStated);
+        let body_a_second = pending_body(0xB4, "run-a-2", ClaimSource::Generated);
+        let body_b_second = pending_body(0xB5, "run-b-2", ClaimSource::Generated);
+
+        for (claim_id, actor, run_id, body) in [
+            (run_a_first, test_id(0xC1), run_a, &body_a_first),
+            (run_b_first, test_id(0xC2), run_b, &body_b_first),
+        ] {
+            let (candidate, envelope) =
+                dreamer_claim_candidate_write_parts(&vault, body, actor, run_id)?;
+            vault
+                .batch()
+                .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+                .commit()?;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &body_default)?;
+        vault
+            .batch()
+            .claim_candidate(&default_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+        std::thread::sleep(Duration::from_millis(2));
+
+        for (claim_id, actor, run_id, body) in [
+            (run_a_second, test_id(0xC4), run_a, &body_a_second),
+            (run_b_second, test_id(0xC5), run_b, &body_b_second),
+        ] {
+            let (candidate, envelope) =
+                dreamer_claim_candidate_write_parts(&vault, body, actor, run_id)?;
+            vault
+                .batch()
+                .claim_candidate(&claim_id, candidate, &envelope, test_time(4), 4)
+                .commit()?;
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        let pending = vault.pending_gate_consents(10)?;
+        assert_eq!(pending.len(), 5);
+        assert_eq!(
+            pending
+                .iter()
+                .find(|record| record.claim_id == *run_a_first.as_bytes())
+                .and_then(|record| record.dreamer_run_id.as_deref()),
+            Some(run_a)
+        );
+        assert_eq!(
+            pending
+                .iter()
+                .find(|record| record.claim_id == *run_b_first.as_bytes())
+                .and_then(|record| record.dreamer_run_id.as_deref()),
+            Some(run_b)
+        );
+        assert_eq!(
+            pending
+                .iter()
+                .find(|record| record.claim_id == *default_id.as_bytes())
+                .and_then(|record| record.dreamer_run_id.as_deref()),
+            None
+        );
+
+        let groups = vault.pending_gate_consent_groups(10)?;
+        assert_eq!(groups.len(), 3);
+        let group_ids = |run_id: Option<&str>| -> Vec<[u8; ENTITY_ID_LEN]> {
+            groups
+                .iter()
+                .find(|group| group.dreamer_run_id.as_deref() == run_id)
+                .expect("group exists")
+                .records
+                .iter()
+                .map(|record| record.claim_id)
+                .collect()
+        };
+        assert_eq!(
+            group_ids(Some(run_a)),
+            vec![*run_a_first.as_bytes(), *run_a_second.as_bytes()]
+        );
+        assert_eq!(
+            group_ids(Some(run_b)),
+            vec![*run_b_first.as_bytes(), *run_b_second.as_bytes()]
+        );
+        assert_eq!(group_ids(None), vec![*default_id.as_bytes()]);
+
+        let mut approved_a_first = body_a_first;
+        approved_a_first.approval = ClaimApprovalStatus::Approved;
+        let (candidate, envelope) =
+            dreamer_claim_candidate_write_parts(&vault, &approved_a_first, test_id(0xC1), run_a)?;
+        vault
+            .batch()
+            .claim_candidate(&run_a_first, candidate, &envelope, test_time(5), 5)
+            .commit()?;
+
+        assert!(!has_pending_gate_consent(&vault, &run_a_first)?);
+        assert!(has_pending_gate_consent(&vault, &run_a_second)?);
+        assert_eq!(
+            vault
+                .get_claim(&run_a_first)?
+                .expect("approved claim")
+                .approval,
+            ClaimApprovalStatus::Approved
+        );
+
+        let groups = vault.pending_gate_consent_groups(10)?;
+        let run_a_after = groups
+            .iter()
+            .find(|group| group.dreamer_run_id.as_deref() == Some(run_a))
+            .expect("run A group remains");
+        assert_eq!(run_a_after.records.len(), 1);
+        assert_eq!(run_a_after.records[0].claim_id, *run_a_second.as_bytes());
         Ok(())
     }
 
