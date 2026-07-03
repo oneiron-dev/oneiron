@@ -301,6 +301,118 @@
         "id": "44444444444444444444444444444444",
         "reason": "gdpr_delete"
       }
+    },
+    {
+      "name": "edit_invalid_delete_missing_reason",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "delete",
+        "idempotency_key": "mcp-fixture-missing-delete-reason",
+        "id": "44444444444444444444444444444444"
+      }
+    },
+    {
+      "name": "edit_invalid_hard_delete_missing_reason",
+      "tool": "oneiron.edit",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "write_memory"
+        },
+        "verb": "hard_delete",
+        "idempotency_key": "mcp-fixture-missing-hard-delete-reason",
+        "id": "44444444444444444444444444444444"
+      }
+    },
+    {
+      "name": "ask_invalid_blank_query",
+      "tool": "oneiron.ask",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "context_pack": {
+          "schema_version": "context_pack_ref.v1",
+          "pack_ref": "context-pack:one-1215"
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "answer_question"
+        },
+        "query": "   "
+      }
+    },
+    {
+      "name": "read_invalid_context_pack_missing_handle",
+      "tool": "oneiron.read",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "agent",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "read_context"
+        },
+        "target": {
+          "context_pack": {
+            "schema_version": "context_pack_ref.v1"
+          }
+        }
+      }
+    },
+    {
+      "name": "nav_invalid_actor_class_mismatch",
+      "tool": "oneiron.nav",
+      "valid": false,
+      "args": {
+        "schema_version": "mcp_tool_args.v1",
+        "actor": {
+          "actor_ref": "11111111111111111111111111111111",
+          "actor_class": "human",
+          "gate_actor_class": "agent",
+          "gate_actor_ref": "11111111111111111111111111111111",
+          "scope": {}
+        },
+        "consent": {
+          "policy_ref": "policy:foreign-mcp",
+          "purpose": "navigate_context"
+        },
+        "mode": "list"
+      }
     }
   ]
 }
