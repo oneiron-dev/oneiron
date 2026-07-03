@@ -119,6 +119,11 @@ name = "sync_sweep_executor"
 path = "tests/sync_sweep_executor.rs"
 required-features = ["sync"]
 
+[[test]]
+name = "sync_maintenance_quota"
+path = "tests/sync_maintenance_quota.rs"
+required-features = ["sync"]
+
 [[bench]]
 name = "sync_memory"
 harness = false
