@@ -4,6 +4,7 @@
 //! (queue leases, local run-tree rows, parked rows, and budget counters) stays
 //! in private LMDB rows and is not sync materialized as vault entities.
 
+use std::collections::HashSet;
 use std::io::Cursor;
 
 use rmpv::Value;
@@ -31,6 +32,17 @@ pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
 pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
 /// Default fan-out reservation for one Dreamer child, in token-like units.
 pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
+/// MICRO consolidation queue kind. Private per-device job rows only.
+pub const DREAMER_CONSOLIDATION_MICRO_JOB_KIND: &str = "dreamer.consolidation.micro";
+/// MESO consolidation queue kind. Private per-device job rows only.
+pub const DREAMER_CONSOLIDATION_MESO_JOB_KIND: &str = "dreamer.consolidation.meso";
+/// MACRO consolidation queue kind. Admission is restricted to the elected home node.
+pub const DREAMER_CONSOLIDATION_MACRO_JOB_KIND: &str = "dreamer.consolidation.macro";
+/// Current pinned home-node designation schema version.
+pub const DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION: u64 = 1;
+/// Pinned on-disk MessagePack key set for the private home-node designation.
+pub const DREAMER_HOME_NODE_DESIGNATION_KEYS: [&str; 4] =
+    ["schema_version", "node_id", "class", "elected_at"];
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_JOB_TYPE: &str = "job_type";
@@ -45,6 +57,9 @@ const KEY_REMAINING_UNITS: &str = "remaining_units";
 const KEY_RESERVED_UNITS: &str = "reserved_units";
 const KEY_UPDATED_AT: &str = "updated_at";
 const KEY_CREATED_AT: &str = "created_at";
+const KEY_NODE_ID: &str = "node_id";
+const KEY_CLASS: &str = "class";
+const KEY_ELECTED_AT: &str = "elected_at";
 const KEY_REASON: &str = "reason";
 const KEY_PARKED_AT: &str = "parked_at";
 const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
@@ -78,9 +93,181 @@ const DREAMER_PRIVATE_BUDGET_PREFIX: &[u8] = b"dreamer:budget:";
 const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reservation:";
 const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
 const DREAMER_PRIVATE_PARKED_PREFIX: &[u8] = b"dreamer:parked:";
+const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";
 const MAX_DREAMER_JOB_TYPE_LEN: usize = 128;
 const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 const MAX_DREAMER_PARK_REASON_LEN: usize = 512;
+
+/// Consolidation job-table lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DreamerConsolidationScope {
+    Micro,
+    Meso,
+    Macro,
+}
+
+impl DreamerConsolidationScope {
+    /// Stable scope string used in Dreamer payloads.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Micro => "micro",
+            Self::Meso => "meso",
+            Self::Macro => "macro",
+        }
+    }
+
+    /// Private job-table kind for this consolidation lane.
+    #[must_use]
+    pub const fn job_kind(self) -> &'static str {
+        match self {
+            Self::Micro => DREAMER_CONSOLIDATION_MICRO_JOB_KIND,
+            Self::Meso => DREAMER_CONSOLIDATION_MESO_JOB_KIND,
+            Self::Macro => DREAMER_CONSOLIDATION_MACRO_JOB_KIND,
+        }
+    }
+}
+
+/// Candidate node signals for home-node MACRO election.
+///
+/// `attached` is the sync attachment signal. It is authority-bearing only for
+/// cloud candidates; local always-on and primary candidates are elected from
+/// the current caller-supplied candidate set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DreamerHomeNodeCandidate {
+    pub node_id: u64,
+    pub cloud: bool,
+    pub attached: bool,
+    pub always_on_local: bool,
+    pub primary_device: bool,
+}
+
+impl DreamerHomeNodeCandidate {
+    /// Cloud candidate; eligible only while attached.
+    #[must_use]
+    pub const fn cloud(node_id: u64, attached: bool) -> Self {
+        Self {
+            node_id,
+            cloud: true,
+            attached,
+            always_on_local: false,
+            primary_device: false,
+        }
+    }
+
+    /// Always-on local candidate.
+    #[must_use]
+    pub const fn always_on_local(node_id: u64) -> Self {
+        Self {
+            node_id,
+            cloud: false,
+            attached: true,
+            always_on_local: true,
+            primary_device: false,
+        }
+    }
+
+    /// Primary-device candidate.
+    #[must_use]
+    pub const fn primary_device(node_id: u64) -> Self {
+        Self {
+            node_id,
+            cloud: false,
+            attached: true,
+            always_on_local: false,
+            primary_device: true,
+        }
+    }
+
+    fn designation_class(self) -> Option<DreamerHomeNodeClass> {
+        if self.cloud && self.attached {
+            Some(DreamerHomeNodeClass::CloudAttached)
+        } else if self.always_on_local {
+            Some(DreamerHomeNodeClass::AlwaysOnLocal)
+        } else if self.primary_device {
+            Some(DreamerHomeNodeClass::PrimaryDevice)
+        } else {
+            None
+        }
+    }
+}
+
+/// Election class that made a node the MACRO home node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DreamerHomeNodeClass {
+    CloudAttached,
+    AlwaysOnLocal,
+    PrimaryDevice,
+}
+
+impl DreamerHomeNodeClass {
+    /// Stable string stored in the private designation row.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CloudAttached => "cloud_attached",
+            Self::AlwaysOnLocal => "always_on_local",
+            Self::PrimaryDevice => "primary_device",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "cloud_attached" => Some(Self::CloudAttached),
+            "always_on_local" => Some(Self::AlwaysOnLocal),
+            "primary_device" => Some(Self::PrimaryDevice),
+            _ => None,
+        }
+    }
+
+    const fn rank(self) -> u8 {
+        match self {
+            Self::CloudAttached => 0,
+            Self::AlwaysOnLocal => 1,
+            Self::PrimaryDevice => 2,
+        }
+    }
+}
+
+/// The single persisted MACRO home-node designation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DreamerHomeNodeDesignation {
+    pub node_id: u64,
+    pub class: DreamerHomeNodeClass,
+    pub elected_at: u64,
+}
+
+/// Input for enqueueing MICRO/MESO/MACRO consolidation on the advisory floor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnqueueDreamerConsolidationJob {
+    pub scope: DreamerConsolidationScope,
+    pub input: Value,
+    pub parent_job: Option<JobId>,
+    /// Optional advisory dedupe key. This is a local cost/policy coalescer,
+    /// not a correctness lock.
+    pub dedupe_key: Option<String>,
+    pub run_id: Option<String>,
+    pub now: u64,
+}
+
+/// Input for home-aware consolidation admission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdmitDreamerConsolidationJob {
+    pub scope: DreamerConsolidationScope,
+    pub local_node_id: u64,
+    pub admission: AdmitDreamerJob,
+}
+
+/// Home-aware consolidation admission result.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum DreamerConsolidationAdmissionOutcome {
+    NoHomeNode,
+    NotHomeNode(DreamerHomeNodeDesignation),
+    Admission(DreamerAdmissionOutcome),
+}
 
 /// Typed Dreamer job payload stored in the generic queue row.
 #[derive(Debug, Clone, PartialEq)]
@@ -346,6 +533,65 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Builds a local candidate from the vault's stable sync device identity.
+    pub fn local_home_node_candidate(
+        &self,
+        attached: bool,
+        always_on_local: bool,
+        primary_device: bool,
+    ) -> Result<DreamerHomeNodeCandidate> {
+        let identity = crate::identity::ensure_device_identity(self.vault)?;
+        Ok(DreamerHomeNodeCandidate {
+            node_id: identity.client_id,
+            cloud: false,
+            attached,
+            always_on_local,
+            primary_device,
+        })
+    }
+
+    /// Elects and persists the single MACRO home-node designation.
+    ///
+    /// Election is deterministic over the supplied current candidate set:
+    /// attached cloud > always-on local > primary device, with node id as a
+    /// stable tie-breaker inside a tier.
+    pub fn elect_home_node(
+        &self,
+        candidates: &[DreamerHomeNodeCandidate],
+        now: u64,
+    ) -> Result<Option<DreamerHomeNodeDesignation>> {
+        let designation = elect_home_node_designation(candidates, now)?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        if let Some(designation) = designation {
+            let encoded = encode_home_node_designation(&designation)?;
+            self.vault
+                .store
+                .vault_meta
+                .put(&mut wtxn, DREAMER_PRIVATE_HOME_NODE_KEY, &encoded)?;
+        } else {
+            self.vault
+                .store
+                .vault_meta
+                .delete(&mut wtxn, DREAMER_PRIVATE_HOME_NODE_KEY)?;
+        }
+        wtxn.commit()?;
+        Ok(designation)
+    }
+
+    /// Reads the persisted MACRO home-node designation, if one exists.
+    pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(raw) = self
+            .vault
+            .store
+            .vault_meta
+            .get(&rtxn, DREAMER_PRIVATE_HOME_NODE_KEY)?
+        else {
+            return Ok(None);
+        };
+        decode_home_node_designation(raw).map(Some)
+    }
+
     /// Enqueues a Dreamer job and records its private run-tree parent row in
     /// the same LMDB write transaction.
     pub fn enqueue(&self, input: EnqueueDreamerJob) -> Result<EnqueueDreamerJobOutcome> {
@@ -396,6 +642,61 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Enqueues a local consolidation job on the advisory job-table floor.
+    ///
+    /// MICRO and MESO remain per-device because these queue rows are private
+    /// runner state. MACRO uses the same advisory dedupe mechanics, but
+    /// admission is restricted by [`Self::admit_next_consolidation`].
+    pub fn enqueue_consolidation(
+        &self,
+        input: EnqueueDreamerConsolidationJob,
+    ) -> Result<EnqueueDreamerJobOutcome> {
+        let payload = DreamerJobPayload {
+            job_type: input.scope.as_str().to_owned(),
+            input: input.input,
+            parent_job: input.parent_job,
+        };
+        let encoded_payload = encode_dreamer_job_payload(&payload)?;
+
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.jobs.enqueue_in_txn(
+            &mut wtxn,
+            EnqueueJob {
+                kind: input.scope.job_kind().to_owned(),
+                payload: encoded_payload,
+                dedupe_key: input.dedupe_key,
+                run_id: input.run_id,
+                now: input.now,
+            },
+        )?;
+
+        let (was_enqueued, status) = match outcome {
+            EnqueueOutcome::Enqueued(record) => {
+                put_run_tree_record_in_txn(
+                    self.vault,
+                    &mut wtxn,
+                    &DreamerRunTreeRecord {
+                        job_id: record.id,
+                        parent_job: payload.parent_job,
+                        created_at: record.created_at,
+                    },
+                )?;
+                (true, decode_dreamer_job_status(record)?)
+            }
+            EnqueueOutcome::Existing(record) => {
+                ensure_run_tree_record_in_txn(self.vault, &mut wtxn, &record)?;
+                (false, decode_dreamer_job_status(record)?)
+            }
+        };
+        wtxn.commit()?;
+
+        if was_enqueued {
+            Ok(EnqueueDreamerJobOutcome::Enqueued(status))
+        } else {
+            Ok(EnqueueDreamerJobOutcome::Existing(status))
+        }
+    }
+
     /// Atomically admits the next queued Dreamer job.
     ///
     /// A successful admission leases one queue row, mutates the private budget
@@ -403,6 +704,42 @@ impl<'a> DreamerRunnerStore<'a> {
     /// committing. Budget denial commits only queue scan repairs, leaving the
     /// job queued and the budget row unchanged.
     pub fn admit_next(&self, input: AdmitDreamerJob) -> Result<DreamerAdmissionOutcome> {
+        self.admit_next_kind(DREAMER_RUNNER_JOB_KIND, input)
+    }
+
+    /// Home-aware consolidation admission.
+    ///
+    /// MICRO/MESO admission remains per-device. MACRO admission requires the
+    /// caller's local node id to match the persisted home-node designation.
+    pub fn admit_next_consolidation(
+        &self,
+        input: AdmitDreamerConsolidationJob,
+    ) -> Result<DreamerConsolidationAdmissionOutcome> {
+        if input.local_node_id == 0 {
+            return Err(invalid_dreamer_runner(
+                "dreamer local node_id must be nonzero",
+            ));
+        }
+        if input.scope == DreamerConsolidationScope::Macro {
+            let Some(designation) = self.home_node_designation()? else {
+                return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
+            };
+            if designation.node_id != input.local_node_id {
+                return Ok(DreamerConsolidationAdmissionOutcome::NotHomeNode(
+                    designation,
+                ));
+            }
+        }
+
+        self.admit_next_kind(input.scope.job_kind(), input.admission)
+            .map(DreamerConsolidationAdmissionOutcome::Admission)
+    }
+
+    fn admit_next_kind(
+        &self,
+        queue_kind: &str,
+        input: AdmitDreamerJob,
+    ) -> Result<DreamerAdmissionOutcome> {
         validate_budget_id(&input.budget_id)?;
         if input.reserve_units == 0 {
             return Err(invalid_dreamer_runner(
@@ -420,9 +757,9 @@ impl<'a> DreamerRunnerStore<'a> {
         }
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let Some(candidate_job_id) =
-            self.jobs
-                .ready_kind_candidate_in_txn(&mut wtxn, DREAMER_RUNNER_JOB_KIND, input.now)?
+        let Some(candidate_job_id) = self
+            .jobs
+            .ready_kind_candidate_in_txn(&mut wtxn, queue_kind, input.now)?
         else {
             wtxn.commit()?;
             return Ok(DreamerAdmissionOutcome::Empty);
@@ -450,7 +787,7 @@ impl<'a> DreamerRunnerStore<'a> {
 
         let claim = self.jobs.claim_kind_in_txn(
             &mut wtxn,
-            DREAMER_RUNNER_JOB_KIND,
+            queue_kind,
             ClaimJob {
                 lease_owner: input.lease_owner,
                 now: input.now,
@@ -709,7 +1046,7 @@ pub fn decode_dreamer_job_payload(bytes: &[u8]) -> Result<DreamerJobPayload> {
 }
 
 fn decode_dreamer_job_status(record: JobRecord) -> Result<DreamerJobStatus> {
-    if record.kind != DREAMER_RUNNER_JOB_KIND {
+    if !is_dreamer_queue_kind(&record.kind) {
         return Err(invalid_dreamer_runner("job is not a Dreamer runner job"));
     }
     let payload = decode_dreamer_job_payload(&record.payload)?;
@@ -717,6 +1054,134 @@ fn decode_dreamer_job_status(record: JobRecord) -> Result<DreamerJobStatus> {
         job: record,
         payload,
     })
+}
+
+fn is_dreamer_queue_kind(kind: &str) -> bool {
+    kind == DREAMER_RUNNER_JOB_KIND
+        || kind == DREAMER_CONSOLIDATION_MICRO_JOB_KIND
+        || kind == DREAMER_CONSOLIDATION_MESO_JOB_KIND
+        || kind == DREAMER_CONSOLIDATION_MACRO_JOB_KIND
+}
+
+fn elect_home_node_designation(
+    candidates: &[DreamerHomeNodeCandidate],
+    now: u64,
+) -> Result<Option<DreamerHomeNodeDesignation>> {
+    let mut seen = HashSet::with_capacity(candidates.len());
+    let mut best: Option<(u8, u64, DreamerHomeNodeDesignation)> = None;
+
+    for candidate in candidates {
+        if candidate.node_id == 0 {
+            return Err(invalid_dreamer_runner(
+                "dreamer home node_id must be nonzero",
+            ));
+        }
+        if !seen.insert(candidate.node_id) {
+            return Err(invalid_dreamer_runner(
+                "duplicate dreamer home node candidate",
+            ));
+        }
+
+        let Some(class) = candidate.designation_class() else {
+            continue;
+        };
+        let rank = class.rank();
+        let designation = DreamerHomeNodeDesignation {
+            node_id: candidate.node_id,
+            class,
+            elected_at: now,
+        };
+        match best.as_ref() {
+            Some((best_rank, best_node_id, _))
+                if rank > *best_rank
+                    || (rank == *best_rank && candidate.node_id > *best_node_id) => {}
+            _ => best = Some((rank, candidate.node_id, designation)),
+        }
+    }
+
+    Ok(best.map(|(_, _, designation)| designation))
+}
+
+fn encode_home_node_designation(record: &DreamerHomeNodeDesignation) -> Result<Vec<u8>> {
+    validate_home_node_designation(record)?;
+    let value = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION),
+        ),
+        (Value::from(KEY_NODE_ID), Value::from(record.node_id)),
+        (Value::from(KEY_CLASS), Value::from(record.class.as_str())),
+        (Value::from(KEY_ELECTED_AT), Value::from(record.elected_at)),
+    ]);
+    encode_value(&value, "dreamer home-node MessagePack encode failed")
+}
+
+fn decode_home_node_designation(bytes: &[u8]) -> Result<DreamerHomeNodeDesignation> {
+    let value = decode_value(bytes)?;
+    let entries = expect_map(&value, "dreamer home-node row must be a MessagePack map")?;
+    let mut schema_version = None;
+    let mut node_id = None;
+    let mut class = None;
+    let mut elected_at = None;
+    let mut seen = [false; DREAMER_HOME_NODE_DESIGNATION_KEYS.len()];
+
+    for (key, value) in entries {
+        let key = expect_key(key, "dreamer home-node keys must be strings")?;
+        let index = pinned_key_index(key, &DREAMER_HOME_NODE_DESIGNATION_KEYS).ok_or(
+            invalid_dreamer_runner("dreamer home-node key is not pinned"),
+        )?;
+        if seen[index] {
+            return Err(invalid_dreamer_runner("duplicate dreamer home-node key"));
+        }
+        seen[index] = true;
+
+        match DREAMER_HOME_NODE_DESIGNATION_KEYS[index] {
+            KEY_SCHEMA_VERSION => {
+                schema_version = Some(expect_u64(
+                    value,
+                    "dreamer home-node schema_version must be an integer",
+                )?);
+            }
+            KEY_NODE_ID => {
+                node_id = Some(expect_u64(
+                    value,
+                    "dreamer home-node node_id must be an integer",
+                )?);
+            }
+            KEY_CLASS => {
+                let parsed = expect_string(value, "dreamer home-node class must be a string")?;
+                class = Some(
+                    DreamerHomeNodeClass::parse(&parsed)
+                        .ok_or(invalid_dreamer_runner("invalid dreamer home-node class"))?,
+                );
+            }
+            KEY_ELECTED_AT => {
+                elected_at = Some(expect_u64(
+                    value,
+                    "dreamer home-node elected_at must be an integer",
+                )?);
+            }
+            _ => unreachable!("index resolved from DREAMER_HOME_NODE_DESIGNATION_KEYS"),
+        }
+    }
+
+    let schema_version = schema_version.ok_or(invalid_dreamer_runner(
+        "missing dreamer home-node schema_version",
+    ))?;
+    if schema_version != DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION {
+        return Err(invalid_dreamer_runner(
+            "unsupported dreamer home-node schema_version",
+        ));
+    }
+    let record = DreamerHomeNodeDesignation {
+        node_id: node_id.ok_or(invalid_dreamer_runner("missing dreamer home-node node_id"))?,
+        class: class.ok_or(invalid_dreamer_runner("missing dreamer home-node class"))?,
+        elected_at: elected_at.ok_or(invalid_dreamer_runner(
+            "missing dreamer home-node elected_at",
+        ))?,
+    };
+    validate_home_node_designation(&record)?;
+    Ok(record)
 }
 
 fn decode_dreamer_job_payload_value(value: &Value) -> Result<DreamerJobPayload> {
@@ -1507,6 +1972,15 @@ fn validate_budget_reservation(record: &DreamerBudgetReservation) -> Result<()> 
     Ok(())
 }
 
+fn validate_home_node_designation(record: &DreamerHomeNodeDesignation) -> Result<()> {
+    if record.node_id == 0 {
+        return Err(invalid_dreamer_runner(
+            "dreamer home node_id must be nonzero",
+        ));
+    }
+    Ok(())
+}
+
 const fn invalid_dreamer_runner(reason: &'static str) -> Error {
     Error::InvalidJobQueueRecord(reason)
 }
@@ -1549,6 +2023,46 @@ mod tests {
             EnqueueDreamerJobOutcome::Enqueued(status)
             | EnqueueDreamerJobOutcome::Existing(status) => Ok(status),
         }
+    }
+
+    fn enqueue_consolidation_job(
+        runner: &DreamerRunnerStore<'_>,
+        scope: DreamerConsolidationScope,
+        dedupe_key: Option<&str>,
+        now: u64,
+    ) -> Result<DreamerJobStatus> {
+        match runner.enqueue_consolidation(EnqueueDreamerConsolidationJob {
+            scope,
+            input: Value::from(format!("input:{}", scope.as_str())),
+            parent_job: None,
+            dedupe_key: dedupe_key.map(str::to_owned),
+            run_id: None,
+            now,
+        })? {
+            EnqueueDreamerJobOutcome::Enqueued(status)
+            | EnqueueDreamerJobOutcome::Existing(status) => Ok(status),
+        }
+    }
+
+    fn admit_consolidation(
+        runner: &DreamerRunnerStore<'_>,
+        scope: DreamerConsolidationScope,
+        local_node_id: u64,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<DreamerConsolidationAdmissionOutcome> {
+        runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope,
+            local_node_id,
+            admission: AdmitDreamerJob {
+                lease_owner: lease_owner.to_owned(),
+                now,
+                budget_id: format!("wake:{}", scope.as_str()),
+                budget_total_units: 10,
+                reserve_units: 1,
+                started_milestone: None,
+            },
+        })
     }
 
     fn test_ready_key(ready_at: u64, id: JobId) -> [u8; 24] {
@@ -1637,6 +2151,205 @@ mod tests {
             DREAMER_JOB_PAYLOAD_KEYS,
             ["schema_version", "job_type", "input", "parent_job"]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_home_node_election_order_persists_and_reelects() -> Result<()> {
+        let (dir, vault) = open_vault();
+        let (primary, always_on, cloud) = {
+            let runner = DreamerRunnerStore::new(&vault);
+            let local = runner.local_home_node_candidate(true, true, false)?;
+            assert_ne!(local.node_id, 0);
+            assert_eq!(
+                runner
+                    .local_home_node_candidate(false, true, false)?
+                    .node_id,
+                local.node_id,
+                "local candidate uses the stable sync device identity"
+            );
+
+            let primary = DreamerHomeNodeCandidate::primary_device(30);
+            let always_on = DreamerHomeNodeCandidate::always_on_local(20);
+            let cloud_detached = DreamerHomeNodeCandidate::cloud(10, false);
+            let elected = runner
+                .elect_home_node(&[primary, cloud_detached, always_on], 100)?
+                .expect("always-on local is eligible");
+            assert_eq!(elected.node_id, 20);
+            assert_eq!(elected.class, DreamerHomeNodeClass::AlwaysOnLocal);
+            assert_eq!(runner.home_node_designation()?, Some(elected));
+
+            let cloud_attached = DreamerHomeNodeCandidate::cloud(10, true);
+            let cloud = runner
+                .elect_home_node(&[primary, always_on, cloud_attached], 110)?
+                .expect("attached cloud wins");
+            assert_eq!(cloud.node_id, 10);
+            assert_eq!(cloud.class, DreamerHomeNodeClass::CloudAttached);
+            assert_eq!(
+                [primary, always_on, cloud_attached]
+                    .into_iter()
+                    .filter(|candidate| candidate.node_id == cloud.node_id)
+                    .count(),
+                1,
+                "exactly one candidate holds the MACRO designation"
+            );
+            (primary, always_on, cloud)
+        };
+        drop(vault);
+
+        let reopened = Vault::open(dir.path(), VaultConfig::device())?;
+        let reopened_runner = DreamerRunnerStore::new(&reopened);
+        assert_eq!(
+            reopened_runner.home_node_designation()?,
+            Some(cloud),
+            "designation survives restart"
+        );
+
+        let re_elected = reopened_runner
+            .elect_home_node(&[primary, always_on], 120)?
+            .expect("always-on local wins after cloud loss");
+        assert_eq!(re_elected.node_id, 20);
+        assert_eq!(re_elected.class, DreamerHomeNodeClass::AlwaysOnLocal);
+
+        let fallback = reopened_runner
+            .elect_home_node(&[primary], 130)?
+            .expect("primary is the last v1 fallback");
+        assert_eq!(fallback.node_id, 30);
+        assert_eq!(fallback.class, DreamerHomeNodeClass::PrimaryDevice);
+
+        assert!(reopened_runner.elect_home_node(&[], 140)?.is_none());
+        assert!(
+            reopened_runner.home_node_designation()?.is_none(),
+            "no eligible candidates clears a stale designation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+
+        let micro = enqueue_consolidation_job(
+            &runner,
+            DreamerConsolidationScope::Micro,
+            Some("device-a:claim-1"),
+            10,
+        )?;
+        let micro_again = enqueue_consolidation_job(
+            &runner,
+            DreamerConsolidationScope::Micro,
+            Some("device-a:claim-1"),
+            11,
+        )?;
+        assert_eq!(micro_again.job.id, micro.job.id);
+        assert_eq!(micro_again.job.kind, DREAMER_CONSOLIDATION_MICRO_JOB_KIND);
+
+        let meso = enqueue_consolidation_job(
+            &runner,
+            DreamerConsolidationScope::Meso,
+            Some("device-a:claim-1"),
+            12,
+        )?;
+        assert_ne!(
+            meso.job.id, micro.job.id,
+            "advisory dedupe is scoped by consolidation lane, not a global lock"
+        );
+        assert_eq!(meso.job.kind, DREAMER_CONSOLIDATION_MESO_JOB_KIND);
+
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted_micro,
+        )) = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Micro,
+            77,
+            "micro-worker",
+            20,
+        )?
+        else {
+            panic!("MICRO should admit per-device without a home node");
+        };
+        assert_eq!(
+            admitted_micro.status.job.kind,
+            DREAMER_CONSOLIDATION_MICRO_JOB_KIND
+        );
+
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted_meso,
+        )) = admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Meso,
+            77,
+            "meso-worker",
+            21,
+        )?
+        else {
+            panic!("MESO should admit per-device without a home node");
+        };
+        assert_eq!(
+            admitted_meso.status.job.kind,
+            DREAMER_CONSOLIDATION_MESO_JOB_KIND
+        );
+        assert!(runner.home_node_designation()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let primary = DreamerHomeNodeCandidate::primary_device(30);
+        let always_on = DreamerHomeNodeCandidate::always_on_local(20);
+        let designation = runner
+            .elect_home_node(&[primary, always_on], 100)?
+            .expect("always-on local wins");
+        assert_eq!(designation.node_id, 20);
+
+        let macro_job = enqueue_consolidation_job(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            Some("home-macro:bucket-pair"),
+            10,
+        )?;
+
+        let non_home =
+            admit_consolidation(&runner, DreamerConsolidationScope::Macro, 30, "primary", 20)?;
+        assert_eq!(
+            non_home,
+            DreamerConsolidationAdmissionOutcome::NotHomeNode(designation)
+        );
+        let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
+        assert_eq!(still_queued.job.state, JobState::Queued);
+        assert_eq!(still_queued.job.attempt_count, 0);
+
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted,
+        )) = admit_consolidation(&runner, DreamerConsolidationScope::Macro, 20, "home", 21)?
+        else {
+            panic!("elected home node should admit MACRO consolidation");
+        };
+        assert_eq!(admitted.status.job.id, macro_job.job.id);
+        assert_eq!(
+            admitted.status.job.kind,
+            DREAMER_CONSOLIDATION_MACRO_JOB_KIND
+        );
+        assert_eq!(admitted.status.job.lease_owner.as_deref(), Some("home"));
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let macro_job =
+            enqueue_consolidation_job(&runner, DreamerConsolidationScope::Macro, None, 10)?;
+
+        let outcome =
+            admit_consolidation(&runner, DreamerConsolidationScope::Macro, 20, "worker", 20)?;
+        assert_eq!(outcome, DreamerConsolidationAdmissionOutcome::NoHomeNode);
+        let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
+        assert_eq!(still_queued.job.state, JobState::Queued);
+        assert_eq!(still_queued.job.attempt_count, 0);
         Ok(())
     }
 
