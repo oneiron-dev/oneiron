@@ -319,6 +319,39 @@ pub struct RetrievalScoreBreakdown {
     pub components: Vec<RetrievalScoreComponent>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalTraceStage {
+    PerChannel,
+    Fused,
+    Blended,
+    Reranked,
+    Final,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalTraceChannelRecord {
+    pub stage: RetrievalTraceStage,
+    pub signal: RetrievalSignal,
+    pub candidates: Vec<RetrievalScoreBreakdown>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalTraceStageRecord {
+    pub stage: RetrievalTraceStage,
+    pub candidates: Vec<RetrievalScoreBreakdown>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalTrace {
+    pub per_channel: Vec<RetrievalTraceChannelRecord>,
+    pub fused: RetrievalTraceStageRecord,
+    pub blended: RetrievalTraceStageRecord,
+    pub reranked: RetrievalTraceStageRecord,
+    #[serde(rename = "final")]
+    pub final_stage: RetrievalTraceStageRecord,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalRunRecord {
     pub version: u8,
@@ -332,6 +365,8 @@ pub struct RetrievalRunRecord {
     pub total_in_scope: usize,
     pub claims_suppressed: usize,
     pub empty_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<RetrievalTrace>,
 }
 
 impl RetrievalRunRecord {
@@ -363,7 +398,13 @@ impl RetrievalRunRecord {
             total_in_scope,
             claims_suppressed,
             empty_reason,
+            trace: None,
         }
+    }
+
+    pub(crate) fn with_trace(mut self, trace: Option<RetrievalTrace>) -> Self {
+        self.trace = trace;
+        self
     }
 }
 
@@ -1339,6 +1380,9 @@ impl Store {
             }
         }
         record.score_breakdown = surfaced_breakdown;
+        if let Some(trace) = record.trace.as_mut() {
+            trace.final_stage.candidates = record.score_breakdown.clone();
+        }
         record.empty_reason = empty_reason;
         let value = encode_retrieval_run(&record)?;
         self.vault_meta.put(&mut wtxn, &key, &value)?;
@@ -2868,6 +2912,115 @@ mod tests {
             }
             other => panic!("expected GateWriteRejected, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn retrieval_run_without_trace_omits_trace_field_from_msgpack() -> Result<()> {
+        let record = RetrievalRunRecord::new(
+            RetrievalRunId::now(),
+            RetrievalAction::Pipeline,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            Vec::new(),
+            0,
+            0,
+            None,
+        );
+
+        assert!(record.trace.is_none());
+        let encoded = encode_retrieval_run(&record)?;
+        let encoded_value =
+            rmpv::decode::read_value(&mut &encoded[..]).expect("encoded retrieval run msgpack");
+        let rmpv::Value::Map(fields) = encoded_value else {
+            panic!("encoded retrieval run must be a msgpack map");
+        };
+        assert!(
+            fields.iter().all(|(key, _)| key.as_str() != Some("trace")),
+            "flag-off trace extension must omit the top-level trace key"
+        );
+        let decoded = decode_retrieval_run(&encoded)?;
+        assert_eq!(decoded.trace, None);
+        Ok(())
+    }
+
+    #[test]
+    fn context_pack_finalization_preserves_reranked_trace_stage() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let kept = entity_id(0xD1);
+        let dropped = entity_id(0xD2);
+        let score_breakdown = vec![
+            RetrievalScoreBreakdown {
+                result_id: *kept.as_bytes(),
+                final_rank: 1,
+                final_score: 2.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Text,
+                    rank: 1,
+                    score: 2.0,
+                }],
+            },
+            RetrievalScoreBreakdown {
+                result_id: *dropped.as_bytes(),
+                final_rank: 2,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Text,
+                    rank: 2,
+                    score: 1.0,
+                }],
+            },
+        ];
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::ContextPack,
+            1,
+            2,
+            vec![RetrievalSignal::Text],
+            score_breakdown.clone(),
+            0,
+            0,
+            None,
+        )
+        .with_trace(Some(RetrievalTrace {
+            per_channel: Vec::new(),
+            fused: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Fused,
+                candidates: score_breakdown.clone(),
+            },
+            blended: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Blended,
+                candidates: score_breakdown.clone(),
+            },
+            reranked: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Reranked,
+                candidates: score_breakdown.clone(),
+            },
+            final_stage: RetrievalTraceStageRecord {
+                stage: RetrievalTraceStage::Final,
+                candidates: score_breakdown,
+            },
+        }));
+        vault.store.record_retrieval_run(&record)?;
+
+        vault.store.finalize_context_pack_retrieval_run(
+            run_id,
+            10,
+            0,
+            &[*kept.as_bytes()],
+            None,
+        )?;
+
+        let finalized = vault
+            .retrieval_run(run_id)?
+            .expect("finalized context-pack run");
+        let trace = finalized.trace.expect("trace remains present");
+        assert_eq!(trace.reranked.candidates.len(), 2);
+        assert_eq!(trace.final_stage.candidates.len(), 1);
+        assert_eq!(trace.reranked.candidates[1].result_id, *dropped.as_bytes());
+        assert_eq!(trace.final_stage.candidates[0].result_id, *kept.as_bytes());
+        Ok(())
     }
 
     #[test]
