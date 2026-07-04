@@ -22,6 +22,9 @@ const MAX_DEDUPE_KEY_LEN: usize = 512;
 const MAX_FAILURE_REASON_LEN: usize = 2048;
 const MAX_LEASE_OWNER_LEN: usize = 128;
 const MAX_RUN_ID_LEN: usize = 128;
+const MAX_INTERVENTION_ACTOR_LEN: usize = 128;
+const MAX_INTERVENTION_NOTE_LEN: usize = 2048;
+const MAX_JOB_EVENTS_PER_RECORD: usize = 256;
 const ERR_EMPTY_KIND: &str = "kind must not be empty";
 const ERR_KIND_TOO_LONG: &str = "kind exceeds 128 bytes";
 const ERR_DEDUPE_KEY_EMPTY: &str = "dedupe key must not be empty";
@@ -32,6 +35,10 @@ const ERR_LEASE_OWNER_EMPTY: &str = "lease owner must not be empty";
 const ERR_LEASE_OWNER_TOO_LONG: &str = "lease owner exceeds 128 bytes";
 const ERR_RUN_ID_EMPTY: &str = "run id must not be empty";
 const ERR_RUN_ID_TOO_LONG: &str = "run id exceeds 128 bytes";
+const ERR_INTERVENTION_ACTOR_EMPTY: &str = "intervention actor must not be empty";
+const ERR_INTERVENTION_ACTOR_TOO_LONG: &str = "intervention actor exceeds 128 bytes";
+const ERR_INTERVENTION_NOTE_EMPTY: &str = "intervention note must not be empty";
+const ERR_INTERVENTION_NOTE_TOO_LONG: &str = "intervention note exceeds 2048 bytes";
 const ERR_JOB_ID_LEN: &str = "job id must be 16 bytes";
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different job kind";
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
@@ -59,6 +66,7 @@ struct ClaimKindCandidate {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ClaimKindWriteAttempt {
     Claimed(JobRecord),
     Empty,
@@ -101,8 +109,10 @@ impl JobId {
 pub enum JobState {
     Queued,
     Leased,
+    Paused,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl JobState {
@@ -110,14 +120,48 @@ impl JobState {
         match self {
             Self::Queued => "queued",
             Self::Leased => "leased",
+            Self::Paused => "paused",
             Self::Completed => "completed",
             Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
     }
 
     const fn is_pending(self) -> bool {
-        matches!(self, Self::Queued | Self::Leased)
+        matches!(self, Self::Queued | Self::Leased | Self::Paused)
     }
+}
+
+/// Durable intervention kind recorded on a job row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobInterventionKind {
+    Interrupt,
+    Pause,
+    Resume,
+    Cancel,
+}
+
+impl JobInterventionKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupt => "interrupt",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// Durable intervention event appended to a job row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobEvent {
+    pub sequence: u64,
+    pub at: u64,
+    pub actor: String,
+    pub kind: JobInterventionKind,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Durable job row stored in LMDB.
@@ -137,6 +181,8 @@ pub struct JobRecord {
     pub dedupe_key: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub events: Vec<JobEvent>,
 }
 
 /// Input for enqueueing a job.
@@ -167,6 +213,7 @@ pub struct ClaimJob {
 /// Typed claim outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum ClaimOutcome {
     Empty,
     Claimed(JobRecord),
@@ -224,6 +271,50 @@ pub struct RetryJob {
 #[non_exhaustive]
 pub enum RetryOutcome {
     Retried(JobRecord),
+}
+
+/// Input for interrupting, pausing, resuming, or cancelling a job row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterveneJob {
+    pub id: JobId,
+    pub kind: JobInterventionKind,
+    pub actor: String,
+    pub note: Option<String>,
+    pub now: u64,
+}
+
+/// Observable effect of an intervention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobInterventionEffect {
+    Interrupted,
+    Paused,
+    AlreadyPaused,
+    Resumed,
+    AlreadyResumed,
+    Cancelled,
+    AlreadyCancelled,
+}
+
+impl JobInterventionEffect {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Interrupted => "interrupted",
+            Self::Paused => "paused",
+            Self::AlreadyPaused => "already_paused",
+            Self::Resumed => "resumed",
+            Self::AlreadyResumed => "already_resumed",
+            Self::Cancelled => "cancelled",
+            Self::AlreadyCancelled => "already_cancelled",
+        }
+    }
+}
+
+/// Typed intervention outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterveneOutcome {
+    pub effect: JobInterventionEffect,
+    pub record: JobRecord,
 }
 
 /// Input for returning stale leased jobs to the ready index.
@@ -425,6 +516,7 @@ impl<'a> JobQueue<'a> {
             dedupe_key: input.dedupe_key,
             created_at: input.now,
             updated_at: input.now,
+            events: Vec::new(),
         };
 
         let encoded = encode_record(&record)?;
@@ -911,6 +1003,83 @@ impl<'a> JobQueue<'a> {
         }
     }
 
+    /// Applies a durable operator intervention to a job row. Pause removes a
+    /// queued row from the ready index, resume restores it, cancel makes a
+    /// queued or paused row terminal, and interrupt records an event without
+    /// changing claimability.
+    pub fn intervene(&self, input: InterveneJob) -> Result<InterveneOutcome> {
+        validate_intervention_actor(&input.actor)?;
+        validate_optional_intervention_note(input.note.as_deref())?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
+            return Err(invalid_transition(input.kind.as_str(), "missing"));
+        };
+        let mut record = decode_record(raw_record, input.id)?;
+
+        let effect = match input.kind {
+            JobInterventionKind::Interrupt => match record.state {
+                JobState::Queued | JobState::Leased | JobState::Paused => {
+                    append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
+                    record.updated_at = input.now;
+                    JobInterventionEffect::Interrupted
+                }
+                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
+            },
+            JobInterventionKind::Pause => match record.state {
+                JobState::Paused => JobInterventionEffect::AlreadyPaused,
+                JobState::Queued => {
+                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
+                    record.state = JobState::Paused;
+                    record.lease_owner = None;
+                    record.updated_at = input.now;
+                    JobInterventionEffect::Paused
+                }
+                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
+            },
+            JobInterventionKind::Resume => match record.state {
+                JobState::Paused => {
+                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
+                    record.state = JobState::Queued;
+                    record.lease_owner = None;
+                    record.updated_at = input.now;
+                    let ready_key = ready_key(ready_at(&record), record.id);
+                    self.store
+                        .job_ready
+                        .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
+                    JobInterventionEffect::Resumed
+                }
+                JobState::Queued | JobState::Leased => JobInterventionEffect::AlreadyResumed,
+                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
+            },
+            JobInterventionKind::Cancel => match record.state {
+                JobState::Cancelled => JobInterventionEffect::AlreadyCancelled,
+                JobState::Queued | JobState::Paused => {
+                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
+                    record.state = JobState::Cancelled;
+                    record.lease_owner = None;
+                    record.backoff_until = None;
+                    record.last_error = None;
+                    record.updated_at = input.now;
+                    self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                    JobInterventionEffect::Cancelled
+                }
+                state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
+            },
+        };
+
+        let encoded = encode_record(&record)?;
+        self.store
+            .job_records
+            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
+        wtxn.commit()?;
+
+        Ok(InterveneOutcome { effect, record })
+    }
+
     /// Returns expired leases to the ready index under LMDB's single-writer
     /// invariant. Cleanup never assigns a replacement owner; reclaim still
     /// happens through [`Self::claim`]'s atomic admission step.
@@ -932,6 +1101,12 @@ impl<'a> JobQueue<'a> {
                         report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
                     }
                 }
+                JobState::Paused => {
+                    report.pending += 1;
+                    if record.backoff_until.is_some() {
+                        report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
+                    }
+                }
                 JobState::Leased if lease_expired(&record, input.now, input.lease_timeout_secs) => {
                     report.running += 1;
                     expired_candidates.push(id);
@@ -944,6 +1119,9 @@ impl<'a> JobQueue<'a> {
                 }
                 JobState::Failed => {
                     report.failed += 1;
+                }
+                JobState::Cancelled => {
+                    report.done += 1;
                 }
             }
         }
@@ -987,6 +1165,13 @@ impl<'a> JobQueue<'a> {
                             report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
                         }
                     }
+                    JobState::Paused => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.pending += 1;
+                        if record.backoff_until.is_some() {
+                            report.increment_retry_reason(JobQueueRetryReason::RetryBackoff);
+                        }
+                    }
                     JobState::Completed => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.done += 1;
@@ -994,6 +1179,10 @@ impl<'a> JobQueue<'a> {
                     JobState::Failed => {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.failed += 1;
+                    }
+                    JobState::Cancelled => {
+                        mark_rechecked_candidate_not_running(&mut report);
+                        report.done += 1;
                     }
                 }
             }
@@ -1151,6 +1340,17 @@ impl<'a> JobQueue<'a> {
         }
         Ok(())
     }
+
+    fn delete_ready_entry_for_record(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &JobRecord,
+    ) -> Result<()> {
+        self.store
+            .job_ready
+            .delete(txn, &ready_key(ready_at(record), record.id))?;
+        Ok(())
+    }
 }
 
 fn validate_kind(kind: &str) -> Result<()> {
@@ -1203,6 +1403,30 @@ fn validate_optional_run_id(run_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+fn validate_intervention_actor(actor: &str) -> Result<()> {
+    if actor.is_empty() {
+        return Err(Error::InvalidJobQueueRecord(ERR_INTERVENTION_ACTOR_EMPTY));
+    }
+    if actor.len() > MAX_INTERVENTION_ACTOR_LEN {
+        return Err(Error::InvalidJobQueueRecord(
+            ERR_INTERVENTION_ACTOR_TOO_LONG,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_optional_intervention_note(note: Option<&str>) -> Result<()> {
+    if let Some(note) = note {
+        if note.is_empty() {
+            return Err(Error::InvalidJobQueueRecord(ERR_INTERVENTION_NOTE_EMPTY));
+        }
+        if note.len() > MAX_INTERVENTION_NOTE_LEN {
+            return Err(Error::InvalidJobQueueRecord(ERR_INTERVENTION_NOTE_TOO_LONG));
+        }
+    }
+    Ok(())
+}
+
 fn validate_lease_owner(lease_owner: &str) -> Result<()> {
     if lease_owner.is_empty() {
         return Err(Error::InvalidJobQueueRecord(ERR_LEASE_OWNER_EMPTY));
@@ -1231,6 +1455,49 @@ fn validate_transition_lease(
     }
     if record.attempt_count != attempt_count {
         return Err(invalid_transition(action, "stale_attempt"));
+    }
+    Ok(())
+}
+
+fn validate_job_events(events: &[JobEvent]) -> Result<()> {
+    let mut previous_sequence = 0;
+    for event in events {
+        if event.sequence == 0 || event.sequence <= previous_sequence {
+            return Err(Error::InvalidJobQueueRecord(
+                "job event sequence must be strictly increasing",
+            ));
+        }
+        validate_intervention_actor(&event.actor)?;
+        validate_optional_intervention_note(event.note.as_deref())?;
+        previous_sequence = event.sequence;
+    }
+    Ok(())
+}
+
+fn append_job_event(
+    record: &mut JobRecord,
+    kind: JobInterventionKind,
+    actor: String,
+    note: Option<String>,
+    now: u64,
+) -> Result<()> {
+    let sequence = match record.events.last() {
+        Some(event) => event
+            .sequence
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("job event sequence"))?,
+        None => 1,
+    };
+    record.events.push(JobEvent {
+        sequence,
+        at: now,
+        actor,
+        kind,
+        note,
+    });
+    if record.events.len() > MAX_JOB_EVENTS_PER_RECORD {
+        let excess = record.events.len() - MAX_JOB_EVENTS_PER_RECORD;
+        record.events.drain(0..excess);
     }
     Ok(())
 }
@@ -1341,6 +1608,7 @@ fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
     validate_optional_dedupe(record.dedupe_key.as_deref())?;
     validate_optional_run_id(record.run_id.as_deref())?;
     validate_optional_failure_reason(record.last_error.as_deref())?;
+    validate_job_events(&record.events)?;
     if let Some(lease_owner) = record.lease_owner.as_deref() {
         validate_lease_owner(lease_owner)?;
     }
@@ -1360,19 +1628,28 @@ fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
                 "leased job must not have backoff state",
             ));
         }
-        JobState::Completed | JobState::Failed if record.lease_owner.is_some() => {
+        JobState::Paused if record.lease_owner.is_some() => {
+            return Err(Error::InvalidJobQueueRecord(
+                "paused job must not have a lease owner",
+            ));
+        }
+        JobState::Completed | JobState::Failed | JobState::Cancelled
+            if record.lease_owner.is_some() =>
+        {
             return Err(Error::InvalidJobQueueRecord(
                 "terminal job must not have a lease owner",
             ));
         }
-        JobState::Completed | JobState::Failed if record.backoff_until.is_some() => {
+        JobState::Completed | JobState::Failed | JobState::Cancelled
+            if record.backoff_until.is_some() =>
+        {
             return Err(Error::InvalidJobQueueRecord(
                 "terminal job must not have backoff state",
             ));
         }
-        JobState::Completed if record.last_error.is_some() => {
+        JobState::Completed | JobState::Cancelled if record.last_error.is_some() => {
             return Err(Error::InvalidJobQueueRecord(
-                "completed job must not have a failure reason",
+                "non-failed terminal job must not have a failure reason",
             ));
         }
         JobState::Failed if record.last_error.is_none() => {
@@ -1548,6 +1825,7 @@ mod tests {
         assert_eq!(persisted.dedupe_key.as_deref(), Some("turn:1"));
         assert_eq!(persisted.created_at, 10);
         assert_eq!(persisted.updated_at, 10);
+        assert!(persisted.events.is_empty());
 
         Ok(())
     }
@@ -1571,6 +1849,271 @@ mod tests {
         assert_eq!(second.id, first.id);
         assert_eq!(second.payload, first.payload);
         assert_eq!(second.created_at, 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_pause_resume_are_durable_and_idempotent() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let paused = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Pause,
+            actor: "dashboard".to_owned(),
+            note: Some("hold branch".to_owned()),
+            now: 20,
+        })?;
+
+        assert_eq!(paused.effect, JobInterventionEffect::Paused);
+        assert_eq!(paused.record.state, JobState::Paused);
+        assert_eq!(paused.record.lease_owner, None);
+        assert_eq!(paused.record.events.len(), 1);
+        assert_eq!(paused.record.events[0].sequence, 1);
+        assert_eq!(paused.record.events[0].kind, JobInterventionKind::Pause);
+        assert_eq!(paused.record.events[0].actor, "dashboard");
+        assert_eq!(paused.record.events[0].note.as_deref(), Some("hold branch"));
+        assert!(matches!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-b".to_owned(),
+                now: 21,
+            })?,
+            ClaimOutcome::Empty
+        ));
+        let EnqueueOutcome::Existing(existing) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 22))?
+        else {
+            panic!("expected paused dedupe hit");
+        };
+        assert_eq!(existing.id, job.id);
+
+        let repeated_pause = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Pause,
+            actor: "dashboard".to_owned(),
+            note: Some("hold branch".to_owned()),
+            now: 23,
+        })?;
+        assert_eq!(repeated_pause.effect, JobInterventionEffect::AlreadyPaused);
+        assert_eq!(repeated_pause.record.events.len(), 1);
+        assert_eq!(repeated_pause.record.updated_at, 20);
+
+        let resumed = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Resume,
+            actor: "dashboard".to_owned(),
+            note: None,
+            now: 30,
+        })?;
+        assert_eq!(resumed.effect, JobInterventionEffect::Resumed);
+        assert_eq!(resumed.record.state, JobState::Queued);
+        assert_eq!(resumed.record.events.len(), 2);
+        assert_eq!(resumed.record.events[1].sequence, 2);
+        assert_eq!(resumed.record.events[1].kind, JobInterventionKind::Resume);
+
+        let repeated_resume = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Resume,
+            actor: "dashboard".to_owned(),
+            note: None,
+            now: 31,
+        })?;
+        assert_eq!(
+            repeated_resume.effect,
+            JobInterventionEffect::AlreadyResumed
+        );
+        assert_eq!(repeated_resume.record.events.len(), 2);
+        assert_eq!(repeated_resume.record.updated_at, 30);
+
+        let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-b".to_owned(),
+            now: 40,
+        })?
+        else {
+            panic!("expected resumed claim");
+        };
+        assert_eq!(reclaimed.id, job.id);
+        assert_eq!(reclaimed.attempt_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_pause_and_cancel_reject_leased_jobs() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("leased"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+
+        let pause = queue
+            .intervene(InterveneJob {
+                id: job.id,
+                kind: JobInterventionKind::Pause,
+                actor: "dashboard".to_owned(),
+                note: None,
+                now: 30,
+            })
+            .unwrap_err();
+        assert_invalid_transition(pause, "pause", "leased");
+
+        let cancel = queue
+            .intervene(InterveneJob {
+                id: job.id,
+                kind: JobInterventionKind::Cancel,
+                actor: "dashboard".to_owned(),
+                note: None,
+                now: 31,
+            })
+            .unwrap_err();
+        assert_invalid_transition(cancel, "cancel", "leased");
+
+        let CompleteOutcome::Completed(completed) = queue.complete(CompleteJob {
+            id: job.id,
+            lease_owner: "worker-a".to_owned(),
+            attempt_count: claimed.attempt_count,
+            now: 40,
+        })?
+        else {
+            panic!("expected leased job to remain completable");
+        };
+        assert_eq!(completed.state, JobState::Completed);
+        assert!(completed.events.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_cancel_is_terminal_and_clears_dedupe() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(job) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let cancelled = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Cancel,
+            actor: "dashboard".to_owned(),
+            note: Some("stop branch".to_owned()),
+            now: 20,
+        })?;
+
+        assert_eq!(cancelled.effect, JobInterventionEffect::Cancelled);
+        assert_eq!(cancelled.record.state, JobState::Cancelled);
+        assert_eq!(cancelled.record.events.len(), 1);
+        assert_eq!(cancelled.record.events[0].kind, JobInterventionKind::Cancel);
+        assert!(matches!(
+            queue.claim(ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 21,
+            })?,
+            ClaimOutcome::Empty
+        ));
+        let EnqueueOutcome::Enqueued(replacement) =
+            queue.enqueue(enqueue("claim_extraction", Some("same"), 22))?
+        else {
+            panic!("expected replacement enqueue after cancelled dedupe");
+        };
+        assert_ne!(replacement.id, job.id);
+
+        let repeated_cancel = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Cancel,
+            actor: "dashboard".to_owned(),
+            note: None,
+            now: 23,
+        })?;
+        assert_eq!(
+            repeated_cancel.effect,
+            JobInterventionEffect::AlreadyCancelled
+        );
+        assert_eq!(repeated_cancel.record.events.len(), 1);
+        assert_eq!(repeated_cancel.record.updated_at, 20);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_interrupt_records_event_without_changing_claimability() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let interrupted = queue.intervene(InterveneJob {
+            id: job.id,
+            kind: JobInterventionKind::Interrupt,
+            actor: "dashboard".to_owned(),
+            note: Some("inject observation".to_owned()),
+            now: 20,
+        })?;
+
+        assert_eq!(interrupted.effect, JobInterventionEffect::Interrupted);
+        assert_eq!(interrupted.record.state, JobState::Queued);
+        assert_eq!(interrupted.record.events.len(), 1);
+        assert_eq!(
+            interrupted.record.events[0].kind,
+            JobInterventionKind::Interrupt
+        );
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "worker-a".to_owned(),
+            now: 21,
+        })?
+        else {
+            panic!("expected interrupted queued job to remain claimable");
+        };
+        assert_eq!(claimed.id, job.id);
+        assert_eq!(claimed.events.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn job_queue_intervention_events_keep_bounded_tail() -> Result<()> {
+        let (_dir, vault) = open_queue();
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+        else {
+            panic!("expected enqueue");
+        };
+
+        let mut latest = None;
+        for index in 0..(MAX_JOB_EVENTS_PER_RECORD + 2) {
+            latest = Some(queue.intervene(InterveneJob {
+                id: job.id,
+                kind: JobInterventionKind::Interrupt,
+                actor: "dashboard".to_owned(),
+                note: Some(format!("event-{index}")),
+                now: 20 + index as u64,
+            })?);
+        }
+        let latest = latest.expect("intervention outcome");
+        assert_eq!(latest.record.events.len(), MAX_JOB_EVENTS_PER_RECORD);
+        assert_eq!(latest.record.events.first().unwrap().sequence, 3);
+        assert_eq!(
+            latest.record.events.last().unwrap().sequence,
+            (MAX_JOB_EVENTS_PER_RECORD + 2) as u64
+        );
 
         Ok(())
     }
@@ -2666,6 +3209,19 @@ mod tests {
             last_error: Some("provider said secret text".to_owned()),
             now: 12,
         })?;
+        let InterveneOutcome {
+            effect: JobInterventionEffect::Paused,
+            ..
+        } = queue.intervene(InterveneJob {
+            id: backoff_job.id,
+            kind: JobInterventionKind::Pause,
+            actor: "cleanup-test".to_owned(),
+            note: None,
+            now: 13,
+        })?
+        else {
+            panic!("expected pause");
+        };
 
         let EnqueueOutcome::Enqueued(stale_job) =
             queue.enqueue(enqueue("stale", Some("turn:stale"), 13))?

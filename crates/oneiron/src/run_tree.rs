@@ -1,8 +1,7 @@
-//! Read-only run tree projection over generic JobQueue rows.
+//! Run tree projection and control adapter over generic JobQueue rows.
 //!
-//! This module intentionally stays a data adapter: it does not own queue
-//! lifecycle transitions, live progress events, pause/resume, or intervention
-//! APIs.
+//! Lifecycle transitions stay in [`JobQueue`]. This module renders queue rows
+//! and their durable intervention events into a deterministic tree surface.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -11,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
 use crate::error::Result;
-use crate::job_queue::{JobQueue, JobRecord, JobState, job_record_order};
+use crate::job_queue::{
+    JobEvent, JobInterventionKind, JobQueue, JobRecord, JobState, job_record_order,
+};
 use crate::types::bytes_to_hex_lower;
 
 /// Renderable run tree for dashboard/read APIs.
@@ -31,6 +32,7 @@ pub struct RunTreeNode {
     pub status: RunTreeStatus,
     pub timestamps: RunTreeTimestamps,
     pub failure: Option<RunTreeFailure>,
+    pub events: Vec<RunTreeEvent>,
     pub children: Vec<RunTreeNode>,
 }
 
@@ -40,8 +42,10 @@ pub struct RunTreeNode {
 pub enum RunTreeStatus {
     Queued,
     Running,
+    Paused,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// Node timestamps copied from the backing queue row.
@@ -55,6 +59,26 @@ pub struct RunTreeTimestamps {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunTreeFailure {
     pub reason: String,
+}
+
+/// Durable intervention event for display and API reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeEvent {
+    pub sequence: u64,
+    pub at: u64,
+    pub actor: String,
+    pub kind: RunTreeEventKind,
+    pub note: Option<String>,
+}
+
+/// Surface intervention event kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunTreeEventKind {
+    Interrupt,
+    Pause,
+    Resume,
+    Cancel,
 }
 
 /// Non-mutating repairs applied while rendering a tree from rows.
@@ -173,8 +197,10 @@ struct FlatRunTreeNode {
 fn flat_node(record: JobRecord) -> Result<FlatRunTreeNode> {
     let metadata = job_metadata(&record)?;
     let state = record.state;
+    let job_id = job_id_hex(&record);
+    let events = record.events.into_iter().map(RunTreeEvent::from).collect();
     let node = RunTreeNode {
-        job_id: job_id_hex(&record),
+        job_id,
         run_id: record.run_id,
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
@@ -185,8 +211,13 @@ fn flat_node(record: JobRecord) -> Result<FlatRunTreeNode> {
         },
         failure: match state {
             JobState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
-            JobState::Queued | JobState::Leased | JobState::Completed => None,
+            JobState::Queued
+            | JobState::Leased
+            | JobState::Paused
+            | JobState::Completed
+            | JobState::Cancelled => None,
         },
+        events,
         children: Vec::new(),
     };
 
@@ -281,8 +312,33 @@ impl From<JobState> for RunTreeStatus {
         match state {
             JobState::Queued => Self::Queued,
             JobState::Leased => Self::Running,
+            JobState::Paused => Self::Paused,
             JobState::Completed => Self::Completed,
             JobState::Failed => Self::Failed,
+            JobState::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+impl From<JobEvent> for RunTreeEvent {
+    fn from(event: JobEvent) -> Self {
+        Self {
+            sequence: event.sequence,
+            at: event.at,
+            actor: event.actor,
+            kind: RunTreeEventKind::from(event.kind),
+            note: event.note,
+        }
+    }
+}
+
+impl From<JobInterventionKind> for RunTreeEventKind {
+    fn from(kind: JobInterventionKind) -> Self {
+        match kind {
+            JobInterventionKind::Interrupt => Self::Interrupt,
+            JobInterventionKind::Pause => Self::Pause,
+            JobInterventionKind::Resume => Self::Resume,
+            JobInterventionKind::Cancel => Self::Cancel,
         }
     }
 }
@@ -296,12 +352,12 @@ mod tests {
         EnqueueDreamerJobOutcome, encode_dreamer_job_payload,
     };
     use crate::job_queue::{
-        ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, FailJob, FailOutcome, JobRecord,
-        JobState, RetryJob, RetryOutcome,
+        ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, FailJob, FailOutcome, InterveneJob,
+        JobInterventionKind, JobRecord, JobState, RetryJob, RetryOutcome,
     };
     use crate::{Result, Vault, VaultConfig};
 
-    use super::{RunTreeAdapter, RunTreeRepair, RunTreeStatus, render_run_tree};
+    use super::{RunTreeAdapter, RunTreeEventKind, RunTreeRepair, RunTreeStatus, render_run_tree};
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -419,6 +475,47 @@ mod tests {
         assert_eq!(tree.roots.len(), 1);
         assert_eq!(tree.roots[0].status, RunTreeStatus::Queued);
         assert_eq!(tree.roots[0].failure, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_tree_projects_intervention_events_and_states() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let paused = enqueue(&runner, "paused-subagent", None, 10, "run-intervene")?;
+        let cancelled = enqueue(&runner, "cancelled-subagent", None, 20, "run-intervene")?;
+        let queue = crate::JobQueue::new(&vault);
+
+        queue.intervene(InterveneJob {
+            id: paused.job.id,
+            kind: JobInterventionKind::Pause,
+            actor: "dashboard".to_owned(),
+            note: Some("hold branch".to_owned()),
+            now: 30,
+        })?;
+        queue.intervene(InterveneJob {
+            id: cancelled.job.id,
+            kind: JobInterventionKind::Cancel,
+            actor: "dashboard".to_owned(),
+            note: None,
+            now: 40,
+        })?;
+
+        let tree = RunTreeAdapter::new(&vault).read_run("run-intervene")?;
+
+        assert_eq!(tree.roots.len(), 2);
+        assert_eq!(tree.roots[0].job_id, hex(paused.job.id));
+        assert_eq!(tree.roots[0].status, RunTreeStatus::Paused);
+        assert_eq!(tree.roots[0].events.len(), 1);
+        assert_eq!(tree.roots[0].events[0].sequence, 1);
+        assert_eq!(tree.roots[0].events[0].kind, RunTreeEventKind::Pause);
+        assert_eq!(tree.roots[0].events[0].actor, "dashboard");
+        assert_eq!(tree.roots[0].events[0].note.as_deref(), Some("hold branch"));
+        assert_eq!(tree.roots[1].job_id, hex(cancelled.job.id));
+        assert_eq!(tree.roots[1].status, RunTreeStatus::Cancelled);
+        assert_eq!(tree.roots[1].events.len(), 1);
+        assert_eq!(tree.roots[1].events[0].kind, RunTreeEventKind::Cancel);
 
         Ok(())
     }
@@ -549,6 +646,7 @@ mod tests {
             dedupe_key: None,
             created_at,
             updated_at: created_at,
+            events: Vec::new(),
         })
     }
 

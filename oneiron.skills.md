@@ -142,6 +142,24 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "list subagent jobs for this run"
 - safety: Read-only; requires core read auth. Returns queue metadata only and does not pause, resume, intervene, or stream progress.
 
+#### core-run-tree-observe - `GET /v1/core/run-tree/observe`
+
+- when-to-use: Observe runtime queue rows through the canonical run-tree read endpoint when the caller needs run, job, subagent, state, and intervention-event structure.
+- trigger phrases:
+  - "observe run tree"
+  - "watch job hierarchy"
+  - "read run intervention events"
+- safety: Read-only; requires core read auth. Returns queue metadata and intervention history only.
+
+#### core-run-tree-intervene - `POST /v1/core/run-tree/intervene`
+
+- when-to-use: Apply a durable intervention to a queued, leased, or paused job when the caller needs to interrupt, pause, resume, or cancel execution by job id.
+- trigger phrases:
+  - "pause this job"
+  - "resume this job"
+  - "cancel this subagent run"
+- safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state.
+
 #### companion-resume - `POST /api/companion/resume`
 
 - when-to-use: Hydrate companion resume state in one read-only call, including session context, pending notifications, unprocessed items, and budget counters.

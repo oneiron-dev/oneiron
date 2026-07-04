@@ -92,6 +92,8 @@ const CAPABILITIES: &[&str] = &[
     "core.context_pack",
     "core.hydrate",
     "core.run_tree",
+    "core.run_tree.observe",
+    "core.run_tree.intervene",
     "core.memory_timeline",
     "core.memory_verbs",
     "mcp.gateway",
@@ -235,6 +237,8 @@ impl EiriSessionRagStore {
         core_memory_verb,
         core_context_pack,
         core_run_tree,
+        core_run_tree_observe,
+        core_run_tree_intervene,
         list_core_conversations,
         create_core_conversation,
         list_core_conversation_turns,
@@ -292,11 +296,17 @@ impl EiriSessionRagStore {
         CoreBatchEntityResult,
         CoreBatchResponse,
         CoreRunTreeQuery,
+        CoreRunTreeInterventionRequest,
+        CoreRunTreeInterventionKind,
+        CoreRunTreeInterventionResponse,
+        CoreRunTreeInterventionEffect,
         CoreRunTreeResponse,
         CoreRunTreeNode,
         CoreRunTreeStatus,
         CoreRunTreeTimestamps,
         CoreRunTreeFailure,
+        CoreRunTreeEvent,
+        CoreRunTreeEventKind,
         CoreRunTreeRepair,
         CoreTextField,
         CoreQueryRequest,
@@ -431,6 +441,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/hydrate", post(core_hydrate))
         .route("/batch/shortId/hydrate", post(core_batch_short_id_hydrate))
         .route("/run-tree", get(core_run_tree))
+        .route("/run-tree/observe", get(core_run_tree_observe))
+        .route("/run-tree/intervene", post(core_run_tree_intervene))
         .route("/memory/{id}/timeline", get(core_memory_timeline))
         .route("/conversations", get(list_core_conversations))
         .route(
@@ -1440,6 +1452,8 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/hydrate", "post"),
         ("/v1/core/batch/shortId/hydrate", "post"),
         ("/v1/core/run-tree", "get"),
+        ("/v1/core/run-tree/observe", "get"),
+        ("/v1/core/run-tree/intervene", "post"),
         ("/v1/core/memory/{id}/timeline", "get"),
         ("/v1/core/memory/verbs/{verb}", "post"),
         ("/v1/core/conversations", "get"),
@@ -5577,6 +5591,68 @@ struct CoreRunTreeQuery {
     run_id: Option<String>,
 }
 
+/// Request body for run-tree intervention.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "job_id": "0123456789abcdef0123456789abcdef",
+    "kind": "pause",
+    "note": "operator requested a checkpoint"
+}))]
+struct CoreRunTreeInterventionRequest {
+    /// Hex-encoded job id to intervene on.
+    #[serde(rename = "job_id", alias = "jobId")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    job_id: String,
+    /// Intervention primitive to apply.
+    kind: CoreRunTreeInterventionKind,
+    /// Optional operator note recorded on the event.
+    #[serde(default)]
+    #[schema(example = "operator requested a checkpoint")]
+    note: Option<String>,
+}
+
+/// Intervention primitive for a runtime job.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreRunTreeInterventionKind {
+    Interrupt,
+    Pause,
+    Resume,
+    Cancel,
+}
+
+/// Response from a run-tree intervention.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeInterventionResponse {
+    /// Hex-encoded job id that was targeted.
+    #[serde(rename = "job_id")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    job_id: String,
+    /// Run id carried by the affected row, when present.
+    #[serde(rename = "run_id")]
+    #[schema(example = "run-2026-07-03T12:00:00Z")]
+    run_id: Option<String>,
+    /// Requested intervention primitive.
+    kind: CoreRunTreeInterventionKind,
+    /// Durable effect of the request.
+    effect: CoreRunTreeInterventionEffect,
+    /// Fresh snapshot for the affected run, when the job row has a run id.
+    tree: Option<CoreRunTreeResponse>,
+}
+
+/// Observable intervention effect.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreRunTreeInterventionEffect {
+    Interrupted,
+    Paused,
+    AlreadyPaused,
+    Resumed,
+    AlreadyResumed,
+    Cancelled,
+    AlreadyCancelled,
+}
+
 /// Runtime job tree response.
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreRunTreeResponse {
@@ -5611,6 +5687,8 @@ struct CoreRunTreeNode {
     timestamps: CoreRunTreeTimestamps,
     /// Terminal failure summary, when present.
     failure: Option<CoreRunTreeFailure>,
+    /// Durable intervention events recorded on the backing queue row.
+    events: Vec<CoreRunTreeEvent>,
     /// Child jobs ordered deterministically by creation time and job id.
     #[schema(no_recursion)]
     children: Vec<CoreRunTreeNode>,
@@ -5622,8 +5700,10 @@ struct CoreRunTreeNode {
 enum CoreRunTreeStatus {
     Queued,
     Running,
+    Paused,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// Queue row timestamps for a runtime job.
@@ -5645,6 +5725,35 @@ struct CoreRunTreeFailure {
     /// Last failure reason recorded on the backing queue row.
     #[schema(example = "worker failed")]
     reason: String,
+}
+
+/// Durable intervention event recorded on a runtime job.
+#[derive(Debug, Serialize, ToSchema)]
+struct CoreRunTreeEvent {
+    /// Monotonic event sequence on the backing job row.
+    #[schema(example = 1_u64)]
+    sequence: u64,
+    /// Event timestamp in Unix seconds.
+    #[schema(example = 1782357635_u64)]
+    at: u64,
+    /// Authenticated principal or explicit actor override that requested the event.
+    #[schema(example = "dreamer-dashboard")]
+    actor: String,
+    /// Intervention primitive recorded.
+    kind: CoreRunTreeEventKind,
+    /// Optional operator note.
+    #[schema(example = "operator requested a checkpoint")]
+    note: Option<String>,
+}
+
+/// Intervention event kind.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum CoreRunTreeEventKind {
+    Interrupt,
+    Pause,
+    Resume,
+    Cancel,
 }
 
 /// Non-mutating repair applied while rendering a run tree.
@@ -6867,6 +6976,96 @@ async fn core_run_tree(
     Ok(Json(core_run_tree_response(tree)))
 }
 
+/// Observe the runtime job queue as a deterministic run tree.
+#[utoipa::path(
+    get,
+    path = "/v1/core/run-tree/observe",
+    params(CoreRunTreeQuery),
+    responses(
+        (status = 200, description = "Runtime job queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
+        (status = 400, description = "Invalid run-tree query.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Run-tree read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_run_tree_observe(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
+) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let params = query_params(query)?;
+    validate_core_run_tree_query(&params)?;
+
+    let adapter = oneiron::RunTreeAdapter::new(&server.vault);
+    let run_id = params.run_id.as_deref().expect("run_id validated");
+    let tree = adapter.read_run(run_id).map_err(|error| {
+        tracing::error!(error = %error, "core run tree observe failed");
+        core_engine_error("core run tree observe failed", error)
+    })?;
+
+    Ok(Json(core_run_tree_response(tree)))
+}
+
+/// Intervene on a runtime job and return a fresh run-tree snapshot.
+#[utoipa::path(
+    post,
+    path = "/v1/core/run-tree/intervene",
+    request_body(content = CoreRunTreeInterventionRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Intervention applied idempotently and recorded on the backing job row.", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Run-tree intervention failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn core_run_tree_intervene(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CoreRunTreeInterventionRequest>, JsonRejection>,
+) -> Result<Json<CoreRunTreeInterventionResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let req = json_payload(payload)?;
+    let job_id = parse_job_id_param(&req.job_id, "job_id")?;
+    let kind = job_intervention_kind(req.kind);
+    let outcome = oneiron::JobQueue::new(&server.vault)
+        .intervene(oneiron::InterveneJob {
+            id: job_id,
+            kind,
+            actor: auth.principal().to_owned(),
+            note: req.note,
+            now: unix_seconds_now(),
+        })
+        .map_err(|error| {
+            tracing::error!(error = %error, job_id = %req.job_id, "core run tree intervene failed");
+            core_engine_error("core run tree intervene failed", error)
+        })?;
+
+    let response_job_id = hex_bytes(outcome.record.id.as_bytes());
+    let run_id = outcome.record.run_id.clone();
+    let tree = if let Some(run_id) = run_id.as_deref() {
+        let adapter = oneiron::RunTreeAdapter::new(&server.vault);
+        Some(core_run_tree_response(
+            adapter.read_run(run_id).map_err(|error| {
+                tracing::error!(error = %error, run_id, "core run tree intervention snapshot failed");
+                core_engine_error("core run tree intervention snapshot failed", error)
+            })?,
+        ))
+    } else {
+        None
+    };
+
+    Ok(Json(CoreRunTreeInterventionResponse {
+        job_id: response_job_id,
+        run_id,
+        kind: req.kind,
+        effect: core_run_tree_intervention_effect(outcome.effect),
+        tree,
+    }))
+}
+
 fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<(), ApiError> {
     let Some(run_id) = params.run_id.as_deref() else {
         return Err(ApiError::bad_request(
@@ -6910,6 +7109,7 @@ fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode {
         failure: node.failure.map(|failure| CoreRunTreeFailure {
             reason: failure.reason,
         }),
+        events: node.events.into_iter().map(core_run_tree_event).collect(),
         children: node.children.into_iter().map(core_run_tree_node).collect(),
     }
 }
@@ -6918,8 +7118,58 @@ fn core_run_tree_status(status: oneiron::RunTreeStatus) -> CoreRunTreeStatus {
     match status {
         oneiron::RunTreeStatus::Queued => CoreRunTreeStatus::Queued,
         oneiron::RunTreeStatus::Running => CoreRunTreeStatus::Running,
+        oneiron::RunTreeStatus::Paused => CoreRunTreeStatus::Paused,
         oneiron::RunTreeStatus::Completed => CoreRunTreeStatus::Completed,
         oneiron::RunTreeStatus::Failed => CoreRunTreeStatus::Failed,
+        oneiron::RunTreeStatus::Cancelled => CoreRunTreeStatus::Cancelled,
+    }
+}
+
+fn core_run_tree_event(event: oneiron::RunTreeEvent) -> CoreRunTreeEvent {
+    CoreRunTreeEvent {
+        sequence: event.sequence,
+        at: event.at,
+        actor: event.actor,
+        kind: core_run_tree_event_kind(event.kind),
+        note: event.note,
+    }
+}
+
+fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreRunTreeEventKind {
+    match kind {
+        oneiron::RunTreeEventKind::Interrupt => CoreRunTreeEventKind::Interrupt,
+        oneiron::RunTreeEventKind::Pause => CoreRunTreeEventKind::Pause,
+        oneiron::RunTreeEventKind::Resume => CoreRunTreeEventKind::Resume,
+        oneiron::RunTreeEventKind::Cancel => CoreRunTreeEventKind::Cancel,
+    }
+}
+
+fn job_intervention_kind(kind: CoreRunTreeInterventionKind) -> oneiron::JobInterventionKind {
+    match kind {
+        CoreRunTreeInterventionKind::Interrupt => oneiron::JobInterventionKind::Interrupt,
+        CoreRunTreeInterventionKind::Pause => oneiron::JobInterventionKind::Pause,
+        CoreRunTreeInterventionKind::Resume => oneiron::JobInterventionKind::Resume,
+        CoreRunTreeInterventionKind::Cancel => oneiron::JobInterventionKind::Cancel,
+    }
+}
+
+fn core_run_tree_intervention_effect(
+    effect: oneiron::JobInterventionEffect,
+) -> CoreRunTreeInterventionEffect {
+    match effect {
+        oneiron::JobInterventionEffect::Interrupted => CoreRunTreeInterventionEffect::Interrupted,
+        oneiron::JobInterventionEffect::Paused => CoreRunTreeInterventionEffect::Paused,
+        oneiron::JobInterventionEffect::AlreadyPaused => {
+            CoreRunTreeInterventionEffect::AlreadyPaused
+        }
+        oneiron::JobInterventionEffect::Resumed => CoreRunTreeInterventionEffect::Resumed,
+        oneiron::JobInterventionEffect::AlreadyResumed => {
+            CoreRunTreeInterventionEffect::AlreadyResumed
+        }
+        oneiron::JobInterventionEffect::Cancelled => CoreRunTreeInterventionEffect::Cancelled,
+        oneiron::JobInterventionEffect::AlreadyCancelled => {
+            CoreRunTreeInterventionEffect::AlreadyCancelled
+        }
     }
 }
 
@@ -7842,6 +8092,31 @@ fn parse_optional_entity_id(
         || Ok(oneiron::EntityId::now()),
         |value| parse_entity_id_param(value, field),
     )
+}
+
+fn parse_job_id_param(value: &str, field: &'static str) -> Result<oneiron::JobId, ApiError> {
+    if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ApiError::bad_request(
+            format!("{field} must be a 32-character hex job id"),
+            Some(field),
+        ));
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        let offset = index * 2;
+        *slot = u8::from_str_radix(&value[offset..offset + 2], 16).map_err(|_| {
+            ApiError::bad_request(
+                format!("{field} must be a 32-character hex job id"),
+                Some(field),
+            )
+        })?;
+    }
+    oneiron::JobId::from_bytes(&bytes).map_err(|_| {
+        ApiError::bad_request(
+            format!("{field} must be a 32-character hex job id"),
+            Some(field),
+        )
+    })
 }
 
 fn core_entity_timestamps(
@@ -9222,6 +9497,8 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody
+        | ErrorKind::InvalidJobQueueRecord
+        | ErrorKind::InvalidJobQueueTransition
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::StructuralKindBandViolation
@@ -10052,6 +10329,8 @@ mod tests {
         ("/v1/core/hydrate", "post"),
         ("/v1/core/batch/shortId/hydrate", "post"),
         ("/v1/core/run-tree", "get"),
+        ("/v1/core/run-tree/observe", "get"),
+        ("/v1/core/run-tree/intervene", "post"),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -10120,7 +10399,13 @@ mod tests {
         "CoreMemoryVerbRequest",
         "CoreMemoryVerbResponse",
         "CoreQueryRequest",
+        "CoreRunTreeEvent",
+        "CoreRunTreeEventKind",
         "CoreRunTreeFailure",
+        "CoreRunTreeInterventionEffect",
+        "CoreRunTreeInterventionKind",
+        "CoreRunTreeInterventionRequest",
+        "CoreRunTreeInterventionResponse",
         "CoreRunTreeNode",
         "CoreRunTreeQuery",
         "CoreRunTreeRepair",
@@ -12200,7 +12485,7 @@ mod tests {
         let _other = enqueue_queue_job(server.vault.as_ref(), "other-run", 20, "run-other");
 
         let (status, body) = core_json(
-            server,
+            server.clone(),
             "GET",
             "/v1/core/run-tree?run_id=run-api",
             "core:read",
@@ -12218,7 +12503,157 @@ mod tests {
         assert_eq!(roots[0]["worker_kind"], Value::from("api-worker"));
         assert_eq!(roots[0]["status"], Value::from("queued"));
         assert_eq!(roots[0]["timestamps"]["created_at"], Value::from(10));
+        assert_eq!(roots[0]["events"], json!([]));
         assert_eq!(roots[0]["children"], json!([]));
+
+        let (observe_status, observe_body) = core_json(
+            server,
+            "GET",
+            "/v1/core/run-tree/observe?run_id=run-api",
+            "core:read",
+            None,
+        )
+        .await;
+        assert_eq!(observe_status, StatusCode::OK);
+        assert_eq!(observe_body, body);
+    }
+
+    #[tokio::test]
+    async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let root = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-api");
+        let request = json!({
+            "job_id": job_id_hex(root.id),
+            "kind": "pause",
+            "note": "hold branch",
+        });
+
+        let (forbidden_status, forbidden_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:read",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(forbidden_status, StatusCode::FORBIDDEN);
+        assert_error_envelope(&forbidden_body, "FORBIDDEN");
+
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:write",
+            Some(&request),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["job_id"], Value::from(job_id_hex(root.id)));
+        assert_eq!(body["run_id"], Value::from("run-api"));
+        assert_eq!(body["kind"], Value::from("pause"));
+        assert_eq!(body["effect"], Value::from("paused"));
+        let roots = body["tree"]["roots"].as_array().expect("snapshot roots");
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(root.id)));
+        assert_eq!(roots[0]["status"], Value::from("paused"));
+        assert_eq!(roots[0]["events"][0]["sequence"], Value::from(1));
+        assert_eq!(roots[0]["events"][0]["kind"], Value::from("pause"));
+        assert_eq!(roots[0]["events"][0]["actor"], Value::from("bearer"));
+        assert_eq!(roots[0]["events"][0]["note"], Value::from("hold branch"));
+
+        let repeated = json!({
+            "job_id": job_id_hex(root.id),
+            "kind": "pause",
+        });
+        let (repeat_status, repeat_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:write",
+            Some(&repeated),
+        )
+        .await;
+        assert_eq!(repeat_status, StatusCode::OK);
+        assert_eq!(repeat_body["effect"], Value::from("already_paused"));
+        let repeat_roots = repeat_body["tree"]["roots"]
+            .as_array()
+            .expect("repeat snapshot roots");
+        assert_eq!(repeat_roots[0]["events"].as_array().unwrap().len(), 1);
+
+        let resume = json!({
+            "job_id": job_id_hex(root.id),
+            "kind": "resume",
+        });
+        let (resume_status, resume_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:write",
+            Some(&resume),
+        )
+        .await;
+        assert_eq!(resume_status, StatusCode::OK);
+        assert_eq!(resume_body["effect"], Value::from("resumed"));
+        let resume_roots = resume_body["tree"]["roots"]
+            .as_array()
+            .expect("resume snapshot roots");
+        assert_eq!(resume_roots[0]["status"], Value::from("queued"));
+        assert_eq!(resume_roots[0]["events"].as_array().unwrap().len(), 2);
+        assert_eq!(resume_roots[0]["events"][1]["kind"], Value::from("resume"));
+
+        let interrupt = json!({
+            "job_id": job_id_hex(root.id),
+            "kind": "interrupt",
+            "note": "snapshot now",
+        });
+        let (interrupt_status, interrupt_body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:write",
+            Some(&interrupt),
+        )
+        .await;
+        assert_eq!(interrupt_status, StatusCode::OK);
+        assert_eq!(interrupt_body["effect"], Value::from("interrupted"));
+        let interrupt_roots = interrupt_body["tree"]["roots"]
+            .as_array()
+            .expect("interrupt snapshot roots");
+        assert_eq!(interrupt_roots[0]["status"], Value::from("queued"));
+        assert_eq!(interrupt_roots[0]["events"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            interrupt_roots[0]["events"][2]["kind"],
+            Value::from("interrupt")
+        );
+        assert_eq!(
+            interrupt_roots[0]["events"][2]["note"],
+            Value::from("snapshot now")
+        );
+
+        let cancel = json!({
+            "job_id": job_id_hex(root.id),
+            "kind": "cancel",
+        });
+        let (cancel_status, cancel_body) = core_json(
+            server,
+            "POST",
+            "/v1/core/run-tree/intervene",
+            "core:write",
+            Some(&cancel),
+        )
+        .await;
+        assert_eq!(cancel_status, StatusCode::OK);
+        assert_eq!(cancel_body["effect"], Value::from("cancelled"));
+        let cancel_roots = cancel_body["tree"]["roots"]
+            .as_array()
+            .expect("cancel snapshot roots");
+        assert_eq!(cancel_roots[0]["status"], Value::from("cancelled"));
+        assert_eq!(cancel_roots[0]["events"].as_array().unwrap().len(), 4);
+        assert_eq!(cancel_roots[0]["events"][3]["kind"], Value::from("cancel"));
     }
 
     #[tokio::test]
