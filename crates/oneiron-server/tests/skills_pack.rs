@@ -12,6 +12,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/openapi.json",
     "/api/skills/oneiron.skills.md",
     "/api/health",
+    "/mcp",
     "/api/core/discover",
     "/api/search/vector",
     "/api/search/text",
@@ -386,10 +387,14 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
 }
 
 fn next_route_literal_start(markdown: &str) -> Option<usize> {
-    [markdown.find("/api/"), markdown.find("/v1/")]
-        .into_iter()
-        .flatten()
-        .min()
+    [
+        markdown.find("/api/"),
+        markdown.find("/mcp"),
+        markdown.find("/v1/"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
 }
 
 fn section_between<'a>(text: &'a str, start_heading: &str, end_heading: &str) -> &'a str {

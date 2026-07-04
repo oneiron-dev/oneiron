@@ -715,7 +715,11 @@ impl PolicyManifestResolution {
         ceiling.unwrap_or(PolicyApprovalCeiling::Proposed)
     }
 
-    fn has_matching_actor_ceiling(&self, actor_class: &str, actor_ref: Option<&str>) -> bool {
+    pub(crate) fn has_matching_actor_ceiling(
+        &self,
+        actor_class: &str,
+        actor_ref: Option<&str>,
+    ) -> bool {
         self.actor_ceilings.iter().any(|row| {
             row.actor_class == actor_class
                 && match (&row.actor_ref, actor_ref) {

@@ -61,6 +61,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
 
+#### mcp-gateway - `POST /mcp`
+
+- when-to-use: Call Oneiron MCP JSON-RPC methods when a connector needs the executable MCP tool layer for initialized tools, tool listings, or tool calls.
+- trigger phrases:
+  - "call Oneiron MCP"
+  - "list Oneiron MCP tools"
+  - "use oneiron.read"
+- safety: Requires a connector credential in `Authorization: Bearer ...` or `x-oneiron-mcp-credential`; write tools route through the existing Gate decision path.
+
 #### core-discover - `GET /api/core/discover`
 
 - when-to-use: Bootstrap an authenticated external agent with vault capability metadata, entity counts, available personas and conversations, predicate namespaces, and bound-context placeholders.
