@@ -933,6 +933,9 @@ pub struct Store {
     pub(crate) vault_meta: Database<Bytes, Bytes>,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// Serializes reward-to-weight tuning so concurrent callers cannot lose
+    /// a gradient step between read, compute, and persist.
+    retrieval_blend_tuning_lock: Mutex<()>,
     /// PPR cache rows. Values carry the final scores and, for current rows,
     /// the residual/frontier state needed to resume a deeper Forward-Push run.
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
@@ -1107,6 +1110,7 @@ impl Store {
             text_doc_field_lengths,
             vault_meta,
             kind_registry,
+            retrieval_blend_tuning_lock: Mutex::new(()),
             ppr_cache,
             ppr_cache_deps,
             type_index,
@@ -1833,6 +1837,10 @@ impl Store {
                 "retrieval blend weight tuning skipped inside active write transaction",
             ));
         }
+        let _tuning_guard = self
+            .retrieval_blend_tuning_lock
+            .lock()
+            .map_err(|_| Error::InvariantViolation("retrieval blend tuning mutex poisoned"))?;
 
         let rtxn = self.env.read_txn()?;
         let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
@@ -3596,6 +3604,7 @@ mod tests {
     use crate::Vault;
     use crate::types::{EntityId, TimeRange};
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Barrier};
 
     fn open_test_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -4219,6 +4228,36 @@ mod tests {
     }
 
     #[test]
+    fn search_falls_back_to_bootstrap_when_blend_weight_table_is_corrupt() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x4E);
+        put_text(&vault, id, "corrupt blend fallback")?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, b"not-msgpack")?;
+            Ok(())
+        })?;
+
+        let table_error = vault
+            .retrieval_blend_weight_table()
+            .expect_err("administrative table read should still report corruption");
+        assert!(matches!(
+            table_error,
+            Error::CorruptedIndex("retrieval blend weight table")
+        ));
+
+        let result = vault
+            .query()
+            .search_text("corrupt blend fallback", 10)
+            .run_with_telemetry()?;
+        assert_eq!(result.value.len(), 1);
+        assert_eq!(result.value[0].id, id);
+        Ok(())
+    }
+
+    #[test]
     fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let run_id = RetrievalRunId::now();
@@ -4298,6 +4337,70 @@ mod tests {
             Some(RETRIEVAL_BLEND_TUNER_ALGORITHM)
         );
         assert_eq!(vault.retrieval_blend_weight_table()?, updated);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            200,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4F).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&record)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let expected_once =
+            apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        let expected_twice =
+            apply_retrieval_blend_weight_update(expected_once, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+
+        let vault = Arc::new(vault);
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let vault = Arc::clone(&vault);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+                    max_runs: 1,
+                    learning_rate: 0.10,
+                    min_reward_count: 1,
+                })
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("tuning thread should not panic")?;
+        }
+
+        let final_entry = vault.retrieval_blend_weight_table()?;
+        assert_eq!(final_entry.weights, expected_twice);
         Ok(())
     }
 

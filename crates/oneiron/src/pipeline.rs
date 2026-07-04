@@ -43,6 +43,19 @@ const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
+
+fn retrieval_blend_weights_for_scoring(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<RetrievalBlendWeights> {
+    match store.retrieval_blend_weight_table_in_txn(rtxn) {
+        Ok(entry) => Ok(entry.weights),
+        Err(Error::CorruptedIndex("retrieval blend weight table")) => {
+            Ok(RetrievalBlendWeights::bootstrap())
+        }
+        Err(error) => Err(error),
+    }
+}
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
@@ -845,11 +858,7 @@ impl<'a> PipelineBuilder<'a> {
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
-            let blend_weights = self
-                .vault
-                .store
-                .retrieval_blend_weight_table_in_txn(&rtxn)?
-                .weights;
+            let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
