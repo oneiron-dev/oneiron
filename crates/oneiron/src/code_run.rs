@@ -159,7 +159,6 @@ impl<'a> HostSelfDispatcher<'a> {
             Value::Binary(call.new_id.as_bytes().to_vec()),
             &envelope,
         );
-        self.check_write_gate(call.old_id, &claim_gate_body, &envelope, false)?;
 
         let supersedes_weight =
             EdgeKind::Supersedes
@@ -177,19 +176,22 @@ impl<'a> HostSelfDispatcher<'a> {
             Value::F32(supersedes_weight),
             &envelope,
         );
-        self.check_write_gate(
-            edge_operation_gate_id(
-                SelfEffect::MemorySupersedeClaim,
-                call.new_id,
-                EdgeKind::Supersedes,
-                call.old_id,
-            )?,
-            &edge_gate_body,
-            &envelope,
-            false,
+        let edge_gate_id = edge_operation_gate_id(
+            SelfEffect::MemorySupersedeClaim,
+            call.new_id,
+            EdgeKind::Supersedes,
+            call.old_id,
         )?;
-        self.vault
-            .supersede_claim(&call.new_id, &call.old_id, call.now)?;
+        self.vault.supersede_claim_for_code_run_trap(
+            &call.new_id,
+            &call.old_id,
+            call.now,
+            &envelope,
+            call.old_id,
+            &claim_gate_body,
+            edge_gate_id,
+            &edge_gate_body,
+        )?;
 
         Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: call.new_id,
@@ -209,14 +211,15 @@ impl<'a> HostSelfDispatcher<'a> {
             Value::F32(call.weight),
             &envelope,
         );
-        self.check_write_gate(
+        self.vault.put_edge_for_code_run_trap(
+            &call.src,
+            call.kind,
+            &call.tgt,
+            call.weight,
+            &envelope,
             edge_operation_gate_id(SelfEffect::MemoryPutEdge, call.src, call.kind, call.tgt)?,
             &gate_body,
-            &envelope,
-            false,
         )?;
-        self.vault
-            .put_edge(&call.src, call.kind, &call.tgt, call.weight)?;
 
         Ok(SelfDispatchOutcome::MemoryEdgeWrite(
             SelfMemoryEdgeWriteResult {
@@ -385,7 +388,7 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
         | EdgeKind::ClaimOf
         | EdgeKind::ChildOf
         | EdgeKind::AssignedTo
-        | EdgeKind::DerivedFrom => Err(Error::InvariantViolation(
+        | EdgeKind::DerivedFrom => Err(Error::InvalidClaimBody(
             "self.memory.put_edge rejects structural edge kinds",
         )),
     }
@@ -1206,7 +1209,7 @@ mod tests {
         )?;
         let before = gate_decision_count(&vault)?;
 
-        let _err = dispatcher
+        let err = dispatcher
             .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
                 src,
                 EdgeKind::ClaimOf,
@@ -1214,6 +1217,13 @@ mod tests {
                 1.0,
             )))
             .expect_err("structural edge kind must reject");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidClaimBody("self.memory.put_edge rejects structural edge kinds")
+            ),
+            "{err:?}"
+        );
 
         assert_eq!(gate_decision_count(&vault)?, before);
         assert!(vault.targets(&src, EdgeKind::ClaimOf, None)?.is_empty());
