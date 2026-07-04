@@ -1318,6 +1318,12 @@ fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         RetrievalSignal::Phonetic => Signal::Phonetic,
         RetrievalSignal::Temporal => Signal::Temporal,
         RetrievalSignal::Ppr => Signal::Ppr,
+        RetrievalSignal::Recency
+        | RetrievalSignal::Salience
+        | RetrievalSignal::Confidence
+        | RetrievalSignal::Gravity => {
+            unreachable!("blend score components are not context-pack retrieval channels")
+        }
     }
 }
 

@@ -1,11 +1,14 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+#[cfg(test)]
+use crate::store::RetrievalBlendSignal;
+use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal};
 use crate::types::{EntityId, ScoredEntity};
 
 pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
@@ -16,29 +19,9 @@ pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RetrievalBlendSignal {
-    Recency,
-    Salience,
-    Confidence,
-    Gravity,
-}
-
-/// RET-010b retrieval-blend weights. This is a contract-pinned table in
-/// the same discipline as `ppr::lambda_for_kind`: keep the rows explicit and
-/// do not derive them from defaults or old multiplicative factors.
-pub(crate) const RETRIEVAL_BLEND_WEIGHT_TABLE: &[(RetrievalBlendSignal, f32)] = &[
-    (RetrievalBlendSignal::Recency, 0.35),
-    (RetrievalBlendSignal::Salience, 0.30),
-    (RetrievalBlendSignal::Confidence, 0.20),
-    (RetrievalBlendSignal::Gravity, 0.15),
-];
-
+#[cfg(test)]
 pub(crate) fn retrieval_blend_weight(signal: RetrievalBlendSignal) -> f32 {
-    RETRIEVAL_BLEND_WEIGHT_TABLE
-        .iter()
-        .find_map(|(candidate, weight)| (*candidate == signal).then_some(*weight))
-        .expect("every retrieval blend signal has a pinned weight row")
+    RetrievalBlendWeights::bootstrap().weight(signal)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,8 +58,75 @@ pub(crate) fn retrieval_candidates_from_ranked_lists(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEntity> {
+    linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())
+}
+
+pub(crate) fn linear_log_blend_with_weights(
+    inputs: &[RetrievalBlendInput],
+    weights: RetrievalBlendWeights,
+) -> Vec<ScoredEntity> {
     let inputs = canonical_blend_inputs(inputs);
+    let columns = normalized_blend_columns(&inputs);
+
+    let mut scores: Vec<ScoredEntity> = inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let log_score = weights.recency * columns.recency[index]
+                + weights.salience * columns.salience[index]
+                + weights.confidence * columns.confidence[index]
+                + weights.gravity * columns.gravity[index];
+            ScoredEntity {
+                id: input.id,
+                score: log_score.exp(),
+            }
+        })
+        .collect();
+    sort_scored_entities_desc(&mut scores);
+    scores
+}
+
+pub(crate) fn retrieval_blend_score_components(
+    inputs: &[RetrievalBlendInput],
+) -> HashMap<EntityId, Vec<RetrievalScoreComponent>> {
+    let inputs = canonical_blend_inputs(inputs);
+    let columns = normalized_blend_columns(&inputs);
+    let signals = [
+        (RetrievalSignal::Recency, columns.recency),
+        (RetrievalSignal::Salience, columns.salience),
+        (RetrievalSignal::Confidence, columns.confidence),
+        (RetrievalSignal::Gravity, columns.gravity),
+    ];
+    let mut components = HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
+    for (signal, values) in signals {
+        if values.iter().all(|value| value.to_bits() == 0) {
+            continue;
+        }
+        let ranks = component_ranks(&inputs, &values);
+        for (index, input) in inputs.iter().enumerate() {
+            components
+                .entry(input.id)
+                .or_default()
+                .push(RetrievalScoreComponent {
+                    signal,
+                    rank: ranks[index],
+                    score: values[index],
+                });
+        }
+    }
+    components
+}
+
+struct NormalizedBlendColumns {
+    recency: Vec<f32>,
+    salience: Vec<f32>,
+    confidence: Vec<f32>,
+    gravity: Vec<f32>,
+}
+
+fn normalized_blend_columns(inputs: &[RetrievalBlendInput]) -> NormalizedBlendColumns {
     let mut recency: Vec<f32> = inputs.iter().map(|input| input.recency).collect();
     let mut salience: Vec<f32> = inputs.iter().map(|input| input.salience).collect();
     let mut confidence: Vec<f32> = inputs.iter().map(|input| input.confidence).collect();
@@ -87,27 +137,29 @@ pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEnti
     z_normalize(&mut confidence);
     z_normalize(&mut gravity);
 
-    let recency_weight = retrieval_blend_weight(RetrievalBlendSignal::Recency);
-    let salience_weight = retrieval_blend_weight(RetrievalBlendSignal::Salience);
-    let confidence_weight = retrieval_blend_weight(RetrievalBlendSignal::Confidence);
-    let gravity_weight = retrieval_blend_weight(RetrievalBlendSignal::Gravity);
+    NormalizedBlendColumns {
+        recency,
+        salience,
+        confidence,
+        gravity,
+    }
+}
 
-    let mut scores: Vec<ScoredEntity> = inputs
-        .iter()
-        .enumerate()
-        .map(|(index, input)| {
-            let log_score = recency_weight * recency[index]
-                + salience_weight * salience[index]
-                + confidence_weight * confidence[index]
-                + gravity_weight * gravity[index];
-            ScoredEntity {
-                id: input.id,
-                score: log_score.exp(),
-            }
+fn component_ranks(inputs: &[RetrievalBlendInput], values: &[f32]) -> Vec<u32> {
+    let mut order: Vec<usize> = (0..inputs.len()).collect();
+    order.sort_unstable_by(|left, right| {
+        values[*right].total_cmp(&values[*left]).then_with(|| {
+            inputs[*left]
+                .id
+                .as_bytes()
+                .cmp(inputs[*right].id.as_bytes())
         })
-        .collect();
-    sort_scored_entities_desc(&mut scores);
-    scores
+    });
+    let mut ranks = vec![0_u32; inputs.len()];
+    for (rank, index) in order.into_iter().enumerate() {
+        ranks[index] = (rank + 1).min(u32::MAX as usize) as u32;
+    }
+    ranks
 }
 
 fn canonical_blend_inputs(inputs: &[RetrievalBlendInput]) -> Cow<'_, [RetrievalBlendInput]> {
@@ -277,22 +329,19 @@ mod tests {
     }
 
     #[test]
-    fn blend_weight_table_is_contract_pinned() {
-        assert_eq!(
-            RETRIEVAL_BLEND_WEIGHT_TABLE,
-            &[
-                (RetrievalBlendSignal::Recency, 0.35),
-                (RetrievalBlendSignal::Salience, 0.30),
-                (RetrievalBlendSignal::Confidence, 0.20),
-                (RetrievalBlendSignal::Gravity, 0.15),
-            ]
-        );
-        for (signal, weight) in RETRIEVAL_BLEND_WEIGHT_TABLE {
-            assert_eq!(
-                retrieval_blend_weight(*signal),
-                *weight,
-                "retrieval blend weight mismatch for {signal:?}"
-            );
+    fn bootstrap_blend_weights_are_explicit() {
+        let weights = RetrievalBlendWeights::bootstrap();
+        assert_eq!(weights.recency, 0.35);
+        assert_eq!(weights.salience, 0.30);
+        assert_eq!(weights.confidence, 0.20);
+        assert_eq!(weights.gravity, 0.15);
+        for signal in [
+            RetrievalBlendSignal::Recency,
+            RetrievalBlendSignal::Salience,
+            RetrievalBlendSignal::Confidence,
+            RetrievalBlendSignal::Gravity,
+        ] {
+            assert_eq!(retrieval_blend_weight(signal), weights.weight(signal));
         }
     }
 
@@ -317,6 +366,21 @@ mod tests {
 
         let first = linear_log_blend(&inputs);
         let second = linear_log_blend(&inputs);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn linear_log_blend_with_fixed_snapshot_is_bit_exact() {
+        let inputs = vec![
+            blend_input([1; 16], 0.03, 0.91, 0.27, 1.0),
+            blend_input([2; 16], 0.89, 0.07, 0.63, 0.0),
+            blend_input([3; 16], 0.41, 0.55, 0.13, 1.0),
+            blend_input([4; 16], 0.67, 0.33, 0.97, 0.0),
+        ];
+        let weights = RetrievalBlendWeights::new(0.05, 0.70, 0.20, 0.05);
+        let first = score_fingerprint(&linear_log_blend_with_weights(&inputs, weights));
+        let second = score_fingerprint(&linear_log_blend_with_weights(&inputs, weights));
 
         assert_eq!(first, second);
     }

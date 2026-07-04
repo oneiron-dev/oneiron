@@ -219,7 +219,9 @@ pub use crate::skill::{
     decode_skill_record, encode_skill_record,
 };
 pub use crate::store::{
-    PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction, RetrievalRunId,
+    PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction, RetrievalBlendSignal,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry,
+    RetrievalBlendWeights, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
     RetrievalTraceStageRecord,

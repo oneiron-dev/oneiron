@@ -225,8 +225,12 @@ const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
+const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] = b"retr_blend_weights:v0:active";
 const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
+const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
+const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
+const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
@@ -298,6 +302,23 @@ pub enum RetrievalSignal {
     Phonetic,
     Temporal,
     Ppr,
+    Recency,
+    Salience,
+    Confidence,
+    Gravity,
+}
+
+impl RetrievalSignal {
+    #[must_use]
+    pub fn as_blend_signal(self) -> Option<RetrievalBlendSignal> {
+        match self {
+            Self::Recency => Some(RetrievalBlendSignal::Recency),
+            Self::Salience => Some(RetrievalBlendSignal::Salience),
+            Self::Confidence => Some(RetrievalBlendSignal::Confidence),
+            Self::Gravity => Some(RetrievalBlendSignal::Gravity),
+            Self::Vector | Self::Text | Self::Phonetic | Self::Temporal | Self::Ppr => None,
+        }
+    }
 }
 
 impl From<Signal> for RetrievalSignal {
@@ -308,6 +329,126 @@ impl From<Signal> for RetrievalSignal {
             Signal::Phonetic => Self::Phonetic,
             Signal::Temporal => Self::Temporal,
             Signal::Ppr => Self::Ppr,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalBlendSignal {
+    Recency,
+    Salience,
+    Confidence,
+    Gravity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalBlendWeights {
+    pub recency: f32,
+    pub salience: f32,
+    pub confidence: f32,
+    pub gravity: f32,
+}
+
+impl RetrievalBlendWeights {
+    #[must_use]
+    pub const fn bootstrap() -> Self {
+        Self {
+            recency: 0.35,
+            salience: 0.30,
+            confidence: 0.20,
+            gravity: 0.15,
+        }
+    }
+
+    #[must_use]
+    pub const fn new(recency: f32, salience: f32, confidence: f32, gravity: f32) -> Self {
+        Self {
+            recency,
+            salience,
+            confidence,
+            gravity,
+        }
+    }
+
+    #[must_use]
+    pub fn weight(self, signal: RetrievalBlendSignal) -> f32 {
+        match signal {
+            RetrievalBlendSignal::Recency => self.recency,
+            RetrievalBlendSignal::Salience => self.salience,
+            RetrievalBlendSignal::Confidence => self.confidence,
+            RetrievalBlendSignal::Gravity => self.gravity,
+        }
+    }
+
+    pub(crate) fn normalized(self) -> Result<Self> {
+        validate_retrieval_blend_weights(self).map_err(Error::InvalidConfig)?;
+        let sum = self.sum();
+        Ok(Self {
+            recency: self.recency / sum,
+            salience: self.salience / sum,
+            confidence: self.confidence / sum,
+            gravity: self.gravity / sum,
+        })
+    }
+
+    fn sum(self) -> f32 {
+        self.recency + self.salience + self.confidence + self.gravity
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RetrievalBlendWeightDataWindow {
+    pub run_count: u32,
+    pub outcome_count: u32,
+    pub candidate_count: u32,
+    pub started_at_min: Option<u64>,
+    pub started_at_max: Option<u64>,
+    pub outcome_updated_at_min: Option<u64>,
+    pub outcome_updated_at_max: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalBlendWeightTableEntry {
+    pub version: u8,
+    pub weights: RetrievalBlendWeights,
+    pub tuned_at: u64,
+    pub provenance: BTreeMap<String, String>,
+    pub data_window: RetrievalBlendWeightDataWindow,
+}
+
+impl RetrievalBlendWeightTableEntry {
+    #[must_use]
+    pub fn bootstrap() -> Self {
+        let mut provenance = BTreeMap::new();
+        provenance.insert(
+            "source".to_owned(),
+            RETRIEVAL_BLEND_BOOTSTRAP_SOURCE.to_owned(),
+        );
+        provenance.insert("algorithm".to_owned(), "ret010b.bootstrap.v1".to_owned());
+        Self {
+            version: RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
+            weights: RetrievalBlendWeights::bootstrap(),
+            tuned_at: 0,
+            provenance,
+            data_window: RetrievalBlendWeightDataWindow::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RetrievalBlendTuningConfig {
+    pub max_runs: usize,
+    pub learning_rate: f32,
+    pub min_reward_count: usize,
+}
+
+impl Default for RetrievalBlendTuningConfig {
+    fn default() -> Self {
+        Self {
+            max_runs: RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT,
+            learning_rate: 0.05,
+            min_reward_count: 1,
         }
     }
 }
@@ -363,12 +504,13 @@ pub type RetrievalTraceForkHash = [u8; 32];
 /// `fork_hash` is the content-addressed replay key for fork-and-diff eval. Its
 /// canonical input snapshot is: query inputs for all enabled retrieval channels,
 /// normalized retrieval config and flags, the BM25 rank-profile snapshot, the
-/// pinned recency half-life table, an explicitly supplied replay clock when
-/// present for time-dependent scoring, and the candidate set canonicalized as
-/// sorted, deduplicated `EntityId` bytes. Implicit wall-clock seconds are not
-/// hashed. Legacy traces missing the field decode to the all-zero sentinel, which
-/// is treated as unknown and is not indexed. The trace remains typed msgpack-native;
-/// JSONL/parquet export belongs outside the engine.
+/// pinned recency half-life table, the active retrieval-blend weight table,
+/// an explicitly supplied replay clock when present for time-dependent scoring,
+/// and the candidate set canonicalized as sorted, deduplicated `EntityId`
+/// bytes. Implicit wall-clock seconds are not hashed. Legacy traces missing
+/// the field decode to the all-zero sentinel, which is treated as unknown and
+/// is not indexed. The trace remains typed msgpack-native; JSONL/parquet export
+/// belongs outside the engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalTrace {
     #[serde(default)]
@@ -791,6 +933,9 @@ pub struct Store {
     pub(crate) vault_meta: Database<Bytes, Bytes>,
     /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
     pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// Serializes reward-to-weight tuning so concurrent callers cannot lose
+    /// a gradient step between read, compute, and persist.
+    retrieval_blend_tuning_lock: Mutex<()>,
     /// PPR cache rows. Values carry the final scores and, for current rows,
     /// the residual/frontier state needed to resume a deeper Forward-Push run.
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
@@ -965,6 +1110,7 @@ impl Store {
             text_doc_field_lengths,
             vault_meta,
             kind_registry,
+            retrieval_blend_tuning_lock: Mutex::new(()),
             ppr_cache,
             ppr_cache_deps,
             type_index,
@@ -1663,11 +1809,183 @@ impl Store {
         Ok(latest.and_then(|record| record.trace))
     }
 
+    pub(crate) fn retrieval_blend_weight_table_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        let Some(value) = self
+            .vault_meta
+            .get(rtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY)?
+        else {
+            return Ok(RetrievalBlendWeightTableEntry::bootstrap());
+        };
+        decode_retrieval_blend_weight_table(value)
+    }
+
+    pub fn retrieval_blend_weight_table(&self) -> Result<RetrievalBlendWeightTableEntry> {
+        let rtxn = self.env.read_txn()?;
+        self.retrieval_blend_weight_table_in_txn(&rtxn)
+    }
+
+    pub fn tune_retrieval_blend_weights(
+        &self,
+        config: RetrievalBlendTuningConfig,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        validate_retrieval_blend_tuning_config(config)?;
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "retrieval blend weight tuning skipped inside active write transaction",
+            ));
+        }
+        let _tuning_guard = self
+            .retrieval_blend_tuning_lock
+            .lock()
+            .map_err(|_| Error::InvariantViolation("retrieval blend tuning mutex poisoned"))?;
+
+        let rtxn = self.env.read_txn()?;
+        let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
+        let upper = retrieval_run_upper_bound();
+        let mut gradient = [0.0_f64; 4];
+        let mut reward_count = 0_usize;
+        let mut component_count = 0_usize;
+        let mut data_window = RetrievalBlendWeightDataWindow::default();
+
+        let mut accepted_runs = 0_usize;
+        for row in self.vault_meta.rev_range(
+            &rtxn,
+            &(
+                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
+                break;
+            }
+            let run_id = retrieval_run_id_from_key(key)?;
+            if self
+                .vault_meta
+                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
+                .is_some()
+            {
+                continue;
+            }
+            let record = decode_retrieval_run(value)?;
+            if record.run_id != run_id {
+                return Err(Error::CorruptedIndex("retrieval run telemetry"));
+            }
+            if accepted_runs == config.max_runs {
+                break;
+            }
+            accepted_runs += 1;
+
+            let outcomes = retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)?;
+            let run_reward_count_before = reward_count;
+            let run_candidate_count_before = data_window.candidate_count;
+            for outcome in outcomes.iter().filter(|outcome| outcome.reward.is_some()) {
+                let reward = f64::from(outcome.reward.expect("filtered reward"));
+                let mut outcome_gradient = [0.0_f64; 4];
+                let mut outcome_component_count = 0_usize;
+                let mut outcome_candidate_count = 0_u32;
+                for candidate in &record.score_breakdown {
+                    let rank_credit = 1.0 / f64::from(candidate.final_rank.max(1));
+                    let mut candidate_has_blend_component = false;
+                    for component in &candidate.components {
+                        let Some(index) = retrieval_blend_component_index(component.signal) else {
+                            continue;
+                        };
+                        if !component.score.is_finite() {
+                            return Err(Error::CorruptedIndex("retrieval blend tuning"));
+                        }
+                        outcome_gradient[index] +=
+                            reward * rank_credit * f64::from(component.score);
+                        outcome_component_count += 1;
+                        candidate_has_blend_component = true;
+                    }
+                    if candidate_has_blend_component {
+                        outcome_candidate_count = outcome_candidate_count.saturating_add(1);
+                    }
+                }
+                if outcome_component_count == 0 {
+                    continue;
+                }
+                for (total, outcome) in gradient.iter_mut().zip(outcome_gradient) {
+                    *total += outcome;
+                }
+                component_count += outcome_component_count;
+                reward_count += 1;
+                observe_retrieval_blend_outcome(&mut data_window, outcome);
+                data_window.candidate_count = data_window
+                    .candidate_count
+                    .saturating_add(outcome_candidate_count);
+            }
+            if reward_count > run_reward_count_before
+                && data_window.candidate_count > run_candidate_count_before
+            {
+                observe_retrieval_blend_run(&mut data_window, &record);
+            }
+        }
+        drop(rtxn);
+
+        if reward_count < config.min_reward_count {
+            return Err(Error::InvalidConfig(format!(
+                "retrieval blend tuning requires at least {} reward outcome(s), found {reward_count}",
+                config.min_reward_count
+            )));
+        }
+        if component_count == 0 {
+            return Err(Error::InvalidConfig(
+                "retrieval blend tuning requires blend-signal score components".to_owned(),
+            ));
+        }
+
+        let weights = apply_retrieval_blend_weight_update(
+            previous.weights,
+            gradient,
+            config.learning_rate,
+            reward_count,
+        )?;
+        let mut provenance = BTreeMap::new();
+        provenance.insert("source".to_owned(), "RetrievalOutcomeRecord".to_owned());
+        provenance.insert(
+            "algorithm".to_owned(),
+            RETRIEVAL_BLEND_TUNER_ALGORITHM.to_owned(),
+        );
+        provenance.insert("max_runs".to_owned(), config.max_runs.to_string());
+        provenance.insert("learning_rate".to_owned(), config.learning_rate.to_string());
+        provenance.insert(
+            "previous_tuned_at".to_owned(),
+            previous.tuned_at.to_string(),
+        );
+        let entry = RetrievalBlendWeightTableEntry {
+            version: RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
+            weights,
+            tuned_at: crate::unix_seconds_now(),
+            provenance,
+            data_window,
+        };
+        self.put_retrieval_blend_weight_table_entry(&entry)?;
+        Ok(entry)
+    }
+
+    fn put_retrieval_blend_weight_table_entry(
+        &self,
+        entry: &RetrievalBlendWeightTableEntry,
+    ) -> Result<()> {
+        vet_retrieval_blend_weight_table_entry(entry)
+            .map_err(|_| Error::InvalidConfig("invalid retrieval blend weight table".to_owned()))?;
+        let value = encode_retrieval_blend_weight_table(entry)?;
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta
+            .put(&mut wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, &value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     pub fn retrieval_outcomes(
         &self,
         run_id: RetrievalRunId,
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
-        let prefix = retrieval_outcome_run_prefix(run_id);
         let rtxn = self.env.read_txn()?;
         if self
             .vault_meta
@@ -1680,21 +1998,7 @@ impl Store {
         {
             return Ok(Vec::new());
         }
-        let mut records = Vec::new();
-        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, value) = row?;
-            let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(key)?;
-            if key_run_id != run_id {
-                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
-            }
-            let record = decode_retrieval_outcome(value)?;
-            if record.run_id != key_run_id || record.key != key_outcome_key {
-                return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
-            }
-            records.push(record);
-        }
-        records.sort_by(|left, right| left.key.cmp(&right.key));
-        Ok(records)
+        retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)
     }
 }
 
@@ -1872,6 +2176,190 @@ fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
         return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
     }
     Ok(record)
+}
+
+fn retrieval_outcomes_for_run_in_txn(
+    vault_meta: &Database<Bytes, Bytes>,
+    rtxn: &RoTxn<'_>,
+    run_id: RetrievalRunId,
+) -> Result<Vec<RetrievalOutcomeRecord>> {
+    let prefix = retrieval_outcome_run_prefix(run_id);
+    let mut records = Vec::new();
+    for row in vault_meta.prefix_iter(rtxn, &prefix)? {
+        let (key, value) = row?;
+        let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(key)?;
+        if key_run_id != run_id {
+            return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+        }
+        let record = decode_retrieval_outcome(value)?;
+        if record.run_id != key_run_id || record.key != key_outcome_key {
+            return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
+        }
+        records.push(record);
+    }
+    records.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok(records)
+}
+
+fn encode_retrieval_blend_weight_table(entry: &RetrievalBlendWeightTableEntry) -> Result<Vec<u8>> {
+    vet_retrieval_blend_weight_table_entry(entry)?;
+    rmp_serde::to_vec_named(entry)
+        .map_err(|_| Error::InvariantViolation("retrieval blend weight table encode failed"))
+}
+
+fn decode_retrieval_blend_weight_table(raw: &[u8]) -> Result<RetrievalBlendWeightTableEntry> {
+    let mut entry: RetrievalBlendWeightTableEntry = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("retrieval blend weight table"))?;
+    vet_retrieval_blend_weight_table_entry(&entry)?;
+    entry.weights = entry
+        .weights
+        .normalized()
+        .map_err(|_| Error::CorruptedIndex("retrieval blend weight table"))?;
+    Ok(entry)
+}
+
+fn vet_retrieval_blend_weight_table_entry(entry: &RetrievalBlendWeightTableEntry) -> Result<()> {
+    if entry.version != RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION
+        || entry.provenance.is_empty()
+        || !entry.provenance.contains_key("source")
+        || !entry.provenance.contains_key("algorithm")
+    {
+        return Err(Error::CorruptedIndex("retrieval blend weight table"));
+    }
+    validate_retrieval_blend_weights(entry.weights)
+        .map_err(|_| Error::CorruptedIndex("retrieval blend weight table"))?;
+    if entry.data_window.outcome_count > 0
+        && (entry.data_window.outcome_updated_at_min.is_none()
+            || entry.data_window.outcome_updated_at_max.is_none())
+    {
+        return Err(Error::CorruptedIndex("retrieval blend weight table"));
+    }
+    if entry.data_window.run_count > 0
+        && (entry.data_window.started_at_min.is_none()
+            || entry.data_window.started_at_max.is_none())
+    {
+        return Err(Error::CorruptedIndex("retrieval blend weight table"));
+    }
+    Ok(())
+}
+
+fn validate_retrieval_blend_weights(
+    weights: RetrievalBlendWeights,
+) -> std::result::Result<(), String> {
+    let values = [
+        ("recency", weights.recency),
+        ("salience", weights.salience),
+        ("confidence", weights.confidence),
+        ("gravity", weights.gravity),
+    ];
+    for (name, value) in values {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!(
+                "retrieval blend {name} weight must be finite and non-negative"
+            ));
+        }
+    }
+    if weights.sum() <= 0.0 {
+        return Err("retrieval blend weights must have positive total mass".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_retrieval_blend_tuning_config(config: RetrievalBlendTuningConfig) -> Result<()> {
+    if config.max_runs == 0 {
+        return Err(Error::InvalidConfig(
+            "retrieval blend tuning max_runs must be positive".to_owned(),
+        ));
+    }
+    if config.min_reward_count == 0 {
+        return Err(Error::InvalidConfig(
+            "retrieval blend tuning min_reward_count must be positive".to_owned(),
+        ));
+    }
+    if !config.learning_rate.is_finite() || config.learning_rate <= 0.0 {
+        return Err(Error::InvalidConfig(
+            "retrieval blend tuning learning_rate must be finite and positive".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn retrieval_blend_component_index(signal: RetrievalSignal) -> Option<usize> {
+    match signal.as_blend_signal()? {
+        RetrievalBlendSignal::Recency => Some(0),
+        RetrievalBlendSignal::Salience => Some(1),
+        RetrievalBlendSignal::Confidence => Some(2),
+        RetrievalBlendSignal::Gravity => Some(3),
+    }
+}
+
+fn observe_retrieval_blend_run(
+    data_window: &mut RetrievalBlendWeightDataWindow,
+    record: &RetrievalRunRecord,
+) {
+    data_window.run_count = data_window.run_count.saturating_add(1);
+    data_window.started_at_min = Some(
+        data_window
+            .started_at_min
+            .map_or(record.started_at, |current| current.min(record.started_at)),
+    );
+    data_window.started_at_max = Some(
+        data_window
+            .started_at_max
+            .map_or(record.started_at, |current| current.max(record.started_at)),
+    );
+}
+
+fn observe_retrieval_blend_outcome(
+    data_window: &mut RetrievalBlendWeightDataWindow,
+    record: &RetrievalOutcomeRecord,
+) {
+    data_window.outcome_count = data_window.outcome_count.saturating_add(1);
+    data_window.outcome_updated_at_min = Some(
+        data_window
+            .outcome_updated_at_min
+            .map_or(record.updated_at, |current| current.min(record.updated_at)),
+    );
+    data_window.outcome_updated_at_max = Some(
+        data_window
+            .outcome_updated_at_max
+            .map_or(record.updated_at, |current| current.max(record.updated_at)),
+    );
+}
+
+fn apply_retrieval_blend_weight_update(
+    previous: RetrievalBlendWeights,
+    gradient: [f64; 4],
+    learning_rate: f32,
+    reward_count: usize,
+) -> Result<RetrievalBlendWeights> {
+    let reward_scale = reward_count.max(1) as f64;
+    let learning_rate = f64::from(learning_rate);
+    let mut next = [
+        f64::from(previous.recency) + learning_rate * gradient[0] / reward_scale,
+        f64::from(previous.salience) + learning_rate * gradient[1] / reward_scale,
+        f64::from(previous.confidence) + learning_rate * gradient[2] / reward_scale,
+        f64::from(previous.gravity) + learning_rate * gradient[3] / reward_scale,
+    ];
+    for value in &mut next {
+        if !value.is_finite() {
+            return Err(Error::InvalidConfig(
+                "retrieval blend tuning produced non-finite weight".to_owned(),
+            ));
+        }
+        *value = value.max(0.0);
+    }
+    let sum = next.iter().sum::<f64>();
+    if sum <= f64::EPSILON {
+        return previous.normalized();
+    }
+    RetrievalBlendWeights::new(
+        (next[0] / sum) as f32,
+        (next[1] / sum) as f32,
+        (next[2] / sum) as f32,
+        (next[3] / sum) as f32,
+    )
+    .normalized()
 }
 
 fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
@@ -3116,6 +3604,7 @@ mod tests {
     use crate::Vault;
     use crate::types::{EntityId, TimeRange};
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Barrier};
 
     fn open_test_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -3735,6 +4224,384 @@ mod tests {
             error,
             Error::CorruptedIndex("retrieval outcome telemetry")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn search_falls_back_to_bootstrap_when_blend_weight_table_is_corrupt() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x4E);
+        put_text(&vault, id, "corrupt blend fallback")?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, b"not-msgpack")?;
+            Ok(())
+        })?;
+
+        let table_error = vault
+            .retrieval_blend_weight_table()
+            .expect_err("administrative table read should still report corruption");
+        assert!(matches!(
+            table_error,
+            Error::CorruptedIndex("retrieval blend weight table")
+        ));
+
+        let result = vault
+            .query()
+            .search_text("corrupt blend fallback", 10)
+            .run_with_telemetry()?;
+        assert_eq!(result.value.len(), 1);
+        assert_eq!(result.value[0].id, id);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let positive = entity_id(0x48);
+        let negative = entity_id(0x49);
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            100,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![
+                RetrievalScoreBreakdown {
+                    result_id: *positive.as_bytes(),
+                    final_rank: 1,
+                    final_score: 2.0,
+                    components: vec![
+                        RetrievalScoreComponent {
+                            signal: RetrievalSignal::Recency,
+                            rank: 1,
+                            score: 1.0,
+                        },
+                        RetrievalScoreComponent {
+                            signal: RetrievalSignal::Salience,
+                            rank: 2,
+                            score: -1.0,
+                        },
+                    ],
+                },
+                RetrievalScoreBreakdown {
+                    result_id: *negative.as_bytes(),
+                    final_rank: 2,
+                    final_score: 1.0,
+                    components: vec![
+                        RetrievalScoreComponent {
+                            signal: RetrievalSignal::Recency,
+                            rank: 2,
+                            score: -1.0,
+                        },
+                        RetrievalScoreComponent {
+                            signal: RetrievalSignal::Salience,
+                            rank: 1,
+                            score: 1.0,
+                        },
+                    ],
+                },
+            ],
+            2,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&record)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+            max_runs: 10,
+            learning_rate: 0.10,
+            min_reward_count: 1,
+        })?;
+
+        assert!(updated.weights.recency > before.weights.recency);
+        assert!(updated.weights.salience < before.weights.salience);
+        assert_eq!(updated.data_window.run_count, 1);
+        assert_eq!(updated.data_window.outcome_count, 1);
+        assert_eq!(updated.data_window.candidate_count, 2);
+        assert_eq!(updated.data_window.started_at_min, Some(100));
+        assert_eq!(updated.data_window.started_at_max, Some(100));
+        assert_eq!(
+            updated.provenance.get("algorithm").map(String::as_str),
+            Some(RETRIEVAL_BLEND_TUNER_ALGORITHM)
+        );
+        assert_eq!(vault.retrieval_blend_weight_table()?, updated);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = RetrievalRunId::now();
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            200,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4F).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&record)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let expected_once =
+            apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        let expected_twice =
+            apply_retrieval_blend_weight_update(expected_once, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+
+        let vault = Arc::new(vault);
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let vault = Arc::clone(&vault);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+                    max_runs: 1,
+                    learning_rate: 0.10,
+                    min_reward_count: 1,
+                })
+            }));
+        }
+        barrier.wait();
+        for handle in handles {
+            handle.join().expect("tuning thread should not panic")?;
+        }
+
+        let final_entry = vault.retrieval_blend_weight_table()?;
+        assert_eq!(final_entry.weights, expected_twice);
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let completed_run_id = RetrievalRunId::now();
+        let completed = RetrievalRunRecord::new(
+            completed_run_id,
+            RetrievalAction::Pipeline,
+            300,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4A).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&completed)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: completed_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let provisional_run_id = RetrievalRunId::now();
+        let provisional = RetrievalRunRecord::new(
+            provisional_run_id,
+            RetrievalAction::ContextPack,
+            400,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4B).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Salience,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&provisional)?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+            max_runs: 1,
+            learning_rate: 0.10,
+            min_reward_count: 1,
+        })?;
+
+        assert!(updated.weights.recency > before.weights.recency);
+        assert_eq!(updated.data_window.run_count, 1);
+        assert_eq!(updated.data_window.outcome_count, 1);
+        assert_eq!(updated.data_window.started_at_min, Some(300));
+        assert_eq!(updated.data_window.started_at_max, Some(300));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let blend_run_id = RetrievalRunId::now();
+        let blend = RetrievalRunRecord::new(
+            blend_run_id,
+            RetrievalAction::Pipeline,
+            500,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4C).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&blend)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: blend_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let text_only_run_id = RetrievalRunId::now();
+        let text_only = RetrievalRunRecord::new(
+            text_only_run_id,
+            RetrievalAction::VaultSearch,
+            600,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4D).as_bytes(),
+                final_rank: 1,
+                final_score: 10.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Text,
+                    rank: 1,
+                    score: 10.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&text_only)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: text_only_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let error = vault
+            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+                max_runs: 2,
+                learning_rate: 0.10,
+                min_reward_count: 2,
+            })
+            .expect_err("text-only reward should not satisfy min_reward_count");
+        assert!(matches!(error, Error::InvalidConfig(message) if message.contains("found 1")));
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let expected_weights =
+            apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+            max_runs: 2,
+            learning_rate: 0.10,
+            min_reward_count: 1,
+        })?;
+
+        assert_eq!(updated.weights, expected_weights);
+        assert_eq!(updated.data_window.run_count, 1);
+        assert_eq!(updated.data_window.outcome_count, 1);
+        assert_eq!(updated.data_window.candidate_count, 1);
+        assert_eq!(updated.data_window.started_at_min, Some(500));
+        assert_eq!(updated.data_window.started_at_max, Some(500));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_weight_table_load_normalizes_persisted_weights() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let mut provenance = BTreeMap::new();
+        provenance.insert("source".to_owned(), "test".to_owned());
+        provenance.insert("algorithm".to_owned(), "test.unnormalized".to_owned());
+        let entry = RetrievalBlendWeightTableEntry {
+            version: RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
+            weights: RetrievalBlendWeights::new(2.0, 3.0, 4.0, 1.0),
+            tuned_at: 123,
+            provenance,
+            data_window: RetrievalBlendWeightDataWindow::default(),
+        };
+        let raw = rmp_serde::to_vec_named(&entry).expect("encode synthetic blend table");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, &raw)?;
+            Ok(())
+        })?;
+
+        let loaded = vault.retrieval_blend_weight_table()?;
+        let sum = loaded.weights.recency
+            + loaded.weights.salience
+            + loaded.weights.confidence
+            + loaded.weights.gravity;
+        assert!((sum - 1.0).abs() < 1.0e-6);
+        assert!((loaded.weights.recency - 0.2).abs() < 1.0e-6);
+        assert!((loaded.weights.salience - 0.3).abs() < 1.0e-6);
+        assert!((loaded.weights.confidence - 0.4).abs() < 1.0e-6);
+        assert!((loaded.weights.gravity - 0.1).abs() < 1.0e-6);
+        assert_eq!(loaded.tuned_at, 123);
         Ok(())
     }
 }
