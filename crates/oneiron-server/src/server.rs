@@ -15,6 +15,7 @@ use oneiron::sync::{self, EphemeralStore, WindowKey, WindowManager};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::config::SyncServerConfig;
+use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::usage::UsageLedger;
 
 /// User id passed to the shared window loader. The server vault is
@@ -60,6 +61,8 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// Process-local connector actor registry for the MCP gateway.
+    pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +186,9 @@ impl SyncServer {
         }
 
         let (broadcast_tx, _) = broadcast::channel(256);
+        let mcp_registry = Mutex::new(McpConnectorActorRegistry::new(
+            McpCredentialHashKey::from_bytes(mcp_registry_hash_key(&config)),
+        ));
 
         let reassert_manager = Arc::new(WindowManager::new(
             vault.clone(),
@@ -204,6 +210,7 @@ impl SyncServer {
             lifecycle_in_flight: Mutex::new(HashSet::new()),
             dreamer_progress: Mutex::new(DreamerJobProgressProducer::new()),
             config,
+            mcp_registry,
         })
     }
 
@@ -871,6 +878,19 @@ impl SyncServer {
             .map_err(|e| oneiron::Error::SyncProtocolError(format!("root delta export: {e}")))?;
         Ok(Some(delta))
     }
+}
+
+fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron-server:mcp-connector-registry:v1");
+    if let Some(secret) = config.auth_secret.as_deref() {
+        hasher.update(secret.as_bytes());
+    } else if config.allow_unauthenticated {
+        hasher.update(b"unauthenticated-dev");
+    } else {
+        hasher.update(b"no-auth-secret-configured");
+    }
+    *hasher.finalize().as_bytes()
 }
 
 /// Outcome of a lease registration attempt (ONE-1140).
