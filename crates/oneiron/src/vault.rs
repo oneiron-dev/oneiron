@@ -4156,6 +4156,7 @@ impl Vault {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
 
+        crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
         self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
         Ok((true, had_vector))
     }

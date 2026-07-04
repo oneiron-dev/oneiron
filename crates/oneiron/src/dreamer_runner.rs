@@ -15,8 +15,8 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimSubject;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::claim::{ClaimBody, ClaimSubject};
 use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
 use crate::job_queue::JobState;
@@ -24,6 +24,7 @@ use crate::job_queue::{
     ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
     FailOutcome, JobId, JobQueue, JobRecord,
 };
+use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
 use crate::types::{ClaimCandidate, ENTITY_TYPE_CLAIM, EntityId, TimeRange, WriteEnvelope};
@@ -41,6 +42,11 @@ pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
 pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for Dreamer milestone claim values.
 pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
+const DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX: &[u8] = b"dreamer.milestone_index.v1.c:";
+const DREAMER_MILESTONE_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer.milestone_index.v1.i:";
+const DREAMER_MILESTONE_INDEX_BACKFILLED_KEY: &[u8] = b"dreamer.milestone_index.v1.backfilled";
+const DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN: usize =
+    DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16 + 8 + 8 + 16;
 /// Flat ephemeral key prefix for live Dreamer job progress.
 #[cfg(feature = "sync")]
 pub const DREAMER_JOB_PROGRESS_KEY_PREFIX: &str = "job:";
@@ -1567,45 +1573,31 @@ impl<'a> DreamerRunnerStore<'a> {
         job_id: JobId,
     ) -> Result<Option<DreamerDurableMilestone>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let mut latest: Option<DreamerDurableMilestone> = None;
-
-        for row in self.vault.store.entities.iter(&rtxn)? {
-            let (key, raw) = row?;
-            let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
-                continue;
-            }
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if body.predicate != DREAMER_MILESTONE_PREDICATE
-                || body.approval != ClaimApprovalStatus::Approved
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                || body.stale
-            {
-                continue;
-            }
-            let (kind, at) = match decode_milestone_value_for_job(&body.value, job_id) {
-                Ok(Some(decoded)) => decoded,
-                Ok(None) | Err(_) => continue,
-            };
-
-            let key_bytes: [u8; 16] = key.try_into().map_err(|_| Error::InvalidKey)?;
-            let milestone = DreamerDurableMilestone {
-                claim_id: EntityId::from_bytes(key_bytes)?,
-                job_id,
-                kind,
-                at,
-                learned_at: header.learned_at,
-            };
-
-            if latest.as_ref().is_none_or(|current| {
-                (milestone.at, milestone.learned_at, milestone.claim_id)
-                    > (current.at, current.learned_at, current.claim_id)
-            }) {
-                latest = Some(milestone);
-            }
+        if self
+            .vault
+            .store
+            .vault_meta
+            .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
+            .is_some()
+        {
+            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, job_id);
         }
+        drop(rtxn);
 
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        if self
+            .vault
+            .store
+            .vault_meta
+            .get(&wtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
+            .is_some()
+        {
+            drop(wtxn);
+            let rtxn = self.vault.store.env.read_txn()?;
+            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, job_id);
+        }
+        let latest = backfill_dreamer_milestone_index(&self.vault.store, &mut wtxn, job_id)?;
+        wtxn.commit()?;
         Ok(latest)
     }
 
@@ -2100,6 +2092,225 @@ fn apply_milestone_claim_in_txn(
         .apply(wtxn)
 }
 
+pub(crate) fn index_dreamer_milestone_claim_for_put(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    learned_at: u64,
+) -> Result<()> {
+    deindex_dreamer_milestone_claim(store, wtxn, claim_id)?;
+
+    let Some(milestone) = dreamer_milestone_from_claim_body(claim_id, body, learned_at) else {
+        return Ok(());
+    };
+
+    let candidate_key = dreamer_milestone_candidate_key(&milestone);
+    store.vault_meta.put(wtxn, &candidate_key, b"")?;
+    store
+        .vault_meta
+        .put(wtxn, &dreamer_milestone_claim_key(claim_id), &candidate_key)?;
+    Ok(())
+}
+
+pub(crate) fn deindex_dreamer_milestone_claim(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<()> {
+    let claim_key = dreamer_milestone_claim_key(claim_id);
+    let Some(candidate_key) = store.vault_meta.get(wtxn, &claim_key)?.map(<[u8]>::to_vec) else {
+        return Ok(());
+    };
+    store.vault_meta.delete(wtxn, &candidate_key)?;
+    store.vault_meta.delete(wtxn, &claim_key)?;
+    Ok(())
+}
+
+fn latest_indexed_dreamer_milestone(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    job_id: JobId,
+) -> Result<Option<DreamerDurableMilestone>> {
+    let prefix = dreamer_milestone_candidate_prefix(job_id);
+    let mut latest: Option<DreamerDurableMilestone> = None;
+    for row in store.vault_meta.prefix_iter(rtxn, &prefix)? {
+        let (key, _value) = row?;
+        let Some(milestone) = indexed_dreamer_milestone_if_current(store, rtxn, key, job_id)?
+        else {
+            continue;
+        };
+        latest = Some(milestone);
+    }
+    Ok(latest)
+}
+
+fn indexed_dreamer_milestone_if_current(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    key: &[u8],
+    expected_job_id: JobId,
+) -> Result<Option<DreamerDurableMilestone>> {
+    let Ok((job_id, at, learned_at, claim_id)) = decode_dreamer_milestone_candidate_key(key) else {
+        return Ok(None);
+    };
+    if job_id != expected_job_id {
+        return Ok(None);
+    }
+    let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Ok(None);
+    };
+    if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(None);
+    }
+    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+        return Ok(None);
+    };
+    let Some(milestone) = dreamer_milestone_from_claim_body(&claim_id, &body, header.learned_at)
+    else {
+        return Ok(None);
+    };
+    if milestone.job_id == job_id
+        && milestone.at == at
+        && milestone.learned_at == learned_at
+        && milestone.claim_id == claim_id
+    {
+        Ok(Some(milestone))
+    } else {
+        Ok(None)
+    }
+}
+
+fn backfill_dreamer_milestone_index(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    job_id: JobId,
+) -> Result<Option<DreamerDurableMilestone>> {
+    let mut milestones = Vec::new();
+    for row in store.entities.iter(&*wtxn)? {
+        let (key, raw) = row?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
+            continue;
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        let Ok(key_bytes) = <[u8; 16]>::try_from(key) else {
+            continue;
+        };
+        let Ok(claim_id) = EntityId::from_bytes(key_bytes) else {
+            continue;
+        };
+        let Some(milestone) =
+            dreamer_milestone_from_claim_body(&claim_id, &body, header.learned_at)
+        else {
+            continue;
+        };
+        milestones.push(milestone);
+    }
+
+    let mut latest: Option<DreamerDurableMilestone> = None;
+    for milestone in milestones {
+        let candidate_key = dreamer_milestone_candidate_key(&milestone);
+        store.vault_meta.put(wtxn, &candidate_key, b"")?;
+        store.vault_meta.put(
+            wtxn,
+            &dreamer_milestone_claim_key(&milestone.claim_id),
+            &candidate_key,
+        )?;
+        if milestone.job_id == job_id
+            && latest.as_ref().is_none_or(|current| {
+                (milestone.at, milestone.learned_at, milestone.claim_id)
+                    > (current.at, current.learned_at, current.claim_id)
+            })
+        {
+            latest = Some(milestone);
+        }
+    }
+    store
+        .vault_meta
+        .put(wtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY, b"1")?;
+    Ok(latest)
+}
+
+fn dreamer_milestone_from_claim_body(
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    learned_at: u64,
+) -> Option<DreamerDurableMilestone> {
+    if body.predicate != DREAMER_MILESTONE_PREDICATE
+        || body.approval != ClaimApprovalStatus::Approved
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.stale
+    {
+        return None;
+    }
+    let Ok((job_id, kind, at)) = decode_milestone_value(&body.value) else {
+        return None;
+    };
+    Some(DreamerDurableMilestone {
+        claim_id: *claim_id,
+        job_id,
+        kind,
+        at,
+        learned_at,
+    })
+}
+
+fn dreamer_milestone_candidate_prefix(job_id: JobId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len() + 16);
+    key.extend_from_slice(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX);
+    key.extend_from_slice(job_id.as_bytes());
+    key
+}
+
+fn dreamer_milestone_candidate_key(milestone: &DreamerDurableMilestone) -> Vec<u8> {
+    let mut key = dreamer_milestone_candidate_prefix(milestone.job_id);
+    key.extend_from_slice(&milestone.at.to_be_bytes());
+    key.extend_from_slice(&milestone.learned_at.to_be_bytes());
+    key.extend_from_slice(milestone.claim_id.as_bytes());
+    key
+}
+
+fn dreamer_milestone_claim_key(claim_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(DREAMER_MILESTONE_INDEX_CLAIM_PREFIX.len() + 16);
+    key.extend_from_slice(DREAMER_MILESTONE_INDEX_CLAIM_PREFIX);
+    key.extend_from_slice(claim_id.as_bytes());
+    key
+}
+
+fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(JobId, u64, u64, EntityId)> {
+    if key.len() != DREAMER_MILESTONE_INDEX_CANDIDATE_KEY_LEN
+        || !key.starts_with(DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX)
+    {
+        return Err(Error::CorruptedIndex("dreamer milestone index key"));
+    }
+    let mut cursor = DREAMER_MILESTONE_INDEX_CANDIDATE_PREFIX.len();
+    let job_id = JobId::from_bytes(&key[cursor..cursor + 16])?;
+    cursor += 16;
+    let at = u64::from_be_bytes(
+        key[cursor..cursor + 8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
+    );
+    cursor += 8;
+    let learned_at = u64::from_be_bytes(
+        key[cursor..cursor + 8]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
+    );
+    cursor += 8;
+    let claim_id = EntityId::from_bytes(
+        key[cursor..cursor + 16]
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("dreamer milestone index key"))?,
+    )?;
+    Ok((job_id, at, learned_at, claim_id))
+}
+
 fn encode_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) -> Value {
     Value::Map(vec![
         (
@@ -2112,10 +2323,7 @@ fn encode_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) ->
     ])
 }
 
-fn decode_milestone_value_for_job(
-    value: &Value,
-    expected_job_id: JobId,
-) -> Result<Option<(DreamerMilestoneKind, u64)>> {
+fn decode_milestone_value(value: &Value) -> Result<(JobId, DreamerMilestoneKind, u64)> {
     let entries = expect_map(value, "dreamer milestone value must be a MessagePack map")?;
     let mut schema_version = None;
     let mut job_id = None;
@@ -2168,19 +2376,16 @@ fn decode_milestone_value_for_job(
             "unsupported dreamer milestone value schema_version",
         ));
     }
-    if job_id.ok_or(invalid_dreamer_runner(
-        "missing dreamer milestone value job_id",
-    ))? != expected_job_id
-    {
-        return Ok(None);
-    }
 
-    Ok(Some((
+    Ok((
+        job_id.ok_or(invalid_dreamer_runner(
+            "missing dreamer milestone value job_id",
+        ))?,
         milestone.ok_or(invalid_dreamer_runner(
             "missing dreamer milestone value milestone",
         ))?,
         at.ok_or(invalid_dreamer_runner("missing dreamer milestone value at"))?,
-    )))
+    ))
 }
 
 #[cfg(feature = "sync")]
@@ -3557,6 +3762,16 @@ mod tests {
         assert_eq!(durable.claim_id, done_claim);
         assert_eq!(durable.kind, DreamerMilestoneKind::Done);
 
+        let mut malformed_index_key = dreamer_milestone_candidate_prefix(queued.job.id);
+        malformed_index_key.extend_from_slice(b"truncated");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, &malformed_index_key, b"bad")?;
+            Ok(())
+        })?;
+
         live_store.set(
             &dreamer_job_progress_key(queued.job.id),
             crate::sync::LoroValue::String("corrupt".into()),
@@ -3567,6 +3782,158 @@ mod tests {
         assert_eq!(snapshot.source, DreamerJobProgressSource::DurableMilestone);
         assert_eq!(snapshot.state, DreamerJobProgressState::Done);
         assert_eq!(snapshot.updated_at_ms, 30_000);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_durable_milestone_lookup_uses_job_index() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "expand", 10)?;
+        let started_claim = EntityId::now();
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            started_claim,
+            DreamerMilestoneKind::Started,
+            20,
+        )?;
+        let done_claim = EntityId::now();
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            done_claim,
+            DreamerMilestoneKind::Done,
+            30,
+        )?;
+        for offset in 0..8 {
+            write_dreamer_boundary_claim(&vault, EntityId::now(), "dreamer.effect", 100 + offset)?;
+        }
+
+        assert!(
+            runner.latest_durable_milestone(queued.job.id)?.is_some(),
+            "first lookup backfills the legacy milestone index"
+        );
+        crate::claim::reset_claim_body_decode_count();
+        let durable = runner
+            .latest_durable_milestone(queued.job.id)?
+            .expect("durable milestone fallback");
+        assert_eq!(durable.claim_id, done_claim);
+        assert_eq!(durable.kind, DreamerMilestoneKind::Done);
+        assert_eq!(
+            crate::claim::claim_body_decode_count(),
+            2,
+            "indexed lookup should decode only this job's milestone candidates"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_durable_milestone_index_invalidates_lifecycle_and_soft_delete() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "expand", 10)?;
+        let started_claim = EntityId::now();
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            started_claim,
+            DreamerMilestoneKind::Started,
+            20,
+        )?;
+        let done_claim = EntityId::now();
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            done_claim,
+            DreamerMilestoneKind::Done,
+            30,
+        )?;
+        assert!(
+            runner.latest_durable_milestone(queued.job.id)?.is_some(),
+            "first lookup backfills the legacy milestone index"
+        );
+
+        vault.retract_claim(&done_claim, 35)?;
+        crate::claim::reset_claim_body_decode_count();
+        let durable = runner
+            .latest_durable_milestone(queued.job.id)?
+            .expect("started milestone remains eligible");
+        assert_eq!(durable.claim_id, started_claim);
+        assert_eq!(durable.kind, DreamerMilestoneKind::Started);
+        assert_eq!(
+            crate::claim::claim_body_decode_count(),
+            1,
+            "retracted latest claim must be removed from the per-job index"
+        );
+
+        let outcome = vault
+            .delete_entity_with_reason(&started_claim, crate::deletion::DeleteReason::UserDelete)?;
+        assert!(outcome.existed);
+        assert!(
+            runner.latest_durable_milestone(queued.job.id)?.is_none(),
+            "soft-deleted milestone claim must be removed from the fallback index"
+        );
+
+        crate::claim::reset_claim_body_decode_count();
+        assert!(
+            runner.latest_durable_milestone(queued.job.id)?.is_none(),
+            "legacy backfill marker should preserve the empty result"
+        );
+        assert_eq!(
+            crate::claim::claim_body_decode_count(),
+            0,
+            "empty indexed result should not rescan durable claims after backfill"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_durable_milestone_backfill_fails_closed_on_malformed_claim_body() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "expand", 10)?;
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            EntityId::now(),
+            DreamerMilestoneKind::Started,
+            20,
+        )?;
+
+        let corrupt_claim = EntityId::now();
+        let mut raw = Vec::new();
+        raw.push(ENTITY_TYPE_CLAIM);
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(b"not a claim body");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, corrupt_claim.as_bytes(), &raw)?;
+            Ok(())
+        })?;
+
+        runner
+            .latest_durable_milestone(queued.job.id)
+            .expect_err("malformed claim body must fail the one-time backfill");
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
+                .is_none(),
+            "failed backfill must not mark the milestone index complete"
+        );
 
         Ok(())
     }
