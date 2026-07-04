@@ -129,17 +129,22 @@ pub use crate::deletion::{
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 pub use crate::dreamer_runner::{
-    AbortDreamerBudgetReservation, AdmitDreamerJob, CompleteDreamerJob, CompleteDreamerJobOutcome,
-    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_JOB_PAYLOAD_KEYS,
+    AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
+    CompleteDreamerJob, CompleteDreamerJobOutcome, DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
+    DREAMER_CONSOLIDATION_MACRO_JOB_KIND, DREAMER_CONSOLIDATION_MESO_JOB_KIND,
+    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DREAMER_HOME_NODE_DESIGNATION_KEYS,
+    DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_JOB_PAYLOAD_KEYS,
     DREAMER_JOB_PAYLOAD_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
     DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND, DreamerAdmissionOutcome,
     DreamerAdmittedJob, DreamerBudgetRecord, DreamerBudgetReservation, DreamerBudgetReserveOutcome,
-    DreamerBudgetSettlement, DreamerBudgetSettlementOutcome, DreamerDurableMilestone,
-    DreamerJobPayload, DreamerJobProgressState, DreamerJobStatus, DreamerMilestoneClaim,
-    DreamerMilestoneKind, DreamerParkedJobRecord, DreamerReservedBudget, DreamerRunTreeRecord,
-    DreamerRunnerStore, DreamerWakeBudgetConfig, EnqueueDreamerJob, EnqueueDreamerJobOutcome,
-    FailDreamerJob, FailDreamerJobOutcome, ParkDreamerJob, ReserveDreamerBudget,
-    SettleDreamerBudget, decode_dreamer_job_payload, encode_dreamer_job_payload,
+    DreamerBudgetSettlement, DreamerBudgetSettlementOutcome, DreamerConsolidationAdmissionOutcome,
+    DreamerConsolidationScope, DreamerDurableMilestone, DreamerHomeNodeCandidate,
+    DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerJobPayload, DreamerJobProgressState,
+    DreamerJobStatus, DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord,
+    DreamerReservedBudget, DreamerRunTreeRecord, DreamerRunnerStore, DreamerWakeBudgetConfig,
+    EnqueueDreamerConsolidationJob, EnqueueDreamerJob, EnqueueDreamerJobOutcome, FailDreamerJob,
+    FailDreamerJobOutcome, ParkDreamerJob, ReserveDreamerBudget, SettleDreamerBudget,
+    decode_dreamer_job_payload, encode_dreamer_job_payload,
 };
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::{
