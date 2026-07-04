@@ -1488,7 +1488,14 @@ pub(crate) fn check_claim_policy_for_write(
                 },
             )
         };
-        let input = claim_gate_input(body, policy, actor, GateContentKind::Claim, provenance);
+        let input = claim_gate_input(
+            body,
+            policy,
+            actor,
+            GateContentKind::Claim,
+            provenance,
+            mode.include_source_in_gate_input,
+        );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
@@ -1561,6 +1568,7 @@ pub(crate) struct GateWriteMode {
     pub(crate) persist_pending_consent: bool,
     pub(crate) resolve_pending: bool,
     pub(crate) can_resolve_pending_consent: bool,
+    pub(crate) include_source_in_gate_input: bool,
 }
 
 pub(crate) fn check_reserved_claim_policy(
@@ -1669,6 +1677,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 source_revision_ref: record.source_revision_ref,
                 body_snapshot_ref: record.body_snapshot_ref,
             },
+            false,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -1693,8 +1702,10 @@ fn claim_gate_input(
     actor: GateActor,
     content_kind: GateContentKind,
     provenance: GateProvenanceHandles,
+    include_source: bool,
 ) -> GateEvaluatorInput {
-    let (source, sensitivity_band) = if body.approval == ClaimApprovalStatus::Auto {
+    let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
+    {
         (body.source, claim_sensitivity_band(body))
     } else {
         (None, None)
@@ -1752,7 +1763,7 @@ fn enforce_claim_gate_decision_with_consent(
     match (decision.outcome(), approval) {
         (GateOutcome::Allow, _) => {
             if mode.resolve_pending {
-                store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+                resolve_pending_gate_consent_if_bound(store, wtxn, id, binding)?;
             }
             Ok(())
         }
@@ -1764,11 +1775,7 @@ fn enforce_claim_gate_decision_with_consent(
             let Some(pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
                 return reject_gate_decision(decision.clone());
             };
-            if pending.diff_handle != binding.diff_handle
-                || pending.read_frontier_hash != binding.read_frontier_hash
-            {
-                return Err(Error::GateConsentStale { claim_id: *id });
-            }
+            require_pending_gate_consent_binding(id, &pending, binding)?;
             if mode.resolve_pending {
                 store.delete_pending_gate_consent_in_txn(wtxn, id)?;
             }
@@ -1776,6 +1783,32 @@ fn enforce_claim_gate_decision_with_consent(
         }
         _ => reject_gate_decision(decision.clone()),
     }
+}
+
+fn resolve_pending_gate_consent_if_bound(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    binding: &GateConsentBinding,
+) -> Result<()> {
+    let Some(pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
+        return Ok(());
+    };
+    require_pending_gate_consent_binding(id, &pending, binding)?;
+    store.delete_pending_gate_consent_in_txn(wtxn, id)
+}
+
+fn require_pending_gate_consent_binding(
+    id: &EntityId,
+    pending: &PendingGateConsentRecord,
+    binding: &GateConsentBinding,
+) -> Result<()> {
+    if pending.diff_handle != binding.diff_handle
+        || pending.read_frontier_hash != binding.read_frontier_hash
+    {
+        return Err(Error::GateConsentStale { claim_id: *id });
+    }
+    Ok(())
 }
 
 fn reject_gate_decision(decision: GateDecision) -> Result<()> {
@@ -2582,6 +2615,7 @@ mod tests {
         payload
     }
 
+    #[cfg(feature = "sync")]
     fn authority_log_blob(data: &[u8]) -> Vec<u8> {
         let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
         payload.push(crate::types::ENTITY_TYPE_AUTHORITY_LOG);
@@ -4944,6 +4978,60 @@ mod tests {
                 .ok_or(Error::CorruptedIndex("pending gate consent"))
         })?;
         assert_eq!(pending.claim_id, *id.as_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut data = encode_policy_manifest(vec![]);
+        append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row(LOCAL_WRITE_ACTOR_CLASS, "auto"),
+        );
+        put_policy_manifest_bytes(&vault, 0xA6, &data)?;
+
+        let id = test_id(0xA7);
+        let mut proposed = source_trust_claim(ClaimSource::Generated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) =
+            dreamer_claim_candidate_write_parts(&vault, &proposed, test_id(0xA8), "run-a")?;
+        vault.put_claim_candidate_without_lexical_query_reconcile(
+            &id,
+            candidate,
+            &envelope,
+            test_time(3),
+            3,
+        )?;
+
+        let pending = vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .pending_gate_consent_in_txn(wtxn, &id)?
+                .ok_or(Error::CorruptedIndex("pending gate consent"))
+        })?;
+        assert_eq!(pending.reason_codes, vec!["gate.pending.source_trust"]);
+
+        let stored = vault.get_claim(&id)?.expect("pending claim");
+        let mut drifted = stored.clone();
+        drifted.value = Value::from("Grace");
+        drifted.approval = ClaimApprovalStatus::Approved;
+        let err = vault
+            .put_claim(&id, &drifted, test_time(4), 4)
+            .expect_err("allow-path approval must bind to original pending diff");
+        assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == id));
+        assert!(has_pending_gate_consent(&vault, &id)?);
+
+        let mut approved = stored;
+        approved.approval = ClaimApprovalStatus::Approved;
+        vault.put_claim(&id, &approved, test_time(5), 5)?;
+
+        assert!(!has_pending_gate_consent(&vault, &id)?);
+        assert_eq!(
+            vault.get_claim(&id)?.expect("approved claim").approval,
+            ClaimApprovalStatus::Approved
+        );
         Ok(())
     }
 
