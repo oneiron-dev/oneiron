@@ -170,7 +170,8 @@ pub use crate::ingest::{
 };
 pub use crate::job_queue::{
     ClaimJob, ClaimOutcome, CleanupJobLeases, CompleteJob, CompleteOutcome, EnqueueJob,
-    EnqueueOutcome, FailJob, FailOutcome, JobId, JobQueue, JobQueueCleanupMetricsSnapshot,
+    EnqueueOutcome, FailJob, FailOutcome, InterveneJob, InterveneOutcome, JobEvent, JobId,
+    JobInterventionEffect, JobInterventionKind, JobQueue, JobQueueCleanupMetricsSnapshot,
     JobQueueCleanupReport, JobQueueRetryReason, JobQueueRetryReasonCount, JobRecord, JobState,
     RetryJob, RetryOutcome, job_queue_cleanup_metrics_snapshot,
 };
@@ -210,8 +211,8 @@ pub use crate::recovery::{
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
 pub use crate::run_tree::{
-    RunTree, RunTreeAdapter, RunTreeFailure, RunTreeNode, RunTreeRepair, RunTreeStatus,
-    RunTreeTimestamps, render_run_tree,
+    RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
+    RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
 };
 pub use crate::skill::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
