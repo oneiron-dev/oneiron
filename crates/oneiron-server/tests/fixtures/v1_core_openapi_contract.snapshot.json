@@ -2936,6 +2936,175 @@
         },
         "type": "object"
       },
+      "CoreRunTreeFailure": {
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CoreRunTreeNode": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/CoreRunTreeNode"
+            },
+            "type": "array"
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreRunTreeFailure"
+              }
+            ]
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CoreRunTreeStatus"
+          },
+          "timestamps": {
+            "$ref": "#/components/schemas/CoreRunTreeTimestamps"
+          },
+          "worker_kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "worker_kind",
+          "status",
+          "timestamps",
+          "children"
+        ],
+        "type": "object"
+      },
+      "CoreRunTreeQuery": {
+        "properties": {
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreRunTreeRepair": {
+        "oneOf": [
+          {
+            "properties": {
+              "job_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "missing_parent"
+                ],
+                "type": "string"
+              },
+              "missing_parent_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "job_id",
+              "missing_parent_id",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "job_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "parent_cycle"
+                ],
+                "type": "string"
+              },
+              "parent_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "job_id",
+              "parent_id",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CoreRunTreeResponse": {
+        "properties": {
+          "repairs": {
+            "items": {
+              "$ref": "#/components/schemas/CoreRunTreeRepair"
+            },
+            "type": "array"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/CoreRunTreeNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "roots",
+          "repairs"
+        ],
+        "type": "object"
+      },
+      "CoreRunTreeStatus": {
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "CoreRunTreeTimestamps": {
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "CoreShortIdHydrateError": {
         "properties": {
           "field": {
@@ -3793,6 +3962,62 @@
           },
           "500": {
             "description": "Query failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/run-tree": {
+      "get": {
+        "operationId": "core_run_tree",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Runtime job queue rendered as a deterministic run tree.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreRunTreeResponse"
+            }
+          },
+          "400": {
+            "description": "Invalid run-tree query.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "500": {
+            "description": "Run-tree read failed.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }

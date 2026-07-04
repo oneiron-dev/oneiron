@@ -124,6 +124,15 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "read turn VAD metadata"
 - safety: Mutating on POST and read-only on GET. Requires auth. VAD components outside the accepted range are rejected; use an `Idempotency-Key` header when retrying POST after transport failure.
 
+#### core-run-tree - `GET /v1/core/run-tree`
+
+- when-to-use: Read runtime queue rows as a deterministic run tree when the caller needs run, job, and subagent structure with summarized terminal failures.
+- trigger phrases:
+  - "show run tree"
+  - "inspect job hierarchy"
+  - "list subagent jobs for this run"
+- safety: Read-only; requires core read auth. Returns queue metadata only and does not pause, resume, intervene, or stream progress.
+
 #### companion-resume - `POST /api/companion/resume`
 
 - when-to-use: Hydrate companion resume state in one read-only call, including session context, pending notifications, unprocessed items, and budget counters.
@@ -308,6 +317,29 @@ Example response:
   "last_activity": 1770000000
 }
 ```
+
+### Core Run Tree
+
+Method: `GET`
+
+Authentication: Core auth with read scope, either scoped bearer or the configured shared secret.
+
+Query parameters:
+
+- `run_id` required: filter queue rows to one runtime run id. Omitted, empty, and over-128-byte values are rejected to avoid unbounded queue scans.
+
+Response fields:
+
+- `roots`: root job nodes after non-mutating repair of missing parents or parent cycles.
+- Each node includes `job_id`, `run_id`, `parent_id`, `worker_kind`, `status`, `timestamps`, optional `failure`, and ordered `children`.
+- `status`: one of `queued`, `running`, `completed`, or `failed`.
+- `failure.reason`: summarized terminal failure text copied from the backing queue row only when `status` is `failed`.
+- `repairs`: render-time repair records, currently `missing_parent` and `parent_cycle`.
+
+Notes:
+
+- This is a read adapter over runtime queue storage. It does not mutate jobs, claim work, pause/resume jobs, intervene in workers, or open a progress stream.
+- Child ordering is deterministic by queue creation timestamp and job id.
 
 ### Vector Search
 
