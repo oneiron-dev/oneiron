@@ -20,9 +20,9 @@ use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::{
-    RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord,
-    RetrievalTraceStage, RetrievalTraceStageRecord, Store,
+    RetrievalAction, RetrievalBlendWeights, RetrievalRunId, RetrievalRunRecord,
+    RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
+    RetrievalTraceChannelRecord, RetrievalTraceStage, RetrievalTraceStageRecord, Store,
 };
 use crate::types::{
     ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT,
@@ -43,6 +43,19 @@ const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
+
+fn retrieval_blend_weights_for_scoring(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<RetrievalBlendWeights> {
+    match store.retrieval_blend_weight_table_in_txn(rtxn) {
+        Ok(entry) => Ok(entry.weights),
+        Err(Error::CorruptedIndex("retrieval blend weight table")) => {
+            Ok(RetrievalBlendWeights::bootstrap())
+        }
+        Err(error) => Err(error),
+    }
+}
 const SECONDS_PER_DAY_F64: f64 = 86_400.0;
 const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
@@ -832,6 +845,7 @@ impl<'a> PipelineBuilder<'a> {
             total_in_scope,
             empty_reason,
             signal_components,
+            blend_components,
             retrieval_trace,
         ) = {
             let mut ranked_lists = Vec::new();
@@ -844,6 +858,7 @@ impl<'a> PipelineBuilder<'a> {
             let mut vector_channel_index = None;
             let mut text_channel_index = None;
             let rtxn = self.vault.store.env.read_txn()?;
+            let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, &rtxn)?;
             let mut metadata_cache = EntityMetadataCache::default();
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
@@ -1191,15 +1206,21 @@ impl<'a> PipelineBuilder<'a> {
                     trace_candidate_limit,
                 ));
             }
-            let (mut scores, mut cosine_ghosts_dampened) = blended_retrieval_scores(
+            let first_blend = blended_retrieval_scores(
                 &ranked_lists,
-                vector_channel_index,
-                text_channel_index,
+                RetrievalChannelIndexes {
+                    vector: vector_channel_index,
+                    text: text_channel_index,
+                },
                 &self.vault.store,
                 &rtxn,
                 &mut metadata_cache,
                 blend_config,
+                blend_weights,
             )?;
+            let mut scores = first_blend.scores;
+            let mut cosine_ghosts_dampened = first_blend.cosine_ghosts_dampened;
+            let mut blend_components = first_blend.components;
             let total_in_scope = scores.len();
             let mut empty_reason = None;
 
@@ -1306,17 +1327,24 @@ impl<'a> PipelineBuilder<'a> {
                             trace_candidate_limit,
                         ));
                     }
-                    let (blended, dampened) = blended_retrieval_scores(
+                    let expanded_blend = blended_retrieval_scores(
                         &ranked_lists,
-                        vector_channel_index,
-                        text_channel_index,
+                        RetrievalChannelIndexes {
+                            vector: vector_channel_index,
+                            text: text_channel_index,
+                        },
                         &self.vault.store,
                         &rtxn,
                         &mut metadata_cache,
                         blend_config,
+                        blend_weights,
                     )?;
-                    scores = filter_blended_scores_to_allowed_ids(blended, &blend_allowed_ids);
-                    cosine_ghosts_dampened = dampened;
+                    scores = filter_blended_scores_to_allowed_ids(
+                        expanded_blend.scores,
+                        &blend_allowed_ids,
+                    );
+                    cosine_ghosts_dampened = expanded_blend.cosine_ghosts_dampened;
+                    blend_components = expanded_blend.components;
                 }
             }
 
@@ -1408,6 +1436,7 @@ impl<'a> PipelineBuilder<'a> {
                 let fork_hash = retrieval_trace_fork_hash(
                     &self,
                     &bm25_config,
+                    blend_weights,
                     explicit_time_dependent_now,
                     occurred_range,
                     &candidate_set,
@@ -1419,24 +1448,28 @@ impl<'a> PipelineBuilder<'a> {
                         RetrievalTraceStage::Fused,
                         &fused_trace_scores.unwrap_or_default(),
                         &signal_components,
+                        &HashMap::new(),
                         trace_candidate_limit,
                     ),
                     blended: retrieval_trace_stage_record(
                         RetrievalTraceStage::Blended,
                         &blended_scores,
                         &signal_components,
+                        &blend_components,
                         trace_candidate_limit,
                     ),
                     reranked: retrieval_trace_stage_record(
                         RetrievalTraceStage::Reranked,
                         &final_scores,
                         &signal_components,
+                        &blend_components,
                         trace_candidate_limit,
                     ),
                     final_stage: retrieval_trace_stage_record(
                         RetrievalTraceStage::Final,
                         &final_scores,
                         &signal_components,
+                        &blend_components,
                         trace_candidate_limit,
                     ),
                 })
@@ -1452,6 +1485,7 @@ impl<'a> PipelineBuilder<'a> {
                 total_in_scope,
                 empty_reason,
                 signal_components,
+                blend_components,
                 retrieval_trace,
             )
         };
@@ -1469,7 +1503,8 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
 
-        let score_breakdown = telemetry_score_breakdown(&scores, &signal_components);
+        let score_breakdown =
+            telemetry_score_breakdown(&scores, &signal_components, &blend_components);
         let ppr_search_executed = self
             .ppr_search
             .as_ref()
@@ -1703,35 +1738,44 @@ fn retrieval_trace_stage_record(
     stage: RetrievalTraceStage,
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     limit: usize,
 ) -> RetrievalTraceStageRecord {
     RetrievalTraceStageRecord {
         stage,
-        candidates: retrieval_score_breakdown(scores, components, limit),
+        candidates: retrieval_score_breakdown(scores, components, blend_components, limit),
     }
 }
 
 fn telemetry_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
 ) -> Vec<RetrievalScoreBreakdown> {
-    retrieval_score_breakdown(scores, components, scores.len())
+    retrieval_score_breakdown(scores, components, blend_components, scores.len())
 }
 
 fn retrieval_score_breakdown(
     scores: &[ScoredEntity],
     components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    blend_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     limit: usize,
 ) -> Vec<RetrievalScoreBreakdown> {
     scores
         .iter()
         .take(limit)
         .enumerate()
-        .map(|(rank, scored)| RetrievalScoreBreakdown {
-            result_id: *scored.id.as_bytes(),
-            final_rank: (rank + 1).min(u32::MAX as usize) as u32,
-            final_score: scored.score,
-            components: components.get(&scored.id).cloned().unwrap_or_default(),
+        .map(|(rank, scored)| {
+            let mut score_components = components.get(&scored.id).cloned().unwrap_or_default();
+            if let Some(blend_components) = blend_components.get(&scored.id) {
+                score_components.extend_from_slice(blend_components);
+            }
+            RetrievalScoreBreakdown {
+                result_id: *scored.id.as_bytes(),
+                final_rank: (rank + 1).min(u32::MAX as usize) as u32,
+                final_score: scored.score,
+                components: score_components,
+            }
         })
         .collect()
 }
@@ -1739,12 +1783,13 @@ fn retrieval_score_breakdown(
 fn retrieval_trace_fork_hash(
     builder: &PipelineBuilder<'_>,
     bm25_config: &Bm25Config,
+    blend_weights: RetrievalBlendWeights,
     explicit_time_dependent_now_secs: Option<u64>,
     resolved_occurred_range: Option<(u64, u64)>,
     candidate_set: &[[u8; ENTITY_ID_LEN]],
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
-    fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v0");
+    fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
 
     fork_hash_vector_query(&mut hasher, builder.vector_search.as_ref());
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
@@ -1772,6 +1817,7 @@ fn retrieval_trace_fork_hash(
     fork_hash_len(&mut hasher, builder.result_limit);
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
     fork_hash_recency_weight_table(&mut hasher);
+    fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
     fork_hash_scoring_constants(&mut hasher);
     fork_hash_candidate_set(&mut hasher, candidate_set);
 
@@ -1953,6 +1999,13 @@ fn fork_hash_recency_weight_table(hasher: &mut Sha256) {
         fork_hash_f32(hasher, *half_life_days);
     }
     fork_hash_f32(hasher, DEFAULT_RECENCY_HALF_LIFE_DAYS);
+}
+
+fn fork_hash_retrieval_blend_weights(hasher: &mut Sha256, weights: RetrievalBlendWeights) {
+    fork_hash_f32(hasher, weights.recency);
+    fork_hash_f32(hasher, weights.salience);
+    fork_hash_f32(hasher, weights.confidence);
+    fork_hash_f32(hasher, weights.gravity);
 }
 
 fn fork_hash_scoring_constants(hasher: &mut Sha256) {
@@ -2177,18 +2230,30 @@ struct RetrievalBlendConfig {
     gravity: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RetrievalChannelIndexes {
+    vector: Option<usize>,
+    text: Option<usize>,
+}
+
+struct BlendedRetrievalScores {
+    scores: Vec<ScoredEntity>,
+    cosine_ghosts_dampened: usize,
+    components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+}
+
 fn blended_retrieval_scores(
     ranked_lists: &[Vec<ScoredEntity>],
-    vector_channel_index: Option<usize>,
-    text_channel_index: Option<usize>,
+    channel_indexes: RetrievalChannelIndexes,
     store: &Store,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     config: RetrievalBlendConfig,
-) -> Result<(Vec<ScoredEntity>, usize)> {
+    weights: RetrievalBlendWeights,
+) -> Result<BlendedRetrievalScores> {
     let mut inputs = fusion::retrieval_candidates_from_ranked_lists(ranked_lists);
     let cosine_ghosts = if config.gravity {
-        cosine_ghost_set(ranked_lists, vector_channel_index, text_channel_index)
+        cosine_ghost_set(ranked_lists, channel_indexes.vector, channel_indexes.text)
     } else {
         HashSet::new()
     };
@@ -2228,7 +2293,12 @@ fn blended_retrieval_scores(
         }
     }
 
-    Ok((fusion::linear_log_blend(&inputs), dampened))
+    let blend_components = fusion::retrieval_blend_score_components(&inputs);
+    Ok(BlendedRetrievalScores {
+        scores: fusion::linear_log_blend_with_weights(&inputs, weights),
+        cosine_ghosts_dampened: dampened,
+        components: blend_components,
+    })
 }
 
 fn score_id_set(scores: &[ScoredEntity]) -> HashSet<EntityId> {
@@ -3631,6 +3701,19 @@ mod tests {
         crate::claim::encode_claim_body(&body).expect("encode claim body")
     }
 
+    fn active_claim_body_with_salience(salience: f32) -> Vec<u8> {
+        let mut body = ClaimBody::new(
+            "test.blend_salience",
+            crate::claim::ClaimSubject::Entity(entity_id(0x7D)),
+            rmpv::Value::from("v"),
+            0.9,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.salience = Some(salience);
+        crate::claim::encode_claim_body(&body).expect("encode claim body")
+    }
+
     fn put_claim_text(
         vault: &Vault,
         id: EntityId,
@@ -3645,6 +3728,25 @@ mod tests {
                 TimeRange { start: 1, end: 1 },
                 1,
                 &active_claim_body(world),
+            )
+            .text(&id, &[("body", text)])
+            .commit()
+    }
+
+    fn put_claim_text_with_salience(
+        vault: &Vault,
+        id: EntityId,
+        text: &str,
+        salience: f32,
+    ) -> Result<()> {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &active_claim_body_with_salience(salience),
             )
             .text(&id, &[("body", text)])
             .commit()
@@ -3807,6 +3909,90 @@ mod tests {
             retrieval_recency_half_life_days_for_type(250),
             DEFAULT_RECENCY_HALF_LIFE_DAYS
         );
+    }
+
+    #[test]
+    fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let high = entity_id(0xB0);
+        let mid = entity_id(0xB1);
+        let low = entity_id(0xB2);
+        put_claim_text_with_salience(&vault, high, "weighttableneedle", 0.9)?;
+        put_claim_text_with_salience(&vault, mid, "weighttableneedle", 0.4)?;
+        put_claim_text_with_salience(&vault, low, "weighttableneedle", 0.0)?;
+
+        let baseline = vault
+            .query()
+            .search_text("weighttableneedle", 10)
+            .boost_salience()
+            .run()?;
+        let baseline_score = *to_score_map(&baseline)
+            .get(&high)
+            .expect("high-salience result is present");
+
+        let run_id = RetrievalRunId::now();
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::Pipeline,
+            200,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![
+                RetrievalScoreBreakdown {
+                    result_id: *high.as_bytes(),
+                    final_rank: 1,
+                    final_score: baseline_score,
+                    components: vec![RetrievalScoreComponent {
+                        signal: RetrievalSignal::Salience,
+                        rank: 1,
+                        score: 1.0,
+                    }],
+                },
+                RetrievalScoreBreakdown {
+                    result_id: *low.as_bytes(),
+                    final_rank: 2,
+                    final_score: 1.0,
+                    components: vec![RetrievalScoreComponent {
+                        signal: RetrievalSignal::Salience,
+                        rank: 2,
+                        score: -1.0,
+                    }],
+                },
+            ],
+            2,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&record)?;
+        vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+            run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let updated =
+            vault.tune_retrieval_blend_weights(crate::store::RetrievalBlendTuningConfig {
+                max_runs: 10,
+                learning_rate: 0.20,
+                min_reward_count: 1,
+            })?;
+        assert!(updated.weights.salience > before.weights.salience);
+
+        let rescored = vault
+            .query()
+            .search_text("weighttableneedle", 10)
+            .boost_salience()
+            .run()?;
+        let rescored_score = *to_score_map(&rescored)
+            .get(&high)
+            .expect("high-salience result remains present");
+
+        assert_ne!(baseline_score.to_bits(), rescored_score.to_bits());
+        assert!(rescored_score > baseline_score);
+        Ok(())
     }
 
     #[test]
