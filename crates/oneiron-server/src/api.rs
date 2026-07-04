@@ -4712,10 +4712,11 @@ struct CoreBatchResponse {
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
 struct CoreRunTreeQuery {
-    /// Optional runtime run id to filter the tree.
+    /// Runtime run id to filter the tree. Unfiltered HTTP reads are rejected to
+    /// avoid unbounded queue scans.
     #[serde(default, rename = "run_id", alias = "runId")]
     #[schema(example = "run-2026-07-03T12:00:00Z")]
-    #[param(example = "run-2026-07-03T12:00:00Z")]
+    #[param(required = true, example = "run-2026-07-03T12:00:00Z")]
     run_id: Option<String>,
 }
 
@@ -6000,11 +6001,8 @@ async fn core_run_tree(
     validate_core_run_tree_query(&params)?;
 
     let adapter = oneiron::RunTreeAdapter::new(&server.vault);
-    let tree = match params.run_id.as_deref() {
-        Some(run_id) => adapter.read_run(run_id),
-        None => adapter.read(),
-    }
-    .map_err(|error| {
+    let run_id = params.run_id.as_deref().expect("run_id validated");
+    let tree = adapter.read_run(run_id).map_err(|error| {
         tracing::error!(error = %error, "core run tree read failed");
         core_engine_error("core run tree read failed", error)
     })?;
@@ -6014,7 +6012,10 @@ async fn core_run_tree(
 
 fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<(), ApiError> {
     let Some(run_id) = params.run_id.as_deref() else {
-        return Ok(());
+        return Err(ApiError::bad_request(
+            "run_id is required; unfiltered run-tree reads are not supported",
+            Some("run_id"),
+        ));
     };
     if run_id.is_empty() {
         return Err(ApiError::bad_request(
@@ -10879,6 +10880,23 @@ mod tests {
         assert_eq!(roots[0]["status"], Value::from("queued"));
         assert_eq!(roots[0]["timestamps"]["created_at"], Value::from(10));
         assert_eq!(roots[0]["children"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn v1_core_run_tree_rejects_unbounded_reads() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = core_json(server, "GET", "/v1/core/run-tree", "core:read", None).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            error_envelope(&body)["message"],
+            Value::from("run_id is required; unfiltered run-tree reads are not supported")
+        );
     }
 
     fn enqueue_queue_job(

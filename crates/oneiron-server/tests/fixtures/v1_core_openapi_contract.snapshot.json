@@ -3984,7 +3984,7 @@
           {
             "in": "query",
             "name": "run_id",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
