@@ -1484,7 +1484,14 @@ pub(crate) fn check_claim_policy_for_write(
                 },
             )
         };
-        let input = claim_gate_input(body, policy, actor, GateContentKind::Claim, provenance);
+        let input = claim_gate_input(
+            body,
+            policy,
+            actor,
+            GateContentKind::Claim,
+            provenance,
+            mode.include_source_in_gate_input,
+        );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
@@ -1557,6 +1564,7 @@ pub(crate) struct GateWriteMode {
     pub(crate) persist_pending_consent: bool,
     pub(crate) resolve_pending: bool,
     pub(crate) can_resolve_pending_consent: bool,
+    pub(crate) include_source_in_gate_input: bool,
 }
 
 pub(crate) fn check_reserved_claim_policy(
@@ -1665,6 +1673,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 source_revision_ref: record.source_revision_ref,
                 body_snapshot_ref: record.body_snapshot_ref,
             },
+            false,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -1689,8 +1698,10 @@ fn claim_gate_input(
     actor: GateActor,
     content_kind: GateContentKind,
     provenance: GateProvenanceHandles,
+    include_source: bool,
 ) -> GateEvaluatorInput {
-    let (source, sensitivity_band) = if body.approval == ClaimApprovalStatus::Auto {
+    let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
+    {
         (body.source, claim_sensitivity_band(body))
     } else {
         (None, None)
@@ -2578,6 +2589,7 @@ mod tests {
         payload
     }
 
+    #[cfg(feature = "sync")]
     fn authority_log_blob(data: &[u8]) -> Vec<u8> {
         let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
         payload.push(crate::types::ENTITY_TYPE_AUTHORITY_LOG);

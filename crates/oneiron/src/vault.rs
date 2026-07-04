@@ -2669,6 +2669,7 @@ impl Vault {
                 persist_pending_consent: false,
                 resolve_pending: false,
                 can_resolve_pending_consent,
+                include_source_in_gate_input: true,
             },
         )
     }

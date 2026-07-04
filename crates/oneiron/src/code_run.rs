@@ -287,6 +287,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 persist_pending_consent: false,
                 resolve_pending: false,
                 can_resolve_pending_consent,
+                include_source_in_gate_input: true,
             },
         );
         wtxn.commit().map_err(Error::from)?;
@@ -767,6 +768,14 @@ mod tests {
     }
 
     fn install_self_memory_allow_policy(vault: &Vault, actor: EntityId) -> Result<()> {
+        install_self_memory_policy_trusting_source(vault, actor, ClaimSource::Generated)
+    }
+
+    fn install_self_memory_policy_trusting_source(
+        vault: &Vault,
+        actor: EntityId,
+        source: ClaimSource,
+    ) -> Result<()> {
         clear_policy_manifests_for_test(vault)?;
         let manifest = Value::Map(vec![
             (Value::from("schema_version"), Value::from("1.1")),
@@ -807,7 +816,7 @@ mod tests {
             (
                 Value::from("source_trust"),
                 Value::Map(vec![(
-                    Value::from(ClaimSource::Generated.as_str()),
+                    Value::from(source.as_str()),
                     Value::Map(vec![
                         (Value::from("max_auto_sensitivity"), Value::from(0_u64)),
                         (Value::from("receipted"), Value::Boolean(true)),
@@ -839,6 +848,39 @@ mod tests {
                 .all(|code| code.starts_with("gate."))
         );
         Ok(())
+    }
+
+    fn assert_latest_gate_decision_reasons(
+        vault: &Vault,
+        expected_id: EntityId,
+        expected_outcome: &str,
+        expected_reasons: &[&str],
+    ) -> Result<()> {
+        let decisions = vault.store.gate_decisions(1)?;
+        let latest = decisions.first().expect("latest gate decision");
+        assert_eq!(latest.outcome, expected_outcome);
+        assert_eq!(latest.claim_id, Some(*expected_id.as_bytes()));
+        assert_eq!(
+            latest.reason_codes,
+            expected_reasons
+                .iter()
+                .map(|reason| (*reason).to_owned())
+                .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    fn assert_source_trust_gate_rejection(err: Error) {
+        match err {
+            Error::GateWriteRejected {
+                outcome,
+                reason_codes,
+            } => {
+                assert_eq!(outcome, "pending");
+                assert_eq!(reason_codes, vec!["gate.pending.source_trust"]);
+            }
+            other => panic!("expected source-trust gate rejection, got {other:?}"),
+        }
     }
 
     fn assert_recent_gate_decision_ids(vault: &Vault, expected: &[EntityId]) -> Result<()> {
@@ -1034,6 +1076,59 @@ mod tests {
     }
 
     #[test]
+    fn code_run_put_claim_trap_ignores_guest_source_and_g2_sees_generated() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_person(&vault, 0xAA);
+        install_self_memory_policy_trusting_source(&vault, actor, ClaimSource::UserStated)?;
+        let subject = seed_person(&vault, 0xBA);
+        let claim = EntityId::from_bytes([0xCA; 16]).expect("claim id");
+        let candidate = ClaimCandidate::new(
+            "profile.favorite_drink",
+            ClaimSubject::Entity(subject),
+            Value::from("gyokuro"),
+            0.9,
+        )
+        .with_evidence(Value::Map(vec![(
+            Value::from("source"),
+            Value::from(ClaimSource::UserStated.as_str()),
+        )]));
+
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-guest-source-spoof",
+        )?;
+        dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            claim,
+            candidate,
+            range(7),
+            8,
+        )))?;
+
+        assert_latest_gate_decision_reasons(
+            &vault,
+            claim,
+            "pending",
+            &["gate.pending.source_trust"],
+        )?;
+        let stored = vault.get_claim(&claim)?.expect("stored claim");
+        assert_eq!(stored.source, Some(ClaimSource::Generated));
+
+        let Some(Value::Map(evidence)) = stored.evidence else {
+            panic!("expected write envelope evidence");
+        };
+        let candidate_evidence = map_value(&evidence, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY);
+        let Value::Map(candidate_evidence) = candidate_evidence else {
+            panic!("expected candidate evidence map");
+        };
+        assert_eq!(
+            map_value(candidate_evidence, "source").as_str(),
+            Some(ClaimSource::UserStated.as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn code_run_public_write_traps_route_per_op_through_gate() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let actor = seed_first_party_actor(&vault);
@@ -1127,6 +1222,90 @@ mod tests {
         let read_after_write = vault.get_claim(&new)?.expect("new claim after traps");
         assert_eq!(read_after_write.value, Value::from("matcha"));
         assert_eq!(read_after_write.lifecycle, ClaimLifecycleStatus::Active);
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_edge_and_supersede_traps_force_generated_source_into_g2() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_person(&vault, 0xAB);
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-generated-source-g2",
+        )?;
+        let subject = seed_person(&vault, 0xBB);
+        let edge_target = seed_person(&vault, 0xCB);
+        let old = EntityId::from_bytes([0xDB; 16]).expect("old claim id");
+        let new = EntityId::from_bytes([0xEB; 16]).expect("new claim id");
+
+        install_self_memory_allow_policy(&vault, actor)?;
+        dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            old,
+            ClaimCandidate::new(
+                "profile.favorite_drink",
+                ClaimSubject::Entity(subject),
+                Value::from("sencha"),
+                0.8,
+            ),
+            range(10),
+            11,
+        )))?;
+        dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            new,
+            ClaimCandidate::new(
+                "profile.favorite_drink",
+                ClaimSubject::Entity(subject),
+                Value::from("matcha"),
+                0.9,
+            ),
+            range(12),
+            13,
+        )))?;
+
+        install_self_memory_policy_trusting_source(&vault, actor, ClaimSource::UserStated)?;
+        let edge_gate_id = edge_operation_gate_id(
+            SelfEffect::MemoryPutEdge,
+            subject,
+            EdgeKind::Mentions,
+            edge_target,
+        )?;
+        let edge_err = dispatcher
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                subject,
+                EdgeKind::Mentions,
+                edge_target,
+                0.7,
+            )))
+            .expect_err("generated source must be evaluated by G2");
+        assert_source_trust_gate_rejection(edge_err);
+        assert_latest_gate_decision_reasons(
+            &vault,
+            edge_gate_id,
+            "pending",
+            &["gate.pending.source_trust"],
+        )?;
+        assert!(
+            vault
+                .targets(&subject, EdgeKind::Mentions, None)?
+                .is_empty()
+        );
+
+        let supersede_err = dispatcher
+            .dispatch(SelfCall::MemorySupersedeClaim(
+                SelfMemorySupersedeClaimCall::new(new, old, 20),
+            ))
+            .expect_err("generated source must be evaluated by G2");
+        assert_source_trust_gate_rejection(supersede_err);
+        assert_latest_gate_decision_reasons(
+            &vault,
+            old,
+            "pending",
+            &["gate.pending.source_trust"],
+        )?;
+        let old_read = vault.get_claim(&old)?.expect("old claim remains");
+        assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Active);
+        assert!(vault.targets(&new, EdgeKind::Supersedes, None)?.is_empty());
         Ok(())
     }
 
