@@ -32,9 +32,9 @@ use crate::authority::{
     encode_authority_log_entry_body, fold_authority_log_with_seen_times,
 };
 use crate::batch::{
-    BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops, deindex_entity,
-    deindex_lexical_query_hints_for_target, delete_from_phonetic_postings,
-    encode_short_id_forward_key,
+    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops,
+    apply_ops_with_gate_mode, deindex_entity, deindex_lexical_query_hints_for_target,
+    delete_from_phonetic_postings, encode_short_id_forward_key,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -2472,7 +2472,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        apply_ops(
+        apply_ops_with_gate_mode(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -2487,8 +2487,7 @@ impl Vault {
             }],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
+            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
         )?;
         wtxn.commit()?;
         Ok(())
