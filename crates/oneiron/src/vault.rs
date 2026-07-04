@@ -2493,6 +2493,185 @@ impl Vault {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "code-run write trap commits both typed gate checks and transition atomically"
+    )]
+    pub(crate) fn supersede_claim_for_code_run_trap(
+        &self,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        envelope: &WriteEnvelope,
+        claim_gate_id: EntityId,
+        claim_gate_body: &ClaimBody,
+        edge_gate_id: EntityId,
+        edge_gate_body: &ClaimBody,
+    ) -> Result<()> {
+        if new_id == old_id {
+            return Err(Error::ClaimSelfSupersession);
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn,
+            claim_gate_id,
+            claim_gate_body,
+            envelope,
+            &policy,
+            false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn,
+            edge_gate_id,
+            edge_gate_body,
+            envelope,
+            &policy,
+            false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+
+        let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
+        Self::require_active_claim(&new_body)?;
+        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
+        Self::require_active_claim(&old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+
+        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+        old_body.valid_to = Some(now);
+        let data = encode_claim_body(&old_body)?;
+
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![
+                BatchOp::Put {
+                    id: *old_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: old_header.occurred_start,
+                        end: now,
+                    },
+                    learned_at: old_header.learned_at,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                },
+                BatchOp::EdgeWithCreatedAt {
+                    src: *new_id,
+                    kind: EdgeKind::Supersedes,
+                    tgt: *old_id,
+                    weight: SUPERSEDES_DEFAULT_WEIGHT,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                },
+            ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "code-run edge trap carries gate material plus edge tuple"
+    )]
+    pub(crate) fn put_edge_for_code_run_trap(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        envelope: &WriteEnvelope,
+        gate_id: EntityId,
+        gate_body: &ClaimBody,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn, gate_id, gate_body, envelope, &policy, false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Edge {
+                src: *src,
+                kind,
+                tgt: *tgt,
+                weight,
+                vad: Vad::NEUTRAL,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn validate_code_run_write_actor_binding_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        crate::gate::validate_write_envelope(envelope)?;
+        let actor = envelope.actor();
+        let actor_raw = self
+            .store
+            .entities
+            .get(wtxn, actor.entity_ref().as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header =
+            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        validate_actor_class(actor_header.entity_type, actor.actor_class())
+    }
+
+    fn check_code_run_write_gate_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        body: &ClaimBody,
+        envelope: &WriteEnvelope,
+        policy: &crate::gate::PolicyManifestResolution,
+        can_resolve_pending_consent: bool,
+    ) -> Result<()> {
+        crate::gate::check_claim_policy_for_write(
+            &self.store,
+            wtxn,
+            &id,
+            body,
+            Some(envelope),
+            policy,
+            crate::gate::GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent,
+            },
+        )
+    }
+
     /// Retrieves and decodes a CLAIM (type 0) entity body.
     ///
     /// Returns `Ok(None)` when no entity exists under `id`, and a typed

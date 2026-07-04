@@ -116,13 +116,15 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
 ];
 
 /// Link-time contract for one guest tier.
+///
+/// First-party write traps are immediate typed host calls; foreign and
+/// untrusted guests link no write imports and use proposal deltas only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SandboxBoundaryContract {
     tier: SandboxGuestTier,
     linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
     credential_call_effect: SandboxCredentialEffect,
-    first_party_write_traps_deferred: bool,
 }
 
 impl SandboxBoundaryContract {
@@ -135,14 +137,12 @@ impl SandboxBoundaryContract {
                 linked_imports: FIRST_PARTY_IMPORTS,
                 proposal_delta_channel: false,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
-                first_party_write_traps_deferred: false,
             },
             SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => Self {
                 tier,
                 linked_imports: READ_ONLY_IMPORTS,
                 proposal_delta_channel: true,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
-                first_party_write_traps_deferred: false,
             },
         }
     }
@@ -167,12 +167,6 @@ impl SandboxBoundaryContract {
     #[must_use]
     pub const fn credential_call_effect(self) -> SandboxCredentialEffect {
         self.credential_call_effect
-    }
-
-    /// Whether first-party typed write traps are still deferred.
-    #[must_use]
-    pub const fn first_party_write_traps_deferred(self) -> bool {
-        self.first_party_write_traps_deferred
     }
 
     /// True if any linked import can commit or trap a host write.
@@ -918,7 +912,6 @@ mod tests {
         }
 
         let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
-        assert!(!first_party.first_party_write_traps_deferred());
         assert!(!first_party.has_proposal_delta_channel());
         assert_eq!(
             first_party.credential_call_effect(),
