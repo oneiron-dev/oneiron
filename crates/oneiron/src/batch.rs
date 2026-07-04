@@ -765,6 +765,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                             persist_pending_consent: false,
                             resolve_pending: false,
                             can_resolve_pending_consent: true,
+                            include_source_in_gate_input: false,
                         },
                     )
                 })
@@ -789,6 +790,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                         persist_pending_consent: false,
                         resolve_pending: false,
                         can_resolve_pending_consent: true,
+                        include_source_in_gate_input: false,
                     },
                 )
             }
@@ -2354,6 +2356,7 @@ fn apply_put(
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                         can_resolve_pending_consent,
+                        include_source_in_gate_input: false,
                     },
                 )?;
             } else {
@@ -2369,6 +2372,7 @@ fn apply_put(
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                         can_resolve_pending_consent,
+                        include_source_in_gate_input: false,
                     },
                 )?;
             }
