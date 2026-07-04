@@ -5,13 +5,16 @@
 //! first-party memory writes through the existing batch/gate chokepoint. The
 //! sandbox link-time boundary contract lives in [`crate::code_sandbox`].
 
+use std::{cell::Cell, collections::HashSet};
+
 use rmpv::Value;
+use sha2::{Digest, Sha256};
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
-    ClaimSubject, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange, Vault, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
+    Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -19,6 +22,1205 @@ const SELF_PROVENANCE_SURFACE_KEY: &str = "surface";
 const SELF_PROVENANCE_RUN_KEY: &str = "run";
 const SELF_PROVENANCE_CALL_KEY: &str = "call";
 const SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN: &[u8] = b"oneiron:self-memory-edge-operation:v1";
+const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
+const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
+const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:sha256:";
+const CODE_RUN_LAYOUT_HASH_DOMAIN: &[u8] = b"oneiron:code-run-replay-layout:v1";
+const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
+const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
+const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
+
+pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
+pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
+pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 7] = [
+    "schema_version",
+    "run_id",
+    "determinism",
+    "bridge_calls",
+    "step_checkpoints",
+    "outputs",
+    "abi_layout_checks",
+];
+pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
+pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
+    "seq",
+    "effect",
+    "request",
+    "outcome",
+    "started_at_ms",
+    "finished_at_ms",
+];
+pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
+    ["seq", "label", "state_hash", "created_at_ms"];
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 5] =
+    ["handle", "path", "raw_sha256", "raw_len", "preview"];
+pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
+pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
+    ["name", "schema_version", "fields", "layout_hash"];
+
+const KEY_SCHEMA_VERSION: &str = CODE_RUN_REPLAY_RECORD_KEYS[0];
+const KEY_RUN_ID: &str = CODE_RUN_REPLAY_RECORD_KEYS[1];
+const KEY_DETERMINISM: &str = CODE_RUN_REPLAY_RECORD_KEYS[2];
+const KEY_BRIDGE_CALLS: &str = CODE_RUN_REPLAY_RECORD_KEYS[3];
+const KEY_STEP_CHECKPOINTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[4];
+const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
+const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
+
+const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
+const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
+
+const KEY_SEQ: &str = CODE_RUN_BRIDGE_CALL_KEYS[0];
+const KEY_EFFECT: &str = CODE_RUN_BRIDGE_CALL_KEYS[1];
+const KEY_REQUEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[2];
+const KEY_OUTCOME: &str = CODE_RUN_BRIDGE_CALL_KEYS[3];
+const KEY_STARTED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[4];
+const KEY_FINISHED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[5];
+
+const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
+const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
+const KEY_CREATED_AT_MS: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[3];
+
+const KEY_HANDLE: &str = CODE_RUN_RAW_OUTPUT_KEYS[0];
+const KEY_PATH: &str = CODE_RUN_RAW_OUTPUT_KEYS[1];
+const KEY_RAW_SHA256: &str = CODE_RUN_RAW_OUTPUT_KEYS[2];
+const KEY_RAW_LEN: &str = CODE_RUN_RAW_OUTPUT_KEYS[3];
+const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[4];
+
+const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
+const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
+const KEY_TRUNCATED: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[2];
+
+const KEY_NAME: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[0];
+const KEY_FIELDS: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[2];
+const KEY_LAYOUT_HASH: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[3];
+
+/// Frozen nondeterministic inputs for one code run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunDeterminism {
+    pub frozen_unix_ms: u64,
+    pub rng_seed: [u8; CODE_RUN_RNG_SEED_LEN],
+}
+
+impl CodeRunDeterminism {
+    #[must_use]
+    pub const fn new(frozen_unix_ms: u64, rng_seed: [u8; CODE_RUN_RNG_SEED_LEN]) -> Self {
+        Self {
+            frozen_unix_ms,
+            rng_seed,
+        }
+    }
+}
+
+/// One host bridge call captured for deterministic step replay.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct CodeRunBridgeCall {
+    pub seq: u64,
+    pub effect: SelfEffect,
+    pub request: Value,
+    pub outcome: Value,
+    pub started_at_ms: u64,
+    pub finished_at_ms: u64,
+}
+
+impl CodeRunBridgeCall {
+    /// Captures one typed `self.*` call and its host outcome.
+    ///
+    /// Replay compares `effect` and the canonical request payload before
+    /// returning this stored outcome. A changed call cannot consume an old row.
+    pub fn record(
+        seq: u64,
+        call: &SelfCall,
+        outcome: &SelfDispatchOutcome,
+        started_at_ms: u64,
+        finished_at_ms: u64,
+    ) -> Result<Self> {
+        if finished_at_ms < started_at_ms {
+            return Err(invalid_code_run_replay(
+                "bridge call finished before it started",
+            ));
+        }
+
+        Ok(Self {
+            seq,
+            effect: call.effect(),
+            request: self_call_request_value(call)?,
+            outcome: self_dispatch_outcome_value(outcome),
+            started_at_ms,
+            finished_at_ms,
+        })
+    }
+}
+
+/// Deterministic checkpoint marker between bridge calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunStepCheckpoint {
+    pub seq: u64,
+    pub label: String,
+    pub state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    pub created_at_ms: u64,
+}
+
+impl CodeRunStepCheckpoint {
+    pub fn new(
+        seq: u64,
+        label: impl Into<String>,
+        state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+        created_at_ms: u64,
+    ) -> Result<Self> {
+        let checkpoint = Self {
+            seq,
+            label: label.into(),
+            state_hash,
+            created_at_ms,
+        };
+        validate_label(&checkpoint.label, "checkpoint label")?;
+        Ok(checkpoint)
+    }
+}
+
+/// Compact preview stored in a replay record beside a raw output handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunOutputPreview {
+    pub codec: String,
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Raw code-run output metadata. Bytes are stored separately by handle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunRawOutput {
+    pub handle: String,
+    pub path: String,
+    pub raw_sha256: [u8; CODE_RUN_REPLAY_HASH_LEN],
+    pub raw_len: u64,
+    pub preview: CodeRunOutputPreview,
+}
+
+impl CodeRunRawOutput {
+    pub fn from_bytes(path: impl Into<String>, raw: &[u8]) -> Result<Self> {
+        let path = path.into();
+        validate_text(
+            &path,
+            CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
+            "raw output path",
+        )?;
+
+        let raw_sha256 = sha256_bytes(raw);
+        let handle = format!(
+            "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
+            crate::types::bytes_to_hex_lower(&raw_sha256)
+        );
+        let raw_len = u64::try_from(raw.len())
+            .map_err(|_| invalid_code_run_replay("raw output length overflow"))?;
+        let (text, truncated) = crate::serialize::compressed_code_run_output_preview(
+            raw,
+            crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS,
+        );
+
+        Ok(Self {
+            handle,
+            path,
+            raw_sha256,
+            raw_len,
+            preview: CodeRunOutputPreview {
+                codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
+                text,
+                truncated,
+            },
+        })
+    }
+}
+
+/// One pinned host/guest record layout check carried by a replay record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeRunAbiLayoutCheck {
+    pub name: String,
+    pub schema_version: u64,
+    pub fields: Vec<String>,
+    pub layout_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+}
+
+impl CodeRunAbiLayoutCheck {
+    #[must_use]
+    pub fn for_fields(name: impl Into<String>, schema_version: u64, fields: &[&str]) -> Self {
+        let name = name.into();
+        Self {
+            layout_hash: code_run_layout_hash(&name, schema_version, fields.iter().copied()),
+            name,
+            schema_version,
+            fields: fields.iter().map(|field| (*field).to_owned()).collect(),
+        }
+    }
+}
+
+/// Persisted deterministic replay record for a first-party code run.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct CodeRunReplayRecord {
+    pub run_id: EntityId,
+    pub determinism: CodeRunDeterminism,
+    pub bridge_calls: Vec<CodeRunBridgeCall>,
+    pub step_checkpoints: Vec<CodeRunStepCheckpoint>,
+    pub outputs: Vec<CodeRunRawOutput>,
+    pub abi_layout_checks: Vec<CodeRunAbiLayoutCheck>,
+}
+
+impl CodeRunReplayRecord {
+    #[must_use]
+    pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
+        Self {
+            run_id,
+            determinism,
+            bridge_calls: Vec::new(),
+            step_checkpoints: Vec::new(),
+            outputs: Vec::new(),
+            abi_layout_checks: code_run_replay_abi_layout_checks(),
+        }
+    }
+
+    #[must_use]
+    pub fn replay_cursor(&self) -> CodeRunReplayCursor<'_> {
+        CodeRunReplayCursor::new(self)
+    }
+}
+
+/// Returns the default ABI/layout checks recorded with v1 replay records.
+#[must_use]
+pub fn code_run_replay_abi_layout_checks() -> Vec<CodeRunAbiLayoutCheck> {
+    vec![
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.replay_record",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_REPLAY_RECORD_KEYS,
+        ),
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.determinism",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_DETERMINISM_KEYS,
+        ),
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.bridge_call",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_BRIDGE_CALL_KEYS,
+        ),
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.step_checkpoint",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_STEP_CHECKPOINT_KEYS,
+        ),
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.raw_output",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_RAW_OUTPUT_KEYS,
+        ),
+        CodeRunAbiLayoutCheck::for_fields(
+            "code_run.output_preview",
+            CODE_RUN_REPLAY_SCHEMA_VERSION,
+            &CODE_RUN_OUTPUT_PREVIEW_KEYS,
+        ),
+    ]
+}
+
+/// Encodes a deterministic code-run replay record as pinned MessagePack.
+pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
+    validate_code_run_replay_record(record)?;
+    let value = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(CODE_RUN_REPLAY_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_RUN_ID),
+            Value::Binary(record.run_id.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(KEY_DETERMINISM),
+            encode_determinism(&record.determinism),
+        ),
+        (
+            Value::from(KEY_BRIDGE_CALLS),
+            Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
+        ),
+        (
+            Value::from(KEY_STEP_CHECKPOINTS),
+            Value::Array(
+                record
+                    .step_checkpoints
+                    .iter()
+                    .map(encode_step_checkpoint)
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_OUTPUTS),
+            Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
+        ),
+        (
+            Value::from(KEY_ABI_LAYOUT_CHECKS),
+            Value::Array(
+                record
+                    .abi_layout_checks
+                    .iter()
+                    .map(encode_abi_layout_check)
+                    .collect(),
+            ),
+        ),
+    ]);
+    encode_value(&value, "code-run replay record MessagePack encode failed")
+}
+
+/// Decodes a deterministic code-run replay record.
+pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
+    let value = decode_value(bytes)?;
+    let fields = pinned_map(
+        &value,
+        &CODE_RUN_REPLAY_RECORD_KEYS,
+        "code-run replay record",
+    )?;
+    let schema_version = u64_value(required(fields[0], "missing replay schema_version")?)?;
+    if schema_version != CODE_RUN_REPLAY_SCHEMA_VERSION {
+        return Err(invalid_code_run_replay(
+            "unsupported code-run replay schema_version",
+        ));
+    }
+
+    let record = CodeRunReplayRecord {
+        run_id: entity_value(required(fields[1], "missing replay run_id")?)?,
+        determinism: decode_determinism(required(fields[2], "missing replay determinism")?)?,
+        bridge_calls: decode_array(
+            required(fields[3], "missing replay bridge_calls")?,
+            decode_bridge_call,
+        )?,
+        step_checkpoints: decode_array(
+            required(fields[4], "missing replay step_checkpoints")?,
+            decode_step_checkpoint,
+        )?,
+        outputs: decode_array(
+            required(fields[5], "missing replay outputs")?,
+            decode_raw_output,
+        )?,
+        abi_layout_checks: decode_array(
+            required(fields[6], "missing replay abi_layout_checks")?,
+            decode_abi_layout_check,
+        )?,
+    };
+    validate_code_run_replay_record(&record)?;
+    Ok(record)
+}
+
+/// Cursor that replays bridge calls from a stored record without invoking live host effects.
+pub struct CodeRunReplayCursor<'a> {
+    record: &'a CodeRunReplayRecord,
+    next: Cell<usize>,
+}
+
+impl<'a> CodeRunReplayCursor<'a> {
+    #[must_use]
+    pub const fn new(record: &'a CodeRunReplayRecord) -> Self {
+        Self {
+            record,
+            next: Cell::new(0),
+        }
+    }
+
+    #[must_use]
+    pub fn consumed(&self) -> usize {
+        self.next.get()
+    }
+
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.consumed() == self.record.bridge_calls.len()
+    }
+}
+
+impl SelfDispatcher for CodeRunReplayCursor<'_> {
+    fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
+        let index = self.next.get();
+        let stored = self
+            .record
+            .bridge_calls
+            .get(index)
+            .ok_or(invalid_code_run_replay(
+                "code-run replay bridge log exhausted",
+            ))?;
+        if stored.seq != index as u64 {
+            return Err(invalid_code_run_replay("code-run replay bridge seq drift"));
+        }
+        if stored.effect != call.effect() {
+            return Err(invalid_code_run_replay("code-run replay effect mismatch"));
+        }
+
+        let request = self_call_request_value(&call)?;
+        if stored.request != request {
+            return Err(invalid_code_run_replay("code-run replay request mismatch"));
+        }
+
+        let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
+        self.next.set(index + 1);
+        Ok(outcome)
+    }
+}
+
+impl Vault {
+    /// Persists the replay record for `record.run_id`.
+    pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
+        let encoded = encode_code_run_replay_record(record)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        self.store.vault_meta.put(
+            &mut wtxn,
+            &code_run_replay_record_key(&record.run_id),
+            &encoded,
+        )?;
+        wtxn.commit().map_err(Error::from)
+    }
+
+    /// Loads the replay record for `run_id`, if present.
+    pub fn get_code_run_replay_record(
+        &self,
+        run_id: &EntityId,
+    ) -> Result<Option<CodeRunReplayRecord>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.store
+            .vault_meta
+            .get(&rtxn, &code_run_replay_record_key(run_id))?
+            .map(decode_code_run_replay_record)
+            .transpose()
+    }
+
+    /// Stores raw output bytes under a deterministic content handle.
+    pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
+        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), raw)?;
+        if expected != *output {
+            return Err(invalid_code_run_replay(
+                "raw output metadata does not match bytes",
+            ));
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        wtxn.commit().map_err(Error::from)
+    }
+
+    /// Loads raw output bytes for `output` and verifies they still match metadata.
+    pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
+        validate_raw_output(output)?;
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &code_run_raw_output_key(output))?
+            .map(<[u8]>::to_vec)
+        else {
+            return Ok(None);
+        };
+        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), &raw)?;
+        if expected != *output {
+            return Err(invalid_code_run_replay(
+                "stored raw output bytes drifted from metadata",
+            ));
+        }
+        Ok(Some(raw))
+    }
+}
+
+fn encode_determinism(determinism: &CodeRunDeterminism) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_FROZEN_UNIX_MS),
+            Value::from(determinism.frozen_unix_ms),
+        ),
+        (
+            Value::from(KEY_RNG_SEED),
+            Value::Binary(determinism.rng_seed.to_vec()),
+        ),
+    ])
+}
+
+fn decode_determinism(value: &Value) -> Result<CodeRunDeterminism> {
+    let fields = pinned_map(value, &CODE_RUN_DETERMINISM_KEYS, "code-run determinism")?;
+    Ok(CodeRunDeterminism {
+        frozen_unix_ms: u64_value(required(fields[0], "missing frozen_unix_ms")?)?,
+        rng_seed: fixed_binary(required(fields[1], "missing rng_seed")?, "rng_seed")?,
+    })
+}
+
+fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_SEQ), Value::from(call.seq)),
+        (Value::from(KEY_EFFECT), Value::from(call.effect.as_str())),
+        (Value::from(KEY_REQUEST), call.request.clone()),
+        (Value::from(KEY_OUTCOME), call.outcome.clone()),
+        (
+            Value::from(KEY_STARTED_AT_MS),
+            Value::from(call.started_at_ms),
+        ),
+        (
+            Value::from(KEY_FINISHED_AT_MS),
+            Value::from(call.finished_at_ms),
+        ),
+    ])
+}
+
+fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
+    let fields = pinned_map(value, &CODE_RUN_BRIDGE_CALL_KEYS, "code-run bridge call")?;
+    Ok(CodeRunBridgeCall {
+        seq: u64_value(required(fields[0], "missing bridge seq")?)?,
+        effect: self_effect_from_str(str_value(required(fields[1], "missing bridge effect")?)?)?,
+        request: required(fields[2], "missing bridge request")?.clone(),
+        outcome: required(fields[3], "missing bridge outcome")?.clone(),
+        started_at_ms: u64_value(required(fields[4], "missing bridge started_at_ms")?)?,
+        finished_at_ms: u64_value(required(fields[5], "missing bridge finished_at_ms")?)?,
+    })
+}
+
+fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_SEQ), Value::from(checkpoint.seq)),
+        (
+            Value::from(KEY_LABEL),
+            Value::from(checkpoint.label.as_str()),
+        ),
+        (
+            Value::from(KEY_STATE_HASH),
+            Value::Binary(checkpoint.state_hash.to_vec()),
+        ),
+        (
+            Value::from(KEY_CREATED_AT_MS),
+            Value::from(checkpoint.created_at_ms),
+        ),
+    ])
+}
+
+fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
+    let fields = pinned_map(
+        value,
+        &CODE_RUN_STEP_CHECKPOINT_KEYS,
+        "code-run step checkpoint",
+    )?;
+    let checkpoint = CodeRunStepCheckpoint {
+        seq: u64_value(required(fields[0], "missing checkpoint seq")?)?,
+        label: str_value(required(fields[1], "missing checkpoint label")?)?.to_owned(),
+        state_hash: fixed_binary(
+            required(fields[2], "missing checkpoint state_hash")?,
+            "checkpoint state_hash",
+        )?,
+        created_at_ms: u64_value(required(fields[3], "missing checkpoint created_at_ms")?)?,
+    };
+    validate_label(&checkpoint.label, "checkpoint label")?;
+    Ok(checkpoint)
+}
+
+fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_HANDLE), Value::from(output.handle.as_str())),
+        (Value::from(KEY_PATH), Value::from(output.path.as_str())),
+        (
+            Value::from(KEY_RAW_SHA256),
+            Value::Binary(output.raw_sha256.to_vec()),
+        ),
+        (Value::from(KEY_RAW_LEN), Value::from(output.raw_len)),
+        (
+            Value::from(KEY_PREVIEW),
+            encode_output_preview(&output.preview),
+        ),
+    ])
+}
+
+fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
+    let fields = pinned_map(value, &CODE_RUN_RAW_OUTPUT_KEYS, "code-run raw output")?;
+    let output = CodeRunRawOutput {
+        handle: str_value(required(fields[0], "missing output handle")?)?.to_owned(),
+        path: str_value(required(fields[1], "missing output path")?)?.to_owned(),
+        raw_sha256: fixed_binary(
+            required(fields[2], "missing output raw_sha256")?,
+            "raw_sha256",
+        )?,
+        raw_len: u64_value(required(fields[3], "missing output raw_len")?)?,
+        preview: decode_output_preview(required(fields[4], "missing output preview")?)?,
+    };
+    validate_raw_output(&output)?;
+    Ok(output)
+}
+
+fn encode_output_preview(preview: &CodeRunOutputPreview) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_CODEC), Value::from(preview.codec.as_str())),
+        (Value::from(KEY_TEXT), Value::from(preview.text.as_str())),
+        (
+            Value::from(KEY_TRUNCATED),
+            Value::Boolean(preview.truncated),
+        ),
+    ])
+}
+
+fn decode_output_preview(value: &Value) -> Result<CodeRunOutputPreview> {
+    let fields = pinned_map(
+        value,
+        &CODE_RUN_OUTPUT_PREVIEW_KEYS,
+        "code-run output preview",
+    )?;
+    Ok(CodeRunOutputPreview {
+        codec: str_value(required(fields[0], "missing preview codec")?)?.to_owned(),
+        text: str_value(required(fields[1], "missing preview text")?)?.to_owned(),
+        truncated: bool_value(required(fields[2], "missing preview truncated")?)?,
+    })
+}
+
+fn encode_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_NAME), Value::from(check.name.as_str())),
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(check.schema_version),
+        ),
+        (
+            Value::from(KEY_FIELDS),
+            Value::Array(
+                check
+                    .fields
+                    .iter()
+                    .map(|field| Value::from(field.as_str()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(KEY_LAYOUT_HASH),
+            Value::Binary(check.layout_hash.to_vec()),
+        ),
+    ])
+}
+
+fn decode_abi_layout_check(value: &Value) -> Result<CodeRunAbiLayoutCheck> {
+    let fields = pinned_map(
+        value,
+        &CODE_RUN_ABI_LAYOUT_CHECK_KEYS,
+        "code-run ABI layout check",
+    )?;
+    let check = CodeRunAbiLayoutCheck {
+        name: str_value(required(fields[0], "missing ABI layout name")?)?.to_owned(),
+        schema_version: u64_value(required(fields[1], "missing ABI layout schema_version")?)?,
+        fields: decode_string_array(required(fields[2], "missing ABI layout fields")?)?,
+        layout_hash: fixed_binary(
+            required(fields[3], "missing ABI layout hash")?,
+            "layout_hash",
+        )?,
+    };
+    validate_abi_layout_check(&check)?;
+    Ok(check)
+}
+
+fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
+    let mut expected_seq = 0_u64;
+    for call in &record.bridge_calls {
+        if call.seq != expected_seq {
+            return Err(invalid_code_run_replay(
+                "bridge call seq must be contiguous",
+            ));
+        }
+        validate_bridge_call(call)?;
+        expected_seq = expected_seq.saturating_add(1);
+    }
+
+    let mut checkpoint_seqs = HashSet::new();
+    for checkpoint in &record.step_checkpoints {
+        if !checkpoint_seqs.insert(checkpoint.seq) {
+            return Err(invalid_code_run_replay("duplicate checkpoint seq"));
+        }
+        validate_label(&checkpoint.label, "checkpoint label")?;
+    }
+
+    let mut output_handles = HashSet::new();
+    for output in &record.outputs {
+        validate_raw_output(output)?;
+        if !output_handles.insert(output.handle.as_str()) {
+            return Err(invalid_code_run_replay("duplicate raw output handle"));
+        }
+    }
+
+    if record.abi_layout_checks.is_empty() {
+        return Err(invalid_code_run_replay("missing ABI layout checks"));
+    }
+    for check in &record.abi_layout_checks {
+        validate_abi_layout_check(check)?;
+    }
+    Ok(())
+}
+
+fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
+    if call.finished_at_ms < call.started_at_ms {
+        return Err(invalid_code_run_replay(
+            "bridge call finished before it started",
+        ));
+    }
+    let _ = decode_self_dispatch_outcome(&call.outcome)?;
+    Ok(())
+}
+
+fn validate_raw_output(output: &CodeRunRawOutput) -> Result<()> {
+    validate_text(
+        &output.path,
+        CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
+        "raw output path",
+    )?;
+    let expected_handle = format!(
+        "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
+        crate::types::bytes_to_hex_lower(&output.raw_sha256)
+    );
+    if output.handle != expected_handle {
+        return Err(invalid_code_run_replay(
+            "raw output handle must match raw_sha256",
+        ));
+    }
+    if output.preview.codec != crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC {
+        return Err(invalid_code_run_replay("unknown output preview codec"));
+    }
+    if output.preview.text.chars().count() > crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS {
+        return Err(invalid_code_run_replay("output preview exceeds cap"));
+    }
+    Ok(())
+}
+
+fn validate_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Result<()> {
+    validate_label(&check.name, "ABI layout name")?;
+    if check.fields.is_empty() {
+        return Err(invalid_code_run_replay(
+            "ABI layout fields must not be empty",
+        ));
+    }
+    for field in &check.fields {
+        validate_label(field, "ABI layout field")?;
+    }
+    let expected = code_run_layout_hash(
+        &check.name,
+        check.schema_version,
+        check.fields.iter().map(String::as_str),
+    );
+    if check.layout_hash != expected {
+        return Err(invalid_code_run_replay("ABI layout hash mismatch"));
+    }
+    Ok(())
+}
+
+fn self_call_request_value(call: &SelfCall) -> Result<Value> {
+    Ok(match call {
+        SelfCall::MemorySearch(call) => request_map(vec![
+            ("query", Value::from(call.query.as_str())),
+            ("limit", Value::from(call.limit as u64)),
+        ]),
+        SelfCall::MemoryWriteFixture(call) => request_map(vec![
+            ("id", entity_id_value(call.id)),
+            ("candidate", claim_candidate_request_value(&call.candidate)?),
+            ("occurred_start", Value::from(call.occurred.start)),
+            ("occurred_end", Value::from(call.occurred.end)),
+            ("learned_at", Value::from(call.learned_at)),
+        ]),
+        SelfCall::MemoryPutClaim(call) => request_map(vec![
+            ("id", entity_id_value(call.id)),
+            ("candidate", claim_candidate_request_value(&call.candidate)?),
+            ("occurred_start", Value::from(call.occurred.start)),
+            ("occurred_end", Value::from(call.occurred.end)),
+            ("learned_at", Value::from(call.learned_at)),
+        ]),
+        SelfCall::MemorySupersedeClaim(call) => request_map(vec![
+            ("new_id", entity_id_value(call.new_id)),
+            ("old_id", entity_id_value(call.old_id)),
+            ("now", Value::from(call.now)),
+        ]),
+        SelfCall::MemoryPutEdge(call) => request_map(vec![
+            ("src", entity_id_value(call.src)),
+            ("kind", Value::from(call.kind as u8)),
+            ("tgt", entity_id_value(call.tgt)),
+            ("weight", Value::F32(call.weight)),
+        ]),
+        SelfCall::AskHuman(call) => {
+            request_map(vec![("prompt", Value::from(call.prompt.as_str()))])
+        }
+        SelfCall::DestructiveFixture(call) | SelfCall::OutboundFixture(call) => {
+            request_map(vec![("label", Value::from(call.label.as_str()))])
+        }
+    })
+}
+
+fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {
+    let envelope = canonical_replay_request_envelope()?;
+    let body = (*candidate).clone().into_claim_body(&envelope);
+    Ok(Value::Map(vec![
+        (
+            Value::from("predicate"),
+            Value::from(body.predicate.as_str()),
+        ),
+        (Value::from("subject"), Value::Binary(body.subject.encode())),
+        (Value::from("value"), body.value.clone()),
+        (Value::from("confidence"), Value::F32(body.confidence)),
+        (Value::from("salience"), optional_f32_value(body.salience)),
+        (
+            Value::from("evidence"),
+            optional_value(body.evidence.clone()),
+        ),
+        (
+            Value::from("valid_from"),
+            optional_u64_value(body.valid_from),
+        ),
+        (Value::from("valid_to"), optional_u64_value(body.valid_to)),
+        (Value::from("world"), optional_entity_value(body.world)),
+        (Value::from("scope"), optional_value(body.scope.clone())),
+        (Value::from("stale"), Value::Boolean(body.stale)),
+    ]))
+}
+
+fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
+    let actor = EntityId::from_bytes(CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR)
+        .map_err(|_| invalid_code_run_replay("canonical replay actor id is invalid"))?;
+    Ok(WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from(SELF_PROVENANCE_SURFACE_KEY),
+            Value::from("code_run_replay_request"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    ))
+}
+
+fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
+    match outcome {
+        SelfDispatchOutcome::MemorySearch(result) => request_map(vec![
+            ("kind", Value::from("memory_search")),
+            ("query", Value::from(result.query.as_str())),
+            (
+                "results",
+                Value::Array(
+                    result
+                        .results
+                        .iter()
+                        .map(|hit| {
+                            request_map(vec![
+                                ("id", entity_id_value(hit.id)),
+                                ("score", Value::F32(hit.score)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
+        SelfDispatchOutcome::MemoryWrite(result) => request_map(vec![
+            ("kind", Value::from("memory_write")),
+            ("id", entity_id_value(result.id)),
+        ]),
+        SelfDispatchOutcome::MemoryEdgeWrite(result) => request_map(vec![
+            ("kind", Value::from("memory_edge_write")),
+            ("src", entity_id_value(result.src)),
+            ("edge_kind", Value::from(result.kind as u8)),
+            ("tgt", entity_id_value(result.tgt)),
+        ]),
+        SelfDispatchOutcome::DurableWait(wait) => request_map(vec![
+            ("kind", Value::from("durable_wait")),
+            ("wait_id", entity_id_value(wait.wait_id)),
+            ("effect", Value::from(wait.effect.as_str())),
+            ("reason", Value::from(durable_wait_reason_str(wait.reason))),
+            (
+                "prompt",
+                wait.prompt
+                    .as_ref()
+                    .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
+            ),
+        ]),
+    }
+}
+
+fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
+    let entries = expect_map(value, "dispatch outcome must be a map")?;
+    let kind = str_value(map_get(entries, "kind")?)?;
+    match kind {
+        "memory_search" => {
+            let results = decode_array(map_get(entries, "results")?, decode_scored_entity)?;
+            Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+                query: str_value(map_get(entries, "query")?)?.to_owned(),
+                results,
+            }))
+        }
+        "memory_write" => Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
+            id: entity_value(map_get(entries, "id")?)?,
+        })),
+        "memory_edge_write" => Ok(SelfDispatchOutcome::MemoryEdgeWrite(
+            SelfMemoryEdgeWriteResult {
+                src: entity_value(map_get(entries, "src")?)?,
+                kind: edge_kind_value(map_get(entries, "edge_kind")?)?,
+                tgt: entity_value(map_get(entries, "tgt")?)?,
+            },
+        )),
+        "durable_wait" => {
+            let prompt = match map_get(entries, "prompt")? {
+                Value::Nil => None,
+                value => Some(str_value(value)?.to_owned()),
+            };
+            Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: entity_value(map_get(entries, "wait_id")?)?,
+                effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+                reason: durable_wait_reason_from_str(str_value(map_get(entries, "reason")?)?)?,
+                prompt,
+            }))
+        }
+        _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
+    }
+}
+
+fn decode_scored_entity(value: &Value) -> Result<ScoredEntity> {
+    let entries = expect_map(value, "scored entity must be a map")?;
+    Ok(ScoredEntity {
+        id: entity_value(map_get(entries, "id")?)?,
+        score: f32_value(map_get(entries, "score")?)?,
+    })
+}
+
+fn request_map(entries: Vec<(&'static str, Value)>) -> Value {
+    Value::Map(
+        entries
+            .into_iter()
+            .map(|(key, value)| (Value::from(key), value))
+            .collect(),
+    )
+}
+
+fn optional_value(value: Option<Value>) -> Value {
+    value.unwrap_or(Value::Nil)
+}
+
+fn optional_u64_value(value: Option<u64>) -> Value {
+    value.map_or(Value::Nil, Value::from)
+}
+
+fn optional_f32_value(value: Option<f32>) -> Value {
+    value.map_or(Value::Nil, Value::F32)
+}
+
+fn optional_entity_value(value: Option<EntityId>) -> Value {
+    value.map_or(Value::Nil, entity_id_value)
+}
+
+fn entity_id_value(id: EntityId) -> Value {
+    Value::Binary(id.as_bytes().to_vec())
+}
+
+fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
+    match value {
+        "self.memory.search" => Ok(SelfEffect::MemorySearch),
+        "self.memory.write_fixture" => Ok(SelfEffect::MemoryWriteFixture),
+        "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),
+        "self.memory.supersede_claim" => Ok(SelfEffect::MemorySupersedeClaim),
+        "self.memory.put_edge" => Ok(SelfEffect::MemoryPutEdge),
+        "self.ask_human" => Ok(SelfEffect::AskHuman),
+        "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
+        "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
+        _ => Err(invalid_code_run_replay("unknown self effect")),
+    }
+}
+
+fn durable_wait_reason_str(reason: SelfDurableWaitReason) -> &'static str {
+    match reason {
+        SelfDurableWaitReason::HumanInput => "human_input",
+        SelfDurableWaitReason::DestructiveEffect => "destructive_effect",
+        SelfDurableWaitReason::OutboundEffect => "outbound_effect",
+    }
+}
+
+fn durable_wait_reason_from_str(value: &str) -> Result<SelfDurableWaitReason> {
+    match value {
+        "human_input" => Ok(SelfDurableWaitReason::HumanInput),
+        "destructive_effect" => Ok(SelfDurableWaitReason::DestructiveEffect),
+        "outbound_effect" => Ok(SelfDurableWaitReason::OutboundEffect),
+        _ => Err(invalid_code_run_replay("unknown durable wait reason")),
+    }
+}
+
+fn decode_value(bytes: &[u8]) -> Result<Value> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| invalid_code_run_replay("record is not valid MessagePack"))?;
+    if !cursor.is_empty() {
+        return Err(invalid_code_run_replay(
+            "trailing bytes after code-run replay record",
+        ));
+    }
+    Ok(value)
+}
+
+fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
+    Ok(out)
+}
+
+fn pinned_map<'a, const N: usize>(
+    value: &'a Value,
+    keys: &[&str; N],
+    context: &'static str,
+) -> Result<[Option<&'a Value>; N]> {
+    let entries = expect_map(value, context)?;
+    let mut out = [None; N];
+    for (key, value) in entries {
+        let key = str_value(key)?;
+        let Some(index) = keys.iter().position(|known| *known == key) else {
+            return Err(invalid_code_run_replay("map key is not pinned"));
+        };
+        if out[index].replace(value).is_some() {
+            return Err(invalid_code_run_replay("duplicate map key"));
+        }
+    }
+    Ok(out)
+}
+
+fn expect_map<'a>(value: &'a Value, _context: &'static str) -> Result<&'a [(Value, Value)]> {
+    let Value::Map(entries) = value else {
+        return Err(invalid_code_run_replay("value must be a MessagePack map"));
+    };
+    Ok(entries)
+}
+
+fn map_get<'a>(entries: &'a [(Value, Value)], needle: &str) -> Result<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(needle)).then_some(value))
+        .ok_or(invalid_code_run_replay("missing dispatch outcome key"))
+}
+
+fn required<'a>(value: Option<&'a Value>, message: &'static str) -> Result<&'a Value> {
+    value.ok_or(invalid_code_run_replay(message))
+}
+
+fn decode_array<T>(value: &Value, decode: fn(&Value) -> Result<T>) -> Result<Vec<T>> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay("value must be an array"));
+    };
+    items.iter().map(decode).collect()
+}
+
+fn decode_string_array(value: &Value) -> Result<Vec<String>> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay("fields must be an array"));
+    };
+    items
+        .iter()
+        .map(|item| str_value(item).map(ToOwned::to_owned))
+        .collect()
+}
+
+fn str_value(value: &Value) -> Result<&str> {
+    value
+        .as_str()
+        .ok_or(invalid_code_run_replay("value must be a string"))
+}
+
+fn bool_value(value: &Value) -> Result<bool> {
+    match value {
+        Value::Boolean(value) => Ok(*value),
+        _ => Err(invalid_code_run_replay("value must be a boolean")),
+    }
+}
+
+fn u64_value(value: &Value) -> Result<u64> {
+    value
+        .as_u64()
+        .ok_or(invalid_code_run_replay("value must be an unsigned integer"))
+}
+
+fn f32_value(value: &Value) -> Result<f32> {
+    let parsed = match value {
+        Value::F32(value) => *value,
+        Value::F64(value) => *value as f32,
+        _ => return Err(invalid_code_run_replay("value must be a float")),
+    };
+    if !parsed.is_finite() {
+        return Err(invalid_code_run_replay("float must be finite"));
+    }
+    Ok(parsed)
+}
+
+fn entity_value(value: &Value) -> Result<EntityId> {
+    let bytes: [u8; 16] = fixed_binary(value, "entity id")?;
+    EntityId::from_bytes(bytes).map_err(|_| invalid_code_run_replay("entity id is reserved"))
+}
+
+fn edge_kind_value(value: &Value) -> Result<EdgeKind> {
+    let raw = u8::try_from(u64_value(value)?)
+        .map_err(|_| invalid_code_run_replay("edge kind byte overflow"))?;
+    EdgeKind::try_from_u8(raw).ok_or(invalid_code_run_replay("unknown edge kind byte"))
+}
+
+fn fixed_binary<const N: usize>(value: &Value, field: &'static str) -> Result<[u8; N]> {
+    let Value::Binary(bytes) = value else {
+        return Err(invalid_code_run_replay(field));
+    };
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid_code_run_replay(field))
+}
+
+fn validate_label(value: &str, field: &'static str) -> Result<()> {
+    validate_text(value, CODE_RUN_REPLAY_MAX_LABEL_BYTES, field)
+}
+
+fn validate_text(value: &str, max_bytes: usize, field: &'static str) -> Result<()> {
+    if value.trim().is_empty() || value.len() > max_bytes {
+        return Err(invalid_code_run_replay(field));
+    }
+    Ok(())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> [u8; CODE_RUN_REPLAY_HASH_LEN] {
+    Sha256::digest(bytes).into()
+}
+
+fn code_run_layout_hash<I, S>(
+    name: &str,
+    schema_version: u64,
+    fields: I,
+) -> [u8; CODE_RUN_REPLAY_HASH_LEN]
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut hasher = Sha256::new();
+    hasher.update(CODE_RUN_LAYOUT_HASH_DOMAIN);
+    hasher.update([0]);
+    hasher.update(name.as_bytes());
+    hasher.update([0]);
+    hasher.update(schema_version.to_be_bytes());
+    for field in fields {
+        hasher.update([0]);
+        hasher.update(field.as_ref().as_bytes());
+    }
+    hasher.finalize().into()
+}
+
+fn code_run_replay_record_key(run_id: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CODE_RUN_REPLAY_RECORD_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(CODE_RUN_REPLAY_RECORD_KEY_PREFIX);
+    key.extend_from_slice(run_id.as_bytes());
+    key
+}
+
+fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CODE_RUN_RAW_OUTPUT_KEY_PREFIX.len() + output.handle.len());
+    key.extend_from_slice(CODE_RUN_RAW_OUTPUT_KEY_PREFIX);
+    key.extend_from_slice(output.handle.as_bytes());
+    key
+}
+
+fn invalid_code_run_replay(message: &'static str) -> Error {
+    Error::InvalidCodeArtifactBody(message)
+}
 
 /// Dispatcher for host-side `self.*` calls emitted by a first-party runtime.
 pub trait SelfDispatcher {
@@ -859,6 +2061,172 @@ mod tests {
                 (entry_key.as_str() == Some(key)).then_some(entry_value)
             })
             .expect("map entry")
+    }
+
+    #[test]
+    fn code_run_replay_record_round_trips_and_replays_bridge_log_without_dispatch() -> Result<()> {
+        let run_id = EntityId::from_bytes([0x91; 16]).expect("run id");
+        let src = EntityId::from_bytes([0x92; 16]).expect("src id");
+        let tgt = EntityId::from_bytes([0x93; 16]).expect("tgt id");
+        let wait_id = EntityId::from_bytes([0x94; 16]).expect("wait id");
+        let determinism = CodeRunDeterminism::new(1_719_000_001_000, [0xAB; 32]);
+
+        let edge_call = SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::Mentions,
+            tgt,
+            0.7,
+        ));
+        let edge_outcome = SelfDispatchOutcome::MemoryEdgeWrite(SelfMemoryEdgeWriteResult {
+            src,
+            kind: EdgeKind::Mentions,
+            tgt,
+        });
+        let human_call = SelfCall::AskHuman(SelfAskHumanCall::new("continue?"));
+        let human_outcome = SelfDispatchOutcome::DurableWait(SelfDurableWait {
+            wait_id,
+            effect: SelfEffect::AskHuman,
+            reason: SelfDurableWaitReason::HumanInput,
+            prompt: Some("continue?".to_owned()),
+        });
+
+        let mut record = CodeRunReplayRecord::new(run_id, determinism);
+        record.bridge_calls.push(CodeRunBridgeCall::record(
+            0,
+            &edge_call,
+            &edge_outcome,
+            determinism.frozen_unix_ms,
+            determinism.frozen_unix_ms + 1,
+        )?);
+        record.bridge_calls.push(CodeRunBridgeCall::record(
+            1,
+            &human_call,
+            &human_outcome,
+            determinism.frozen_unix_ms + 2,
+            determinism.frozen_unix_ms + 3,
+        )?);
+        record.step_checkpoints.push(CodeRunStepCheckpoint::new(
+            0,
+            "after-edge",
+            [0xCD; 32],
+            determinism.frozen_unix_ms + 4,
+        )?);
+
+        let encoded = encode_code_run_replay_record(&record)?;
+        let decoded = decode_code_run_replay_record(&encoded)?;
+        assert_eq!(decoded, record);
+        assert_eq!(encode_code_run_replay_record(&decoded)?, encoded);
+
+        let replay = decoded.replay_cursor();
+        assert_eq!(replay.dispatch(edge_call)?, edge_outcome);
+        assert_eq!(replay.dispatch(human_call.clone())?, human_outcome);
+        assert!(replay.is_complete());
+
+        let reordered = decoded.replay_cursor();
+        let err = reordered
+            .dispatch(human_call)
+            .expect_err("replay must reject out-of-order bridge calls");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
+        assert_eq!(reordered.consumed(), 0);
+
+        let changed_call = SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::Mentions,
+            tgt,
+            0.8,
+        ));
+        let changed = decoded.replay_cursor();
+        let _err = changed
+            .dispatch(changed_call)
+            .expect_err("replay must reject changed typed trap arguments");
+        assert_eq!(changed.consumed(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_replay_large_output_persists_raw_bytes_and_compact_preview() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let run_id = EntityId::from_bytes([0x95; 16]).expect("run id");
+        let raw = (0..1024)
+            .map(|i| format!("row {i}: large output payload with whitespace\n\n"))
+            .collect::<String>()
+            .into_bytes();
+        let output = CodeRunRawOutput::from_bytes("/mnt/outputs/large.txt", &raw)?;
+
+        assert_eq!(output.raw_len, raw.len() as u64);
+        assert!(output.preview.truncated);
+        assert!(
+            output.preview.text.chars().count()
+                <= crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS
+        );
+        assert!(!output.preview.text.contains("\n\n"));
+
+        vault.put_code_run_raw_output(&output, &raw)?;
+        let mut record = CodeRunReplayRecord::new(
+            run_id,
+            CodeRunDeterminism::new(1_719_000_002_000, [0xBC; 32]),
+        );
+        record.outputs.push(output.clone());
+        vault.put_code_run_replay_record(&record)?;
+
+        let loaded = vault
+            .get_code_run_replay_record(&run_id)?
+            .expect("stored replay record");
+        assert_eq!(loaded.outputs, vec![output.clone()]);
+        let loaded_raw = vault
+            .get_code_run_raw_output(&output)?
+            .expect("stored raw output");
+        assert_eq!(loaded_raw, raw);
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
+        assert_eq!(
+            CODE_RUN_REPLAY_RECORD_KEYS,
+            [
+                "schema_version",
+                "run_id",
+                "determinism",
+                "bridge_calls",
+                "step_checkpoints",
+                "outputs",
+                "abi_layout_checks",
+            ]
+        );
+        assert_eq!(
+            CODE_RUN_BRIDGE_CALL_KEYS,
+            [
+                "seq",
+                "effect",
+                "request",
+                "outcome",
+                "started_at_ms",
+                "finished_at_ms",
+            ]
+        );
+        assert_eq!(
+            CODE_RUN_RAW_OUTPUT_KEYS,
+            ["handle", "path", "raw_sha256", "raw_len", "preview"]
+        );
+        assert_eq!(CODE_RUN_OUTPUT_PREVIEW_KEYS, ["codec", "text", "truncated"]);
+
+        let checks = code_run_replay_abi_layout_checks();
+        assert!(checks.iter().any(|check| {
+            check.name == "code_run.bridge_call"
+                && check.fields == CODE_RUN_BRIDGE_CALL_KEYS.map(str::to_owned)
+        }));
+
+        let mut record = CodeRunReplayRecord::new(
+            EntityId::from_bytes([0x96; 16]).expect("run id"),
+            CodeRunDeterminism::new(1_719_000_003_000, [0xDD; 32]),
+        );
+        record.abi_layout_checks[0]
+            .fields
+            .push("bulk_write".to_owned());
+        let err = encode_code_run_replay_record(&record)
+            .expect_err("layout field drift must fail before persistence");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
     }
 
     #[test]
