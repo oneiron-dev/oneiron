@@ -87,20 +87,23 @@ impl<'a> RunTreeAdapter<'a> {
 
     /// Renders all persisted job rows into deterministic roots and children.
     pub fn read(&self) -> Result<RunTree> {
-        render_run_tree(self.queue.list()?)
+        render_run_tree_presorted(self.queue.list()?)
     }
 
     /// Renders persisted rows for one run id into deterministic roots and
     /// children.
     pub fn read_run(&self, run_id: &str) -> Result<RunTree> {
-        render_run_tree(self.queue.list_run(run_id)?)
+        render_run_tree_presorted(self.queue.list_run(run_id)?)
     }
 }
 
 /// Renders queue rows into a deterministic tree without mutating storage.
 pub fn render_run_tree(mut records: Vec<JobRecord>) -> Result<RunTree> {
     records.sort_by(job_record_order);
+    render_run_tree_presorted(records)
+}
 
+fn render_run_tree_presorted(records: Vec<JobRecord>) -> Result<RunTree> {
     let present: BTreeSet<String> = records.iter().map(job_id_hex).collect();
     let mut repairs = Vec::new();
     let mut roots = Vec::new();
@@ -145,17 +148,14 @@ pub fn render_run_tree(mut records: Vec<JobRecord>) -> Result<RunTree> {
         ));
     }
 
-    for leftover in remaining_nodes(children_by_parent, &emitted) {
-        if emitted.contains(&leftover.node.job_id) {
-            continue;
-        }
-        if let Some(parent_id) = leftover.node.parent_id.clone() {
-            repairs.push(RunTreeRepair::ParentCycle {
-                job_id: leftover.node.job_id.clone(),
-                parent_id,
-            });
-        }
-        rendered_roots.push(leftover.node);
+    while let Some(leftover) = next_remaining_node(&children_by_parent, &emitted) {
+        rendered_roots.push(attach_children(
+            leftover,
+            &mut children_by_parent,
+            &mut emitted,
+            &mut repairs,
+            &mut Vec::new(),
+        ));
     }
 
     Ok(RunTree {
@@ -172,17 +172,21 @@ struct FlatRunTreeNode {
 
 fn flat_node(record: JobRecord) -> Result<FlatRunTreeNode> {
     let metadata = job_metadata(&record)?;
+    let state = record.state;
     let node = RunTreeNode {
         job_id: job_id_hex(&record),
         run_id: record.run_id,
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
-        status: RunTreeStatus::from(record.state),
+        status: RunTreeStatus::from(state),
         timestamps: RunTreeTimestamps {
             created_at: record.created_at,
             updated_at: record.updated_at,
         },
-        failure: record.last_error.map(|reason| RunTreeFailure { reason }),
+        failure: match state {
+            JobState::Failed => record.last_error.map(|reason| RunTreeFailure { reason }),
+            JobState::Queued | JobState::Leased | JobState::Completed => None,
+        },
         children: Vec::new(),
     };
 
@@ -230,21 +234,20 @@ fn attach_children(
     node
 }
 
-fn remaining_nodes(
-    children_by_parent: BTreeMap<String, Vec<FlatRunTreeNode>>,
+fn next_remaining_node(
+    children_by_parent: &BTreeMap<String, Vec<FlatRunTreeNode>>,
     emitted: &HashSet<String>,
-) -> Vec<FlatRunTreeNode> {
-    let mut nodes = children_by_parent
-        .into_values()
-        .flatten()
+) -> Option<FlatRunTreeNode> {
+    children_by_parent
+        .values()
+        .flat_map(|nodes| nodes.iter())
         .filter(|node| !emitted.contains(&node.node.job_id))
-        .collect::<Vec<_>>();
-    nodes.sort_by(|left, right| {
-        left.created_at
-            .cmp(&right.created_at)
-            .then_with(|| left.node.job_id.cmp(&right.node.job_id))
-    });
-    nodes
+        .min_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.node.job_id.cmp(&right.node.job_id))
+        })
+        .cloned()
 }
 
 struct JobMetadata {
@@ -288,13 +291,17 @@ impl From<JobState> for RunTreeStatus {
 mod tests {
     use rmpv::Value;
 
-    use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
+    use crate::dreamer_runner::{
+        DREAMER_RUNNER_JOB_KIND, DreamerJobPayload, DreamerRunnerStore, EnqueueDreamerJob,
+        EnqueueDreamerJobOutcome, encode_dreamer_job_payload,
+    };
     use crate::job_queue::{
-        ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, FailJob, FailOutcome,
+        ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, FailJob, FailOutcome, JobRecord,
+        JobState, RetryJob, RetryOutcome,
     };
     use crate::{Result, Vault, VaultConfig};
 
-    use super::{RunTreeAdapter, RunTreeRepair, RunTreeStatus};
+    use super::{RunTreeAdapter, RunTreeRepair, RunTreeStatus, render_run_tree};
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -383,6 +390,69 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn run_tree_omits_retry_last_error_until_terminal_failure() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue(&runner, "retrying-subagent", None, 10, "run-retry")?;
+        let queue = crate::JobQueue::new(&vault);
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "retry-worker".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, queued.job.id);
+        let RetryOutcome::Retried(_) = queue.retry(RetryJob {
+            id: claimed.id,
+            lease_owner: "retry-worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            backoff_until: 40,
+            last_error: Some("rate limited".to_owned()),
+            now: 30,
+        })?;
+
+        let tree = RunTreeAdapter::new(&vault).read_run("run-retry")?;
+
+        assert_eq!(tree.roots.len(), 1);
+        assert_eq!(tree.roots[0].status, RunTreeStatus::Queued);
+        assert_eq!(tree.roots[0].failure, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_tree_preserves_descendants_when_repairing_rootless_cycle() -> Result<()> {
+        let a = fixed_job_id(0x11);
+        let b = fixed_job_id(0x22);
+        let c = fixed_job_id(0x33);
+
+        let tree = render_run_tree(vec![
+            dreamer_record(a, "cycle-a", Some(b), 10, "run-cycle")?,
+            dreamer_record(b, "cycle-b", Some(a), 20, "run-cycle")?,
+            dreamer_record(c, "cycle-child", Some(a), 30, "run-cycle")?,
+        ])?;
+
+        assert_eq!(
+            tree.repairs,
+            vec![RunTreeRepair::ParentCycle {
+                job_id: hex(a),
+                parent_id: hex(b),
+            }]
+        );
+        assert_eq!(tree.roots.len(), 1);
+        assert_eq!(tree.roots[0].job_id, hex(a));
+        assert_eq!(tree.roots[0].parent_id.as_deref(), Some(hex(b).as_str()));
+        assert_eq!(tree.roots[0].children.len(), 2);
+        assert_eq!(tree.roots[0].children[0].job_id, hex(b));
+        assert!(tree.roots[0].children[0].children.is_empty());
+        assert_eq!(tree.roots[0].children[1].job_id, hex(c));
+
+        Ok(())
+    }
+
     fn enqueue(
         runner: &DreamerRunnerStore<'_>,
         job_type: &str,
@@ -453,6 +523,37 @@ mod tests {
         vault.store.job_records.delete(&mut wtxn, id.as_bytes())?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    fn dreamer_record(
+        id: crate::JobId,
+        job_type: &str,
+        parent_job: Option<crate::JobId>,
+        created_at: u64,
+        run_id: &str,
+    ) -> Result<JobRecord> {
+        Ok(JobRecord {
+            id,
+            kind: DREAMER_RUNNER_JOB_KIND.to_owned(),
+            payload: encode_dreamer_job_payload(&DreamerJobPayload {
+                job_type: job_type.to_owned(),
+                input: Value::from(format!("input:{job_type}")),
+                parent_job,
+            })?,
+            state: JobState::Queued,
+            lease_owner: None,
+            attempt_count: 0,
+            backoff_until: None,
+            last_error: None,
+            run_id: Some(run_id.to_owned()),
+            dedupe_key: None,
+            created_at,
+            updated_at: created_at,
+        })
+    }
+
+    fn fixed_job_id(byte: u8) -> crate::JobId {
+        crate::JobId::from_bytes(&[byte; 16]).expect("valid fixed job id")
     }
 
     fn hex(id: crate::JobId) -> String {

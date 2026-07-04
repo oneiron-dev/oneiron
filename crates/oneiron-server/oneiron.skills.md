@@ -326,14 +326,14 @@ Authentication: Core auth with read scope, either scoped bearer or the configure
 
 Query parameters:
 
-- `run_id` optional: filter queue rows to one runtime run id. Empty values and values over 128 bytes are rejected.
+- `run_id` required: filter queue rows to one runtime run id. Omitted, empty, and over-128-byte values are rejected to avoid unbounded queue scans.
 
 Response fields:
 
 - `roots`: root job nodes after non-mutating repair of missing parents or parent cycles.
 - Each node includes `job_id`, `run_id`, `parent_id`, `worker_kind`, `status`, `timestamps`, optional `failure`, and ordered `children`.
 - `status`: one of `queued`, `running`, `completed`, or `failed`.
-- `failure.reason`: summarized terminal failure text copied from the backing queue row.
+- `failure.reason`: summarized terminal failure text copied from the backing queue row only when `status` is `failed`.
 - `repairs`: render-time repair records, currently `missing_parent` and `parent_cycle`.
 
 Notes:

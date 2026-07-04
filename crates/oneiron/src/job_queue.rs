@@ -1030,8 +1030,17 @@ impl<'a> JobQueue<'a> {
     /// Reads persisted job rows for one run id in deterministic creation order.
     pub fn list_run(&self, run_id: &str) -> Result<Vec<JobRecord>> {
         validate_optional_run_id(Some(run_id))?;
-        let mut records = self.list()?;
-        records.retain(|record| record.run_id.as_deref() == Some(run_id));
+        let rtxn = self.store.env.read_txn()?;
+        let mut records = Vec::new();
+        for row in self.store.job_records.iter(&rtxn)? {
+            let (key, raw_record) = row?;
+            let id = JobId::from_bytes(key)?;
+            let record = decode_record(raw_record, id)?;
+            if record.run_id.as_deref() == Some(run_id) {
+                records.push(record);
+            }
+        }
+        records.sort_by(job_record_order);
         Ok(records)
     }
 
