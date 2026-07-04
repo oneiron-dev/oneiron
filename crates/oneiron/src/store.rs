@@ -1876,8 +1876,9 @@ impl Store {
             let run_candidate_count_before = data_window.candidate_count;
             for outcome in outcomes.iter().filter(|outcome| outcome.reward.is_some()) {
                 let reward = f64::from(outcome.reward.expect("filtered reward"));
-                reward_count += 1;
-                observe_retrieval_blend_outcome(&mut data_window, outcome);
+                let mut outcome_gradient = [0.0_f64; 4];
+                let mut outcome_component_count = 0_usize;
+                let mut outcome_candidate_count = 0_u32;
                 for candidate in &record.score_breakdown {
                     let rank_credit = 1.0 / f64::from(candidate.final_rank.max(1));
                     let mut candidate_has_blend_component = false;
@@ -1888,14 +1889,27 @@ impl Store {
                         if !component.score.is_finite() {
                             return Err(Error::CorruptedIndex("retrieval blend tuning"));
                         }
-                        gradient[index] += reward * rank_credit * f64::from(component.score);
-                        component_count += 1;
+                        outcome_gradient[index] +=
+                            reward * rank_credit * f64::from(component.score);
+                        outcome_component_count += 1;
                         candidate_has_blend_component = true;
                     }
                     if candidate_has_blend_component {
-                        data_window.candidate_count = data_window.candidate_count.saturating_add(1);
+                        outcome_candidate_count = outcome_candidate_count.saturating_add(1);
                     }
                 }
+                if outcome_component_count == 0 {
+                    continue;
+                }
+                for (total, outcome) in gradient.iter_mut().zip(outcome_gradient) {
+                    *total += outcome;
+                }
+                component_count += outcome_component_count;
+                reward_count += 1;
+                observe_retrieval_blend_outcome(&mut data_window, outcome);
+                data_window.candidate_count = data_window
+                    .candidate_count
+                    .saturating_add(outcome_candidate_count);
             }
             if reward_count > run_reward_count_before
                 && data_window.candidate_count > run_candidate_count_before
@@ -4358,6 +4372,97 @@ mod tests {
         assert_eq!(updated.data_window.outcome_count, 1);
         assert_eq!(updated.data_window.started_at_min, Some(300));
         assert_eq!(updated.data_window.started_at_max, Some(300));
+        Ok(())
+    }
+
+    #[test]
+    fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let blend_run_id = RetrievalRunId::now();
+        let blend = RetrievalRunRecord::new(
+            blend_run_id,
+            RetrievalAction::Pipeline,
+            500,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4C).as_bytes(),
+                final_rank: 1,
+                final_score: 1.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Recency,
+                    rank: 1,
+                    score: 1.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&blend)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: blend_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let text_only_run_id = RetrievalRunId::now();
+        let text_only = RetrievalRunRecord::new(
+            text_only_run_id,
+            RetrievalAction::VaultSearch,
+            600,
+            10,
+            vec![RetrievalSignal::Text],
+            vec![RetrievalScoreBreakdown {
+                result_id: *entity_id(0x4D).as_bytes(),
+                final_rank: 1,
+                final_score: 10.0,
+                components: vec![RetrievalScoreComponent {
+                    signal: RetrievalSignal::Text,
+                    rank: 1,
+                    score: 10.0,
+                }],
+            }],
+            1,
+            0,
+            None,
+        );
+        vault.store.record_retrieval_run(&text_only)?;
+        vault.record_retrieval_outcome(RetrievalOutcome {
+            run_id: text_only_run_id,
+            key: "beam.reward".to_owned(),
+            reward: Some(1.0),
+            accepted: Some(true),
+            metadata: BTreeMap::new(),
+        })?;
+
+        let error = vault
+            .tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+                max_runs: 2,
+                learning_rate: 0.10,
+                min_reward_count: 2,
+            })
+            .expect_err("text-only reward should not satisfy min_reward_count");
+        assert!(matches!(error, Error::InvalidConfig(message) if message.contains("found 1")));
+
+        let before = vault.retrieval_blend_weight_table()?;
+        let expected_weights =
+            apply_retrieval_blend_weight_update(before.weights, [1.0, 0.0, 0.0, 0.0], 0.10, 1)?;
+        let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
+            max_runs: 2,
+            learning_rate: 0.10,
+            min_reward_count: 1,
+        })?;
+
+        assert_eq!(updated.weights, expected_weights);
+        assert_eq!(updated.data_window.run_count, 1);
+        assert_eq!(updated.data_window.outcome_count, 1);
+        assert_eq!(updated.data_window.candidate_count, 1);
+        assert_eq!(updated.data_window.started_at_min, Some(500));
+        assert_eq!(updated.data_window.started_at_max, Some(500));
         Ok(())
     }
 
