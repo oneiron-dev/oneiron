@@ -1073,7 +1073,12 @@ impl<'a> DreamerRunnerStore<'a> {
             (JobState::Completed, DreamerJobProgressState::Done)
             | (JobState::Failed, DreamerJobProgressState::Failed)
             | (JobState::Queued | JobState::Leased, _) => {}
-            (JobState::Completed | JobState::Failed, _) => return Ok(None),
+            (
+                JobState::Paused | JobState::Completed | JobState::Failed | JobState::Cancelled,
+                _,
+            ) => {
+                return Ok(None);
+            }
         }
         producer
             .publish(ephemeral, update)
