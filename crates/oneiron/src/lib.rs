@@ -132,20 +132,28 @@ pub use crate::deletion::{
 };
 pub use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
-    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_JOB_KIND,
-    DREAMER_CONSOLIDATION_MESO_JOB_KIND, DREAMER_CONSOLIDATION_MICRO_JOB_KIND,
-    DREAMER_HOME_NODE_DESIGNATION_KEYS, DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION,
-    DREAMER_JOB_PAYLOAD_KEYS, DREAMER_JOB_PAYLOAD_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE,
-    DREAMER_MILESTONE_VALUE_KEYS, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND,
-    DreamerAdmissionOutcome, DreamerAdmittedJob, DreamerBudgetRecord, DreamerBudgetReservation,
-    DreamerBudgetReserveOutcome, DreamerBudgetSettlement, DreamerBudgetSettlementOutcome,
-    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerJobPayload, DreamerJobStatus,
-    DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord, DreamerReservedBudget,
-    DreamerRunTreeRecord, DreamerRunnerStore, DreamerWakeBudgetConfig,
-    EnqueueDreamerConsolidationJob, EnqueueDreamerJob, EnqueueDreamerJobOutcome, ParkDreamerJob,
-    ReserveDreamerBudget, SettleDreamerBudget, decode_dreamer_job_payload,
-    encode_dreamer_job_payload,
+    CompleteDreamerJob, CompleteDreamerJobOutcome, DEFAULT_DREAMER_CHILD_RESERVE_UNITS,
+    DREAMER_CONSOLIDATION_MACRO_JOB_KIND, DREAMER_CONSOLIDATION_MESO_JOB_KIND,
+    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DREAMER_HOME_NODE_DESIGNATION_KEYS,
+    DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_JOB_PAYLOAD_KEYS,
+    DREAMER_JOB_PAYLOAD_SCHEMA_VERSION, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_KEYS,
+    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DREAMER_RUNNER_JOB_KIND, DreamerAdmissionOutcome,
+    DreamerAdmittedJob, DreamerBudgetRecord, DreamerBudgetReservation, DreamerBudgetReserveOutcome,
+    DreamerBudgetSettlement, DreamerBudgetSettlementOutcome, DreamerConsolidationAdmissionOutcome,
+    DreamerConsolidationScope, DreamerDurableMilestone, DreamerHomeNodeCandidate,
+    DreamerHomeNodeClass, DreamerHomeNodeDesignation, DreamerJobPayload, DreamerJobProgressState,
+    DreamerJobStatus, DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord,
+    DreamerReservedBudget, DreamerRunTreeRecord, DreamerRunnerStore, DreamerWakeBudgetConfig,
+    EnqueueDreamerConsolidationJob, EnqueueDreamerJob, EnqueueDreamerJobOutcome, FailDreamerJob,
+    FailDreamerJobOutcome, ParkDreamerJob, ReserveDreamerBudget, SettleDreamerBudget,
+    decode_dreamer_job_payload, encode_dreamer_job_payload,
+};
+#[cfg(feature = "sync")]
+pub use crate::dreamer_runner::{
+    DREAMER_JOB_PROGRESS_KEY_PREFIX, DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS,
+    DREAMER_JOB_PROGRESS_THROTTLE_MS, DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION,
+    DreamerJobProgressProducer, DreamerJobProgressSnapshot, DreamerJobProgressSource,
+    DreamerJobProgressUpdate, DreamerProgressed, dreamer_job_progress_key,
 };
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::federation::{

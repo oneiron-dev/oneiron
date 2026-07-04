@@ -4,18 +4,29 @@
 //! (queue leases, local run-tree rows, parked rows, and budget counters) stays
 //! in private LMDB rows and is not sync materialized as vault entities.
 
+#[cfg(feature = "sync")]
+use std::collections::HashMap;
 use std::collections::HashSet;
+#[cfg(feature = "sync")]
+use std::fmt::Write as _;
 use std::io::Cursor;
 
 use rmpv::Value;
 
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimSubject;
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::error::{Error, Result};
+#[cfg(feature = "sync")]
+use crate::job_queue::JobState;
 use crate::job_queue::{
-    ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobId, JobQueue, JobRecord,
+    ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, EnqueueJob, EnqueueOutcome, FailJob,
+    FailOutcome, JobId, JobQueue, JobRecord,
 };
-use crate::types::{ClaimCandidate, EntityId, TimeRange, WriteEnvelope};
+#[cfg(feature = "sync")]
+use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
+use crate::types::{ClaimCandidate, ENTITY_TYPE_CLAIM, EntityId, TimeRange, WriteEnvelope};
 
 /// Generic [`JobQueue`] kind used by Dreamer runner jobs.
 pub const DREAMER_RUNNER_JOB_KIND: &str = "dreamer";
@@ -30,6 +41,18 @@ pub const DREAMER_MILESTONE_PREDICATE: &str = "dreamer.job_milestone";
 pub const DREAMER_MILESTONE_VALUE_SCHEMA_VERSION: u64 = 1;
 /// Pinned on-disk MessagePack key set for Dreamer milestone claim values.
 pub const DREAMER_MILESTONE_VALUE_KEYS: [&str; 4] = ["schema_version", "job_id", "milestone", "at"];
+/// Flat ephemeral key prefix for live Dreamer job progress.
+#[cfg(feature = "sync")]
+pub const DREAMER_JOB_PROGRESS_KEY_PREFIX: &str = "job:";
+/// Current schema version for live Dreamer job progress ephemeral values.
+#[cfg(feature = "sync")]
+pub const DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION: i64 = 1;
+/// Default per-job live progress throttle: at most one update per second.
+#[cfg(feature = "sync")]
+pub const DREAMER_JOB_PROGRESS_THROTTLE_MS: u64 = 1_000;
+/// Default in-process terminal-stop retention, matching the sync lane TTL.
+#[cfg(feature = "sync")]
+pub const DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS: u64 = 30_000;
 /// Default fan-out reservation for one Dreamer child, in token-like units.
 pub const DEFAULT_DREAMER_CHILD_RESERVE_UNITS: u64 = 8_000;
 /// MICRO consolidation queue kind. Private per-device job rows only.
@@ -62,6 +85,24 @@ const KEY_CLASS: &str = "class";
 const KEY_ELECTED_AT: &str = "elected_at";
 const KEY_REASON: &str = "reason";
 const KEY_PARKED_AT: &str = "parked_at";
+#[cfg(feature = "sync")]
+const KEY_STATE: &str = "state";
+#[cfg(feature = "sync")]
+const KEY_MESSAGE: &str = "message";
+#[cfg(feature = "sync")]
+const KEY_COMPLETED_UNITS: &str = "completed_units";
+#[cfg(feature = "sync")]
+const KEY_UPDATED_AT_MS: &str = "updated_at_ms";
+#[cfg(feature = "sync")]
+const DREAMER_JOB_PROGRESS_VALUE_KEYS: [&str; 7] = [
+    KEY_SCHEMA_VERSION,
+    KEY_JOB_ID,
+    KEY_STATE,
+    KEY_MESSAGE,
+    KEY_COMPLETED_UNITS,
+    KEY_TOTAL_UNITS,
+    KEY_UPDATED_AT_MS,
+];
 const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
 const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 1;
 const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
@@ -97,6 +138,129 @@ const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";
 const MAX_DREAMER_JOB_TYPE_LEN: usize = 128;
 const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 const MAX_DREAMER_PARK_REASON_LEN: usize = 512;
+#[cfg(feature = "sync")]
+const MAX_DREAMER_PROGRESS_MESSAGE_LEN: usize = 512;
+
+/// Coarse Dreamer job progress state for live ephemeral rows and durable
+/// milestone fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DreamerJobProgressState {
+    Created,
+    Started,
+    Running,
+    CheckpointReached,
+    Parked,
+    Done,
+    Failed,
+}
+
+impl DreamerJobProgressState {
+    /// Stable string stored in `job:{job_id}` ephemeral values.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Started => "started",
+            Self::Running => "running",
+            Self::CheckpointReached => "checkpoint-reached",
+            Self::Parked => "parked",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// Parses the pinned live-progress state string form.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "created" => Some(Self::Created),
+            "started" => Some(Self::Started),
+            "running" => Some(Self::Running),
+            "checkpoint-reached" => Some(Self::CheckpointReached),
+            "parked" => Some(Self::Parked),
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    /// Returns true once the runner must stop producing live ticks.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Done | Self::Failed)
+    }
+}
+
+impl From<DreamerMilestoneKind> for DreamerJobProgressState {
+    fn from(kind: DreamerMilestoneKind) -> Self {
+        match kind {
+            DreamerMilestoneKind::Created => Self::Created,
+            DreamerMilestoneKind::Started => Self::Started,
+            DreamerMilestoneKind::CheckpointReached => Self::CheckpointReached,
+            DreamerMilestoneKind::Done => Self::Done,
+            DreamerMilestoneKind::Failed => Self::Failed,
+        }
+    }
+}
+
+/// Durable Dreamer milestone decoded from `dreamer.job_milestone` claims.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DreamerDurableMilestone {
+    pub claim_id: EntityId,
+    pub job_id: JobId,
+    pub kind: DreamerMilestoneKind,
+    pub at: u64,
+    pub learned_at: u64,
+}
+
+/// Live Dreamer progress update to publish into the ephemeral keyspace.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerJobProgressUpdate {
+    pub job_id: JobId,
+    pub state: DreamerJobProgressState,
+    pub message: Option<String>,
+    pub completed_units: u64,
+    pub total_units: Option<u64>,
+    pub updated_at_ms: u64,
+}
+
+/// Source used for a progress snapshot returned to a consumer.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DreamerJobProgressSource {
+    Ephemeral,
+    DurableMilestone,
+}
+
+/// Consumer-facing progress snapshot: live row if present, durable milestone
+/// fallback otherwise.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamerJobProgressSnapshot {
+    pub job_id: JobId,
+    pub state: DreamerJobProgressState,
+    pub source: DreamerJobProgressSource,
+    pub message: Option<String>,
+    pub completed_units: u64,
+    pub total_units: Option<u64>,
+    pub updated_at_ms: u64,
+}
+
+/// In-process producer for Dreamer live progress on the Loro ephemeral lane.
+///
+/// The producer keeps only bounded throttle/terminal-stop bookkeeping. The
+/// sync-visible state remains exactly one mutable `job:{job_id}` row in the
+/// provided [`EphemeralStore`].
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone)]
+pub struct DreamerJobProgressProducer {
+    throttle_ms: u64,
+    terminal_retention_ms: u64,
+    last_emitted_at_ms: HashMap<JobId, u64>,
+    terminal_at_ms: HashMap<JobId, u64>,
+}
 
 /// Consolidation job-table lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -303,6 +467,49 @@ pub enum EnqueueDreamerJobOutcome {
     Existing(DreamerJobStatus),
 }
 
+/// Input for completing a leased Dreamer job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompleteDreamerJob {
+    pub id: JobId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub now: u64,
+}
+
+/// Typed complete outcome for a Dreamer job.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum CompleteDreamerJobOutcome {
+    Completed(DreamerJobStatus),
+    AlreadyCompleted(DreamerJobStatus),
+}
+
+/// Input for failing a leased Dreamer job terminally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailDreamerJob {
+    pub id: JobId,
+    pub lease_owner: String,
+    pub attempt_count: u32,
+    pub reason: String,
+    pub now: u64,
+}
+
+/// Typed fail outcome for a Dreamer job.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum FailDreamerJobOutcome {
+    Failed(DreamerJobStatus),
+    AlreadyFailed(DreamerJobStatus),
+}
+
+/// Runner transition outcome plus an optional encoded ephemeral frame.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct DreamerProgressed<T> {
+    pub outcome: T,
+    pub frame: Option<Vec<u8>>,
+}
+
 /// Pinned milestone vocabulary for durable Dreamer progress claims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -350,6 +557,157 @@ pub struct DreamerMilestoneClaim {
     pub envelope: WriteEnvelope,
     pub occurred: TimeRange,
     pub learned_at: u64,
+}
+
+#[cfg(feature = "sync")]
+impl DreamerJobProgressUpdate {
+    fn validate(&self) -> std::result::Result<(), TransportError> {
+        if let Some(total) = self.total_units
+            && self.completed_units > total
+        {
+            return Err(TransportError::InvalidPayload(
+                "dreamer progress completed_units exceeds total_units",
+            ));
+        }
+        if self
+            .message
+            .as_ref()
+            .is_some_and(|message| message.len() > MAX_DREAMER_PROGRESS_MESSAGE_LEN)
+        {
+            return Err(TransportError::InvalidPayload(
+                "dreamer progress message exceeds 512 bytes",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "sync")]
+impl DreamerJobProgressSnapshot {
+    fn from_live_update(update: &DreamerJobProgressUpdate) -> Self {
+        Self {
+            job_id: update.job_id,
+            state: update.state,
+            source: DreamerJobProgressSource::Ephemeral,
+            message: update.message.clone(),
+            completed_units: update.completed_units,
+            total_units: update.total_units,
+            updated_at_ms: update.updated_at_ms,
+        }
+    }
+
+    fn from_milestone(milestone: DreamerDurableMilestone) -> Self {
+        Self {
+            job_id: milestone.job_id,
+            state: milestone.kind.into(),
+            source: DreamerJobProgressSource::DurableMilestone,
+            message: None,
+            completed_units: 0,
+            total_units: None,
+            updated_at_ms: milestone.at.saturating_mul(1_000),
+        }
+    }
+}
+
+#[cfg(feature = "sync")]
+impl Default for DreamerJobProgressProducer {
+    fn default() -> Self {
+        Self::with_limits(
+            DREAMER_JOB_PROGRESS_THROTTLE_MS,
+            DREAMER_JOB_PROGRESS_TERMINAL_RETENTION_MS,
+        )
+        .expect("default dreamer progress limits are valid")
+    }
+}
+
+#[cfg(feature = "sync")]
+impl DreamerJobProgressProducer {
+    /// Creates a producer with the contract-pinned 1Hz throttle.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a producer with explicit limits. `terminal_retention_ms` should
+    /// match the [`EphemeralStore`] timeout so stopped jobs cannot resume
+    /// ticking before their last live row ages out.
+    pub fn with_limits(throttle_ms: u64, terminal_retention_ms: u64) -> Result<Self> {
+        if throttle_ms == 0 {
+            return Err(invalid_dreamer_runner(
+                "dreamer progress throttle_ms must be > 0",
+            ));
+        }
+        if terminal_retention_ms == 0 {
+            return Err(invalid_dreamer_runner(
+                "dreamer progress terminal_retention_ms must be > 0",
+            ));
+        }
+        Ok(Self {
+            throttle_ms,
+            terminal_retention_ms,
+            last_emitted_at_ms: HashMap::new(),
+            terminal_at_ms: HashMap::new(),
+        })
+    }
+
+    /// Publishes one live progress update if it passes the per-job throttle.
+    ///
+    /// Terminal `Done`/`Failed` updates overwrite the mutable live row with a
+    /// terminal state, then stop any further live production until TTL ageout.
+    pub fn publish(
+        &mut self,
+        store: &EphemeralStore,
+        update: DreamerJobProgressUpdate,
+    ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+        update.validate()?;
+        self.retain_terminal_stops(update.updated_at_ms);
+
+        if update.state.is_terminal() {
+            let key = dreamer_job_progress_key(update.job_id);
+            let value = encode_job_progress_value(&update)?;
+            store.set(&key, value);
+            self.mark_terminal(update.job_id, update.updated_at_ms);
+            return encode_ephemeral(&store.encode(&key))
+                .into_result()
+                .map(Some);
+        }
+        if self.terminal_at_ms.contains_key(&update.job_id) {
+            return Ok(None);
+        }
+        if let Some(last) = self.last_emitted_at_ms.get(&update.job_id)
+            && update.updated_at_ms.saturating_sub(*last) < self.throttle_ms
+        {
+            return Ok(None);
+        }
+
+        let key = dreamer_job_progress_key(update.job_id);
+        let value = encode_job_progress_value(&update)?;
+        store.set(&key, value);
+        self.last_emitted_at_ms
+            .insert(update.job_id, update.updated_at_ms);
+        encode_ephemeral(&store.encode(&key))
+            .into_result()
+            .map(Some)
+    }
+
+    /// Marks a job terminal without producing a live progress frame.
+    pub fn mark_terminal(&mut self, job_id: JobId, now_ms: u64) {
+        self.last_emitted_at_ms.remove(&job_id);
+        self.terminal_at_ms.insert(job_id, now_ms);
+    }
+
+    /// Runs the Rust-side `EphemeralStore` TTL pass and prunes old terminal
+    /// stop markers from this producer.
+    pub fn remove_outdated(&mut self, store: &EphemeralStore, now_ms: u64) {
+        store.remove_outdated();
+        self.retain_terminal_stops(now_ms);
+    }
+
+    fn retain_terminal_stops(&mut self, now_ms: u64) {
+        let retention = self.terminal_retention_ms;
+        self.terminal_at_ms
+            .retain(|_, terminal_at| now_ms.saturating_sub(*terminal_at) < retention);
+    }
 }
 
 /// Private wake-budget counter row used only by the local Dreamer runner.
@@ -697,6 +1055,31 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Publishes a live progress update for an existing Dreamer job.
+    ///
+    /// This is the runner seam used by execution loops for in-flight ticks;
+    /// the producer enforces per-job throttling and terminal-stop behavior.
+    #[cfg(feature = "sync")]
+    pub fn publish_progress(
+        &self,
+        producer: &mut DreamerJobProgressProducer,
+        ephemeral: &EphemeralStore,
+        update: DreamerJobProgressUpdate,
+    ) -> Result<Option<Vec<u8>>> {
+        let status = self.status(update.job_id)?.ok_or(invalid_dreamer_runner(
+            "dreamer progress job must exist before publish",
+        ))?;
+        match (status.job.state, update.state) {
+            (JobState::Completed, DreamerJobProgressState::Done)
+            | (JobState::Failed, DreamerJobProgressState::Failed)
+            | (JobState::Queued | JobState::Leased, _) => {}
+            (JobState::Completed | JobState::Failed, _) => return Ok(None),
+        }
+        producer
+            .publish(ephemeral, update)
+            .map_err(dreamer_progress_error)
+    }
+
     /// Atomically admits the next queued Dreamer job.
     ///
     /// A successful admission leases one queue row, mutates the private budget
@@ -840,6 +1223,36 @@ impl<'a> DreamerRunnerStore<'a> {
         )))
     }
 
+    /// Admits the next Dreamer job and emits its initial live progress row.
+    #[cfg(feature = "sync")]
+    pub fn admit_next_with_progress(
+        &self,
+        input: AdmitDreamerJob,
+        producer: &mut DreamerJobProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<DreamerProgressed<DreamerAdmissionOutcome>> {
+        let now_ms = input.now.saturating_mul(1_000);
+        let outcome = self.admit_next(input)?;
+        let frame = if let DreamerAdmissionOutcome::Admitted(admitted) = &outcome {
+            let reservation = &admitted.reservation;
+            self.publish_progress(
+                producer,
+                ephemeral,
+                DreamerJobProgressUpdate {
+                    job_id: admitted.status.job.id,
+                    state: DreamerJobProgressState::Started,
+                    message: None,
+                    completed_units: 0,
+                    total_units: Some(reservation.reserved_units),
+                    updated_at_ms: now_ms,
+                },
+            )?
+        } else {
+            None
+        };
+        Ok(DreamerProgressed { outcome, frame })
+    }
+
     /// Reserves wake-budget units for a known child job.
     ///
     /// `admit_next` is the normal spawn path because it co-commits queue
@@ -943,6 +1356,100 @@ impl<'a> DreamerRunnerStore<'a> {
         })
     }
 
+    /// Marks a leased Dreamer job complete through the generic queue.
+    pub fn complete(&self, input: CompleteDreamerJob) -> Result<CompleteDreamerJobOutcome> {
+        self.ensure_terminal_transition_target(input.id)?;
+        match self.jobs.complete(CompleteJob {
+            id: input.id,
+            lease_owner: input.lease_owner,
+            attempt_count: input.attempt_count,
+            now: input.now,
+        })? {
+            CompleteOutcome::Completed(record) => Ok(CompleteDreamerJobOutcome::Completed(
+                decode_dreamer_job_status(record)?,
+            )),
+            CompleteOutcome::AlreadyCompleted(record) => Ok(
+                CompleteDreamerJobOutcome::AlreadyCompleted(decode_dreamer_job_status(record)?),
+            ),
+        }
+    }
+
+    /// Marks a leased Dreamer job complete and stops live progress production.
+    #[cfg(feature = "sync")]
+    pub fn complete_with_progress(
+        &self,
+        input: CompleteDreamerJob,
+        producer: &mut DreamerJobProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<DreamerProgressed<CompleteDreamerJobOutcome>> {
+        let outcome = self.complete(input)?;
+        let status = complete_outcome_status(&outcome);
+        let frame = self.publish_progress(
+            producer,
+            ephemeral,
+            DreamerJobProgressUpdate {
+                job_id: status.job.id,
+                state: DreamerJobProgressState::Done,
+                message: None,
+                completed_units: 0,
+                total_units: None,
+                updated_at_ms: status.job.updated_at.saturating_mul(1_000),
+            },
+        )?;
+        Ok(DreamerProgressed { outcome, frame })
+    }
+
+    /// Marks a leased Dreamer job terminally failed through the generic queue.
+    pub fn fail(&self, input: FailDreamerJob) -> Result<FailDreamerJobOutcome> {
+        self.ensure_terminal_transition_target(input.id)?;
+        match self.jobs.fail(FailJob {
+            id: input.id,
+            lease_owner: input.lease_owner,
+            attempt_count: input.attempt_count,
+            reason: input.reason,
+            now: input.now,
+        })? {
+            FailOutcome::Failed(record) => Ok(FailDreamerJobOutcome::Failed(
+                decode_dreamer_job_status(record)?,
+            )),
+            FailOutcome::AlreadyFailed(record) => Ok(FailDreamerJobOutcome::AlreadyFailed(
+                decode_dreamer_job_status(record)?,
+            )),
+        }
+    }
+
+    /// Marks a leased Dreamer job failed and stops live progress production.
+    #[cfg(feature = "sync")]
+    pub fn fail_with_progress(
+        &self,
+        input: FailDreamerJob,
+        producer: &mut DreamerJobProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<DreamerProgressed<FailDreamerJobOutcome>> {
+        let outcome = self.fail(input)?;
+        let status = fail_outcome_status(&outcome);
+        let frame = self.publish_progress(
+            producer,
+            ephemeral,
+            DreamerJobProgressUpdate {
+                job_id: status.job.id,
+                state: DreamerJobProgressState::Failed,
+                message: bounded_progress_message(status.job.last_error.as_deref()),
+                completed_units: 0,
+                total_units: None,
+                updated_at_ms: status.job.updated_at.saturating_mul(1_000),
+            },
+        )?;
+        Ok(DreamerProgressed { outcome, frame })
+    }
+
+    fn ensure_terminal_transition_target(&self, id: JobId) -> Result<()> {
+        let record = self.jobs.get(id)?.ok_or(invalid_dreamer_runner(
+            "dreamer terminal transition job must exist",
+        ))?;
+        decode_dreamer_job_status(record).map(|_| ())
+    }
+
     /// Reads one Dreamer job by queue id.
     pub fn status(&self, id: JobId) -> Result<Option<DreamerJobStatus>> {
         self.jobs
@@ -1014,6 +1521,33 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(record)
     }
 
+    /// Parks a Dreamer job and emits a live parked progress row.
+    #[cfg(feature = "sync")]
+    pub fn park_job_with_progress(
+        &self,
+        input: ParkDreamerJob,
+        producer: &mut DreamerJobProgressProducer,
+        ephemeral: &EphemeralStore,
+    ) -> Result<DreamerProgressed<DreamerParkedJobRecord>> {
+        let record = self.park_job(input)?;
+        let frame = self.publish_progress(
+            producer,
+            ephemeral,
+            DreamerJobProgressUpdate {
+                job_id: record.job_id,
+                state: DreamerJobProgressState::Parked,
+                message: Some(record.reason.clone()),
+                completed_units: 0,
+                total_units: None,
+                updated_at_ms: record.parked_at.saturating_mul(1_000),
+            },
+        )?;
+        Ok(DreamerProgressed {
+            outcome: record,
+            frame,
+        })
+    }
+
     /// Reads a private parked-job row.
     pub fn parked_job(&self, job_id: JobId) -> Result<Option<DreamerParkedJobRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
@@ -1022,6 +1556,75 @@ impl<'a> DreamerRunnerStore<'a> {
             return Ok(None);
         };
         decode_parked_record(raw).map(Some)
+    }
+
+    /// Returns the latest active/approved durable milestone for `job_id`.
+    ///
+    /// This is the coarse fallback surface for consumers that cannot reach the
+    /// executing device's live ephemeral row.
+    pub fn latest_durable_milestone(
+        &self,
+        job_id: JobId,
+    ) -> Result<Option<DreamerDurableMilestone>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let mut latest: Option<DreamerDurableMilestone> = None;
+
+        for row in self.vault.store.entities.iter(&rtxn)? {
+            let (key, raw) = row?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
+                continue;
+            }
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if body.predicate != DREAMER_MILESTONE_PREDICATE
+                || body.approval != ClaimApprovalStatus::Approved
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.stale
+            {
+                continue;
+            }
+            let (kind, at) = match decode_milestone_value_for_job(&body.value, job_id) {
+                Ok(Some(decoded)) => decoded,
+                Ok(None) | Err(_) => continue,
+            };
+
+            let key_bytes: [u8; 16] = key.try_into().map_err(|_| Error::InvalidKey)?;
+            let milestone = DreamerDurableMilestone {
+                claim_id: EntityId::from_bytes(key_bytes)?,
+                job_id,
+                kind,
+                at,
+                learned_at: header.learned_at,
+            };
+
+            if latest.as_ref().is_none_or(|current| {
+                (milestone.at, milestone.learned_at, milestone.claim_id)
+                    > (current.at, current.learned_at, current.claim_id)
+            }) {
+                latest = Some(milestone);
+            }
+        }
+
+        Ok(latest)
+    }
+
+    /// Returns the live ephemeral progress row when present, otherwise falls
+    /// back to the latest durable milestone claim.
+    #[cfg(feature = "sync")]
+    pub fn progress_snapshot(
+        &self,
+        ephemeral: &EphemeralStore,
+        job_id: JobId,
+    ) -> Result<Option<DreamerJobProgressSnapshot>> {
+        if let Some(value) = ephemeral.get(&dreamer_job_progress_key(job_id))
+            && let Ok(update) = decode_job_progress_value(&value, job_id)
+        {
+            return Ok(Some(DreamerJobProgressSnapshot::from_live_update(&update)));
+        }
+
+        self.latest_durable_milestone(job_id)
+            .map(|milestone| milestone.map(DreamerJobProgressSnapshot::from_milestone))
     }
 }
 
@@ -1061,6 +1664,46 @@ fn decode_dreamer_job_status(record: JobRecord) -> Result<DreamerJobStatus> {
         job: record,
         payload,
     })
+}
+
+#[cfg(feature = "sync")]
+fn dreamer_progress_error(error: TransportError) -> Error {
+    Error::SyncProtocolError(error.to_string())
+}
+
+#[cfg(feature = "sync")]
+fn complete_outcome_status(outcome: &CompleteDreamerJobOutcome) -> &DreamerJobStatus {
+    match outcome {
+        CompleteDreamerJobOutcome::Completed(status)
+        | CompleteDreamerJobOutcome::AlreadyCompleted(status) => status,
+    }
+}
+
+#[cfg(feature = "sync")]
+fn fail_outcome_status(outcome: &FailDreamerJobOutcome) -> &DreamerJobStatus {
+    match outcome {
+        FailDreamerJobOutcome::Failed(status) | FailDreamerJobOutcome::AlreadyFailed(status) => {
+            status
+        }
+    }
+}
+
+#[cfg(feature = "sync")]
+fn bounded_progress_message(message: Option<&str>) -> Option<String> {
+    let message = message?;
+    if message.len() <= MAX_DREAMER_PROGRESS_MESSAGE_LEN {
+        return Some(message.to_owned());
+    }
+
+    let mut end = 0;
+    for (index, ch) in message.char_indices() {
+        let next = index + ch.len_utf8();
+        if next > MAX_DREAMER_PROGRESS_MESSAGE_LEN {
+            break;
+        }
+        end = next;
+    }
+    Some(message[..end].to_owned())
 }
 
 fn is_dreamer_queue_kind(kind: &str) -> bool {
@@ -1467,6 +2110,248 @@ fn encode_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) ->
         (Value::from(KEY_MILESTONE), Value::from(kind.as_str())),
         (Value::from(KEY_AT), Value::from(at)),
     ])
+}
+
+fn decode_milestone_value_for_job(
+    value: &Value,
+    expected_job_id: JobId,
+) -> Result<Option<(DreamerMilestoneKind, u64)>> {
+    let entries = expect_map(value, "dreamer milestone value must be a MessagePack map")?;
+    let mut schema_version = None;
+    let mut job_id = None;
+    let mut milestone = None;
+    let mut at = None;
+    let mut seen = [false; DREAMER_MILESTONE_VALUE_KEYS.len()];
+
+    for (key, value) in entries {
+        let key = expect_key(key, "dreamer milestone value keys must be strings")?;
+        let index = pinned_key_index(key, &DREAMER_MILESTONE_VALUE_KEYS).ok_or(
+            invalid_dreamer_runner("dreamer milestone value key is not pinned"),
+        )?;
+        if seen[index] {
+            return Err(invalid_dreamer_runner(
+                "duplicate dreamer milestone value key",
+            ));
+        }
+        seen[index] = true;
+
+        match DREAMER_MILESTONE_VALUE_KEYS[index] {
+            KEY_SCHEMA_VERSION => {
+                schema_version = Some(expect_u64(
+                    value,
+                    "dreamer milestone value schema_version must be an integer",
+                )?);
+            }
+            KEY_JOB_ID => job_id = Some(decode_job_id(value)?),
+            KEY_MILESTONE => {
+                let parsed =
+                    expect_string(value, "dreamer milestone value milestone must be a string")?;
+                milestone = Some(DreamerMilestoneKind::parse(&parsed).ok_or(
+                    invalid_dreamer_runner("unknown dreamer milestone value milestone"),
+                )?);
+            }
+            KEY_AT => {
+                at = Some(expect_u64(
+                    value,
+                    "dreamer milestone value at must be an integer",
+                )?);
+            }
+            _ => unreachable!("index resolved from DREAMER_MILESTONE_VALUE_KEYS"),
+        }
+    }
+
+    let schema_version = schema_version.ok_or(invalid_dreamer_runner(
+        "missing dreamer milestone value schema_version",
+    ))?;
+    if schema_version != DREAMER_MILESTONE_VALUE_SCHEMA_VERSION {
+        return Err(invalid_dreamer_runner(
+            "unsupported dreamer milestone value schema_version",
+        ));
+    }
+    if job_id.ok_or(invalid_dreamer_runner(
+        "missing dreamer milestone value job_id",
+    ))? != expected_job_id
+    {
+        return Ok(None);
+    }
+
+    Ok(Some((
+        milestone.ok_or(invalid_dreamer_runner(
+            "missing dreamer milestone value milestone",
+        ))?,
+        at.ok_or(invalid_dreamer_runner("missing dreamer milestone value at"))?,
+    )))
+}
+
+#[cfg(feature = "sync")]
+#[must_use]
+pub fn dreamer_job_progress_key(job_id: JobId) -> String {
+    let mut key = String::with_capacity(DREAMER_JOB_PROGRESS_KEY_PREFIX.len() + 32);
+    key.push_str(DREAMER_JOB_PROGRESS_KEY_PREFIX);
+    for byte in job_id.as_bytes() {
+        write!(&mut key, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    key
+}
+
+#[cfg(feature = "sync")]
+fn encode_job_progress_value(
+    update: &DreamerJobProgressUpdate,
+) -> std::result::Result<LoroValue, TransportError> {
+    update.validate()?;
+    Ok(LoroValue::Map(
+        vec![
+            (
+                KEY_SCHEMA_VERSION.to_owned(),
+                LoroValue::I64(DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION),
+            ),
+            (
+                KEY_JOB_ID.to_owned(),
+                LoroValue::String(dreamer_job_id_hex(update.job_id).into()),
+            ),
+            (
+                KEY_STATE.to_owned(),
+                LoroValue::String(update.state.as_str().into()),
+            ),
+            (
+                KEY_MESSAGE.to_owned(),
+                update
+                    .message
+                    .as_deref()
+                    .map_or(LoroValue::Null, |message| LoroValue::String(message.into())),
+            ),
+            (
+                KEY_COMPLETED_UNITS.to_owned(),
+                LoroValue::I64(u64_to_i64_progress(update.completed_units)?),
+            ),
+            (
+                KEY_TOTAL_UNITS.to_owned(),
+                update
+                    .total_units
+                    .map(u64_to_i64_progress)
+                    .transpose()?
+                    .map_or(LoroValue::Null, LoroValue::I64),
+            ),
+            (
+                KEY_UPDATED_AT_MS.to_owned(),
+                LoroValue::I64(u64_to_i64_progress(update.updated_at_ms)?),
+            ),
+        ]
+        .into(),
+    ))
+}
+
+#[cfg(feature = "sync")]
+fn decode_job_progress_value(
+    value: &LoroValue,
+    expected_job_id: JobId,
+) -> std::result::Result<DreamerJobProgressUpdate, TransportError> {
+    let LoroValue::Map(entries) = value else {
+        return Err(TransportError::InvalidPayload(
+            "dreamer progress value must be a map",
+        ));
+    };
+    if entries
+        .keys()
+        .any(|key| !DREAMER_JOB_PROGRESS_VALUE_KEYS.contains(&key.as_str()))
+    {
+        return Err(TransportError::InvalidPayload(
+            "dreamer progress value key is not pinned",
+        ));
+    }
+
+    let schema_version = expect_loro_i64(entries.get(KEY_SCHEMA_VERSION), KEY_SCHEMA_VERSION)?;
+    if schema_version != DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION {
+        return Err(TransportError::InvalidPayload(
+            "unsupported dreamer progress schema_version",
+        ));
+    }
+
+    let job_id = expect_loro_string(entries.get(KEY_JOB_ID), KEY_JOB_ID)?;
+    if job_id != dreamer_job_id_hex(expected_job_id) {
+        return Err(TransportError::InvalidPayload(
+            "dreamer progress job_id mismatch",
+        ));
+    }
+
+    let state =
+        DreamerJobProgressState::parse(expect_loro_string(entries.get(KEY_STATE), KEY_STATE)?)
+            .ok_or(TransportError::InvalidPayload(
+                "unknown dreamer progress state",
+            ))?;
+    let message = match entries.get(KEY_MESSAGE) {
+        Some(LoroValue::Null) | None => None,
+        Some(value) => Some(expect_loro_string(Some(value), KEY_MESSAGE)?.to_owned()),
+    };
+    let completed_units = i64_to_u64_progress(expect_loro_i64(
+        entries.get(KEY_COMPLETED_UNITS),
+        KEY_COMPLETED_UNITS,
+    )?)?;
+    let total_units = match entries.get(KEY_TOTAL_UNITS) {
+        Some(LoroValue::Null) | None => None,
+        Some(value) => Some(i64_to_u64_progress(expect_loro_i64(
+            Some(value),
+            KEY_TOTAL_UNITS,
+        )?)?),
+    };
+    let updated_at_ms = i64_to_u64_progress(expect_loro_i64(
+        entries.get(KEY_UPDATED_AT_MS),
+        KEY_UPDATED_AT_MS,
+    )?)?;
+
+    let update = DreamerJobProgressUpdate {
+        job_id: expected_job_id,
+        state,
+        message,
+        completed_units,
+        total_units,
+        updated_at_ms,
+    };
+    update.validate()?;
+    Ok(update)
+}
+
+#[cfg(feature = "sync")]
+fn dreamer_job_id_hex(job_id: JobId) -> String {
+    let mut out = String::with_capacity(32);
+    for byte in job_id.as_bytes() {
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+#[cfg(feature = "sync")]
+fn u64_to_i64_progress(value: u64) -> std::result::Result<i64, TransportError> {
+    i64::try_from(value)
+        .map_err(|_| TransportError::InvalidPayload("dreamer progress integer exceeds i64"))
+}
+
+#[cfg(feature = "sync")]
+fn i64_to_u64_progress(value: i64) -> std::result::Result<u64, TransportError> {
+    u64::try_from(value)
+        .map_err(|_| TransportError::InvalidPayload("dreamer progress integer is negative"))
+}
+
+#[cfg(feature = "sync")]
+fn expect_loro_i64(
+    value: Option<&LoroValue>,
+    field: &'static str,
+) -> std::result::Result<i64, TransportError> {
+    let Some(LoroValue::I64(value)) = value else {
+        return Err(TransportError::InvalidPayload(field));
+    };
+    Ok(*value)
+}
+
+#[cfg(feature = "sync")]
+fn expect_loro_string<'a>(
+    value: Option<&'a LoroValue>,
+    field: &'static str,
+) -> std::result::Result<&'a str, TransportError> {
+    let Some(LoroValue::String(value)) = value else {
+        return Err(TransportError::InvalidPayload(field));
+    };
+    Ok(value.as_str())
 }
 
 fn encode_budget_record(record: &DreamerBudgetRecord) -> Result<Vec<u8>> {
@@ -2153,6 +3038,50 @@ mod tests {
     }
 
     #[cfg(feature = "sync")]
+    fn write_milestone_for_job(
+        vault: &Vault,
+        job_id: JobId,
+        claim_id: EntityId,
+        kind: DreamerMilestoneKind,
+        at: u64,
+    ) -> Result<()> {
+        let mut milestone = milestone_fixture(vault, claim_id, at)?;
+        milestone.kind = kind;
+        let mut wtxn = vault.store.env.write_txn()?;
+        apply_milestone_claim_in_txn(vault, &mut wtxn, job_id, milestone)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    fn write_milestone_value_claim(
+        vault: &Vault,
+        claim_id: EntityId,
+        value: Value,
+        at: u64,
+        stale: bool,
+    ) -> Result<()> {
+        let fixture = milestone_fixture(vault, claim_id, at)?;
+        let candidate = crate::types::ClaimCandidate::new(
+            DREAMER_MILESTONE_PREDICATE,
+            ClaimSubject::Entity(fixture.subject),
+            value,
+            1.0,
+        )
+        .with_stale(stale);
+        vault
+            .batch()
+            .claim_candidate(
+                &claim_id,
+                candidate,
+                &fixture.envelope,
+                occurred(at),
+                fixture.learned_at,
+            )
+            .commit()
+    }
+
+    #[cfg(feature = "sync")]
     fn write_dreamer_boundary_claim(
         vault: &Vault,
         claim_id: EntityId,
@@ -2181,6 +3110,46 @@ mod tests {
             .commit()
     }
 
+    #[cfg(feature = "sync")]
+    fn progress_update(
+        job_id: JobId,
+        state: DreamerJobProgressState,
+        completed_units: u64,
+        total_units: Option<u64>,
+        updated_at_ms: u64,
+    ) -> DreamerJobProgressUpdate {
+        DreamerJobProgressUpdate {
+            job_id,
+            state,
+            message: Some(format!("{}:{completed_units}", state.as_str())),
+            completed_units,
+            total_units,
+            updated_at_ms,
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn progress_i64(store: &crate::sync::EphemeralStore, key: &str, field: &str) -> i64 {
+        let Some(crate::sync::LoroValue::Map(map)) = store.get(key) else {
+            panic!("expected progress map for {key}");
+        };
+        let Some(crate::sync::LoroValue::I64(value)) = map.get(field) else {
+            panic!("expected i64 field {field}");
+        };
+        *value
+    }
+
+    #[cfg(feature = "sync")]
+    fn progress_str(store: &crate::sync::EphemeralStore, key: &str, field: &str) -> String {
+        let Some(crate::sync::LoroValue::Map(map)) = store.get(key) else {
+            panic!("expected progress map for {key}");
+        };
+        let Some(crate::sync::LoroValue::String(value)) = map.get(field) else {
+            panic!("expected string field {field}");
+        };
+        value.to_string()
+    }
+
     #[test]
     fn dreamer_payload_round_trips_with_pinned_keys() -> Result<()> {
         let payload = DreamerJobPayload {
@@ -2195,6 +3164,410 @@ mod tests {
             DREAMER_JOB_PAYLOAD_KEYS,
             ["schema_version", "job_type", "input", "parent_job"]
         );
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_progress_producer_throttles_and_reuses_one_ephemeral_key() {
+        use crate::sync::{EphemeralStore, TAG_EPHEMERAL, decode_ephemeral_states};
+
+        let store = EphemeralStore::new(30_000);
+        let mut producer = DreamerJobProgressProducer::new();
+        let job_id = JobId::now();
+        let key = dreamer_job_progress_key(job_id);
+
+        let first = producer
+            .publish(
+                &store,
+                progress_update(job_id, DreamerJobProgressState::Running, 1, Some(4), 1_000),
+            )
+            .expect("first progress update encodes")
+            .expect("first progress update emits");
+        assert_eq!(first[0], TAG_EPHEMERAL);
+        let states = decode_ephemeral_states(&first[1..]).expect("decode progress frame");
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].key, key);
+        assert_eq!(store.keys(), vec![key.clone()]);
+        assert_eq!(progress_i64(&store, &key, KEY_COMPLETED_UNITS), 1);
+
+        let throttled = producer
+            .publish(
+                &store,
+                progress_update(job_id, DreamerJobProgressState::Running, 2, Some(4), 1_500),
+            )
+            .expect("throttled progress update validates");
+        assert!(
+            throttled.is_none(),
+            "second update inside the 1s window must not emit"
+        );
+        assert_eq!(
+            progress_i64(&store, &key, KEY_COMPLETED_UNITS),
+            1,
+            "throttled update must not mutate the existing row"
+        );
+
+        let second = producer
+            .publish(
+                &store,
+                progress_update(job_id, DreamerJobProgressState::Running, 3, Some(4), 2_000),
+            )
+            .expect("second progress update encodes")
+            .expect("second progress update emits");
+        let states = decode_ephemeral_states(&second[1..]).expect("decode second progress frame");
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].key, key);
+        assert_eq!(
+            store.keys(),
+            vec![key.clone()],
+            "progress must remain one mutable key"
+        );
+        assert_eq!(progress_i64(&store, &key, KEY_COMPLETED_UNITS), 3);
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
+        use crate::sync::{EphemeralStore, TAG_EPHEMERAL};
+
+        let (_tmp, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        enqueue_job(&runner, "runner-progress", 10)?;
+        let store = EphemeralStore::new(30_000);
+        let mut producer = DreamerJobProgressProducer::new();
+
+        let admitted = runner.admit_next_with_progress(
+            AdmitDreamerJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 20,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 20,
+                reserve_units: 8,
+                started_milestone: None,
+            },
+            &mut producer,
+            &store,
+        )?;
+        let Some(frame) = admitted.frame.as_ref() else {
+            panic!("admission must emit a live progress frame");
+        };
+        assert_eq!(frame[0], TAG_EPHEMERAL);
+        let DreamerAdmissionOutcome::Admitted(admitted_job) = admitted.outcome else {
+            panic!("expected admitted job");
+        };
+        let job_id = admitted_job.status.job.id;
+        let key = dreamer_job_progress_key(job_id);
+        assert_eq!(store.keys(), vec![key.clone()]);
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Started.as_str()
+        );
+        assert_eq!(progress_i64(&store, &key, KEY_TOTAL_UNITS), 8);
+
+        let completed = runner.complete_with_progress(
+            CompleteDreamerJob {
+                id: job_id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: admitted_job.status.job.attempt_count,
+                now: 30,
+            },
+            &mut producer,
+            &store,
+        )?;
+        assert!(
+            matches!(completed.outcome, CompleteDreamerJobOutcome::Completed(_)),
+            "terminal queue transition should complete the leased job"
+        );
+        assert!(
+            completed.frame.is_some(),
+            "terminal progress must overwrite the live row"
+        );
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Done.as_str()
+        );
+        assert_eq!(
+            runner.status(job_id)?.expect("completed job").job.state,
+            JobState::Completed
+        );
+
+        let post_terminal = runner.publish_progress(
+            &mut producer,
+            &store,
+            progress_update(job_id, DreamerJobProgressState::Running, 1, Some(8), 30_500),
+        )?;
+        assert!(
+            post_terminal.is_none(),
+            "runner must stop live ticks after terminal state"
+        );
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Done.as_str(),
+            "post-terminal tick must not mutate the terminal live row"
+        );
+
+        producer.remove_outdated(&store, 61_000);
+        let post_terminal_after_marker_ttl = runner.publish_progress(
+            &mut producer,
+            &store,
+            progress_update(job_id, DreamerJobProgressState::Running, 2, Some(8), 61_000),
+        )?;
+        assert!(
+            post_terminal_after_marker_ttl.is_none(),
+            "durable terminal queue state must prevent progress revival after stop-marker TTL"
+        );
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Done.as_str(),
+            "post-marker tick must still not mutate the terminal live row"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_complete_fail_reject_non_dreamer_queue_rows_before_mutation() -> Result<()> {
+        let (_tmp, vault) = open_vault();
+        let queue = crate::job_queue::JobQueue::new(&vault);
+        let companion = match queue.enqueue(crate::job_queue::EnqueueJob {
+            kind: "companion".to_owned(),
+            payload: b"not-dreamer".to_vec(),
+            dedupe_key: None,
+            run_id: None,
+            now: 10,
+        })? {
+            crate::job_queue::EnqueueOutcome::Enqueued(record)
+            | crate::job_queue::EnqueueOutcome::Existing(record) => record,
+        };
+        let crate::job_queue::ClaimOutcome::Claimed(claimed) = queue.claim_kind(
+            "companion",
+            crate::job_queue::ClaimJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 11,
+            },
+        )?
+        else {
+            panic!("expected companion job to be leased");
+        };
+        assert_eq!(claimed.id, companion.id);
+
+        let runner = DreamerRunnerStore::new(&vault);
+        runner
+            .complete(CompleteDreamerJob {
+                id: claimed.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: claimed.attempt_count,
+                now: 12,
+            })
+            .expect_err("non-Dreamer queue row must be rejected before complete");
+        assert_eq!(
+            queue.get(claimed.id)?.expect("companion row remains").state,
+            JobState::Leased,
+            "complete guard must not mutate the generic queue row"
+        );
+
+        runner
+            .fail(FailDreamerJob {
+                id: claimed.id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: "should-not-commit".to_owned(),
+                now: 13,
+            })
+            .expect_err("non-Dreamer queue row must be rejected before fail");
+        assert_eq!(
+            queue.get(claimed.id)?.expect("companion row remains").state,
+            JobState::Leased,
+            "fail guard must not mutate the generic queue row"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_fail_with_progress_bounds_terminal_reason_message() -> Result<()> {
+        use crate::sync::EphemeralStore;
+
+        let (_tmp, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        enqueue_job(&runner, "runner-progress-fail", 10)?;
+        let store = EphemeralStore::new(30_000);
+        let mut producer = DreamerJobProgressProducer::new();
+        let admitted = runner.admit_next_with_progress(
+            AdmitDreamerJob {
+                lease_owner: "worker-a".to_owned(),
+                now: 20,
+                budget_id: "wake".to_owned(),
+                budget_total_units: 20,
+                reserve_units: 8,
+                started_milestone: None,
+            },
+            &mut producer,
+            &store,
+        )?;
+        let DreamerAdmissionOutcome::Admitted(admitted_job) = admitted.outcome else {
+            panic!("expected admitted job");
+        };
+        let job_id = admitted_job.status.job.id;
+        let reason = "x".repeat(MAX_DREAMER_PROGRESS_MESSAGE_LEN + 88);
+
+        let failed = runner.fail_with_progress(
+            FailDreamerJob {
+                id: job_id,
+                lease_owner: "worker-a".to_owned(),
+                attempt_count: admitted_job.status.job.attempt_count,
+                reason: reason.clone(),
+                now: 30,
+            },
+            &mut producer,
+            &store,
+        )?;
+        assert!(
+            matches!(failed.outcome, FailDreamerJobOutcome::Failed(_)),
+            "durable failure transition should commit"
+        );
+        assert!(
+            failed.frame.is_some(),
+            "terminal failure should publish a bounded terminal row"
+        );
+        let key = dreamer_job_progress_key(job_id);
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Failed.as_str()
+        );
+        let message = progress_str(&store, &key, KEY_MESSAGE);
+        assert_eq!(message.len(), MAX_DREAMER_PROGRESS_MESSAGE_LEN);
+        assert_eq!(message, reason[..MAX_DREAMER_PROGRESS_MESSAGE_LEN]);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_progress_terminal_stop_ages_out_on_housekeeping() -> Result<()> {
+        use crate::sync::EphemeralStore;
+
+        let store = EphemeralStore::new(5);
+        let mut producer = DreamerJobProgressProducer::with_limits(1_000, 1_000)?;
+        let job_id = JobId::now();
+        let key = dreamer_job_progress_key(job_id);
+
+        assert!(
+            producer
+                .publish(
+                    &store,
+                    progress_update(job_id, DreamerJobProgressState::Running, 1, Some(2), 1_000),
+                )
+                .expect("running progress encodes")
+                .is_some()
+        );
+        assert!(store.get(&key).is_some());
+
+        let terminal = producer
+            .publish(
+                &store,
+                progress_update(job_id, DreamerJobProgressState::Done, 2, Some(2), 1_200),
+            )
+            .expect("terminal progress validates");
+        assert!(
+            terminal.is_some(),
+            "terminal state must overwrite the mutable live row"
+        );
+        assert_eq!(
+            progress_i64(&store, &key, KEY_COMPLETED_UNITS),
+            2,
+            "terminal stop leaves a terminal row for TTL ageout"
+        );
+        assert_eq!(
+            progress_str(&store, &key, KEY_STATE),
+            DreamerJobProgressState::Done.as_str()
+        );
+
+        let post_terminal = producer
+            .publish(
+                &store,
+                progress_update(job_id, DreamerJobProgressState::Running, 2, Some(2), 1_500),
+            )
+            .expect("post-terminal progress validates");
+        assert!(
+            post_terminal.is_none(),
+            "producer must not resume ticking after terminal state"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        producer.remove_outdated(&store, 1_510);
+        assert!(
+            store.get(&key).is_none(),
+            "runner housekeeping must drive ephemeral TTL ageout"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() -> Result<()> {
+        use crate::sync::EphemeralStore;
+
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "expand", 10)?;
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            EntityId::now(),
+            DreamerMilestoneKind::Started,
+            20,
+        )?;
+        let done_claim = EntityId::now();
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            done_claim,
+            DreamerMilestoneKind::Done,
+            30,
+        )?;
+        write_milestone_value_claim(
+            &vault,
+            EntityId::now(),
+            Value::from("malformed milestone value"),
+            40,
+            false,
+        )?;
+        write_milestone_value_claim(
+            &vault,
+            EntityId::now(),
+            encode_milestone_value(queued.job.id, DreamerMilestoneKind::Failed, 50),
+            50,
+            true,
+        )?;
+
+        let live_store = EphemeralStore::new(5);
+        assert!(
+            live_store
+                .get(&dreamer_job_progress_key(queued.job.id))
+                .is_none(),
+            "fixture represents an unreachable executing device"
+        );
+
+        let durable = runner
+            .latest_durable_milestone(queued.job.id)?
+            .expect("durable milestone fallback");
+        assert_eq!(durable.claim_id, done_claim);
+        assert_eq!(durable.kind, DreamerMilestoneKind::Done);
+
+        live_store.set(
+            &dreamer_job_progress_key(queued.job.id),
+            crate::sync::LoroValue::String("corrupt".into()),
+        );
+        let snapshot = runner
+            .progress_snapshot(&live_store, queued.job.id)?
+            .expect("durable progress snapshot");
+        assert_eq!(snapshot.source, DreamerJobProgressSource::DurableMilestone);
+        assert_eq!(snapshot.state, DreamerJobProgressState::Done);
+        assert_eq!(snapshot.updated_at_ms, 30_000);
+
         Ok(())
     }
 
