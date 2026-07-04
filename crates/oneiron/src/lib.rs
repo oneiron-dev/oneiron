@@ -97,7 +97,8 @@ pub use crate::code_revision::{
 pub use crate::code_run::{
     HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
-    SelfMemorySearchCall, SelfMemorySearchResult, SelfMemoryWriteFixtureCall,
+    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
+    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
     SelfMemoryWriteResult,
 };
 pub use crate::code_sandbox::{
