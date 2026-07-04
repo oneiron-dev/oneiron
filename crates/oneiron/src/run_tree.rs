@@ -207,6 +207,8 @@ fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
     let events = run_tree_events(
         record.created_at,
         record.updated_at,
+        record.attempt_count,
+        record.claimed_at,
         std::mem::take(&mut record.events),
         state,
     )?;
@@ -321,12 +323,27 @@ fn job_id_hex(record: &JobRecord) -> String {
 fn run_tree_events(
     created_at: u64,
     updated_at: u64,
+    attempt_count: u32,
+    claimed_at: Option<u64>,
     stored_events: Vec<JobEvent>,
     state: JobState,
 ) -> Result<Vec<RunTreeEvent>> {
-    let mut events = Vec::with_capacity(stored_events.len() + 2);
+    let has_claim = attempt_count > 0;
+    let mut events = Vec::with_capacity(stored_events.len() + 2 + usize::from(has_claim));
     events.push(lifecycle_event(0, created_at, RunTreeEventKind::Created));
-    events.extend(stored_events.into_iter().map(RunTreeEvent::from));
+    if has_claim {
+        // Pre-claim-timestamp rows cannot recover the historical lease time;
+        // keep their projected claimed event stable instead of using updated_at.
+        events.push(lifecycle_event(
+            1,
+            claimed_at.unwrap_or(created_at),
+            RunTreeEventKind::Claimed,
+        ));
+    }
+    let sequence_offset = u64::from(has_claim);
+    for event in stored_events {
+        events.push(operator_event(event, sequence_offset)?);
+    }
 
     if let Some(kind) = status_event_kind(state)
         && !events.iter().any(|event| event.kind == kind)
@@ -342,6 +359,19 @@ fn run_tree_events(
     }
 
     Ok(events)
+}
+
+fn operator_event(event: JobEvent, sequence_offset: u64) -> Result<RunTreeEvent> {
+    Ok(RunTreeEvent {
+        sequence: event
+            .sequence
+            .checked_add(sequence_offset)
+            .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?,
+        at: event.at,
+        actor: event.actor,
+        kind: RunTreeEventKind::from(event.kind),
+        note: event.note,
+    })
 }
 
 fn lifecycle_event(sequence: u64, at: u64, kind: RunTreeEventKind) -> RunTreeEvent {
@@ -374,18 +404,6 @@ impl From<JobState> for RunTreeStatus {
             JobState::Completed => Self::Completed,
             JobState::Failed => Self::Failed,
             JobState::Cancelled => Self::Cancelled,
-        }
-    }
-}
-
-impl From<JobEvent> for RunTreeEvent {
-    fn from(event: JobEvent) -> Self {
-        Self {
-            sequence: event.sequence,
-            at: event.at,
-            actor: event.actor,
-            kind: RunTreeEventKind::from(event.kind),
-            note: event.note,
         }
     }
 }
@@ -451,7 +469,11 @@ mod tests {
         assert_eq!(root_node.status, RunTreeStatus::Completed);
         assert_eq!(
             event_kinds(root_node),
-            vec![RunTreeEventKind::Created, RunTreeEventKind::Completed]
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Completed,
+            ]
         );
         assert_eq!(root_node.children.len(), 2);
 
@@ -472,7 +494,11 @@ mod tests {
         );
         assert_eq!(
             event_kinds(&root_node.children[0].children[0]),
-            vec![RunTreeEventKind::Created, RunTreeEventKind::Failed]
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Failed,
+            ]
         );
 
         assert_eq!(root_node.children[1].job_id, hex(right.job.id));
@@ -519,17 +545,115 @@ mod tests {
         assert_eq!(tree.roots[1].status, RunTreeStatus::Completed);
         assert_eq!(
             event_kinds(&tree.roots[1]),
-            vec![RunTreeEventKind::Created, RunTreeEventKind::Completed]
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Completed,
+            ]
         );
         assert_eq!(tree.roots[1].events[1].at, 50);
+        assert_eq!(tree.roots[1].events[2].at, 50);
 
         assert_eq!(tree.roots[2].job_id, hex(failed.job.id));
         assert_eq!(tree.roots[2].status, RunTreeStatus::Failed);
         assert_eq!(
             event_kinds(&tree.roots[2]),
-            vec![RunTreeEventKind::Created, RunTreeEventKind::Failed]
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Failed,
+            ]
         );
         assert_eq!(tree.roots[2].events[1].at, 60);
+        assert_eq!(tree.roots[2].events[2].at, 60);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_tree_orders_claimed_before_running_interrupts() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let running = enqueue(&runner, "interruptible-subagent", None, 10, "run-interrupt")?;
+        let queue = crate::JobQueue::new(&vault);
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "stream-worker".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, running.job.id);
+        queue.intervene(InterveneJob {
+            id: running.job.id,
+            kind: JobInterventionKind::Interrupt,
+            actor: "dashboard".to_owned(),
+            note: Some("stop current tool call".to_owned()),
+            now: 30,
+        })?;
+
+        let tree = RunTreeAdapter::new(&vault).read_run("run-interrupt")?;
+
+        assert_eq!(tree.roots.len(), 1);
+        assert_eq!(
+            event_kinds(&tree.roots[0]),
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Interrupted,
+            ]
+        );
+        assert_eq!(tree.roots[0].events[1].sequence, 1);
+        assert_eq!(tree.roots[0].events[1].at, 20);
+        assert_eq!(tree.roots[0].events[2].sequence, 2);
+        assert_eq!(tree.roots[0].events[2].at, 30);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_tree_preserves_claimed_event_after_terminal_transition() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let job = enqueue(&runner, "terminal-subagent", None, 10, "run-terminal")?;
+        let queue = crate::JobQueue::new(&vault);
+
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+            lease_owner: "stream-worker".to_owned(),
+            now: 20,
+        })?
+        else {
+            panic!("expected claim");
+        };
+        assert_eq!(claimed.id, job.job.id);
+
+        let running_tree = RunTreeAdapter::new(&vault).read_run("run-terminal")?;
+        let running_claimed = running_tree.roots[0].events[1].clone();
+
+        let CompleteOutcome::Completed(_) = queue.complete(CompleteJob {
+            id: job.job.id,
+            lease_owner: "stream-worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            now: 30,
+        })?
+        else {
+            panic!("expected completion");
+        };
+
+        let completed_tree = RunTreeAdapter::new(&vault).read_run("run-terminal")?;
+
+        assert_eq!(
+            event_kinds(&completed_tree.roots[0]),
+            vec![
+                RunTreeEventKind::Created,
+                RunTreeEventKind::Claimed,
+                RunTreeEventKind::Completed,
+            ]
+        );
+        assert_eq!(completed_tree.roots[0].events[1], running_claimed);
+        assert_eq!(completed_tree.roots[0].events[2].sequence, 2);
+        assert_eq!(completed_tree.roots[0].events[2].at, 30);
 
         Ok(())
     }
@@ -544,7 +668,7 @@ mod tests {
             note: None,
         }];
 
-        let result = run_tree_events(10, 30, events, JobState::Completed);
+        let result = run_tree_events(10, 30, 0, None, events, JobState::Completed);
 
         assert!(matches!(
             result,
@@ -809,6 +933,7 @@ mod tests {
             state: JobState::Queued,
             lease_owner: None,
             attempt_count: 0,
+            claimed_at: None,
             backoff_until: None,
             last_error: None,
             run_id: Some(run_id.to_owned()),
