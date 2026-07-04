@@ -1377,6 +1377,28 @@ fn materialize_lexical_query_hints_for_target(
     Ok(had_graph_mutation)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ApplyOpsGateMode {
+    record_decisions: bool,
+    persist_pending_consent: bool,
+    include_source_in_gate_input: bool,
+}
+
+impl ApplyOpsGateMode {
+    pub(crate) const fn new(record_decisions: bool, persist_pending_consent: bool) -> Self {
+        Self {
+            record_decisions,
+            persist_pending_consent,
+            include_source_in_gate_input: false,
+        }
+    }
+
+    pub(crate) const fn with_source_in_gate_input(mut self) -> Self {
+        self.include_source_in_gate_input = true;
+        self
+    }
+}
+
 /// Applies a list of batch operations to an LMDB write transaction.
 #[expect(
     clippy::too_many_arguments,
@@ -1392,6 +1414,30 @@ pub(crate) fn apply_ops(
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
 ) -> Result<()> {
+    apply_ops_with_gate_mode(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+    )
+}
+
+pub(crate) fn apply_ops_with_gate_mode(
+    store: &Store,
+    config: &crate::types::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+    gate_mode: ApplyOpsGateMode,
+) -> Result<()> {
+    let record_gate_decisions = gate_mode.record_decisions;
+    let persist_gate_pending_consent = gate_mode.persist_pending_consent;
+    let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
+
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
@@ -1471,6 +1517,7 @@ pub(crate) fn apply_ops(
                     record_gate_decisions,
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
+                    include_source_in_gate_input,
                     Some(&companion_retired_histories),
                 )?;
                 if let Some(token) = applied.pending_embedding_token {
@@ -1555,6 +1602,7 @@ pub(crate) fn apply_ops(
                     record_gate_decisions,
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
+                    include_source_in_gate_input,
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -2120,6 +2168,7 @@ fn apply_claim_candidate(
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
     can_resolve_pending_consent: bool,
+    include_source_in_gate_input: bool,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -2158,6 +2207,7 @@ fn apply_claim_candidate(
         record_gate_decisions,
         persist_gate_pending_consent,
         can_resolve_pending_consent,
+        include_source_in_gate_input,
         None,
     )?;
 
@@ -2260,6 +2310,7 @@ fn apply_put(
     record_gate_decisions: bool,
     persist_gate_pending_consent: bool,
     can_resolve_pending_consent: bool,
+    include_source_in_gate_input: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
@@ -2356,7 +2407,7 @@ fn apply_put(
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                         can_resolve_pending_consent,
-                        include_source_in_gate_input: false,
+                        include_source_in_gate_input,
                     },
                 )?;
             } else {
@@ -2372,7 +2423,7 @@ fn apply_put(
                         persist_pending_consent: persist_gate_pending_consent,
                         resolve_pending: true,
                         can_resolve_pending_consent,
-                        include_source_in_gate_input: false,
+                        include_source_in_gate_input,
                     },
                 )?;
             }

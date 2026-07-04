@@ -1113,6 +1113,10 @@ mod tests {
         )?;
         let stored = vault.get_claim(&claim)?.expect("stored claim");
         assert_eq!(stored.source, Some(ClaimSource::Generated));
+        let pending = vault.pending_gate_consents(10)?;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].claim_id, *claim.as_bytes());
+        assert_eq!(pending[0].reason_codes, vec!["gate.pending.source_trust"]);
 
         let Some(Value::Map(evidence)) = stored.evidence else {
             panic!("expected write envelope evidence");
