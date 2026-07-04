@@ -2077,6 +2077,7 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     let learned_key = Store::encode_temporal_key(learned_at, id);
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
+    crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     neighbors.sort_unstable();
     neighbors.dedup();
@@ -2272,6 +2273,7 @@ fn apply_put(
     // Bodies of all other type bytes stay opaque at the storage layer.
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut decoded_claim_body = None;
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
@@ -2373,6 +2375,7 @@ fn apply_put(
                 )?;
             }
         }
+        decoded_claim_body = Some(body);
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
@@ -2525,6 +2528,11 @@ fn apply_put(
     payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    if let Some(body) = decoded_claim_body.as_ref() {
+        crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
+            store, wtxn, &id, body, learned_at,
+        )?;
+    }
     if let Some(key) = authority_first_seen_key {
         let observed_secs =
             authority_observation_secs_for_write(store, wtxn, crate::unix_seconds_now())?;
