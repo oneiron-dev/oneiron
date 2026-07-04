@@ -2,8 +2,9 @@
 //!
 //! This module does not start a sandbox or link a production adapter. It pins
 //! the host/guest ABI that future runners must obey: guests target stable
-//! `/mnt` virtual paths, credential use is handle-only, and foreign writes leave
-//! the sandbox as reviewable proposal deltas rather than commit authority.
+//! `/mnt` virtual paths, credential use is handle-only, first-party writes are
+//! linked as typed traps, and foreign writes leave the sandbox as reviewable
+//! proposal deltas rather than commit authority.
 
 use std::{
     collections::BTreeMap,
@@ -28,7 +29,7 @@ const ABI_KEY_ARGS: &str = "args";
 /// Trust tier selected by the host before linking a guest program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SandboxGuestTier {
-    /// First-party Dreamer code. Public write traps are tracked in follow-ups.
+    /// First-party Dreamer code. Public writes link as per-op typed traps.
     FirstPartyDreamer,
     /// Imported or externally-authored code.
     Foreign,
@@ -99,16 +100,31 @@ const CREDENTIAL_CALL_IMPORT: SandboxLinkedImport = SandboxLinkedImport::new(
     "sandbox.credential.call",
     SandboxImportClass::CredentialHandle,
 );
+const SELF_MEMORY_PUT_CLAIM_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::WriteTrap);
+const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.memory.supersede_claim", SandboxImportClass::WriteTrap);
+const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
 const READ_ONLY_IMPORTS: &[SandboxLinkedImport] = &[READ_FILE_IMPORT, CREDENTIAL_CALL_IMPORT];
+const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
+    READ_FILE_IMPORT,
+    CREDENTIAL_CALL_IMPORT,
+    SELF_MEMORY_PUT_CLAIM_IMPORT,
+    SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
+    SELF_MEMORY_PUT_EDGE_IMPORT,
+];
 
 /// Link-time contract for one guest tier.
+///
+/// First-party write traps are immediate typed host calls; foreign and
+/// untrusted guests link no write imports and use proposal deltas only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SandboxBoundaryContract {
     tier: SandboxGuestTier,
     linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
     credential_call_effect: SandboxCredentialEffect,
-    first_party_write_traps_deferred: bool,
 }
 
 impl SandboxBoundaryContract {
@@ -118,17 +134,15 @@ impl SandboxBoundaryContract {
         match tier {
             SandboxGuestTier::FirstPartyDreamer => Self {
                 tier,
-                linked_imports: READ_ONLY_IMPORTS,
+                linked_imports: FIRST_PARTY_IMPORTS,
                 proposal_delta_channel: false,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
-                first_party_write_traps_deferred: true,
             },
             SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => Self {
                 tier,
                 linked_imports: READ_ONLY_IMPORTS,
                 proposal_delta_channel: true,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
-                first_party_write_traps_deferred: false,
             },
         }
     }
@@ -153,12 +167,6 @@ impl SandboxBoundaryContract {
     #[must_use]
     pub const fn credential_call_effect(self) -> SandboxCredentialEffect {
         self.credential_call_effect
-    }
-
-    /// First-party typed write traps are deliberately out of this ticket.
-    #[must_use]
-    pub const fn first_party_write_traps_deferred(self) -> bool {
-        self.first_party_write_traps_deferred
     }
 
     /// True if any linked import can commit or trap a host write.
@@ -904,13 +912,32 @@ mod tests {
         }
 
         let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
-        assert!(first_party.first_party_write_traps_deferred());
         assert!(!first_party.has_proposal_delta_channel());
         assert_eq!(
             first_party.credential_call_effect(),
             SandboxCredentialEffect::ReadOnly
         );
-        assert!(!first_party.links_write_imports());
+        assert!(first_party.links_write_imports());
+        let write_imports = first_party
+            .linked_imports()
+            .iter()
+            .filter(|import| import.class().is_write())
+            .map(|import| import.name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            write_imports,
+            vec![
+                "self.memory.put_claim",
+                "self.memory.supersede_claim",
+                "self.memory.put_edge",
+            ]
+        );
+        assert!(
+            first_party
+                .linked_imports()
+                .iter()
+                .all(|import| !import.name().contains("bulk") && !import.name().contains("batch"))
+        );
     }
 
     #[test]
