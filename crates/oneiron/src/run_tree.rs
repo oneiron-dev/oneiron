@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::job_queue::{
     JobEvent, JobInterventionKind, JobQueue, JobRecord, JobState, job_record_order,
 };
@@ -200,11 +200,16 @@ struct FlatRunTreeNode {
 
 const RUN_TREE_RUNTIME_ACTOR: &str = "runtime";
 
-fn flat_node(record: JobRecord) -> Result<FlatRunTreeNode> {
+fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
     let metadata = job_metadata(&record)?;
     let state = record.state;
     let job_id = job_id_hex(&record);
-    let events = run_tree_events(&record, state);
+    let events = run_tree_events(
+        record.created_at,
+        record.updated_at,
+        std::mem::take(&mut record.events),
+        state,
+    )?;
     let node = RunTreeNode {
         job_id,
         run_id: record.run_id,
@@ -313,14 +318,15 @@ fn job_id_hex(record: &JobRecord) -> String {
     bytes_to_hex_lower(record.id.as_bytes())
 }
 
-fn run_tree_events(record: &JobRecord, state: JobState) -> Vec<RunTreeEvent> {
-    let mut events = Vec::with_capacity(record.events.len() + 2);
-    events.push(lifecycle_event(
-        0,
-        record.created_at,
-        RunTreeEventKind::Created,
-    ));
-    events.extend(record.events.iter().cloned().map(RunTreeEvent::from));
+fn run_tree_events(
+    created_at: u64,
+    updated_at: u64,
+    stored_events: Vec<JobEvent>,
+    state: JobState,
+) -> Result<Vec<RunTreeEvent>> {
+    let mut events = Vec::with_capacity(stored_events.len() + 2);
+    events.push(lifecycle_event(0, created_at, RunTreeEventKind::Created));
+    events.extend(stored_events.into_iter().map(RunTreeEvent::from));
 
     if let Some(kind) = status_event_kind(state)
         && !events.iter().any(|event| event.kind == kind)
@@ -330,11 +336,12 @@ fn run_tree_events(record: &JobRecord, state: JobState) -> Vec<RunTreeEvent> {
             .map(|event| event.sequence)
             .max()
             .unwrap_or(0)
-            .saturating_add(1);
-        events.push(lifecycle_event(sequence, record.updated_at, kind));
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("run-tree event sequence"))?;
+        events.push(lifecycle_event(sequence, updated_at, kind));
     }
 
-    events
+    Ok(events)
 }
 
 fn lifecycle_event(sequence: u64, at: u64, kind: RunTreeEventKind) -> RunTreeEvent {
@@ -404,11 +411,14 @@ mod tests {
     };
     use crate::job_queue::{
         ClaimJob, ClaimOutcome, CompleteJob, CompleteOutcome, FailJob, FailOutcome, InterveneJob,
-        JobInterventionKind, JobRecord, JobState, RetryJob, RetryOutcome,
+        JobEvent, JobInterventionKind, JobRecord, JobState, RetryJob, RetryOutcome,
     };
-    use crate::{Result, Vault, VaultConfig};
+    use crate::{Error, Result, Vault, VaultConfig};
 
-    use super::{RunTreeAdapter, RunTreeEventKind, RunTreeRepair, RunTreeStatus, render_run_tree};
+    use super::{
+        RunTreeAdapter, RunTreeEventKind, RunTreeRepair, RunTreeStatus, render_run_tree,
+        run_tree_events,
+    };
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
         crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -522,6 +532,24 @@ mod tests {
         assert_eq!(tree.roots[2].events[1].at, 60);
 
         Ok(())
+    }
+
+    #[test]
+    fn run_tree_event_sequence_overflow_fails_closed() {
+        let events = vec![JobEvent {
+            sequence: u64::MAX,
+            at: 20,
+            actor: "dashboard".to_owned(),
+            kind: JobInterventionKind::Pause,
+            note: None,
+        }];
+
+        let result = run_tree_events(10, 30, events, JobState::Completed);
+
+        assert!(matches!(
+            result,
+            Err(Error::ArithmeticOverflow("run-tree event sequence"))
+        ));
     }
 
     #[test]
