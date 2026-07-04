@@ -33,6 +33,11 @@ const OTHER_ENTITY_TYPE: u8 = u8::MAX;
 const TOON_MAX_DEPTH: usize = 128;
 type ValueDepthLimit = Option<usize>;
 
+/// Codec label for deterministic code-run raw output previews.
+pub const CODE_RUN_OUTPUT_PREVIEW_CODEC: &str = "utf8-lossy-whitespace-compact-v1";
+/// Default character cap for compact code-run raw output previews.
+pub const CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS: usize = 256;
+
 /// Stable serializer identity recorded in whole-vault export manifests.
 pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
 /// Version of the whole-vault export serializer contract.
@@ -189,6 +194,48 @@ fn serialize_prepared_pack_telemetry(prepared: &PreparedPack) -> SerializedPackT
 
 pub fn serialize_resume_bundle(bundle: &ResumeBundle) -> Vec<u8> {
     serde_json::to_vec(bundle).expect("ResumeBundle JSON serialization should not fail")
+}
+
+/// Builds the compact text preview stored beside raw code-run output bytes.
+///
+/// The preview is deterministic and intentionally lossy: invalid UTF-8 is
+/// replaced, runs of whitespace collapse to one ASCII space, and the result is
+/// capped by `max_chars`.
+#[must_use]
+pub fn compressed_code_run_output_preview(raw: &[u8], max_chars: usize) -> (String, bool) {
+    if raw.is_empty() || max_chars == 0 {
+        return (String::new(), !raw.is_empty());
+    }
+
+    let mut compact = String::new();
+    let mut previous_was_space = true;
+    for ch in String::from_utf8_lossy(raw).chars() {
+        if ch.is_whitespace() {
+            if !previous_was_space {
+                compact.push(' ');
+                previous_was_space = true;
+            }
+        } else {
+            compact.push(ch);
+            previous_was_space = false;
+        }
+    }
+
+    if compact.ends_with(' ') {
+        compact.pop();
+    }
+
+    let mut preview = String::new();
+    let mut truncated = false;
+    for (index, ch) in compact.chars().enumerate() {
+        if index >= max_chars {
+            truncated = true;
+            break;
+        }
+        preview.push(ch);
+    }
+
+    (preview, truncated)
 }
 
 fn serialize_json(pack: &ContextPack, config: &SerializeConfig, prepared: PreparedPack) -> Vec<u8> {
