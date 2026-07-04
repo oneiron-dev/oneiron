@@ -2192,16 +2192,12 @@ fn backfill_dreamer_milestone_index(
     let mut milestones = Vec::new();
     for row in store.entities.iter(&*wtxn)? {
         let (key, raw) = row?;
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
-            continue;
-        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM || raw.len() == ENTITY_METADATA_HEADER_LEN {
             continue;
         }
-        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        else {
-            continue;
-        };
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         let Ok(key_bytes) = <[u8; 16]>::try_from(key) else {
             continue;
         };
@@ -3892,6 +3888,51 @@ mod tests {
             crate::claim::claim_body_decode_count(),
             0,
             "empty indexed result should not rescan durable claims after backfill"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn dreamer_durable_milestone_backfill_fails_closed_on_malformed_claim_body() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queued = enqueue_job(&runner, "expand", 10)?;
+        write_milestone_for_job(
+            &vault,
+            queued.job.id,
+            EntityId::now(),
+            DreamerMilestoneKind::Started,
+            20,
+        )?;
+
+        let corrupt_claim = EntityId::now();
+        let mut raw = Vec::new();
+        raw.push(ENTITY_TYPE_CLAIM);
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(&25_u64.to_be_bytes());
+        raw.extend_from_slice(b"not a claim body");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, corrupt_claim.as_bytes(), &raw)?;
+            Ok(())
+        })?;
+
+        runner
+            .latest_durable_milestone(queued.job.id)
+            .expect_err("malformed claim body must fail the one-time backfill");
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
+                .is_none(),
+            "failed backfill must not mark the milestone index complete"
         );
 
         Ok(())
