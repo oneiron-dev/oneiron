@@ -12,7 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Bytes;
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
+use axum::http::{
+    HeaderMap, StatusCode,
+    header::{AUTHORIZATION, CONTENT_TYPE},
+};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::{Router, middleware};
@@ -24,7 +27,7 @@ use oneiron::{
         ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN,
     },
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use utoipa::{IntoParams, OpenApi, ToSchema};
@@ -33,6 +36,11 @@ use crate::auth::{CoreAuth, CoreScope, check_auth};
 use crate::config::SyncServerConfig;
 use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::idempotency::{IdempotencyLayerState, idempotency_middleware};
+use crate::mcp::{
+    McpActorClass, McpActorMetadata, McpAskToolArgs, McpConnectorActorResolutionError,
+    McpEditToolArgs, McpEditVerb, McpResolvedActor, McpRoutedAskToolArgs, McpToolName,
+    McpToolValidationError, McpValidatedToolArgs, validate_mcp_tool_args,
+};
 use crate::projection::{self, View};
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
 use crate::runtime::{
@@ -86,6 +94,7 @@ const CAPABILITIES: &[&str] = &[
     "core.run_tree",
     "core.memory_timeline",
     "core.memory_verbs",
+    "mcp.gateway",
     "core.conversations",
     "core.turns",
     "health.capabilities",
@@ -467,6 +476,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/openapi.json", get(openapi_json))
         .route("/api/skills/oneiron.skills.md", get(skills_pack))
         .route("/api/health", get(health))
+        .route("/mcp", post(mcp_gateway))
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
         .route("/api/search/text", get(search_text))
@@ -1540,6 +1550,853 @@ fn scoped_read_for_actor_ref<'a>(
     let actor_key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
         .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
     Ok(vault.scoped_read(actor_key))
+}
+
+const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+
+#[derive(Debug, Deserialize)]
+struct McpJsonRpcRequest {
+    jsonrpc: String,
+    #[serde(default)]
+    id: Option<Value>,
+    method: String,
+    #[serde(default)]
+    params: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpToolCallParams {
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+#[derive(Debug)]
+struct McpGatewayError {
+    code: i64,
+    kind: &'static str,
+    message: String,
+    field: Option<String>,
+}
+
+impl McpGatewayError {
+    fn new(code: i64, kind: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            kind,
+            message: message.into(),
+            field: None,
+        }
+    }
+
+    fn with_field(mut self, field: impl Into<String>) -> Self {
+        self.field = Some(field.into());
+        self
+    }
+}
+
+async fn mcp_gateway(
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let raw: Value = match serde_json::from_slice(&body) {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Json(mcp_error_response(
+                Value::Null,
+                McpGatewayError::new(-32700, "parse_error", error.to_string()),
+            ));
+        }
+    };
+    let id = raw.get("id").cloned().unwrap_or(Value::Null);
+    let request = match serde_json::from_value::<McpJsonRpcRequest>(raw) {
+        Ok(request) => request,
+        Err(error) => {
+            return Json(mcp_error_response(
+                id,
+                McpGatewayError::new(-32600, "invalid_request", error.to_string()),
+            ));
+        }
+    };
+    let id = request.id.clone().unwrap_or(id);
+
+    let result = handle_mcp_request(&headers, &server, request).await;
+    Json(match result {
+        Ok(result) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }),
+        Err(error) => mcp_error_response(id, error),
+    })
+}
+
+async fn handle_mcp_request(
+    headers: &HeaderMap,
+    server: &Arc<SyncServer>,
+    request: McpJsonRpcRequest,
+) -> Result<Value, McpGatewayError> {
+    if request.jsonrpc != "2.0" {
+        return Err(
+            McpGatewayError::new(-32600, "invalid_request", "jsonrpc must be \"2.0\"")
+                .with_field("jsonrpc"),
+        );
+    }
+
+    match request.method.as_str() {
+        "initialize" => {
+            let actor = resolve_mcp_gateway_actor(headers, server).await?;
+            Ok(json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "serverInfo": {
+                    "name": "oneiron",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                },
+                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for schemas and tools/call with connector actor metadata matching this authenticated credential.",
+                "actor": mcp_actor_result(&actor),
+            }))
+        }
+        "notifications/initialized" => Ok(json!({})),
+        "tools/list" => {
+            let actor = resolve_mcp_gateway_actor(headers, server).await?;
+            Ok(json!({
+                "tools": crate::mcp::mcp_tool_schemas(),
+                "actor": mcp_actor_result(&actor),
+            }))
+        }
+        "tools/call" => {
+            let actor = resolve_mcp_gateway_actor(headers, server).await?;
+            let params: McpToolCallParams = mcp_params(request.params, "params")?;
+            let tool = McpToolName::from_name(&params.name).ok_or_else(|| {
+                McpGatewayError::new(
+                    -32602,
+                    "unknown_tool",
+                    "tool name is not advertised by this Oneiron MCP gateway",
+                )
+                .with_field("name")
+            })?;
+            let args = validate_mcp_tool_args(tool, params.arguments)
+                .map_err(mcp_tool_validation_error)?;
+            ensure_mcp_actor_matches(&args, &actor)?;
+            execute_mcp_tool(server, args, &actor)
+        }
+        _ => Err(McpGatewayError::new(
+            -32601,
+            "method_not_found",
+            format!("unsupported MCP method {}", request.method),
+        )
+        .with_field("method")),
+    }
+}
+
+async fn resolve_mcp_gateway_actor(
+    headers: &HeaderMap,
+    server: &Arc<SyncServer>,
+) -> Result<McpResolvedActor, McpGatewayError> {
+    let credential = mcp_connector_credential(headers)?;
+    let registry = server.mcp_registry.lock().await;
+    registry
+        .resolve(&credential, unix_seconds_now(), |actor_class, actor_ref| {
+            server
+                .vault
+                .gate_actor_ceiling_exists(actor_class, actor_ref)
+                .unwrap_or(false)
+        })
+        .map_err(mcp_actor_resolution_error)
+}
+
+fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
+    if let Some(value) = headers
+        .get(MCP_CREDENTIAL_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(value.to_owned());
+    }
+
+    let Some(value) = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "missing MCP connector credential",
+        ));
+    };
+    let value = value.trim_start();
+    let Some((scheme, credential)) = value.split_once(char::is_whitespace) else {
+        return Err(McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "Authorization must use Bearer credentials",
+        )
+        .with_field("authorization"));
+    };
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Err(McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "Authorization must use Bearer credentials",
+        )
+        .with_field("authorization"));
+    }
+    let credential = credential.trim();
+    if credential.is_empty() {
+        return Err(McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "MCP connector credential must not be empty",
+        )
+        .with_field("authorization"));
+    }
+    Ok(credential.to_owned())
+}
+
+fn mcp_actor_resolution_error(error: McpConnectorActorResolutionError) -> McpGatewayError {
+    let kind = match error {
+        McpConnectorActorResolutionError::UnknownCredential => "mcp_credential_unknown",
+        McpConnectorActorResolutionError::ExpiredCredential => "mcp_credential_expired",
+        McpConnectorActorResolutionError::RevokedCredential => "mcp_credential_revoked",
+        McpConnectorActorResolutionError::MissingActorCeiling => "mcp_actor_ceiling_missing",
+    };
+    McpGatewayError::new(-32001, kind, error.to_string())
+}
+
+fn mcp_params<T: DeserializeOwned>(
+    params: Option<Value>,
+    field: &'static str,
+) -> Result<T, McpGatewayError> {
+    let params = params.ok_or_else(|| {
+        McpGatewayError::new(-32602, "invalid_params", "params are required").with_field(field)
+    })?;
+    serde_json::from_value(params).map_err(|error| {
+        McpGatewayError::new(-32602, "invalid_params", error.to_string()).with_field(field)
+    })
+}
+
+fn mcp_tool_validation_error(error: McpToolValidationError) -> McpGatewayError {
+    match error {
+        McpToolValidationError::Decode { tool, message } => McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            format!("{tool} arguments could not be decoded: {message}"),
+        ),
+        McpToolValidationError::Field {
+            tool,
+            field,
+            message,
+        } => McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            format!("{tool}.{field}: {message}"),
+        )
+        .with_field(field),
+    }
+}
+
+fn ensure_mcp_actor_matches(
+    args: &McpValidatedToolArgs,
+    resolved: &McpResolvedActor,
+) -> Result<(), McpGatewayError> {
+    let actor = mcp_validated_actor(args);
+    if actor.actor_ref != resolved.actor_ref.to_hex() {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool actor_ref must match the authenticated connector actor",
+        )
+        .with_field("actor.actor_ref"));
+    }
+    if mcp_actor_class_wire(actor.actor_class) != resolved.gate_actor_class {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool actor_class must match the authenticated connector actor class",
+        )
+        .with_field("actor.actor_class"));
+    }
+    if actor.gate_actor_ref != resolved.gate_actor_ref {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool gate_actor_ref must match the authenticated connector actor",
+        )
+        .with_field("actor.gate_actor_ref"));
+    }
+    if mcp_actor_class_wire(actor.gate_actor_class) != resolved.gate_actor_class {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool gate_actor_class must match the authenticated connector actor class",
+        )
+        .with_field("actor.gate_actor_class"));
+    }
+    let scope = &resolved.scope;
+    if actor.scope.world_ref.as_deref()
+        != scope
+            .world_ref
+            .as_ref()
+            .map(oneiron::EntityId::to_hex)
+            .as_deref()
+    {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool actor.scope.world_ref must match the authenticated connector scope",
+        )
+        .with_field("actor.scope.world_ref"));
+    }
+    if actor.scope.facet_ref.as_deref()
+        != scope
+            .facet_ref
+            .as_ref()
+            .map(oneiron::EntityId::to_hex)
+            .as_deref()
+    {
+        return Err(McpGatewayError::new(
+            -32602,
+            "mcp_actor_mismatch",
+            "tool actor.scope.facet_ref must match the authenticated connector scope",
+        )
+        .with_field("actor.scope.facet_ref"));
+    }
+    Ok(())
+}
+
+fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetadata {
+    match args {
+        McpValidatedToolArgs::Nav(args) => &args.actor,
+        McpValidatedToolArgs::Read(args) => &args.actor,
+        McpValidatedToolArgs::Edit(args) => &args.actor,
+        McpValidatedToolArgs::Ask(args) => &args.actor,
+        McpValidatedToolArgs::RoutedAsk(args) => &args.actor,
+    }
+}
+
+fn execute_mcp_tool(
+    server: &SyncServer,
+    args: McpValidatedToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    match args {
+        McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
+        McpValidatedToolArgs::Read(args) => execute_mcp_read(server, args, actor),
+        McpValidatedToolArgs::Edit(args) => execute_mcp_edit(server, args, actor),
+        McpValidatedToolArgs::Ask(args) => Ok(mcp_ask_result(args, actor)),
+        McpValidatedToolArgs::RoutedAsk(args) => Ok(mcp_routed_ask_result(args, actor)),
+    }
+}
+
+fn execute_mcp_nav(
+    server: &SyncServer,
+    args: crate::mcp::McpNavToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    let limit = args.limit.unwrap_or(10).min(CORE_MAX_LIST_LIMIT as u32) as usize;
+    match args.mode {
+        crate::mcp::McpNavMode::Search => {
+            let query = args.query.as_deref().ok_or_else(|| {
+                McpGatewayError::new(
+                    -32602,
+                    "tool_args_invalid",
+                    "oneiron.nav query is required for search mode",
+                )
+                .with_field("query")
+            })?;
+            let results = scoped_read
+                .search_text(query, limit)
+                .map_err(|error| mcp_engine_error("mcp nav search failed", error))?;
+            let items = results
+                .into_iter()
+                .map(|result| {
+                    projection::project_search_result(scoped_read.vault(), result, View::Summary)
+                        .map_err(|error| mcp_engine_error("mcp nav projection failed", error))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            Ok(json!({
+                "content": [mcp_text_content(format!("{} result(s)", items.len()))],
+                "structuredContent": {
+                    "tool": McpToolName::Nav.as_str(),
+                    "mode": "search",
+                    "items": items,
+                },
+                "isError": false,
+            }))
+        }
+        _ => Ok(json!({
+            "content": [mcp_text_content("navigation mode accepted")],
+            "structuredContent": {
+                "tool": McpToolName::Nav.as_str(),
+                "mode": format!("{:?}", args.mode).to_ascii_lowercase(),
+                "status": "accepted",
+            },
+            "isError": false,
+        })),
+    }
+}
+
+fn execute_mcp_read(
+    server: &SyncServer,
+    args: crate::mcp::McpReadToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    let scoped_read = mcp_scoped_read(&server.vault, actor)?;
+    if let Some(entity_ref) = args.target.entity_ref.as_deref() {
+        let id = parse_entity_id_param(entity_ref, "target.entity_ref").map_err(mcp_api_error)?;
+        let item = scoped_read
+            .get_entity_parts(&id)
+            .map_err(|error| mcp_engine_error("mcp read failed", error))?
+            .map(|(entity_type, learned_at, body)| {
+                projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
+            });
+        return Ok(json!({
+            "content": [mcp_text_content(if item.is_some() { "entity found" } else { "entity not found" })],
+            "structuredContent": {
+                "tool": McpToolName::Read.as_str(),
+                "target": { "entity_ref": entity_ref },
+                "found": item.is_some(),
+                "item": item,
+            },
+            "isError": false,
+        }));
+    }
+    if let Some(short_ref) = args.target.short_ref.as_deref() {
+        let (short_id, content_hash) = parse_short_ref(short_ref).map_err(mcp_api_error)?;
+        let item = hydrate_short_id_response(&scoped_read, short_id, content_hash, View::Full)
+            .map_err(mcp_api_error)?;
+        return Ok(json!({
+            "content": [mcp_text_content(if item.is_some() { "short ref found" } else { "short ref not found" })],
+            "structuredContent": {
+                "tool": McpToolName::Read.as_str(),
+                "target": { "short_ref": short_ref },
+                "found": item.is_some(),
+                "item": item,
+            },
+            "isError": false,
+        }));
+    }
+    Ok(json!({
+        "content": [mcp_text_content("context pack reference accepted")],
+        "structuredContent": {
+            "tool": McpToolName::Read.as_str(),
+            "target": { "context_pack": args.target.context_pack },
+        },
+        "isError": false,
+    }))
+}
+
+fn execute_mcp_edit(
+    server: &SyncServer,
+    args: McpEditToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    if args.dry_run {
+        return Ok(json!({
+            "content": [mcp_text_content("edit validated")],
+            "structuredContent": {
+                "tool": McpToolName::Edit.as_str(),
+                "verb": args.verb,
+                "dryRun": true,
+                "actor": mcp_actor_result(actor),
+            },
+            "isError": false,
+        }));
+    }
+
+    match args.verb {
+        McpEditVerb::Remember => execute_mcp_remember(server, &args, actor),
+        McpEditVerb::Supersede
+        | McpEditVerb::Retract
+        | McpEditVerb::Delete
+        | McpEditVerb::HardDelete => Err(McpGatewayError::new(
+            -32004,
+            "mcp_edit_verb_not_implemented",
+            "this MCP edit verb is schema-valid but not wired to a connector-stamped Gate path yet",
+        )
+        .with_field("verb")),
+    }
+}
+
+fn execute_mcp_remember(
+    server: &SyncServer,
+    args: &McpEditToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<Value, McpGatewayError> {
+    let entity = args.entity.as_ref().ok_or_else(|| {
+        McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "entity is required for remember",
+        )
+        .with_field("entity")
+    })?;
+    let id = parse_optional_entity_id(entity.id.as_deref(), "entity.id").map_err(mcp_api_error)?;
+    let timestamps = core_entity_timestamps(
+        entity.occurred_start,
+        entity.occurred_end,
+        entity.learned_at,
+    )
+    .map_err(mcp_api_error)?;
+
+    if entity.entity_type == oneiron::types::ENTITY_TYPE_CLAIM {
+        let candidate = mcp_claim_candidate_from_entity(entity)?;
+        let envelope = mcp_write_envelope(args, actor)?;
+        server
+            .vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                timestamps.occurred,
+                timestamps.learned_at,
+            )
+            .commit()
+            .map_err(|error| mcp_engine_error("mcp remember claim failed", error))?;
+    } else {
+        return Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "oneiron.edit remember currently accepts claim entities only because MCP writes must use the connector-stamped Gate path",
+        )
+        .with_field("entity.entity_type"));
+    }
+
+    Ok(json!({
+        "content": [mcp_text_content("entity remembered")],
+        "structuredContent": {
+            "tool": McpToolName::Edit.as_str(),
+            "verb": "remember",
+            "id": id.to_hex(),
+            "entity_type": entity.entity_type,
+            "dryRun": false,
+        },
+        "isError": false,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpClaimCandidateBody {
+    #[serde(alias = "pred")]
+    predicate: String,
+    #[serde(default)]
+    subject: Option<McpClaimSubject>,
+    #[serde(default, alias = "subject_ref", alias = "subj")]
+    subject_entity_ref: Option<String>,
+    #[serde(alias = "val")]
+    value: Value,
+    #[serde(alias = "conf")]
+    confidence: f32,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    approval: Option<String>,
+    #[serde(default)]
+    evidence: Option<Value>,
+    #[serde(default)]
+    salience: Option<f32>,
+    #[serde(default)]
+    valid_from: Option<u64>,
+    #[serde(default)]
+    valid_to: Option<u64>,
+    #[serde(default)]
+    world_ref: Option<String>,
+    #[serde(default)]
+    scope: Option<Value>,
+    #[serde(default)]
+    stale: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpClaimSubject {
+    entity_ref: String,
+}
+
+fn mcp_claim_candidate_from_entity(
+    entity: &crate::mcp::McpEditEntityInput,
+) -> Result<oneiron::ClaimCandidate, McpGatewayError> {
+    let body: McpClaimCandidateBody =
+        serde_json::from_value(entity.body.clone()).map_err(|error| {
+            McpGatewayError::new(
+                -32602,
+                "tool_args_invalid",
+                format!("entity.body must be an MCP claim candidate body: {error}"),
+            )
+            .with_field("entity.body")
+        })?;
+    if body.predicate.trim().is_empty() {
+        return Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "entity.body.predicate must not be blank",
+        )
+        .with_field("entity.body.predicate"));
+    }
+    let subject_ref = match (body.subject, body.subject_entity_ref) {
+        (Some(subject), None) => subject.entity_ref,
+        (None, Some(subject_ref)) => subject_ref,
+        _ => {
+            return Err(McpGatewayError::new(
+                -32602,
+                "tool_args_invalid",
+                "entity.body must include exactly one subject entity reference",
+            )
+            .with_field("entity.body.subject"));
+        }
+    };
+    let subject = parse_entity_id_param(&subject_ref, "entity.body.subject.entity_ref")
+        .map_err(mcp_api_error)?;
+    let value = oneiron::companion_value_from_json(&body.value)
+        .map_err(|error| mcp_engine_error("mcp claim value conversion failed", error))?;
+    let mut candidate = oneiron::ClaimCandidate::new(
+        body.predicate,
+        oneiron::ClaimSubject::Entity(subject),
+        value,
+        body.confidence,
+    );
+    if let Some(evidence) = body.evidence {
+        candidate = candidate.with_evidence(
+            oneiron::companion_value_from_json(&evidence)
+                .map_err(|error| mcp_engine_error("mcp claim evidence conversion failed", error))?,
+        );
+    }
+    if let Some(salience) = body.salience {
+        candidate = candidate.with_salience(salience);
+    }
+    candidate = candidate.with_validity(body.valid_from, body.valid_to);
+    if let Some(world_ref) = body.world_ref.as_deref() {
+        candidate = candidate.with_world(
+            parse_entity_id_param(world_ref, "entity.body.world_ref").map_err(mcp_api_error)?,
+        );
+    }
+    if let Some(scope) = body.scope {
+        candidate = candidate.with_scope(
+            oneiron::companion_value_from_json(&scope)
+                .map_err(|error| mcp_engine_error("mcp claim scope conversion failed", error))?,
+        );
+    }
+    Ok(candidate.with_stale(body.stale))
+}
+
+fn mcp_write_envelope(
+    args: &McpEditToolArgs,
+    actor: &McpResolvedActor,
+) -> Result<oneiron::WriteEnvelope, McpGatewayError> {
+    let entity = args
+        .entity
+        .as_ref()
+        .expect("remember entity is checked before envelope construction");
+    let body: McpClaimCandidateBody =
+        serde_json::from_value(entity.body.clone()).map_err(|error| {
+            McpGatewayError::new(
+                -32602,
+                "tool_args_invalid",
+                format!("entity.body must be an MCP claim candidate body: {error}"),
+            )
+            .with_field("entity.body")
+        })?;
+    let source = mcp_claim_source(body.source.as_deref().unwrap_or("tool_output"))?;
+    let approval = match body.approval.as_deref() {
+        Some(value) => mcp_claim_approval(value)?,
+        None if args.consent.require_human_approval => oneiron::ClaimApprovalStatus::Proposed,
+        None => oneiron::ClaimApprovalStatus::Auto,
+    };
+    let provenance = oneiron::WriteProvenance::new(
+        oneiron::companion_value_from_json(&json!({
+            "surface": "mcp",
+            "tool": McpToolName::Edit.as_str(),
+            "idempotency_key": args.idempotency_key,
+            "consent": {
+                "policy_ref": args.consent.policy_ref,
+                "purpose": args.consent.purpose,
+                "approval_ref": args.consent.approval_ref,
+                "consent_receipt_ref": args.consent.consent_receipt_ref,
+                "require_human_approval": args.consent.require_human_approval,
+            }
+        }))
+        .map_err(|error| mcp_engine_error("mcp provenance conversion failed", error))?,
+    )
+    .map_err(|error| mcp_engine_error("mcp provenance invalid", error))?;
+    Ok(oneiron::WriteEnvelope::new(
+        actor.write_actor(),
+        source,
+        provenance,
+        approval,
+    ))
+}
+
+fn mcp_claim_source(value: &str) -> Result<oneiron::ClaimSource, McpGatewayError> {
+    match value {
+        "user_stated" => Ok(oneiron::ClaimSource::UserStated),
+        "observed" => Ok(oneiron::ClaimSource::Observed),
+        "inferred" => Ok(oneiron::ClaimSource::Inferred),
+        "imported" => Ok(oneiron::ClaimSource::Imported),
+        "tool_output" => Ok(oneiron::ClaimSource::ToolOutput),
+        "generated" => Ok(oneiron::ClaimSource::Generated),
+        _ => Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "entity.body.source is not recognized",
+        )
+        .with_field("entity.body.source")),
+    }
+}
+
+fn mcp_claim_approval(value: &str) -> Result<oneiron::ClaimApprovalStatus, McpGatewayError> {
+    match value {
+        "auto" => Ok(oneiron::ClaimApprovalStatus::Auto),
+        "proposed" => Ok(oneiron::ClaimApprovalStatus::Proposed),
+        "approved" => Ok(oneiron::ClaimApprovalStatus::Approved),
+        "rejected" => Ok(oneiron::ClaimApprovalStatus::Rejected),
+        _ => Err(McpGatewayError::new(
+            -32602,
+            "tool_args_invalid",
+            "entity.body.approval is not recognized",
+        )
+        .with_field("entity.body.approval")),
+    }
+}
+
+fn mcp_ask_result(args: McpAskToolArgs, actor: &McpResolvedActor) -> Value {
+    json!({
+        "content": [mcp_text_content("ask accepted")],
+        "structuredContent": {
+            "tool": McpToolName::Ask.as_str(),
+            "status": "accepted",
+            "query": args.query,
+            "context_pack": args.context_pack,
+            "effort": args.effort,
+            "citation_mode": args.citation_mode,
+            "actor": mcp_actor_result(actor),
+        },
+        "isError": false,
+    })
+}
+
+fn mcp_routed_ask_result(args: McpRoutedAskToolArgs, actor: &McpResolvedActor) -> Value {
+    json!({
+        "content": [mcp_text_content("routed ask accepted")],
+        "structuredContent": {
+            "tool": McpToolName::RoutedAsk.as_str(),
+            "status": "accepted",
+            "query": args.query,
+            "context_pack": args.context_pack,
+            "route": args.route,
+            "effort": args.effort,
+            "citation_mode": args.citation_mode,
+            "actor": mcp_actor_result(actor),
+        },
+        "isError": false,
+    })
+}
+
+fn mcp_scoped_read<'a>(
+    vault: &'a oneiron::Vault,
+    actor: &McpResolvedActor,
+) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
+    let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
+        &actor.gate_actor_ref,
+        actor.gate_actor_class,
+    )
+    .ok_or_else(|| {
+        McpGatewayError::new(
+            -32003,
+            "mcp_actor_invalid",
+            "resolved actor cannot be used as a scoped read key",
+        )
+    })?;
+    Ok(vault.scoped_read(key))
+}
+
+fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
+    json!({
+        "actor_ref": actor.actor_ref.to_hex(),
+        "actor_class": actor.gate_actor_class,
+        "gate_actor_ref": actor.gate_actor_ref,
+        "gate_actor_class": actor.gate_actor_class,
+        "scope": {
+            "world_ref": actor.scope.world_ref.map(|id| id.to_hex()),
+            "facet_ref": actor.scope.facet_ref.map(|id| id.to_hex()),
+        },
+    })
+}
+
+fn mcp_actor_class_wire(actor_class: McpActorClass) -> &'static str {
+    match actor_class {
+        McpActorClass::Human => "human",
+        McpActorClass::Agent => "agent",
+    }
+}
+
+fn mcp_text_content(text: impl Into<String>) -> Value {
+    json!({
+        "type": "text",
+        "text": text.into(),
+    })
+}
+
+fn mcp_api_error(error: ApiError) -> McpGatewayError {
+    let code = match error.code() {
+        ErrorCode::BadRequest => -32602,
+        ErrorCode::NotFound => -32004,
+        ErrorCode::InvalidState => -32020,
+        ErrorCode::InternalServerError => -32603,
+        _ => -32000,
+    };
+    let mut gateway = McpGatewayError::new(code, error.code().as_str(), error.message());
+    if let ApiErrorDetails::BadRequest { field } = error.details()
+        && let Some(field) = field
+    {
+        gateway = gateway.with_field(field.clone());
+    }
+    gateway
+}
+
+fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
+    match error.kind() {
+        ErrorKind::GateWriteRejected => {
+            McpGatewayError::new(-32020, "gate_write_rejected", error.to_string())
+        }
+        ErrorKind::GateConsentStale => {
+            McpGatewayError::new(-32020, "gate_consent_stale", error.to_string())
+        }
+        ErrorKind::EntityNotFound => {
+            McpGatewayError::new(-32004, "entity_not_found", error.to_string())
+        }
+        _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
+    }
+}
+
+fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
+    let mut data = json!({ "kind": error.kind });
+    if let Some(field) = error.field
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("field".to_owned(), Value::String(field));
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": error.code,
+            "message": error.message,
+            "data": data,
+        },
+    })
 }
 
 fn query_params<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
@@ -9838,6 +10695,484 @@ mod tests {
             .expect("JSON response body");
         let body: Value = serde_json::from_slice(&body).expect("JSON response");
         (status, body)
+    }
+
+    fn mcp_request(credential: &str, body: Value) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, format!("Bearer {credential}"))
+            .body(Body::from(body.to_string()))
+            .expect("mcp request")
+    }
+
+    fn mcp_call_request(credential: &str, id: &str, name: &str, arguments: Value) -> Request<Body> {
+        mcp_request(
+            credential,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": arguments,
+                },
+            }),
+        )
+    }
+
+    async fn register_mcp_actor(
+        server: &Arc<SyncServer>,
+        credential: &str,
+        actor_ref: oneiron::EntityId,
+        actor_class: oneiron::EdgeActorClass,
+    ) {
+        let actor_type = match actor_class {
+            oneiron::EdgeActorClass::Human => oneiron::types::ENTITY_TYPE_PERSON,
+            oneiron::EdgeActorClass::Agent => oneiron::types::ENTITY_TYPE_MACHINE,
+            oneiron::EdgeActorClass::System => oneiron::types::ENTITY_TYPE_MACHINE,
+        };
+        server
+            .vault
+            .put_entity(
+                &actor_ref,
+                actor_type,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"mcp actor",
+            )
+            .expect("seed mcp actor entity");
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .register(
+                credential,
+                crate::mcp::McpConnectorActorRecord::new(
+                    actor_ref,
+                    actor_class,
+                    crate::mcp::McpConnectorScope::vault_wide(),
+                ),
+            )
+            .expect("register mcp actor");
+    }
+
+    fn mcp_actor_json(actor_ref: oneiron::EntityId, actor_class: &str) -> Value {
+        json!({
+            "actor_ref": actor_ref.to_hex(),
+            "actor_class": actor_class,
+            "gate_actor_class": actor_class,
+            "gate_actor_ref": actor_ref.to_hex(),
+            "scope": {},
+        })
+    }
+
+    fn mcp_consent_json(purpose: &str, require_human_approval: bool) -> Value {
+        json!({
+            "policy_ref": "policy:foreign-mcp",
+            "purpose": purpose,
+            "approval_ref": "approval:one-1222",
+            "consent_receipt_ref": "consent:one-1222",
+            "require_human_approval": require_human_approval,
+        })
+    }
+
+    fn mcp_context_pack_json(result_id: oneiron::EntityId) -> Value {
+        json!({
+            "schema_version": "context_pack_ref.v1",
+            "context_version": "v4",
+            "pack_ref": "context-pack:one-1222",
+            "retrieval_run_id": "retrieval:one-1222",
+            "result_ids": [result_id.to_hex()],
+            "budget_ref": "budget:standard",
+        })
+    }
+
+    fn mcp_remember_claim_args(
+        actor_ref: oneiron::EntityId,
+        claim_id: oneiron::EntityId,
+        subject_ref: oneiron::EntityId,
+        source: &str,
+    ) -> Value {
+        json!({
+            "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+            "actor": mcp_actor_json(actor_ref, "human"),
+            "consent": mcp_consent_json("write_memory", false),
+            "verb": "remember",
+            "idempotency_key": format!("one-1222-{}", claim_id.to_hex()),
+            "entity": {
+                "id": claim_id.to_hex(),
+                "entity_type": oneiron::types::ENTITY_TYPE_CLAIM,
+                "occurred_start": 10,
+                "occurred_end": 10,
+                "learned_at": 11,
+                "body": {
+                    "predicate": "profile.mcp_gateway",
+                    "subject": { "entity_ref": subject_ref.to_hex() },
+                    "value": "MCP gateway write",
+                    "confidence": 0.8,
+                    "source": source
+                }
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_read_uses_connector_actor_and_scoped_read() {
+        let (_dir, server) = test_server();
+        let actor_ref = seeded_test_entity_id(0x1222_0001);
+        let credential = "one-1222-read-credential";
+        register_mcp_actor(
+            &server,
+            credential,
+            actor_ref,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+
+        let entity_ref = seeded_test_entity_id(0x1222_0002);
+        let body = rmp_serde::to_vec_named(&json!({
+            "txt": "MCP read fixture",
+        }))
+        .expect("encode MCP read body");
+        server
+            .vault
+            .put_entity(
+                &entity_ref,
+                ENTITY_TYPE_TURN,
+                oneiron::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                101,
+                &body,
+            )
+            .expect("seed MCP read entity");
+
+        let (status, body) = route_json(
+            server,
+            mcp_call_request(
+                credential,
+                "mcp-read",
+                "oneiron.read",
+                json!({
+                    "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+                    "actor": mcp_actor_json(actor_ref, "human"),
+                    "consent": mcp_consent_json("read_memory", false),
+                    "target": { "entity_ref": entity_ref.to_hex() },
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("error").is_none(),
+            "unexpected MCP error: {body:?}"
+        );
+        assert_eq!(
+            body["result"]["structuredContent"]["found"],
+            Value::Bool(true)
+        );
+        assert_eq!(
+            body["result"]["structuredContent"]["item"]["id"],
+            Value::from(entity_ref.to_hex())
+        );
+        assert_eq!(body["result"]["isError"], Value::Bool(false));
+    }
+
+    #[tokio::test]
+    async fn mcp_edit_remember_claim_persists_gate_decision_with_actor_stamp() {
+        let (_dir, server) = test_server();
+        let actor_ref = seeded_test_entity_id(0x1222_0101);
+        let credential = "one-1222-write-credential";
+        register_mcp_actor(
+            &server,
+            credential,
+            actor_ref,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+
+        let subject_ref = seeded_test_entity_id(0x1222_0102);
+        server
+            .vault
+            .put_entity(
+                &subject_ref,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange {
+                    start: 200,
+                    end: 200,
+                },
+                200,
+                b"MCP subject",
+            )
+            .expect("seed MCP claim subject");
+
+        let claim_id = seeded_test_entity_id(0x1222_0103);
+        let (status, body) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential,
+                "mcp-write-allow",
+                "oneiron.edit",
+                mcp_remember_claim_args(actor_ref, claim_id, subject_ref, "tool_output"),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("error").is_none(),
+            "unexpected MCP error: {body:?}"
+        );
+        assert_eq!(
+            body["result"]["structuredContent"]["id"],
+            Value::from(claim_id.to_hex())
+        );
+
+        let stored = server
+            .vault
+            .get_claim(&claim_id)
+            .expect("read stored MCP claim")
+            .expect("MCP claim should be stored after an allow decision");
+        assert_eq!(stored.source, Some(oneiron::ClaimSource::ToolOutput));
+
+        let decisions = server
+            .vault
+            .gate_decisions(10)
+            .expect("gate decisions after MCP write");
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+            .expect("MCP write must persist a Gate decision");
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+        assert_eq!(decision.actor_class, "human");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(actor_ref.to_hex().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_denied_write_returns_stable_error_without_partial_mutation() {
+        let (_dir, server) = test_server();
+        let actor_ref = seeded_test_entity_id(0x1222_0201);
+        let credential = "one-1222-denied-credential";
+        register_mcp_actor(
+            &server,
+            credential,
+            actor_ref,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+
+        let subject_ref = seeded_test_entity_id(0x1222_0202);
+        server
+            .vault
+            .put_entity(
+                &subject_ref,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange {
+                    start: 300,
+                    end: 300,
+                },
+                300,
+                b"MCP denied subject",
+            )
+            .expect("seed MCP denied subject");
+
+        let claim_id = seeded_test_entity_id(0x1222_0203);
+        let (status, body) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential,
+                "mcp-write-denied",
+                "oneiron.edit",
+                mcp_remember_claim_args(actor_ref, claim_id, subject_ref, "generated"),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["error"]["code"], Value::from(-32020));
+        assert_eq!(
+            body["error"]["data"]["kind"],
+            Value::from("gate_write_rejected")
+        );
+        assert!(
+            server
+                .vault
+                .get_claim(&claim_id)
+                .expect("read denied MCP claim")
+                .is_none(),
+            "denied MCP write must not leave a partial claim"
+        );
+
+        let decisions = server
+            .vault
+            .gate_decisions(10)
+            .expect("gate decisions after denied MCP write");
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+            .expect("denied MCP write must still persist a Gate decision");
+        assert_eq!(decision.outcome, "pending");
+        assert_eq!(decision.reason_codes, vec!["gate.pending.source_trust"]);
+        assert_eq!(decision.actor_class, "human");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(actor_ref.to_hex().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_edit_remember_rejects_non_claim_without_partial_mutation() {
+        let (_dir, server) = test_server();
+        let actor_ref = seeded_test_entity_id(0x1222_0401);
+        let credential = "one-1222-non-claim-credential";
+        register_mcp_actor(
+            &server,
+            credential,
+            actor_ref,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+
+        let entity_ref = seeded_test_entity_id(0x1222_0402);
+        let (status, body) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential,
+                "mcp-write-non-claim",
+                "oneiron.edit",
+                json!({
+                    "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+                    "actor": mcp_actor_json(actor_ref, "human"),
+                    "consent": mcp_consent_json("write_memory", false),
+                    "verb": "remember",
+                    "idempotency_key": "one-1222-non-claim",
+                    "entity": {
+                        "id": entity_ref.to_hex(),
+                        "entity_type": ENTITY_TYPE_TURN,
+                        "occurred_start": 400_u64,
+                        "occurred_end": 400_u64,
+                        "learned_at": 400_u64,
+                        "body": { "txt": "non-claim MCP write should not persist" },
+                        "text": [
+                            {
+                                "field": "body",
+                                "value": "non-claim MCP write should not persist"
+                            }
+                        ]
+                    }
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["error"]["code"], Value::from(-32602));
+        assert_eq!(
+            body["error"]["data"]["kind"],
+            Value::from("tool_args_invalid")
+        );
+        assert_eq!(
+            body["error"]["data"]["field"],
+            Value::from("entity.entity_type")
+        );
+        assert!(
+            !server
+                .vault
+                .entity_exists(&entity_ref)
+                .expect("check non-claim entity"),
+            "rejected non-claim MCP write must not persist the entity"
+        );
+        assert!(
+            server
+                .vault
+                .gate_decisions(10)
+                .expect("gate decisions")
+                .is_empty(),
+            "rejected non-claim MCP write must not emit a Gate decision"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_ask_returns_accepted_without_mutation() {
+        let (_dir, server) = test_server();
+        let actor_ref = seeded_test_entity_id(0x1222_0301);
+        let credential = "one-1222-ask-credential";
+        register_mcp_actor(
+            &server,
+            credential,
+            actor_ref,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+        let result_id = seeded_test_entity_id(0x1222_0302);
+
+        let (status, body) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential,
+                "mcp-ask",
+                "oneiron.ask",
+                json!({
+                    "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
+                    "actor": mcp_actor_json(actor_ref, "human"),
+                    "context_pack": mcp_context_pack_json(result_id),
+                    "consent": mcp_consent_json("ask_memory", false),
+                    "query": "What does this context say?",
+                    "effort": "standard",
+                    "citation_mode": "claim_refs",
+                }),
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("error").is_none(),
+            "unexpected MCP error: {body:?}"
+        );
+        assert_eq!(
+            body["result"]["structuredContent"]["status"],
+            Value::from("accepted")
+        );
+        assert_eq!(
+            body["result"]["structuredContent"]["tool"],
+            Value::from("oneiron.ask")
+        );
+        assert!(
+            server
+                .vault
+                .gate_decisions(10)
+                .expect("gate decisions after ask")
+                .is_empty(),
+            "ask must not persist write Gate decisions"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_malformed_call_returns_stable_json_rpc_error() {
+        let (_dir, server) = test_server();
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("{"))
+            .expect("malformed MCP request");
+
+        let (status, body) = route_json(server, request).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["jsonrpc"], Value::from("2.0"));
+        assert_eq!(body["id"], Value::Null);
+        assert_eq!(body["error"]["code"], Value::from(-32700));
+        assert_eq!(body["error"]["data"]["kind"], Value::from("parse_error"));
     }
 
     fn error_envelope(body: &Value) -> &Value {

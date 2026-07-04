@@ -61,7 +61,7 @@ use crate::provenance::{
     validate_model_substrate_field, winner_index,
 };
 use crate::store::{
-    DB_MANIFEST, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
+    DB_MANIFEST, GateDecisionRecord, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
     PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
     RetrievalBlendWeightTableEntry, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId,
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
@@ -5180,6 +5180,18 @@ impl Vault {
     /// Returns pending Gate consent proposals ordered by their write decision.
     pub fn pending_gate_consents(&self, limit: usize) -> Result<Vec<PendingGateConsentRecord>> {
         self.store.pending_gate_consents(limit)
+    }
+
+    /// Returns recent Gate decisions ordered from newest to oldest.
+    pub fn gate_decisions(&self, limit: usize) -> Result<Vec<GateDecisionRecord>> {
+        self.store.gate_decisions(limit)
+    }
+
+    /// Checks whether the active Gate policy has an actor-ceiling row for an actor.
+    pub fn gate_actor_ceiling_exists(&self, actor_class: &str, actor_ref: &str) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        Ok(policy.has_matching_actor_ceiling(actor_class, Some(actor_ref)))
     }
 
     /// Returns pending Gate consent proposals grouped by Dreamer run id.
