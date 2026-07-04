@@ -5687,7 +5687,7 @@ struct CoreRunTreeNode {
     timestamps: CoreRunTreeTimestamps,
     /// Terminal failure summary, when present.
     failure: Option<CoreRunTreeFailure>,
-    /// Durable intervention events recorded on the backing queue row.
+    /// Lifecycle/operator events projected from the backing queue row.
     events: Vec<CoreRunTreeEvent>,
     /// Child jobs ordered deterministically by creation time and job id.
     #[schema(no_recursion)]
@@ -5727,33 +5727,37 @@ struct CoreRunTreeFailure {
     reason: String,
 }
 
-/// Durable intervention event recorded on a runtime job.
+/// Lifecycle/operator event projected for a runtime job.
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreRunTreeEvent {
-    /// Monotonic event sequence on the backing job row.
+    /// Monotonic event sequence in the projected run-tree event stream.
     #[schema(example = 1_u64)]
     sequence: u64,
     /// Event timestamp in Unix seconds.
     #[schema(example = 1782357635_u64)]
     at: u64,
-    /// Authenticated principal or explicit actor override that requested the event.
+    /// Authenticated principal for operator events, otherwise the runtime actor.
     #[schema(example = "dreamer-dashboard")]
     actor: String,
-    /// Intervention primitive recorded.
+    /// Lifecycle or operator event kind.
     kind: CoreRunTreeEventKind,
     /// Optional operator note.
     #[schema(example = "operator requested a checkpoint")]
     note: Option<String>,
 }
 
-/// Intervention event kind.
+/// Lifecycle/operator event kind.
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 enum CoreRunTreeEventKind {
-    Interrupt,
-    Pause,
-    Resume,
-    Cancel,
+    Created,
+    Claimed,
+    Paused,
+    Resumed,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
 }
 
 /// Non-mutating repair applied while rendering a run tree.
@@ -7137,10 +7141,14 @@ fn core_run_tree_event(event: oneiron::RunTreeEvent) -> CoreRunTreeEvent {
 
 fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreRunTreeEventKind {
     match kind {
-        oneiron::RunTreeEventKind::Interrupt => CoreRunTreeEventKind::Interrupt,
-        oneiron::RunTreeEventKind::Pause => CoreRunTreeEventKind::Pause,
-        oneiron::RunTreeEventKind::Resume => CoreRunTreeEventKind::Resume,
-        oneiron::RunTreeEventKind::Cancel => CoreRunTreeEventKind::Cancel,
+        oneiron::RunTreeEventKind::Created => CoreRunTreeEventKind::Created,
+        oneiron::RunTreeEventKind::Claimed => CoreRunTreeEventKind::Claimed,
+        oneiron::RunTreeEventKind::Paused => CoreRunTreeEventKind::Paused,
+        oneiron::RunTreeEventKind::Resumed => CoreRunTreeEventKind::Resumed,
+        oneiron::RunTreeEventKind::Completed => CoreRunTreeEventKind::Completed,
+        oneiron::RunTreeEventKind::Failed => CoreRunTreeEventKind::Failed,
+        oneiron::RunTreeEventKind::Cancelled => CoreRunTreeEventKind::Cancelled,
+        oneiron::RunTreeEventKind::Interrupted => CoreRunTreeEventKind::Interrupted,
     }
 }
 
@@ -12503,7 +12511,16 @@ mod tests {
         assert_eq!(roots[0]["worker_kind"], Value::from("api-worker"));
         assert_eq!(roots[0]["status"], Value::from("queued"));
         assert_eq!(roots[0]["timestamps"]["created_at"], Value::from(10));
-        assert_eq!(roots[0]["events"], json!([]));
+        assert_eq!(
+            roots[0]["events"],
+            json!([{
+                "sequence": 0,
+                "at": 10,
+                "actor": "runtime",
+                "kind": "created",
+                "note": null,
+            }])
+        );
         assert_eq!(roots[0]["children"], json!([]));
 
         let (observe_status, observe_body) = core_json(
@@ -12560,10 +12577,13 @@ mod tests {
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(root.id)));
         assert_eq!(roots[0]["status"], Value::from("paused"));
-        assert_eq!(roots[0]["events"][0]["sequence"], Value::from(1));
-        assert_eq!(roots[0]["events"][0]["kind"], Value::from("pause"));
-        assert_eq!(roots[0]["events"][0]["actor"], Value::from("bearer"));
-        assert_eq!(roots[0]["events"][0]["note"], Value::from("hold branch"));
+        assert_eq!(roots[0]["events"].as_array().unwrap().len(), 2);
+        assert_eq!(roots[0]["events"][0]["sequence"], Value::from(0));
+        assert_eq!(roots[0]["events"][0]["kind"], Value::from("created"));
+        assert_eq!(roots[0]["events"][1]["sequence"], Value::from(1));
+        assert_eq!(roots[0]["events"][1]["kind"], Value::from("paused"));
+        assert_eq!(roots[0]["events"][1]["actor"], Value::from("bearer"));
+        assert_eq!(roots[0]["events"][1]["note"], Value::from("hold branch"));
 
         let repeated = json!({
             "job_id": job_id_hex(root.id),
@@ -12582,7 +12602,7 @@ mod tests {
         let repeat_roots = repeat_body["tree"]["roots"]
             .as_array()
             .expect("repeat snapshot roots");
-        assert_eq!(repeat_roots[0]["events"].as_array().unwrap().len(), 1);
+        assert_eq!(repeat_roots[0]["events"].as_array().unwrap().len(), 2);
 
         let resume = json!({
             "job_id": job_id_hex(root.id),
@@ -12602,8 +12622,8 @@ mod tests {
             .as_array()
             .expect("resume snapshot roots");
         assert_eq!(resume_roots[0]["status"], Value::from("queued"));
-        assert_eq!(resume_roots[0]["events"].as_array().unwrap().len(), 2);
-        assert_eq!(resume_roots[0]["events"][1]["kind"], Value::from("resume"));
+        assert_eq!(resume_roots[0]["events"].as_array().unwrap().len(), 3);
+        assert_eq!(resume_roots[0]["events"][2]["kind"], Value::from("resumed"));
 
         let interrupt = json!({
             "job_id": job_id_hex(root.id),
@@ -12624,13 +12644,13 @@ mod tests {
             .as_array()
             .expect("interrupt snapshot roots");
         assert_eq!(interrupt_roots[0]["status"], Value::from("queued"));
-        assert_eq!(interrupt_roots[0]["events"].as_array().unwrap().len(), 3);
+        assert_eq!(interrupt_roots[0]["events"].as_array().unwrap().len(), 4);
         assert_eq!(
-            interrupt_roots[0]["events"][2]["kind"],
-            Value::from("interrupt")
+            interrupt_roots[0]["events"][3]["kind"],
+            Value::from("interrupted")
         );
         assert_eq!(
-            interrupt_roots[0]["events"][2]["note"],
+            interrupt_roots[0]["events"][3]["note"],
             Value::from("snapshot now")
         );
 
@@ -12652,8 +12672,11 @@ mod tests {
             .as_array()
             .expect("cancel snapshot roots");
         assert_eq!(cancel_roots[0]["status"], Value::from("cancelled"));
-        assert_eq!(cancel_roots[0]["events"].as_array().unwrap().len(), 4);
-        assert_eq!(cancel_roots[0]["events"][3]["kind"], Value::from("cancel"));
+        assert_eq!(cancel_roots[0]["events"].as_array().unwrap().len(), 5);
+        assert_eq!(
+            cancel_roots[0]["events"][4]["kind"],
+            Value::from("cancelled")
+        );
     }
 
     #[tokio::test]
