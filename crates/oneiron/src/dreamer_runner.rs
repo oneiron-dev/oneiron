@@ -1585,6 +1585,17 @@ impl<'a> DreamerRunnerStore<'a> {
         drop(rtxn);
 
         let mut wtxn = self.vault.store.env.write_txn()?;
+        if self
+            .vault
+            .store
+            .vault_meta
+            .get(&wtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
+            .is_some()
+        {
+            drop(wtxn);
+            let rtxn = self.vault.store.env.read_txn()?;
+            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, job_id);
+        }
         let latest = backfill_dreamer_milestone_index(&self.vault.store, &mut wtxn, job_id)?;
         wtxn.commit()?;
         Ok(latest)
@@ -2140,7 +2151,9 @@ fn indexed_dreamer_milestone_if_current(
     key: &[u8],
     expected_job_id: JobId,
 ) -> Result<Option<DreamerDurableMilestone>> {
-    let (job_id, at, learned_at, claim_id) = decode_dreamer_milestone_candidate_key(key)?;
+    let Ok((job_id, at, learned_at, claim_id)) = decode_dreamer_milestone_candidate_key(key) else {
+        return Ok(None);
+    };
     if job_id != expected_job_id {
         return Ok(None);
     }
@@ -3752,6 +3765,16 @@ mod tests {
             .expect("durable milestone fallback");
         assert_eq!(durable.claim_id, done_claim);
         assert_eq!(durable.kind, DreamerMilestoneKind::Done);
+
+        let mut malformed_index_key = dreamer_milestone_candidate_prefix(queued.job.id);
+        malformed_index_key.extend_from_slice(b"truncated");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .vault_meta
+                .put(wtxn, &malformed_index_key, b"bad")?;
+            Ok(())
+        })?;
 
         live_store.set(
             &dreamer_job_progress_key(queued.job.id),
