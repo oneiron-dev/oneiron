@@ -174,6 +174,8 @@ pub struct JobRecord {
     pub lease_owner: Option<String>,
     pub attempt_count: u32,
     #[serde(default)]
+    pub claimed_at: Option<u64>,
+    #[serde(default)]
     pub backoff_until: Option<u64>,
     #[serde(default)]
     pub last_error: Option<String>,
@@ -510,6 +512,7 @@ impl<'a> JobQueue<'a> {
             state: JobState::Queued,
             lease_owner: None,
             attempt_count: 0,
+            claimed_at: None,
             backoff_until: None,
             last_error: None,
             run_id: input.run_id,
@@ -741,6 +744,9 @@ impl<'a> JobQueue<'a> {
                 .attempt_count
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("job attempt count"))?;
+            if record.claimed_at.is_none() {
+                record.claimed_at = Some(input.now);
+            }
             record.backoff_until = None;
             record.updated_at = input.now;
             claimed = Some((candidate.ready_key.clone(), id, record));
@@ -846,6 +852,9 @@ impl<'a> JobQueue<'a> {
                 .attempt_count
                 .checked_add(1)
                 .ok_or(Error::ArithmeticOverflow("job attempt count"))?;
+            if record.claimed_at.is_none() {
+                record.claimed_at = Some(input.now);
+            }
             record.backoff_until = None;
             record.updated_at = input.now;
             claimed = Some((key.to_vec(), id, record));

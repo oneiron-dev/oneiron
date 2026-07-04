@@ -2969,10 +2969,14 @@
       },
       "CoreRunTreeEventKind": {
         "enum": [
-          "interrupt",
-          "pause",
-          "resume",
-          "cancel"
+          "created",
+          "claimed",
+          "paused",
+          "resumed",
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted"
         ],
         "type": "string"
       },
