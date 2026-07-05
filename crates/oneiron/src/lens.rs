@@ -10,7 +10,11 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de, de::DeserializeSeed, ser::SerializeMap,
 };
 
-use crate::{Error, Result};
+use crate::{
+    Error, Result,
+    claim::{ScopedRead, ScopedReadActorKey},
+    types::{ENTITY_TYPE_CLAIM, EdgeActorClass, EntityId},
+};
 
 pub const LENS_ATOM_KIT_VERSION: u16 = 1;
 
@@ -117,6 +121,8 @@ macro_rules! lens_token_type {
 
 lens_token_type!(LensAtomId, "lens atom id");
 lens_token_type!(LensHandleName, "lens handle name");
+lens_token_type!(LensRenderId, "lens render id");
+lens_token_type!(LensBackingRefId, "lens backing ref id");
 lens_token_type!(SelfUiControlId, "self.ui control id");
 lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
@@ -677,6 +683,553 @@ pub enum LensHandleRole {
     Timeline,
     QueryResult,
     ActionTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensActingPrincipalKind {
+    HumanView,
+    AgentTask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensPrincipalBinding {
+    principal_ref: String,
+    kind: LensActingPrincipalKind,
+    selected_read_key: ScopedReadActorKey,
+    held_read_keys: Vec<ScopedReadActorKey>,
+}
+
+impl LensPrincipalBinding {
+    pub fn human_view(
+        principal_ref: impl Into<String>,
+        selected_read_key: ScopedReadActorKey,
+        held_read_keys: Vec<ScopedReadActorKey>,
+    ) -> Result<Self> {
+        Self::new(
+            principal_ref,
+            LensActingPrincipalKind::HumanView,
+            selected_read_key,
+            held_read_keys,
+        )
+    }
+
+    pub fn agent_task(
+        principal_ref: impl Into<String>,
+        selected_read_key: ScopedReadActorKey,
+        held_read_keys: Vec<ScopedReadActorKey>,
+    ) -> Result<Self> {
+        Self::new(
+            principal_ref,
+            LensActingPrincipalKind::AgentTask,
+            selected_read_key,
+            held_read_keys,
+        )
+    }
+
+    fn new(
+        principal_ref: impl Into<String>,
+        kind: LensActingPrincipalKind,
+        selected_read_key: ScopedReadActorKey,
+        held_read_keys: Vec<ScopedReadActorKey>,
+    ) -> Result<Self> {
+        let principal_ref = principal_ref.into();
+        let principal_ref = principal_ref.trim();
+        if principal_ref.is_empty() {
+            return Err(Error::InvalidConfig(
+                "lens acting principal must not be empty".to_string(),
+            ));
+        }
+        if held_read_keys.is_empty() {
+            return Err(Error::InvalidConfig(
+                "lens acting principal must hold at least one read key".to_string(),
+            ));
+        }
+        if principal_ref != selected_read_key.actor_ref() {
+            return Err(Error::InvalidConfig(
+                "lens acting principal ref must match the selected read key actor".to_string(),
+            ));
+        }
+        if held_read_keys
+            .iter()
+            .any(|key| key.actor_ref() != principal_ref)
+        {
+            return Err(Error::InvalidConfig(
+                "lens acting principal held read keys must belong to the same actor".to_string(),
+            ));
+        }
+        if !held_read_keys.iter().any(|key| key == &selected_read_key) {
+            return Err(Error::InvalidConfig(
+                "lens render read key must be held by the acting principal".to_string(),
+            ));
+        }
+        match kind {
+            LensActingPrincipalKind::HumanView => {
+                if selected_read_key
+                    .actor_class()
+                    .is_some_and(|class| class != EdgeActorClass::Human.gate_actor_class())
+                {
+                    return Err(Error::InvalidConfig(
+                        "lens human-view principal must use a human read key".to_string(),
+                    ));
+                }
+            }
+            LensActingPrincipalKind::AgentTask => {
+                if selected_read_key.actor_class() != Some(EdgeActorClass::Agent.gate_actor_class())
+                {
+                    return Err(Error::InvalidConfig(
+                        "lens agent-task principal must use an agent read key".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            principal_ref: principal_ref.to_owned(),
+            kind,
+            selected_read_key,
+            held_read_keys,
+        })
+    }
+
+    #[must_use]
+    pub fn principal_ref(&self) -> &str {
+        &self.principal_ref
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> LensActingPrincipalKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn selected_read_key(&self) -> &ScopedReadActorKey {
+        &self.selected_read_key
+    }
+
+    #[must_use]
+    pub fn held_read_keys(&self) -> &[ScopedReadActorKey] {
+        &self.held_read_keys
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensBackingTargetKind {
+    Entity,
+    Claim,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensBackingTarget {
+    kind: LensBackingTargetKind,
+    entity_id: EntityId,
+    short_id: String,
+    content_hash: u8,
+}
+
+impl LensBackingTarget {
+    pub fn entity(
+        entity_id: EntityId,
+        short_id: impl Into<String>,
+        content_hash: u8,
+    ) -> Result<Self> {
+        Self::new(
+            LensBackingTargetKind::Entity,
+            entity_id,
+            short_id,
+            content_hash,
+        )
+    }
+
+    pub fn claim(
+        entity_id: EntityId,
+        short_id: impl Into<String>,
+        content_hash: u8,
+    ) -> Result<Self> {
+        Self::new(
+            LensBackingTargetKind::Claim,
+            entity_id,
+            short_id,
+            content_hash,
+        )
+    }
+
+    fn new(
+        kind: LensBackingTargetKind,
+        entity_id: EntityId,
+        short_id: impl Into<String>,
+        content_hash: u8,
+    ) -> Result<Self> {
+        let short_id = short_id.into();
+        validate_lens_token("lens backing short id", &short_id)?;
+        Ok(Self {
+            kind,
+            entity_id,
+            short_id,
+            content_hash,
+        })
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> LensBackingTargetKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn entity_id(&self) -> &EntityId {
+        &self.entity_id
+    }
+
+    #[must_use]
+    pub fn short_id(&self) -> &str {
+        &self.short_id
+    }
+
+    #[must_use]
+    pub fn content_hash(&self) -> u8 {
+        self.content_hash
+    }
+
+    #[must_use]
+    pub fn short_ref(&self) -> String {
+        format!("{}:{:02x}", self.short_id, self.content_hash)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LensBackingRefToken {
+    render_id: LensRenderId,
+    ref_id: LensBackingRefId,
+}
+
+impl LensBackingRefToken {
+    #[must_use]
+    pub fn render_id(&self) -> &LensRenderId {
+        &self.render_id
+    }
+
+    #[must_use]
+    pub fn ref_id(&self) -> &LensBackingRefId {
+        &self.ref_id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensHostBackingRef {
+    token: LensBackingRefToken,
+    handle: LensHandleName,
+    role: LensHandleRole,
+    target: LensBackingTarget,
+}
+
+impl LensHostBackingRef {
+    #[must_use]
+    pub fn token(&self) -> &LensBackingRefToken {
+        &self.token
+    }
+
+    #[must_use]
+    pub fn handle(&self) -> &LensHandleName {
+        &self.handle
+    }
+
+    #[must_use]
+    pub fn role(&self) -> LensHandleRole {
+        self.role
+    }
+
+    #[must_use]
+    pub fn target(&self) -> &LensBackingTarget {
+        &self.target
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LensRenderFrame {
+    render_id: LensRenderId,
+    principal: LensPrincipalBinding,
+    backing_refs: Vec<LensHostBackingRef>,
+}
+
+impl LensRenderFrame {
+    #[must_use]
+    pub fn new(render_id: LensRenderId, principal: LensPrincipalBinding) -> Self {
+        Self {
+            render_id,
+            principal,
+            backing_refs: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn render_id(&self) -> &LensRenderId {
+        &self.render_id
+    }
+
+    #[must_use]
+    pub fn principal(&self) -> &LensPrincipalBinding {
+        &self.principal
+    }
+
+    #[must_use]
+    pub fn backing_refs(&self) -> &[LensHostBackingRef] {
+        &self.backing_refs
+    }
+
+    pub fn mint_backing_ref(
+        &mut self,
+        scoped_read: &ScopedRead<'_>,
+        handle: LensHandleName,
+        role: LensHandleRole,
+        target: LensBackingTarget,
+    ) -> Result<LensBackingRefToken> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        if self
+            .backing_refs
+            .iter()
+            .any(|backing_ref| backing_ref.handle == handle)
+        {
+            return Err(Error::InvalidConfig(
+                "lens backing handle must be host-bound at most once per render".to_string(),
+            ));
+        }
+        Self::ensure_target_readable(scoped_read, &target)?;
+
+        let ref_id = LensBackingRefId::new(format!("ref-{}", self.backing_refs.len()))?;
+        let token = LensBackingRefToken {
+            render_id: self.render_id.clone(),
+            ref_id,
+        };
+        self.backing_refs.push(LensHostBackingRef {
+            token: token.clone(),
+            handle,
+            role,
+            target,
+        });
+        Ok(token)
+    }
+
+    pub fn resolve_backing_ref_token(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        token: &LensBackingRefToken,
+    ) -> Result<LensHostBackingRef> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        if token.render_id != self.render_id {
+            return Err(Error::InvalidConfig(
+                "lens backing ref token belongs to a different render".to_string(),
+            ));
+        }
+        let backing_ref = self
+            .backing_refs
+            .iter()
+            .find(|backing_ref| backing_ref.token.ref_id == token.ref_id)
+            .ok_or_else(|| {
+                Error::InvalidConfig("lens backing ref token was not host-minted".to_string())
+            })?;
+        Self::ensure_target_readable(scoped_read, &backing_ref.target)?;
+        Ok(backing_ref.clone())
+    }
+
+    pub fn approve_action(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        action: &SelfUiAction,
+    ) -> Result<LensApprovedAction> {
+        self.ensure_scoped_read_actor(scoped_read)?;
+        let mut args = Vec::with_capacity(action.args.len());
+        for arg in &action.args {
+            args.push(match arg {
+                SelfUiValue::Bool(value) => LensApprovedActionArg::Bool(*value),
+                SelfUiValue::Number(value) => LensApprovedActionArg::Number(*value),
+                SelfUiValue::Text(value) => LensApprovedActionArg::Text(value.clone()),
+                SelfUiValue::Token(value) => LensApprovedActionArg::Token(value.clone()),
+                SelfUiValue::Handle(handle) => {
+                    let backing_ref = self.resolve_handle(scoped_read, handle)?;
+                    LensApprovedActionArg::BackingRef(backing_ref.clone())
+                }
+            });
+        }
+        Ok(LensApprovedAction {
+            command: action.command.clone(),
+            args,
+        })
+    }
+
+    fn resolve_handle(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        handle: &LensHandleName,
+    ) -> Result<&LensHostBackingRef> {
+        let backing_ref = self
+            .backing_refs
+            .iter()
+            .find(|backing_ref| &backing_ref.handle == handle)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "lens action handle was not host-bound for this render".to_string(),
+                )
+            })?;
+        if backing_ref.role != LensHandleRole::ActionTarget {
+            return Err(Error::InvalidConfig(
+                "lens action handle must resolve to an action-target backing ref".to_string(),
+            ));
+        }
+        Self::ensure_target_readable(scoped_read, &backing_ref.target)?;
+        Ok(backing_ref)
+    }
+
+    fn ensure_scoped_read_actor(&self, scoped_read: &ScopedRead<'_>) -> Result<()> {
+        if scoped_read.actor_key() == self.principal.selected_read_key() {
+            return Ok(());
+        }
+        Err(Error::InvalidConfig(
+            "lens render must use the acting principal's selected read key".to_string(),
+        ))
+    }
+
+    fn ensure_target_readable(
+        scoped_read: &ScopedRead<'_>,
+        target: &LensBackingTarget,
+    ) -> Result<()> {
+        let Some(hydrated) =
+            scoped_read.hydrate_short_id(target.short_id(), target.content_hash())?
+        else {
+            return Err(Error::InvalidConfig(
+                "lens backing short ref is not readable by the acting principal".to_string(),
+            ));
+        };
+        if hydrated.id != *target.entity_id() || hydrated.body.is_none() {
+            return Err(Error::InvalidConfig(
+                "lens backing short ref does not resolve to the target entity".to_string(),
+            ));
+        }
+        match (target.kind(), hydrated.entity_type) {
+            (LensBackingTargetKind::Claim, ENTITY_TYPE_CLAIM) => {}
+            (LensBackingTargetKind::Claim, _) => {
+                return Err(Error::InvalidConfig(
+                    "lens claim backing ref target must resolve to a claim entity".to_string(),
+                ));
+            }
+            (LensBackingTargetKind::Entity, ENTITY_TYPE_CLAIM) => {
+                return Err(Error::InvalidConfig(
+                    "lens entity backing ref target must not resolve to a claim entity".to_string(),
+                ));
+            }
+            (LensBackingTargetKind::Entity, _) => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LensApprovedAction {
+    command: SelfUiActionId,
+    args: Vec<LensApprovedActionArg>,
+}
+
+impl LensApprovedAction {
+    #[must_use]
+    pub fn command(&self) -> &SelfUiActionId {
+        &self.command
+    }
+
+    #[must_use]
+    pub fn args(&self) -> &[LensApprovedActionArg] {
+        &self.args
+    }
+
+    #[must_use]
+    pub fn into_host_mediated_write(
+        self,
+        chokepoint: LensGateWriteChokepoint,
+    ) -> LensHostMediatedWrite {
+        LensHostMediatedWrite {
+            action: self,
+            chokepoint,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LensApprovedActionArg {
+    Bool(bool),
+    Number(FiniteF64),
+    Text(LensText),
+    Token(SelfUiOptionValue),
+    BackingRef(LensHostBackingRef),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensGateWriteChokepoint {
+    EvaluateGate,
+    CheckClaimPolicyForWrite,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LensHostMediatedWrite {
+    action: LensApprovedAction,
+    chokepoint: LensGateWriteChokepoint,
+}
+
+impl LensHostMediatedWrite {
+    #[must_use]
+    pub fn action(&self) -> &LensApprovedAction {
+        &self.action
+    }
+
+    #[must_use]
+    pub fn chokepoint(&self) -> LensGateWriteChokepoint {
+        self.chokepoint
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LensHostImport {
+    ScopedRead,
+    ResolveBackingRef,
+    EmitAtom,
+    VaultWrite,
+    BatchWrite,
+    EvaluateGate,
+    CheckClaimPolicyForWrite,
+}
+
+impl LensHostImport {
+    #[must_use]
+    pub fn is_write(self) -> bool {
+        matches!(
+            self,
+            Self::VaultWrite
+                | Self::BatchWrite
+                | Self::EvaluateGate
+                | Self::CheckClaimPolicyForWrite
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LensExecutionBoundary {
+    imports: Vec<LensHostImport>,
+}
+
+impl LensExecutionBoundary {
+    pub fn read_only(imports: Vec<LensHostImport>) -> Result<Self> {
+        if let Some(import) = imports.iter().copied().find(|import| import.is_write()) {
+            return Err(Error::InvalidConfig(format!(
+                "generated lens execution must not link write import {import:?}"
+            )));
+        }
+        Ok(Self { imports })
+    }
+
+    #[must_use]
+    pub fn imports(&self) -> &[LensHostImport] {
+        &self.imports
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1970,6 +2523,14 @@ mod tests {
         LensHandleName::new(value).expect("valid handle")
     }
 
+    fn render_id(value: &str) -> LensRenderId {
+        LensRenderId::new(value).expect("valid render id")
+    }
+
+    fn backing_ref_id(value: &str) -> LensBackingRefId {
+        LensBackingRefId::new(value).expect("valid backing ref id")
+    }
+
     fn control_id(value: &str) -> SelfUiControlId {
         SelfUiControlId::new(value).expect("valid control id")
     }
@@ -1995,6 +2556,62 @@ mod tests {
 
     fn finite(value: f64) -> FiniteF64 {
         FiniteF64::new(value).expect("valid finite number")
+    }
+
+    fn actor_key(value: &str) -> ScopedReadActorKey {
+        ScopedReadActorKey::new(value).expect("valid actor key")
+    }
+
+    fn test_entity_id(seed: u8) -> EntityId {
+        EntityId::from_bytes([seed; 16]).expect("valid entity id")
+    }
+
+    fn put_person(vault: &crate::Vault, id: &EntityId) -> Result<()> {
+        vault.put_entity(
+            id,
+            crate::types::ENTITY_TYPE_PERSON,
+            crate::types::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+    }
+
+    fn put_profile_claim(vault: &crate::Vault, id: &EntityId, subject: &EntityId) -> Result<()> {
+        let body = crate::claim::ClaimBody::new(
+            "profile.likes",
+            crate::claim::ClaimSubject::Entity(*subject),
+            rmpv::Value::from("tea"),
+            0.75,
+            crate::claim::ClaimApprovalStatus::Approved,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        vault.put_claim(id, &body, crate::types::TimeRange { start: 1, end: 1 }, 2)
+    }
+
+    fn backing_target_for(
+        vault: &crate::Vault,
+        id: &EntityId,
+        kind: LensBackingTargetKind,
+    ) -> Result<LensBackingTarget> {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let (short_id, content_hash) = crate::batch::parse_short_id_value(value)?;
+        match kind {
+            LensBackingTargetKind::Entity => {
+                LensBackingTarget::entity(*id, short_id.to_owned(), content_hash)
+            }
+            LensBackingTargetKind::Claim => {
+                LensBackingTarget::claim(*id, short_id.to_owned(), content_hash)
+            }
+        }
+    }
+
+    fn test_vault() -> (tempfile::TempDir, crate::Vault) {
+        crate::test_util::open_test_vault_with(crate::types::VaultConfig::default())
     }
 
     fn status() -> StatusDotAtom {
@@ -2188,6 +2805,274 @@ mod tests {
             let decoded: LensAtom = serde_json::from_value(value).expect("atom decodes");
             assert_eq!(decoded.kind(), observed_kind);
         }
+    }
+
+    #[test]
+    fn render_principal_key_selection_must_be_held_by_principal() {
+        let human_key = actor_key("human-viewer");
+        let agent_key =
+            ScopedReadActorKey::with_actor_class("task-agent", "agent").expect("agent key");
+
+        let human = LensPrincipalBinding::human_view(
+            "human-viewer",
+            human_key.clone(),
+            vec![human_key.clone()],
+        )
+        .expect("human binding");
+        assert_eq!(human.kind(), LensActingPrincipalKind::HumanView);
+        assert_eq!(human.selected_read_key(), &human_key);
+
+        let agent = LensPrincipalBinding::agent_task(
+            "task-agent",
+            agent_key.clone(),
+            vec![agent_key.clone()],
+        )
+        .expect("agent binding");
+        assert_eq!(agent.kind(), LensActingPrincipalKind::AgentTask);
+
+        assert!(
+            LensPrincipalBinding::agent_task("task-agent", human_key, vec![agent_key]).is_err(),
+            "over-scope render key selection must fail containment"
+        );
+        assert!(
+            LensPrincipalBinding::human_view(" ", actor_key("viewer"), vec![actor_key("viewer")])
+                .is_err(),
+            "blank principal refs cannot bind a render"
+        );
+        assert!(
+            LensPrincipalBinding::human_view("viewer", actor_key("viewer"), Vec::new()).is_err(),
+            "principal bindings must name at least one held read key"
+        );
+        assert!(
+            LensPrincipalBinding::human_view(
+                "viewer-a",
+                actor_key("viewer-a"),
+                vec![actor_key("viewer-b")]
+            )
+            .is_err(),
+            "held read keys must belong to the acting principal"
+        );
+        assert!(
+            LensPrincipalBinding::human_view(
+                "viewer",
+                ScopedReadActorKey::with_actor_class("viewer", "agent").expect("agent key"),
+                vec![ScopedReadActorKey::with_actor_class("viewer", "agent").expect("agent key")]
+            )
+            .is_err(),
+            "human renders must not bind an agent-class read key"
+        );
+    }
+
+    #[test]
+    fn forged_and_foreign_backing_ref_tokens_do_not_resolve() -> Result<()> {
+        let (_tmp, vault) = test_vault();
+        let target_id = test_entity_id(7);
+        put_person(&vault, &target_id)?;
+
+        let viewer_key = actor_key("viewer");
+        let scoped_read = vault.scoped_read(viewer_key.clone());
+        let principal =
+            LensPrincipalBinding::human_view("viewer", viewer_key.clone(), vec![viewer_key])?;
+        let mut frame = LensRenderFrame::new(render_id("render-a"), principal);
+        let token = frame.mint_backing_ref(
+            &scoped_read,
+            handle("visible-person"),
+            LensHandleRole::ActionTarget,
+            backing_target_for(&vault, &target_id, LensBackingTargetKind::Entity)?,
+        )?;
+
+        let resolved = frame.resolve_backing_ref_token(&scoped_read, &token)?;
+        assert_eq!(resolved.target().entity_id(), &target_id);
+
+        let foreign_token = LensBackingRefToken {
+            render_id: render_id("render-b"),
+            ref_id: token.ref_id().clone(),
+        };
+        assert!(
+            frame
+                .resolve_backing_ref_token(&scoped_read, &foreign_token)
+                .is_err(),
+            "a token minted for another render must not select this render's target"
+        );
+
+        let forged_token = LensBackingRefToken {
+            render_id: render_id("render-a"),
+            ref_id: backing_ref_id("ref-999"),
+        };
+        assert!(
+            frame
+                .resolve_backing_ref_token(&scoped_read, &forged_token)
+                .is_err(),
+            "a token absent from the host backing table must not resolve"
+        );
+
+        let other_key = actor_key("other-viewer");
+        let other_read = vault.scoped_read(other_key);
+        assert!(
+            frame
+                .resolve_backing_ref_token(&other_read, &token)
+                .is_err(),
+            "render-bound selections must be rechecked under the acting principal key"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn lens_actions_resolve_only_host_bound_handles() -> Result<()> {
+        let (_tmp, vault) = test_vault();
+        let target_id = test_entity_id(8);
+        put_person(&vault, &target_id)?;
+
+        let viewer_key = actor_key("viewer");
+        let scoped_read = vault.scoped_read(viewer_key.clone());
+        let principal =
+            LensPrincipalBinding::human_view("viewer", viewer_key.clone(), vec![viewer_key])?;
+        let mut frame = LensRenderFrame::new(render_id("render-a"), principal);
+        let target = backing_target_for(&vault, &target_id, LensBackingTargetKind::Entity)?;
+        let expected_short_ref = target.short_ref();
+        frame.mint_backing_ref(
+            &scoped_read,
+            handle("selected-person"),
+            LensHandleRole::ActionTarget,
+            target.clone(),
+        )?;
+        assert!(
+            frame
+                .mint_backing_ref(
+                    &scoped_read,
+                    handle("selected-person"),
+                    LensHandleRole::ActionTarget,
+                    target.clone(),
+                )
+                .is_err(),
+            "one handle must not bind multiple backing refs in a render"
+        );
+        frame.mint_backing_ref(
+            &scoped_read,
+            handle("visible-set"),
+            LensHandleRole::EntitySet,
+            target,
+        )?;
+
+        let action = SelfUiAction {
+            command: action_id("remember"),
+            args: vec![SelfUiValue::Handle(handle("selected-person"))],
+        };
+        let approved = frame.approve_action(&scoped_read, &action)?;
+        assert_eq!(approved.command().as_str(), "remember");
+        match &approved.args()[0] {
+            LensApprovedActionArg::BackingRef(backing_ref) => {
+                assert_eq!(backing_ref.target().entity_id(), &target_id);
+                assert_eq!(backing_ref.target().short_ref(), expected_short_ref);
+            }
+            other => panic!("expected host backing ref, got {other:?}"),
+        }
+
+        let forged = SelfUiAction {
+            command: action_id("remember"),
+            args: vec![SelfUiValue::Handle(handle("cl999"))],
+        };
+        assert!(
+            frame.approve_action(&scoped_read, &forged).is_err(),
+            "lens-supplied ids that were never host-bound must fail at the action boundary"
+        );
+        let wrong_role = SelfUiAction {
+            command: action_id("remember"),
+            args: vec![SelfUiValue::Handle(handle("visible-set"))],
+        };
+        assert!(
+            frame.approve_action(&scoped_read, &wrong_role).is_err(),
+            "only action-target handles can become approved backing refs"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn backing_refs_recheck_short_ref_and_target_kind_under_scoped_read() -> Result<()> {
+        let (_tmp, vault) = test_vault();
+        let subject_id = test_entity_id(9);
+        let claim_id = test_entity_id(10);
+        put_person(&vault, &subject_id)?;
+        put_profile_claim(&vault, &claim_id, &subject_id)?;
+
+        let viewer_key = actor_key("viewer");
+        let scoped_read = vault.scoped_read(viewer_key.clone());
+        let principal =
+            LensPrincipalBinding::human_view("viewer", viewer_key.clone(), vec![viewer_key])?;
+        let mut frame = LensRenderFrame::new(render_id("render-a"), principal);
+
+        assert!(
+            frame
+                .mint_backing_ref(
+                    &scoped_read,
+                    handle("wrong-kind"),
+                    LensHandleRole::ActionTarget,
+                    backing_target_for(&vault, &subject_id, LensBackingTargetKind::Claim)?,
+                )
+                .is_err(),
+            "claim backing refs must resolve to claim entities"
+        );
+        assert!(
+            frame
+                .mint_backing_ref(
+                    &scoped_read,
+                    handle("claim-as-entity"),
+                    LensHandleRole::ActionTarget,
+                    backing_target_for(&vault, &claim_id, LensBackingTargetKind::Entity)?,
+                )
+                .is_err(),
+            "entity backing refs must not hide claim targets"
+        );
+
+        let mut drifted = backing_target_for(&vault, &subject_id, LensBackingTargetKind::Entity)?;
+        drifted.entity_id = claim_id;
+        assert!(
+            frame
+                .mint_backing_ref(
+                    &scoped_read,
+                    handle("drifted-short-ref"),
+                    LensHandleRole::ActionTarget,
+                    drifted,
+                )
+                .is_err(),
+            "short refs must hydrate back to the host-selected entity"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn lens_execution_rejects_write_imports_and_host_writes_name_gate_chokepoint() -> Result<()> {
+        let boundary = LensExecutionBoundary::read_only(vec![
+            LensHostImport::ScopedRead,
+            LensHostImport::ResolveBackingRef,
+            LensHostImport::EmitAtom,
+        ])?;
+        assert_eq!(boundary.imports().len(), 3);
+
+        assert!(
+            LensExecutionBoundary::read_only(vec![
+                LensHostImport::ScopedRead,
+                LensHostImport::BatchWrite,
+            ])
+            .is_err(),
+            "lens execution must expose zero write imports"
+        );
+
+        let action = LensApprovedAction {
+            command: action_id("propose_claim"),
+            args: Vec::new(),
+        };
+        let write =
+            action.into_host_mediated_write(LensGateWriteChokepoint::CheckClaimPolicyForWrite);
+        assert_eq!(
+            write.chokepoint(),
+            LensGateWriteChokepoint::CheckClaimPolicyForWrite
+        );
+
+        Ok(())
     }
 
     #[test]
