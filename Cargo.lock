@@ -2424,6 +2424,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-llm-local"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "oneiron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-napi"
 version = "0.1.0"
 dependencies = [
