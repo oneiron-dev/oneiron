@@ -2424,6 +2424,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-llm-anthropic"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "oneiron",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "oneiron-llm-local"
 version = "0.1.0"
 dependencies = [
@@ -2432,6 +2443,17 @@ dependencies = [
  "oneiron",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "oneiron-llm-openai"
+version = "0.1.0"
+dependencies = [
+ "futures-core",
+ "oneiron",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
