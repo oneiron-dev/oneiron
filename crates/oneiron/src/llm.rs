@@ -4,6 +4,18 @@
 //! and catalog types consumed by engine callers and host-supplied adapters. It
 //! intentionally contains no provider implementation or inference dependency.
 
+mod budget;
+
+pub use budget::{
+    BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
+    BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
+    BUDGET_PLAN_PROMPT_TEMPLATE, BUDGET_PLAN_PROMPT_TEMPLATE_ID, BUDGET_PROMPT_TEMPLATES,
+    BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
+    BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
+    BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
+    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
+};
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
@@ -91,6 +103,10 @@ impl BudgetLease {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    pub(crate) fn issued(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
