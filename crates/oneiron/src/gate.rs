@@ -246,6 +246,7 @@ pub(crate) struct GateProvenanceHandles {
     pub(crate) substrate_ref: Option<EntityId>,
     pub(crate) source_revision_ref: Option<[u8; ENTITY_ID_LEN]>,
     pub(crate) body_snapshot_ref: Option<[u8; ENTITY_ID_LEN]>,
+    pub(crate) dreamer_run_id: Option<String>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -743,6 +744,16 @@ impl PolicyManifestResolution {
             && !self.has_matching_actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
     }
 
+    fn dreamer_auto_grant_requires_manifest_signature(&self, input: &GateEvaluatorInput) -> bool {
+        input.content_kind == GateContentKind::Claim
+            && input.actor.actor_class.trim() == "agent"
+            && input.provenance.dreamer_run_id.is_some()
+            && self.actor_ceiling(
+                input.actor.actor_class.trim(),
+                input.actor.actor_ref.as_deref(),
+            ) == PolicyApprovalCeiling::Auto
+    }
+
     #[must_use]
     pub(crate) fn criticality_for_predicate(&self, predicate: &str) -> PolicyCriticality {
         if self.is_fail_closed() {
@@ -810,8 +821,16 @@ impl PolicyManifestResolution {
 
         let mut pending = Vec::new();
 
-        if !self.actor_ceiling_allows_auto_for_content(input) {
+        let actor_ceiling_allows_auto = self.actor_ceiling_allows_auto_for_content(input);
+        if !actor_ceiling_allows_auto {
             pending.push(GateReasonCode::PendingActorCeiling);
+        }
+
+        if actor_ceiling_allows_auto
+            && self.dreamer_auto_grant_requires_manifest_signature(input)
+            && self.signatures.is_empty()
+        {
+            pending.push(GateReasonCode::PendingPolicyManifestAuthority);
         }
 
         if !self.source_trust_allows_auto(input.source, input.sensitivity_band) {
@@ -1466,6 +1485,7 @@ pub(crate) fn check_claim_policy_for_write(
     if policy.enforces_write_gate() {
         let (actor, provenance) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
+            let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
             (
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
@@ -1473,6 +1493,7 @@ pub(crate) fn check_claim_policy_for_write(
                 },
                 GateProvenanceHandles {
                     actor_entity_ref: Some(actor.entity_ref()),
+                    dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
             )
@@ -1622,12 +1643,15 @@ fn pending_consent_dreamer_run_id(
     }
 
     let envelope = envelope?;
+    dreamer_run_id_from_write_envelope(envelope)
+}
+
+fn dreamer_run_id_from_write_envelope(envelope: &WriteEnvelope) -> Option<String> {
     if envelope.source() != ClaimSource::Generated
         || envelope.actor().actor_class() != EdgeActorClass::Agent
     {
         return None;
     }
-
     dreamer_run_id_from_provenance(envelope.provenance().value())
 }
 
@@ -1676,6 +1700,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 substrate_ref: record.substrate_ref,
                 source_revision_ref: record.source_revision_ref,
                 body_snapshot_ref: record.body_snapshot_ref,
+                ..GateProvenanceHandles::default()
             },
             false,
         );
@@ -3841,6 +3866,7 @@ mod tests {
                 substrate_ref: Some(test_id(0xA1)),
                 source_revision_ref: Some([0xA2; ENTITY_ID_LEN]),
                 body_snapshot_ref: Some([0xA3; ENTITY_ID_LEN]),
+                ..GateProvenanceHandles::default()
             },
         }
     }
@@ -4561,6 +4587,82 @@ mod tests {
     }
 
     #[test]
+    fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        );
+        put_policy_manifest_bytes(&vault, 0xC4, &data)?;
+
+        let claim_id = test_id(0xC5);
+        let body = source_trust_claim(ClaimSource::Generated);
+        let (candidate, envelope) = dreamer_claim_candidate_write_parts(
+            &vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            "dreamer-run-auth",
+        )?;
+
+        let err = vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()
+            .expect_err("unsigned manifest must not grant Dreamer Auto writes");
+
+        assert_gate_rejected(err, "pending", &["gate.pending.policy_manifest_authority"]);
+        assert!(vault.get_raw(&claim_id)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let mut data = encode_policy_manifest(vec![
+            source_trust_entry(ClaimSource::Generated, 0),
+            signatures_entry(),
+        ]);
+        append_actor_ceiling(
+            &mut data,
+            actor_ceiling_row_for_ref("agent", &first_party_eiri_connector_actor_ref(), "auto"),
+        );
+        put_policy_manifest_bytes(&vault, 0xC6, &data)?;
+
+        let claim_id = test_id(0xC7);
+        let body = source_trust_claim(ClaimSource::Generated);
+        let (candidate, envelope) = dreamer_claim_candidate_write_parts(
+            &vault,
+            &body,
+            first_party_eiri_connector_actor_id(),
+            "dreamer-run-auth",
+        )?;
+
+        vault
+            .batch()
+            .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+            .commit()?;
+
+        let stored = stored_claim_body(&vault, &claim_id)?;
+        assert_eq!(stored.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(stored.source, Some(ClaimSource::Generated));
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let decision = decisions
+            .iter()
+            .find(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+            .expect("signed Dreamer Auto write must record a gate decision");
+        assert_eq!(decision.outcome, "allow");
+        assert_eq!(decision.reason_codes, vec!["gate.allow"]);
+        assert_eq!(decision.actor_class, "agent");
+        assert_eq!(
+            decision.actor_ref.as_deref(),
+            Some(first_party_eiri_connector_actor_ref().as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn foreign_tool_output_connector_stays_pending_actor_ceiling() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_first_party_eiri_default_policy_manifest();
@@ -4984,7 +5086,7 @@ mod tests {
     #[test]
     fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Result<()> {
         let (_tmp, vault) = temp_vault();
-        let mut data = encode_policy_manifest(vec![]);
+        let mut data = encode_policy_manifest(vec![signatures_entry()]);
         append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
         append_actor_ceiling(
             &mut data,
