@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-llm-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Local in-process LLM adapter for the Oneiron LlmBackend seam"
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+futures-core = { workspace = true }
+futures-util = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-hooks"] }
+
+[lints]
+workspace = true
