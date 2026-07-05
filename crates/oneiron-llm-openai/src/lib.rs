@@ -957,7 +957,7 @@ mod tests {
         let events = accumulator
             .push_chunk(json!({
                 "choices": [{
-                    "delta": { "content": "hel" },
+                    "delta": { "content": "help" },
                     "finish_reason": null
                 }]
             }))
@@ -996,7 +996,7 @@ mod tests {
         assert_eq!(
             done.0.content,
             vec![ContentPart::Text {
-                text: "hel".to_owned()
+                text: "help".to_owned()
             }]
         );
         assert_eq!(*done.1, usage);

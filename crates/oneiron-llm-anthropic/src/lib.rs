@@ -1037,7 +1037,7 @@ mod tests {
         accumulator
             .push_event(json!({
                 "type": "content_block_delta",
-                "delta": { "type": "text_delta", "text": "hel" }
+                "delta": { "type": "text_delta", "text": "help" }
             }))
             .unwrap();
 
@@ -1070,7 +1070,7 @@ mod tests {
         assert_eq!(
             done.0.content,
             vec![ContentPart::Text {
-                text: "hel".to_owned()
+                text: "help".to_owned()
             }]
         );
         assert_eq!(*done.1, usage);
