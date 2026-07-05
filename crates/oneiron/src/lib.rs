@@ -187,12 +187,19 @@ pub use crate::lens::{
     VadBadge, VoiceLineAtom,
 };
 pub use crate::llm::{
-    BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    DeterministicFallback, FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability,
-    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
-    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
-    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
-    ReasoningEffort, ResponseFormat, RetryableLlmError, TierPrecedence, UnsupportedCapability,
+    BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
+    BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
+    BUDGET_PLAN_PROMPT_TEMPLATE, BUDGET_PLAN_PROMPT_TEMPLATE_ID, BUDGET_PROMPT_TEMPLATES,
+    BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
+    BudgetAdmission, BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent,
+    BudgetLease, BudgetPromptTemplate, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel,
+    BudgetSteeringSignal, BudgetThreshold, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    DEFAULT_BUDGET_RESERVE_UNITS, DeterministicFallback, FatalLlmError, FinishReason, ImageContent,
+    LlmBackend, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
+    LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError,
+    ModelLocality, ModelTierRef, ReasoningEffort, ResponseFormat, RetryableLlmError,
+    TierPrecedence, UnsupportedCapability,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::pipeline::{

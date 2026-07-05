@@ -16,6 +16,7 @@ use crate::claim::{
 };
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
 use crate::error::{Error, Result};
+use crate::llm::BudgetExhaustionPolicy;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
@@ -35,6 +36,7 @@ const POLICY_SOURCE_TRUST_KEY: &str = "source_trust";
 const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 const POLICY_SIGNATURE_KEY: &str = "signature";
 const POLICY_SIGNATURES_KEY: &str = "signatures";
+const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
 
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
@@ -662,6 +664,7 @@ pub(crate) struct PolicyManifestResolution {
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
     signatures: Vec<PolicySignature>,
+    on_budget_exhausted: Option<BudgetExhaustionPolicy>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -681,6 +684,11 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    #[must_use]
+    pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
+        self.on_budget_exhausted.unwrap_or_default()
     }
 
     #[must_use]
@@ -1085,6 +1093,7 @@ fn hash_policy_frontier_v0(
     hash_bytes(hasher, b"oneiron.gate.policy_frontier.v0");
     hash_diagnostics(hasher, resolution.diagnostics);
     hash_source_trust(hasher, &resolution.source_trust);
+    hash_budget_exhaustion_policy(hasher, resolution.on_budget_exhausted());
 
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
@@ -1255,12 +1264,28 @@ fn hash_len(hasher: &mut Sha256, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 
+fn hash_u64(hasher: &mut Sha256, value: u64) {
+    hasher.update(value.to_le_bytes());
+}
+
+fn hash_budget_exhaustion_policy(hasher: &mut Sha256, policy: BudgetExhaustionPolicy) {
+    match policy {
+        BudgetExhaustionPolicy::Suspend => hash_str(hasher, "suspend"),
+        BudgetExhaustionPolicy::ContinueOnLocal => hash_str(hasher, "continue_on_local"),
+        BudgetExhaustionPolicy::Overdraft { cap } => {
+            hash_str(hasher, "overdraft");
+            hash_u64(hasher, cap);
+        }
+    }
+}
+
 struct DecodedPolicyManifest {
     pack: PolicyPack,
     actor_ceilings: Vec<ActorCeiling>,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
     signatures: Vec<PolicySignature>,
+    on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     unsupported_schema: bool,
     engine_version_floor: bool,
     unknown_axis_seen: bool,
@@ -1379,6 +1404,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             )]),
         ),
         (
+            Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
+            Value::from("suspend"),
+        ),
+        (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![
                 (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),
@@ -1435,6 +1464,13 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
                 resolution.signatures.extend(decoded.signatures);
+                if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
+                    match resolution.on_budget_exhausted {
+                        None => resolution.on_budget_exhausted = Some(on_budget_exhausted),
+                        Some(existing) if existing == on_budget_exhausted => {}
+                        Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                    }
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
@@ -1940,6 +1976,11 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         MapValue::Duplicate => return None,
         MapValue::Present(value) => signatures.extend(parse_signatures(value)?),
     }
+    let on_budget_exhausted = match single_map_value(&entries, POLICY_ON_BUDGET_EXHAUSTED_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_budget_exhaustion_policy(value)?),
+    };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -1956,6 +1997,7 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         source_trust,
         scoped_grants,
         signatures,
+        on_budget_exhausted,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -2102,6 +2144,47 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                 warned,
             })
         }
+        _ => None,
+    }
+}
+
+fn parse_budget_exhaustion_policy(value: &Value) -> Option<BudgetExhaustionPolicy> {
+    if let Some(policy) = value.as_str().and_then(parse_budget_exhaustion_policy_kind) {
+        return Some(policy);
+    }
+
+    let Value::Map(entries) = value else {
+        return None;
+    };
+
+    match single_map_value(entries, "kind") {
+        MapValue::Present(kind) => match kind.as_str()? {
+            "suspend" => Some(BudgetExhaustionPolicy::Suspend),
+            "continue_on_local" => Some(BudgetExhaustionPolicy::ContinueOnLocal),
+            "overdraft" => {
+                let cap = required_value(entries, "cap")?.as_u64()?;
+                Some(BudgetExhaustionPolicy::Overdraft { cap })
+            }
+            _ => None,
+        },
+        MapValue::Missing => match single_map_value(entries, "overdraft") {
+            MapValue::Missing | MapValue::Duplicate => None,
+            MapValue::Present(overdraft) => {
+                let Value::Map(overdraft_entries) = overdraft else {
+                    return None;
+                };
+                let cap = required_value(overdraft_entries, "cap")?.as_u64()?;
+                Some(BudgetExhaustionPolicy::Overdraft { cap })
+            }
+        },
+        MapValue::Duplicate => None,
+    }
+}
+
+fn parse_budget_exhaustion_policy_kind(kind: &str) -> Option<BudgetExhaustionPolicy> {
+    match kind {
+        "suspend" => Some(BudgetExhaustionPolicy::Suspend),
+        "continue_on_local" => Some(BudgetExhaustionPolicy::ContinueOnLocal),
         _ => None,
     }
 }
@@ -2656,6 +2739,79 @@ mod tests {
     fn resolve(vault: &crate::Vault) -> Result<PolicyManifestResolution> {
         let rtxn = vault.store.env.read_txn()?;
         resolve_policy_manifest(&vault.store, &rtxn)
+    }
+
+    #[test]
+    fn policy_manifest_budget_exhaustion_defaults_to_suspend() -> Result<()> {
+        assert_eq!(
+            PolicyManifestResolution::default().on_budget_exhausted(),
+            BudgetExhaustionPolicy::Suspend
+        );
+
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0x81, &encode_policy_manifest(vec![]))?;
+
+        let policy = resolve(&vault)?;
+        assert_eq!(
+            policy.on_budget_exhausted(),
+            BudgetExhaustionPolicy::Suspend
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_manifest_budget_exhaustion_parses_continue_and_overdraft() -> Result<()> {
+        let (_tmp, continue_vault) = temp_vault();
+        let continue_manifest = encode_policy_manifest(vec![(
+            Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
+            Value::from("continue_on_local"),
+        )]);
+        put_policy_manifest_bytes(&continue_vault, 0x82, &continue_manifest)?;
+        assert_eq!(
+            resolve(&continue_vault)?.on_budget_exhausted(),
+            BudgetExhaustionPolicy::ContinueOnLocal
+        );
+
+        let (_tmp, overdraft_vault) = temp_vault();
+        let overdraft_manifest = encode_policy_manifest(vec![(
+            Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
+            Value::Map(vec![
+                (Value::from("kind"), Value::from("overdraft")),
+                (Value::from("cap"), Value::from(25_u64)),
+            ]),
+        )]);
+        put_policy_manifest_bytes(&overdraft_vault, 0x83, &overdraft_manifest)?;
+        assert_eq!(
+            resolve(&overdraft_vault)?.on_budget_exhausted(),
+            BudgetExhaustionPolicy::Overdraft { cap: 25 }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conflicting_budget_exhaustion_policies_fail_closed() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x84,
+            &encode_policy_manifest(vec![(
+                Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
+                Value::from("continue_on_local"),
+            )]),
+        )?;
+        put_policy_manifest_bytes(
+            &vault,
+            0x85,
+            &encode_policy_manifest(vec![(
+                Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
+                Value::from("suspend"),
+            )]),
+        )?;
+
+        let policy = resolve(&vault)?;
+        assert!(policy.diagnostics().malformed_manifest_seen);
+        assert!(policy.is_fail_closed());
+        Ok(())
     }
 
     fn first_party_eiri_connector_actor_id() -> EntityId {
