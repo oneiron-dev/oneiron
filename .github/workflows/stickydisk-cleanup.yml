@@ -1,0 +1,39 @@
+name: Sticky disk weekly cleanup
+
+# Sticky disks are billed per GB/mo and grow with stale cargo artifacts.
+# Weekly delete keeps steady-state cost low; Monday's first CI run
+# re-hydrates cold (one slow run per week, by design).
+# Also manually triggerable (workflow_dispatch) after heavy PR waves.
+
+on:
+  schedule:
+    - cron: '0 18 * * 0' # Sunday 18:00 UTC = Monday 03:00 JST, before the week's runs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Delete cargo registry disk
+        continue-on-error: true
+        uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
+        with:
+          delete-key: ${{ github.repository }}-cargo-registry
+      - name: Delete clippy target disk
+        continue-on-error: true
+        uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
+        with:
+          delete-key: ${{ github.repository }}-target-clippy
+      - name: Delete test target disk
+        continue-on-error: true
+        uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
+        with:
+          delete-key: ${{ github.repository }}-target-test
+      - name: Delete package target disk (retired key — no-op once gone)
+        continue-on-error: true
+        uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
+        with:
+          delete-key: ${{ github.repository }}-target-package
