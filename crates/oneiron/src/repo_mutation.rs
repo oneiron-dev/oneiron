@@ -63,6 +63,16 @@ pub const REPO_CONFLICT_RESOLUTION_VALUE_KEYS: [&str; 7] = [
     "resolved_tree",
     "resolved_paths",
 ];
+pub const REPO_PROVENANCE_PREDICATE: &str = "repo.provenance";
+pub const REPO_PROVENANCE_VALUE_KEYS: [&str; 5] = [
+    "actor",
+    "model",
+    "prompt_hash",
+    "derivation_envelope",
+    "diff_lineage_receipt",
+];
+pub const REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS: [&str; 4] =
+    ["content_hash", "model_id", "version", "params_hash"];
 
 const REPO_MUTATION_SEQ_KEY_PREFIX: &[u8] = b"repo_mutation:seq:v1:";
 const REPO_MUTATION_OPLOG_KEY_PREFIX: &[u8] = b"repo_mutation:oplog:v1:";
@@ -79,6 +89,8 @@ const REPO_MUTATION_LOCK_FILE_NAME: &str = "oneiron-repo-mutation.lock";
 const REPO_PROVENANCE_TRAILER_PREFIX: &str = "Oneiron-Claim:";
 const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
 const REPO_PROVENANCE_GIT_AUTHOR_EMAIL: &str = "oneiron@example.invalid";
+const REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR: u8 = 0x00;
+const REPO_PROVENANCE_GIT_LOG_RECORD_SEPARATOR: u8 = 0x1e;
 
 static REPO_MUTATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -760,7 +772,7 @@ fn validate_repo_provenance_request(vault: &Vault, request: &RepoMutationRequest
     let Some(claim_id) = request.provenance_claim_id else {
         return Ok(());
     };
-    match request.operation {
+    match &request.operation {
         RepoMutationOperation::CommitFile { .. }
         | RepoMutationOperation::ResolveConflictFile { .. } => {
             require_repo_provenance_claim(vault, &claim_id)
@@ -777,6 +789,39 @@ fn require_repo_provenance_claim(vault: &Vault, claim_id: &EntityId) -> Result<(
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Err(Error::InvalidRepoMutationRecord(
             "provenance claim id must reference a CLAIM entity",
+        ));
+    }
+    let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    validate_repo_provenance_claim_body(&body)?;
+    Ok(())
+}
+
+fn validate_repo_provenance_claim_body(body: &ClaimBody) -> Result<()> {
+    if body.predicate != REPO_PROVENANCE_PREDICATE {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo provenance claim must use the repo.provenance predicate",
+        ));
+    }
+    if body.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo provenance claim must be active",
+        ));
+    }
+    let entries = msgpack_map_entries(
+        &body.value,
+        "repo provenance claim value must be a PROV-AGENT map",
+    )?;
+    require_nonblank_msgpack_string(entries, "actor")?;
+    require_nonblank_msgpack_string(entries, "model")?;
+    require_nonblank_msgpack_string(entries, "prompt_hash")?;
+    let envelope = require_msgpack_map(entries, "derivation_envelope")?;
+    for key in REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS {
+        require_nonblank_msgpack_string(envelope, key)?;
+    }
+    let receipt = require_msgpack_map(entries, "diff_lineage_receipt")?;
+    if receipt.is_empty() {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo provenance diff_lineage_receipt must be a non-empty map",
         ));
     }
     Ok(())
@@ -1340,9 +1385,94 @@ fn snapshot_recorded_for_repo(
         .any(|entry| entry.pre_action_fork_hash == fork_hash))
 }
 
+fn msgpack_map_entries<'a>(
+    value: &'a Value,
+    context: &'static str,
+) -> Result<&'a [(Value, Value)]> {
+    match value {
+        Value::Map(entries) => Ok(entries),
+        _ => Err(Error::InvalidRepoMutationRecord(context)),
+    }
+}
+
+fn require_msgpack_map<'a>(
+    entries: &'a [(Value, Value)],
+    key: &str,
+) -> Result<&'a [(Value, Value)]> {
+    let value = require_unique_msgpack_key(entries, key)?;
+    msgpack_map_entries(value, "repo provenance nested field must be a map")
+}
+
+fn require_nonblank_msgpack_string(entries: &[(Value, Value)], key: &str) -> Result<()> {
+    let value = require_unique_msgpack_key(entries, key)?;
+    let Some(value) = value.as_str() else {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo provenance field must be a string",
+        ));
+    };
+    if value.trim().is_empty() {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo provenance field must be non-empty",
+        ));
+    }
+    Ok(())
+}
+
+fn require_unique_msgpack_key<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
+    let mut found = None;
+    for (candidate, value) in entries {
+        if candidate.as_str() == Some(key) && found.replace(value).is_some() {
+            return Err(Error::InvalidRepoMutationRecord(
+                "repo provenance claim value must not duplicate required keys",
+            ));
+        }
+    }
+    found.ok_or(Error::InvalidRepoMutationRecord(
+        "repo provenance claim value is missing a required key",
+    ))
+}
+
+fn final_trailer_block(message: &str) -> Option<Vec<&str>> {
+    let trimmed = message.trim_end_matches(['\r', '\n']);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lines = trimmed.lines().collect::<Vec<_>>();
+    let mut start = lines.len();
+    while start > 0 && !lines[start - 1].trim().is_empty() {
+        start -= 1;
+    }
+    if start == 0 {
+        return None;
+    }
+    let block = lines[start..].to_vec();
+    if block.is_empty() || !block.iter().all(|line| is_git_trailer_line(line)) {
+        return None;
+    }
+    Some(block)
+}
+
+fn has_final_trailer_block(message: &str) -> bool {
+    final_trailer_block(message).is_some()
+}
+
+fn is_git_trailer_line(line: &str) -> bool {
+    let Some((key, value)) = line.split_once(':') else {
+        return false;
+    };
+    !key.is_empty()
+        && !value.trim().is_empty()
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
 pub fn parse_repo_provenance_trailer(message: &str) -> Result<Option<EntityId>> {
     let mut found = None;
-    for line in message.lines() {
+    let Some(block) = final_trailer_block(message) else {
+        return Ok(None);
+    };
+    for line in block {
         let Some(raw_claim_id) = line.strip_prefix(REPO_PROVENANCE_TRAILER_PREFIX) else {
             continue;
         };
@@ -1371,7 +1501,7 @@ pub fn repo_commit_provenance(
     commit_sha: &str,
 ) -> Result<Option<RepoCommitProvenance>> {
     let commit_sha = canonical_commit_sha(repo_root, commit_sha)?;
-    let message = String::from_utf8(run_git(
+    let message_bytes = run_git(
         repo_root,
         &[
             "show".to_owned(),
@@ -1379,8 +1509,8 @@ pub fn repo_commit_provenance(
             "--format=%B".to_owned(),
             commit_sha.clone(),
         ],
-    )?)
-    .map_err(|_| Error::InvalidRepoMutationRecord("git commit message must be UTF-8"))?;
+    )?;
+    let message = String::from_utf8_lossy(&message_bytes);
     Ok(
         parse_repo_provenance_trailer(&message)?.map(|claim_id| RepoCommitProvenance {
             commit_sha,
@@ -1389,32 +1519,76 @@ pub fn repo_commit_provenance(
     )
 }
 
-pub fn repo_commits_for_provenance_claim(
+pub fn repo_commit_for_provenance_claim(
     repo_root: &Path,
     claim_id: &EntityId,
-) -> Result<Vec<String>> {
-    let output = String::from_utf8(run_git(
+) -> Result<Option<String>> {
+    let trailer = format!("{REPO_PROVENANCE_TRAILER_KEY}: {}", claim_id.to_hex());
+    let output = run_git(
         repo_root,
         &[
             "log".to_owned(),
-            "--all".to_owned(),
-            "--format=%H".to_owned(),
+            "--branches".to_owned(),
+            "--tags".to_owned(),
+            "--remotes".to_owned(),
+            "--fixed-strings".to_owned(),
+            "--grep".to_owned(),
+            trailer,
+            format!(
+                "--format=%H%x{:02x}%B%x{:02x}",
+                REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR, REPO_PROVENANCE_GIT_LOG_RECORD_SEPARATOR
+            ),
         ],
-    )?)
-    .map_err(|_| Error::InvalidRepoMutationRecord("git log output must be UTF-8"))?;
-    let mut commits = Vec::new();
-    for line in output.lines() {
-        let commit_sha = line.trim();
-        if commit_sha.is_empty() {
+    )?;
+    let mut found = None;
+    for record in output.split(|byte| *byte == REPO_PROVENANCE_GIT_LOG_RECORD_SEPARATOR) {
+        let record = trim_git_log_record_prefix(record);
+        if record.is_empty() {
             continue;
         }
-        if repo_commit_provenance(repo_root, commit_sha)?
-            .is_some_and(|provenance| provenance.claim_id == *claim_id)
-        {
-            commits.push(commit_sha.to_owned());
+        let Some(commit_sha) = repo_commit_for_provenance_claim_record(record, claim_id)? else {
+            continue;
+        };
+        if found.replace(commit_sha).is_some() {
+            return Err(Error::InvalidRepoMutationRecord(
+                "repo provenance claim id maps to multiple commits",
+            ));
         }
     }
-    Ok(commits)
+    Ok(found)
+}
+
+fn trim_git_log_record_prefix(mut record: &[u8]) -> &[u8] {
+    while matches!(record.first(), Some(b'\r' | b'\n')) {
+        record = &record[1..];
+    }
+    record
+}
+
+fn repo_commit_for_provenance_claim_record(
+    record: &[u8],
+    claim_id: &EntityId,
+) -> Result<Option<String>> {
+    let Some(separator) = record
+        .iter()
+        .position(|byte| *byte == REPO_PROVENANCE_GIT_LOG_FIELD_SEPARATOR)
+    else {
+        return Err(Error::InvalidRepoMutationRecord(
+            "git log provenance record missing commit separator",
+        ));
+    };
+    let commit_sha = std::str::from_utf8(&record[..separator])
+        .map_err(|_| Error::InvalidRepoMutationRecord("git log commit sha must be UTF-8"))?
+        .trim();
+    validate_git_object_hash(commit_sha, "git log commit sha must be a 40-hex commit")?;
+    let message = String::from_utf8_lossy(&record[separator + 1..]);
+    let Some(recorded_claim_id) = parse_repo_provenance_trailer(&message)? else {
+        return Ok(None);
+    };
+    if recorded_claim_id == *claim_id {
+        return Ok(Some(commit_sha.to_ascii_lowercase()));
+    }
+    Ok(None)
 }
 
 pub fn export_repo_provenance_git_note(
@@ -1464,6 +1638,39 @@ pub fn repo_provenance_git_note(repo_root: &Path, commit_sha: &str) -> Result<Op
     Ok(Some(note.trim_end_matches(['\r', '\n']).to_owned()))
 }
 
+pub fn repo_commit_provenance_from_git_note(
+    repo_root: &Path,
+    commit_sha: &str,
+) -> Result<Option<RepoCommitProvenance>> {
+    let commit_sha = canonical_commit_sha(repo_root, commit_sha)?;
+    let Some(note) = repo_provenance_git_note(repo_root, &commit_sha)? else {
+        return Ok(None);
+    };
+    let payload: RepoProvenanceGitNotePayload = serde_json::from_str(&note)
+        .map_err(|_| Error::InvalidRepoMutationRecord("git notes provenance payload invalid"))?;
+    if payload.trailer != REPO_PROVENANCE_TRAILER_KEY {
+        return Err(Error::InvalidRepoMutationRecord(
+            "git notes provenance trailer key mismatch",
+        ));
+    }
+    validate_git_object_hash(
+        &payload.commit,
+        "git notes provenance commit must be a 40-hex commit",
+    )?;
+    if payload.commit.to_ascii_lowercase() != commit_sha {
+        return Err(Error::InvalidRepoMutationRecord(
+            "git notes provenance commit mismatch",
+        ));
+    }
+    let claim_id = EntityId::from_hex(&payload.claim_id).map_err(|_| {
+        Error::InvalidRepoMutationRecord("git notes provenance claim id must be 32-hex")
+    })?;
+    Ok(Some(RepoCommitProvenance {
+        commit_sha,
+        claim_id,
+    }))
+}
+
 fn commit_message_with_provenance_trailer(
     message: &str,
     claim_id: Option<EntityId>,
@@ -1478,12 +1685,24 @@ fn commit_message_with_provenance_trailer(
         ));
     }
     let message = message.trim_end_matches(['\r', '\n']);
+    let separator = if has_final_trailer_block(message) {
+        "\n"
+    } else {
+        "\n\n"
+    };
     let message = format!(
-        "{message}\n\n{REPO_PROVENANCE_TRAILER_KEY}: {}\n",
+        "{message}{separator}{REPO_PROVENANCE_TRAILER_KEY}: {}\n",
         claim_id.to_hex()
     );
     validate_commit_message(&message)?;
     Ok(message)
+}
+
+#[derive(Deserialize)]
+struct RepoProvenanceGitNotePayload {
+    commit: String,
+    claim_id: String,
+    trailer: String,
 }
 
 fn repo_provenance_git_note_payload(commit_sha: &str, claim_id: &EntityId) -> String {
@@ -2871,6 +3090,51 @@ mod tests {
             .expect("return left");
     }
 
+    fn add_side_branch_with_message(repo: &TempDir, branch: &str, message: &[u8]) -> String {
+        let message_path = repo.path().join(format!("{branch}-message.bin"));
+        fs::write(&message_path, message).expect("write commit message");
+        let parent = current_head_commit(repo.path()).expect("side branch parent");
+        let tree = utf8_trimmed(
+            run_git_at_path(
+                repo.path(),
+                &["rev-parse".to_owned(), "HEAD^{tree}".to_owned()],
+            )
+            .expect("head tree"),
+            "git tree sha must be UTF-8",
+        )
+        .expect("head tree utf8");
+        let commit = utf8_trimmed(
+            run_git_at_path(
+                repo.path(),
+                &[
+                    "-c".to_owned(),
+                    "user.name=Oneiron".to_owned(),
+                    "-c".to_owned(),
+                    "user.email=oneiron@example.invalid".to_owned(),
+                    "commit-tree".to_owned(),
+                    tree,
+                    "-p".to_owned(),
+                    parent,
+                    "-F".to_owned(),
+                    path_arg(&message_path).expect("message path"),
+                ],
+            )
+            .expect("commit tree"),
+            "git commit-tree output must be UTF-8",
+        )
+        .expect("commit sha");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "update-ref".to_owned(),
+                format!("refs/heads/{branch}"),
+                commit.clone(),
+            ],
+        )
+        .expect("update side branch");
+        commit
+    }
+
     fn put_branch_subject(vault: &Vault) -> EntityId {
         let branch_subject = EntityId::now();
         vault
@@ -2885,13 +3149,50 @@ mod tests {
         branch_subject
     }
 
+    fn repo_provenance_claim_value() -> Value {
+        Value::Map(vec![
+            (Value::from("actor"), Value::from("agent:oneiron-test")),
+            (Value::from("model"), Value::from("oneiron/test-model@1")),
+            (
+                Value::from("prompt_hash"),
+                Value::from("sha256:test-prompt"),
+            ),
+            (
+                Value::from("derivation_envelope"),
+                Value::Map(vec![
+                    (
+                        Value::from("content_hash"),
+                        Value::from("sha256:test-content"),
+                    ),
+                    (Value::from("model_id"), Value::from("oneiron/test-model@1")),
+                    (Value::from("version"), Value::from("1")),
+                    (
+                        Value::from("params_hash"),
+                        Value::from("sha256:test-params"),
+                    ),
+                ]),
+            ),
+            (
+                Value::from("diff_lineage_receipt"),
+                Value::Map(vec![
+                    (Value::from("base_tree"), Value::from("base-tree")),
+                    (Value::from("result_tree"), Value::from("result-tree")),
+                ]),
+            ),
+        ])
+    }
+
     fn put_repo_provenance_claim(vault: &Vault) -> EntityId {
+        put_repo_provenance_claim_with_value(vault, repo_provenance_claim_value())
+    }
+
+    fn put_repo_provenance_claim_with_value(vault: &Vault, value: Value) -> EntityId {
         let subject = put_branch_subject(vault);
         let claim_id = EntityId::now();
         let body = ClaimBody::new(
-            "repo.provenance",
+            REPO_PROVENANCE_PREDICATE,
             ClaimSubject::Entity(subject),
-            Value::from("private payload"),
+            value,
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
@@ -2964,9 +3265,48 @@ mod tests {
         assert_eq!(provenance.commit_sha, head);
         assert_eq!(provenance.claim_id, claim_id);
 
-        let commits = repo_commits_for_provenance_claim(repo.path(), &claim_id)
+        let commit = repo_commit_for_provenance_claim(repo.path(), &claim_id)
             .expect("claim provenance lookup");
-        assert_eq!(commits, vec![head]);
+        assert_eq!(commit, Some(head));
+    }
+
+    #[test]
+    fn repo_provenance_parser_reads_only_final_trailer_block() {
+        let claim_id = EntityId::now();
+        let diagnostic = format!(
+            "subject\n\nExample output:\n{REPO_PROVENANCE_TRAILER_KEY}: not-a-claim\n\nSigned-off-by: Tester <test@example.invalid>\n"
+        );
+        assert_eq!(
+            parse_repo_provenance_trailer(&diagnostic).expect("body diagnostic ignored"),
+            None
+        );
+
+        let trailer = format!(
+            "subject\n\nbody\n\nSigned-off-by: Tester <test@example.invalid>\n{REPO_PROVENANCE_TRAILER_KEY}: {}\n",
+            claim_id.to_hex()
+        );
+        assert_eq!(
+            parse_repo_provenance_trailer(&trailer).expect("final trailer parsed"),
+            Some(claim_id)
+        );
+    }
+
+    #[test]
+    fn repo_provenance_trailer_appends_to_existing_trailer_block() {
+        let claim_id = EntityId::now();
+        let message = commit_message_with_provenance_trailer(
+            "subject\n\nSigned-off-by: Tester <test@example.invalid>",
+            Some(claim_id),
+        )
+        .expect("append provenance");
+
+        assert!(message.contains(&format!(
+            "Signed-off-by: Tester <test@example.invalid>\n{REPO_PROVENANCE_TRAILER_KEY}: {}",
+            claim_id.to_hex()
+        )));
+        assert!(
+            !message.contains("Signed-off-by: Tester <test@example.invalid>\n\nOneiron-Claim:")
+        );
     }
 
     #[test]
@@ -3001,6 +3341,14 @@ mod tests {
             .expect("read git note")
             .expect("note exists");
         assert_eq!(stored, note);
+
+        let note_provenance = repo_commit_provenance_from_git_note(repo.path(), &head)
+            .expect("resolve git note")
+            .expect("note provenance");
+        let trailer_provenance = repo_commit_provenance(repo.path(), &head)
+            .expect("resolve trailer")
+            .expect("trailer provenance");
+        assert_eq!(note_provenance, trailer_provenance);
     }
 
     #[test]
@@ -3028,6 +3376,98 @@ mod tests {
         assert_eq!(
             current_head_commit(repo.path()).expect("head after"),
             head_before
+        );
+    }
+
+    #[test]
+    fn repo_mutation_rejects_incomplete_repo_provenance_claim_before_commit() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let claim_id = put_repo_provenance_claim_with_value(&vault, Value::from("private payload"));
+        let head_before = current_head_commit(repo.path()).expect("head before");
+
+        let error = vault
+            .apply_repo_mutation(
+                RepoMutationRequest::new(
+                    repo_ref(&repo),
+                    RepoMutationOperation::CommitFile {
+                        path: "bad-provenance.txt".to_owned(),
+                        content: b"bad\n".to_vec(),
+                        message: "bad provenance".to_owned(),
+                    },
+                )
+                .with_provenance_claim_id(claim_id),
+            )
+            .expect_err("incomplete provenance claim must fail");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidRepoMutationRecord);
+        assert_eq!(
+            current_head_commit(repo.path()).expect("head after"),
+            head_before
+        );
+    }
+
+    #[test]
+    fn repo_claim_lookup_errors_when_claim_maps_to_multiple_commits() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let claim_id = put_repo_provenance_claim(&vault);
+
+        for (path, content, message) in [
+            ("one.txt", b"one\n".to_vec(), "one edit"),
+            ("two.txt", b"two\n".to_vec(), "two edit"),
+        ] {
+            vault
+                .apply_repo_mutation(
+                    RepoMutationRequest::new(
+                        repo_ref(&repo),
+                        RepoMutationOperation::CommitFile {
+                            path: path.to_owned(),
+                            content,
+                            message: message.to_owned(),
+                        },
+                    )
+                    .with_provenance_claim_id(claim_id),
+                )
+                .expect("repo mutation with reused provenance");
+        }
+
+        let error = repo_commit_for_provenance_claim(repo.path(), &claim_id)
+            .expect_err("reused claim id must be ambiguous");
+        assert_eq!(error.kind(), ErrorKind::InvalidRepoMutationRecord);
+    }
+
+    #[test]
+    fn repo_claim_lookup_ignores_body_matches_and_unreadable_unrelated_messages() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let claim_id = put_repo_provenance_claim(&vault);
+        let body_match = format!(
+            "diagnostic\n\nExample:\n{REPO_PROVENANCE_TRAILER_KEY}: {}\n\nSigned-off-by: Tester <test@example.invalid>\n",
+            claim_id.to_hex()
+        );
+        add_side_branch_with_message(&repo, "body-match", body_match.as_bytes());
+        add_side_branch_with_message(&repo, "non-utf8", b"non utf8 side branch \xff\n");
+
+        vault
+            .apply_repo_mutation(
+                RepoMutationRequest::new(
+                    repo_ref(&repo),
+                    RepoMutationOperation::CommitFile {
+                        path: "real.txt".to_owned(),
+                        content: b"real\n".to_vec(),
+                        message: "real edit".to_owned(),
+                    },
+                )
+                .with_provenance_claim_id(claim_id),
+            )
+            .expect("real provenance mutation");
+        let head = current_head_commit(repo.path()).expect("head commit");
+
+        assert_eq!(
+            repo_commit_for_provenance_claim(repo.path(), &claim_id)
+                .expect("claim lookup survives side branches"),
+            Some(head)
         );
     }
 

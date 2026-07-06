@@ -119,6 +119,10 @@ pub struct ProvenanceArgs {
     /// Export the generated provenance mirror into refs/notes/oneiron-provenance.
     #[arg(long = "git-notes")]
     pub git_notes: bool,
+
+    /// Include raw claim value, scope, and evidence payloads in the JSON output.
+    #[arg(long = "include-payload")]
+    pub include_payload: bool,
 }
 
 impl Cli {
@@ -272,6 +276,7 @@ mod tests {
             "--repo-path",
             "/tmp/repo",
             "--git-notes",
+            "--include-payload",
         ])
         .unwrap();
 
@@ -284,6 +289,7 @@ mod tests {
                 assert_eq!(args.vault_path, PathBuf::from("/tmp/oneiron-vault"));
                 assert_eq!(args.repo_path, PathBuf::from("/tmp/repo"));
                 assert!(args.git_notes);
+                assert!(args.include_payload);
             }
             _ => panic!("expected provenance command"),
         }

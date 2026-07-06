@@ -16,6 +16,7 @@ use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
+const MAX_MSGPACK_JSON_DEPTH: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictSearchResolution {
@@ -48,9 +49,21 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     };
     let vault = open_vault_for_command(&vault_args)?;
     let output = if let Some(sha) = args.sha {
-        provenance_for_commit(&vault, &args.repo_path, &sha, args.git_notes)?
+        provenance_for_commit(
+            &vault,
+            &args.repo_path,
+            &sha,
+            args.git_notes,
+            args.include_payload,
+        )?
     } else if let Some(claim_id) = args.claim_id {
-        provenance_for_claim(&vault, &args.repo_path, &claim_id, args.git_notes)?
+        provenance_for_claim(
+            &vault,
+            &args.repo_path,
+            &claim_id,
+            args.git_notes,
+            args.include_payload,
+        )?
     } else {
         anyhow::bail!("provenance requires a SHA or --claim-id");
     };
@@ -83,6 +96,7 @@ fn provenance_for_commit(
     repo_path: &Path,
     sha: &str,
     git_notes: bool,
+    include_payload: bool,
 ) -> anyhow::Result<JsonValue> {
     let link = oneiron::repo_commit_provenance(repo_path, sha)?
         .ok_or_else(|| anyhow::anyhow!("commit {sha} has no Oneiron provenance trailer"))?;
@@ -91,7 +105,7 @@ fn provenance_for_commit(
     let mut output = json!({
         "commit": commit_sha,
         "claim_id": claim_id.to_hex(),
-        "claim": claim_json(vault, &claim_id)?,
+        "claim": claim_json(vault, &claim_id, include_payload)?,
     });
     if git_notes {
         oneiron::export_repo_provenance_git_note(repo_path, &commit_sha, &claim_id)?;
@@ -108,26 +122,24 @@ fn provenance_for_claim(
     repo_path: &Path,
     claim_id: &str,
     git_notes: bool,
+    include_payload: bool,
 ) -> anyhow::Result<JsonValue> {
     let claim_id = oneiron::EntityId::from_hex(claim_id)
         .map_err(|_| anyhow::anyhow!("claim id must be a 32-hex entity id"))?;
-    let commits = oneiron::repo_commits_for_provenance_claim(repo_path, &claim_id)?;
-    let claim = claim_json(vault, &claim_id)?;
+    let commit = oneiron::repo_commit_for_provenance_claim(repo_path, &claim_id)?
+        .ok_or_else(|| anyhow::anyhow!("claim {} has no linked commit", claim_id.to_hex()))?;
+    let claim = claim_json(vault, &claim_id, include_payload)?;
     let mut git_notes_exported = None;
     if git_notes {
-        let mut exported = Vec::new();
-        for commit in &commits {
-            oneiron::export_repo_provenance_git_note(repo_path, commit, &claim_id)?;
-            exported.push(commit.to_owned());
-        }
+        oneiron::export_repo_provenance_git_note(repo_path, &commit, &claim_id)?;
         git_notes_exported = Some(json!({
-            "exported": exported,
+            "exported": commit,
             "ref": oneiron::REPO_PROVENANCE_NOTES_REF,
         }));
     }
     let mut output = json!({
         "claim_id": claim_id.to_hex(),
-        "commits": commits,
+        "commit": commit,
         "claim": claim,
     });
     if let Some(exported) = git_notes_exported {
@@ -136,26 +148,45 @@ fn provenance_for_claim(
     Ok(output)
 }
 
-fn claim_json(vault: &oneiron::Vault, claim_id: &oneiron::EntityId) -> anyhow::Result<JsonValue> {
+fn claim_json(
+    vault: &oneiron::Vault,
+    claim_id: &oneiron::EntityId,
+    include_payload: bool,
+) -> anyhow::Result<JsonValue> {
     let body = vault
         .get_claim(claim_id)?
         .ok_or_else(|| anyhow::anyhow!("claim {} was not found in the vault", claim_id.to_hex()))?;
-    Ok(json!({
+    Ok(claim_body_json(&body, include_payload))
+}
+
+fn claim_body_json(body: &oneiron::ClaimBody, include_payload: bool) -> JsonValue {
+    let mut claim = json!({
         "predicate": body.predicate,
         "subject": claim_subject_json(&body.subject),
-        "value": msgpack_value_json(&body.value),
         "confidence": body.confidence,
         "approval": body.approval.as_str(),
         "lifecycle": body.lifecycle.as_str(),
         "salience": body.salience,
-        "evidence": body.evidence.as_ref().map(msgpack_value_json),
         "valid_from": body.valid_from,
         "valid_to": body.valid_to,
         "source": body.source.map(oneiron::ClaimSource::as_str),
         "world": body.world.map(|id| id.to_hex()),
-        "scope": body.scope.as_ref().map(msgpack_value_json),
         "stale": body.stale,
-    }))
+    });
+    if include_payload {
+        claim["value"] = msgpack_value_json(&body.value);
+        claim["evidence"] = body
+            .evidence
+            .as_ref()
+            .map(msgpack_value_json)
+            .unwrap_or(JsonValue::Null);
+        claim["scope"] = body
+            .scope
+            .as_ref()
+            .map(msgpack_value_json)
+            .unwrap_or(JsonValue::Null);
+    }
+    claim
 }
 
 fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
@@ -178,6 +209,10 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
 }
 
 fn msgpack_value_json(value: &MsgpackValue) -> JsonValue {
+    msgpack_value_json_with_depth(value, MAX_MSGPACK_JSON_DEPTH)
+}
+
+fn msgpack_value_json_with_depth(value: &MsgpackValue, remaining_depth: usize) -> JsonValue {
     match value {
         MsgpackValue::Nil => JsonValue::Null,
         MsgpackValue::Boolean(value) => json!(value),
@@ -191,13 +226,23 @@ fn msgpack_value_json(value: &MsgpackValue) -> JsonValue {
             |value| json!(value),
         ),
         MsgpackValue::Binary(value) => json!({ "binary_hex": hex_bytes(value) }),
-        MsgpackValue::Array(values) => {
-            JsonValue::Array(values.iter().map(msgpack_value_json).collect())
+        MsgpackValue::Array(_) | MsgpackValue::Map(_) if remaining_depth == 0 => {
+            json!({ "truncated": "max_depth" })
         }
+        MsgpackValue::Array(values) => JsonValue::Array(
+            values
+                .iter()
+                .map(|value| msgpack_value_json_with_depth(value, remaining_depth - 1))
+                .collect(),
+        ),
         MsgpackValue::Map(values) => {
             let mut map = serde_json::Map::new();
             for (key, value) in values {
-                insert_json_map_value(&mut map, msgpack_map_key(key), msgpack_value_json(value));
+                insert_json_map_value(
+                    &mut map,
+                    msgpack_map_key(key, remaining_depth - 1),
+                    msgpack_value_json_with_depth(value, remaining_depth - 1),
+                );
             }
             JsonValue::Object(map)
         }
@@ -208,12 +253,12 @@ fn msgpack_value_json(value: &MsgpackValue) -> JsonValue {
     }
 }
 
-fn msgpack_map_key(value: &MsgpackValue) -> String {
+fn msgpack_map_key(value: &MsgpackValue, remaining_depth: usize) -> String {
     match value {
         MsgpackValue::String(value) => value
             .as_str()
             .map_or_else(|| value.to_string(), std::borrow::ToOwned::to_owned),
-        _ => serde_json::to_string(&msgpack_value_json(value))
+        _ => serde_json::to_string(&msgpack_value_json_with_depth(value, remaining_depth))
             .unwrap_or_else(|_| format!("{value:?}")),
     }
 }
@@ -508,6 +553,41 @@ mod tests {
         let error = parse_allowed_origins(&origins).unwrap_err().to_string();
 
         assert!(error.contains("wildcard CORS origin is not allowed"));
+    }
+
+    #[test]
+    fn provenance_claim_json_omits_payload_by_default() {
+        let body = oneiron::ClaimBody::new(
+            oneiron::REPO_PROVENANCE_PREDICATE,
+            oneiron::ClaimSubject::Edge {
+                source: oneiron::EntityId::now(),
+                kind: oneiron::EdgeKind::Mentions,
+                target: oneiron::EntityId::now(),
+            },
+            MsgpackValue::from("private payload"),
+            1.0,
+            oneiron::ClaimApprovalStatus::Auto,
+            oneiron::ClaimLifecycleStatus::Active,
+        );
+
+        let redacted = claim_body_json(&body, false);
+        assert!(redacted.get("value").is_none());
+        assert!(redacted.get("scope").is_none());
+        assert!(redacted.get("evidence").is_none());
+
+        let included = claim_body_json(&body, true);
+        assert_eq!(included["value"], "private payload");
+    }
+
+    #[test]
+    fn msgpack_json_conversion_truncates_deep_arrays() {
+        let value = MsgpackValue::Array(vec![MsgpackValue::Array(vec![MsgpackValue::from(
+            "private payload",
+        )])]);
+
+        let rendered = msgpack_value_json_with_depth(&value, 1);
+
+        assert_eq!(rendered, json!([{ "truncated": "max_depth" }]));
     }
 
     #[test]
