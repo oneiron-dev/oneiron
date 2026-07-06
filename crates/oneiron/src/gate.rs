@@ -14,14 +14,17 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
     sensitivity_band_from_value,
 };
+use crate::counterparty_contact::{
+    CounterpartyContactRecord, CounterpartyFirstTouch, decode_counterparty_contact_body,
+};
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
 use crate::error::{Error, Result};
 use crate::llm::BudgetExhaustionPolicy;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
-    WriteEnvelope, bytes_to_hex_lower,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope, bytes_to_hex_lower,
 };
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -82,7 +85,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 10;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 11;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -306,6 +309,10 @@ impl ExternalEffectPolicyRisk {
 pub(crate) struct ExternalEffectGateContext {
     pub(crate) verb: String,
     pub(crate) channel: String,
+    pub(crate) channel_identity_ref: Option<EntityId>,
+    pub(crate) counterparty: Option<String>,
+    pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
+    pub(crate) counterparty_opted_out: bool,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -318,6 +325,10 @@ pub(crate) struct ExternalEffectGateInput {
     pub(crate) provenance: GateProvenanceHandles,
     pub(crate) verb: String,
     pub(crate) channel: String,
+    pub(crate) channel_identity_ref: Option<EntityId>,
+    pub(crate) counterparty: Option<String>,
+    pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
+    pub(crate) counterparty_opted_out: bool,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -337,6 +348,10 @@ impl ExternalEffectGateInput {
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),
                 channel: self.channel.clone(),
+                channel_identity_ref: self.channel_identity_ref,
+                counterparty: self.counterparty.clone(),
+                counterparty_first_touch: self.counterparty_first_touch,
+                counterparty_opted_out: self.counterparty_opted_out,
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,
@@ -390,6 +405,7 @@ pub(crate) enum GateMetricReasonClass {
     CriticalityFloor,
     PolicyManifestAuthority,
     ExternalEffectAuthority,
+    CounterpartyOptOut,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -407,6 +423,7 @@ impl GateMetricReasonClass {
             Self::CriticalityFloor => "criticality_floor",
             Self::PolicyManifestAuthority => "policy_manifest_authority",
             Self::ExternalEffectAuthority => "external_effect_authority",
+            Self::CounterpartyOptOut => "counterparty_opt_out",
         }
     }
 
@@ -422,6 +439,7 @@ impl GateMetricReasonClass {
             Self::CriticalityFloor => 7,
             Self::PolicyManifestAuthority => 8,
             Self::ExternalEffectAuthority => 9,
+            Self::CounterpartyOptOut => 10,
         }
     }
 
@@ -437,6 +455,7 @@ impl GateMetricReasonClass {
             Self::CriticalityFloor,
             Self::PolicyManifestAuthority,
             Self::ExternalEffectAuthority,
+            Self::CounterpartyOptOut,
         ]
     }
 }
@@ -454,6 +473,7 @@ pub(crate) enum GateReasonCode {
     PendingCriticalityFloor,
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
+    DenyCounterpartyOptOut,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -471,6 +491,7 @@ impl GateReasonCode {
             Self::PendingCriticalityFloor => "gate.pending.criticality_floor",
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
+            Self::DenyCounterpartyOptOut => "gate.deny.counterparty_opt_out",
         }
     }
 
@@ -488,6 +509,7 @@ impl GateReasonCode {
             Self::PendingCriticalityFloor => GateMetricReasonClass::CriticalityFloor,
             Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
             Self::PendingExternalEffectAuthority => GateMetricReasonClass::ExternalEffectAuthority,
+            Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
         }
     }
 }
@@ -918,6 +940,14 @@ impl PolicyManifestResolution {
         }
         if input.policy_manifest_version.trim().is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingPolicyManifestVersion);
+        }
+        if input.content_kind == GateContentKind::ExternalEffect
+            && input
+                .external_effect
+                .as_ref()
+                .is_some_and(|effect| effect.counterparty_opted_out)
+        {
+            return GateDecision::deny(GateReasonCode::DenyCounterpartyOptOut);
         }
         if self.is_fail_closed() {
             if input.content_kind == GateContentKind::ExternalEffect {
@@ -1842,7 +1872,8 @@ pub(crate) fn check_external_effect_policy(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
 ) -> Result<(GateDecisionId, GateDecision)> {
-    let input = effect.gate_input();
+    let hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
+    let input = hydrated_effect.gate_input();
     let decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
@@ -1871,6 +1902,56 @@ pub(crate) fn check_external_effect_policy(
     record_gate_decision_metrics(&decision);
 
     Ok((decision_id, decision))
+}
+
+fn hydrate_external_effect_contact(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+) -> Result<ExternalEffectGateInput> {
+    let mut hydrated = effect.clone();
+    let (Some(identity_ref), Some(counterparty)) =
+        (effect.channel_identity_ref, effect.counterparty.as_deref())
+    else {
+        return Ok(hydrated);
+    };
+    if let Some(record) = counterparty_contact_for_send(store, txn, &identity_ref, counterparty)? {
+        hydrated.counterparty_first_touch = Some(record.first_touch);
+        hydrated.counterparty_opted_out = record.is_opted_out();
+    }
+    Ok(hydrated)
+}
+
+fn counterparty_contact_for_send(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    identity_ref: &EntityId,
+    counterparty: &str,
+) -> Result<Option<CounterpartyContactRecord>> {
+    for entry in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
+    {
+        let (key, _) = entry?;
+        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_COUNTERPARTY_CONTACT) else {
+            return Err(Error::CorruptedIndex("counterparty contact type index key"));
+        };
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("counterparty contact entity row"));
+        };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+            return Err(Error::CorruptedIndex("counterparty contact entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+            return Err(Error::CorruptedIndex("counterparty contact entity type"));
+        }
+        let record =
+            decode_counterparty_contact_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+        if record.matches_counterparty(identity_ref, counterparty) {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2693,6 +2774,10 @@ mod tests {
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
         claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
+    };
+    use crate::counterparty_contact::{
+        CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
+        CounterpartyOptOutReason,
     };
     use crate::error::{GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
@@ -4352,6 +4437,10 @@ mod tests {
             },
             verb: verb.to_owned(),
             channel: channel.to_owned(),
+            channel_identity_ref: None,
+            counterparty: None,
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
             has_opted_in: true,
             has_permission: true,
             policy_risk: ExternalEffectPolicyRisk::Normal,
@@ -5074,6 +5163,95 @@ mod tests {
         assert_eq!(
             decisions[0].read_frontier_hash,
             policy.read_frontier_hash()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn counterparty_contact_records_are_visible_and_revocable_by_identity() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let identity = test_id(0xC7);
+        let intro_id = test_id(0xC8);
+        let inbound_id = test_id(0xC9);
+        let intro =
+            CounterpartyContactRecord::user_introduction(identity, " kenji@example.com ", 10)?;
+        let inbound = CounterpartyContactRecord::inbound_first(identity, "+15551234567", 11)?;
+
+        vault.create_counterparty_contact(&intro_id, &intro)?;
+        vault.create_counterparty_contact(&inbound_id, &inbound)?;
+
+        let found = vault
+            .find_counterparty_contact(&identity, "kenji@example.com")?
+            .expect("intro contact visible by target");
+        assert_eq!(found.0, intro_id);
+        assert_eq!(
+            found.1.first_touch,
+            CounterpartyFirstTouch::UserIntroduction
+        );
+        assert_eq!(found.1.counterparty, "kenji@example.com");
+
+        let contacts = vault.counterparty_contacts_for_identity(&identity)?;
+        assert_eq!(contacts.len(), 2);
+
+        let revoked = vault.revoke_counterparty_contact(&intro_id, 20)?;
+        assert_eq!(revoked.status, CounterpartyContactStatus::Revoked);
+        assert_eq!(revoked.revoked_at, Some(20));
+        assert_eq!(
+            vault
+                .get_counterparty_contact(&intro_id)?
+                .expect("revoked stored"),
+            revoked
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "send",
+            Value::Map(vec![(
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            )]),
+            None,
+        )]);
+        put_policy_manifest_bytes(&vault, 0xD5, &data)?;
+        let policy = resolve(&vault)?;
+
+        let identity = test_id(0xCA);
+        let contact_id = test_id(0xCB);
+        let contact =
+            CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
+        vault.create_counterparty_contact(&contact_id, &contact)?;
+        let opted_out = vault.opt_out_counterparty_contact(
+            &contact_id,
+            CounterpartyOptOutReason::Unsubscribe,
+            20,
+        )?;
+        assert!(opted_out.is_opted_out());
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.channel_identity_ref = Some(identity);
+        effect.counterparty = Some("kenji@example.com".to_owned());
+
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.counterparty_opt_out"]
+        );
+
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].outcome, "deny");
+        assert_eq!(
+            decisions[0].reason_codes,
+            vec!["gate.deny.counterparty_opt_out"]
         );
         Ok(())
     }

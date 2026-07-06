@@ -7,6 +7,8 @@ pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod channel_identity;
+pub mod channel_identity_lifecycle;
+pub mod channel_identity_manifest;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
@@ -15,6 +17,7 @@ pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
+pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
 pub(crate) mod distance;
@@ -24,9 +27,11 @@ pub mod error;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
+pub mod genui;
 pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_reputation;
 pub mod ingest;
 pub mod job_queue;
 pub mod lens;
@@ -36,6 +41,7 @@ pub mod maintain;
 pub mod outbound;
 pub mod pipeline;
 pub(crate) mod ppr;
+pub mod prompt;
 pub mod provenance;
 pub mod receipt;
 pub mod recovery;
@@ -45,6 +51,7 @@ pub mod serialize;
 pub mod settings;
 pub mod skill;
 pub mod store;
+pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
@@ -100,6 +107,20 @@ pub use crate::channel_identity::{
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT, decode_channel_identity_body,
     encode_channel_identity_body,
 };
+pub use crate::channel_identity_lifecycle::{
+    BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
+    ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
+    ChannelIdentityLifecyclePolicyRisk, ChannelIdentityLifecycleRequest,
+    ChannelIdentityLifecycleResult, ChannelIdentityLifecycleVerb, ProvisionIntent, ReleaseIntent,
+    RotateIntent, RouteInboundIntent,
+};
+pub use crate::channel_identity_manifest::{
+    CHANNEL_IDENTITY_CAPABILITY_MATRIX_VERSION, ChannelIdentityCapabilityMatrix,
+    ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError,
+    ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities,
+    ChannelIdentityReputationSignal, channel_identity_capability_matrix, channel_identity_manifest,
+    channel_identity_manifests, parse_channel_identity_capability_matrix,
+};
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
@@ -136,11 +157,12 @@ pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_ENTITY_BODY_KEYS, CODE_SYMBOL_FINGERPRINT_LEN,
     CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_MANIFEST_BODY_KEYS, CODE_SYMBOL_MANIFEST_MAX_CHUNKS,
     CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_REVISION_KEYS,
-    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeSymbolBlame,
-    CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest,
-    CodeSymbolRevision, CodeSymbolSource, code_symbol_entity_id, decode_code_symbol_manifest,
-    derive_code_chunks_from_text_diff, derive_code_symbol_graph_from_sources,
-    derive_symbol_fingerprint, encode_code_symbol_manifest,
+    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeEmbeddingInput,
+    CodeEmbeddingVector, CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph,
+    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
+    code_symbol_entity_id, decode_code_symbol_manifest, derive_code_chunks_from_text_diff,
+    derive_code_embedding_inputs_from_text_diff, derive_code_symbol_graph_from_sources,
+    derive_symbol_fingerprint, embed_code_chunks, encode_code_symbol_manifest,
 };
 pub use crate::codebase::{
     CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS,
@@ -151,6 +173,17 @@ pub use crate::codebase::{
     encode_codebase_snapshot,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
+pub use crate::counterparty_contact::{
+    COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
+    COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,
+    CounterpartyFirstTouch, CounterpartyOptOut, CounterpartyOptOutReason,
+    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY, PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH, PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+    PREDICATE_COUNTERPARTY_CONTACT_NOTES, PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT,
+    PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT, PREDICATE_COUNTERPARTY_CONTACT_REVOKED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_STATUS, PREDICATE_COUNTERPARTY_CONTACT_UPDATED_AT,
+    decode_counterparty_contact_body, encode_counterparty_contact_body,
+};
 pub use crate::critic::{
     CRITIC_LENS_CATALOG_SCHEMA_VERSION, CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION,
     CRITIC_RELIABILITY_PREDICATE_PREFIX, CRITIQUE_ARTIFACT_SCHEMA_VERSION, CriticLens,
@@ -203,6 +236,14 @@ pub use crate::federation::{
     FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
     encode_federation_grant_body,
 };
+pub use crate::genui::{
+    BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentActionDecision,
+    ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity,
+    ConsentAskCard, ConsentScopeEscalator, ConsentSurface, GrantMintIntent, GrantMintIntentScope,
+    OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
+    Of336Component, Of336ComponentKind, Of336RenderedComponent, Of336SurfaceAdapter,
+    ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
+};
 pub use crate::graph_fs::{
     GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP, GRAPH_FS_COREUTILS_MAX_RESULT_CAP,
     GRAPH_FS_DEFAULT_MAX_ENTRIES, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP, GRAPH_FS_HOST_IMPORTS,
@@ -210,6 +251,17 @@ pub use crate::graph_fs::{
     GRAPH_FS_MORE_ENTRY, GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
+};
+pub use crate::identity_reputation::{
+    CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
+    IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,
+    IdentityAttestationTier, IdentityReputation, IdentityReputationSignal,
+    IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage,
+    PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER, PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
+    PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE, PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
+    PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
+    PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
+    WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
 };
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
@@ -256,16 +308,23 @@ pub use crate::llm::{
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::outbound::{
-    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
-    OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
-    OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
-    OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
-    outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
-    unsupported_outbound_connector,
+    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
+    OUTBOUND_INTENT_SCHEMA_VERSION, OUTBOUND_VERB_FIELD_CONTRACT, OutboundCapabilityManifest,
+    OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
+    OutboundIntent, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass,
+    OutboundVerbContract, UnsupportedOutboundCapability, outbound_capability_manifest,
+    outbound_capability_manifests, outbound_verb_contract, unsupported_outbound_connector,
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
     RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
+};
+pub use crate::prompt::{
+    DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,
+    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptRecompileStamp, ResolvedPrompt,
+    SessionPromptAssembly, SessionPromptParts, StampedLlmRequest, assemble_eiri_session_prompt,
+    build_eiri_session_request, resolve_eiri_v3_prompt, resolve_prompt,
+    workspace_prompt_package_root,
 };
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
@@ -273,7 +332,12 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
-pub use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+pub use crate::receipt::{
+    BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, PendingTrayAsk,
+    PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery,
+    ReceiptRecord, ReceiptView, project_receipts_by_brief, project_receipts_by_counterparty,
+    project_receipts_by_grant,
+};
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
@@ -318,6 +382,11 @@ pub use crate::store::{
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
     RetrievalTraceStageRecord,
 };
+pub use crate::surface_event::{
+    INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
+    SurfaceCounterpartyStamp, SurfaceEvent,
+};
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
     PackTokenizer, count_context_pack_tokens,
@@ -333,13 +402,13 @@ pub use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, DecodedEdgeValue,
     EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PSYCH_PROFILE,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
-    EmptyContext, EmptyReason, EndCompanionRelationship, EndCompanionRelationshipOutcome,
-    EnqueueCompanionTask, EnqueueCompanionTaskOutcome, EntityId, FailCompanionTask,
-    FailCompanionTaskOutcome, FieldProfile, HnswConfig, HydratedShortIdDeletion,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
+    EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
+    EiriSessionRagState, EmptyContext, EmptyReason, EndCompanionRelationship,
+    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome, EntityId,
+    FailCompanionTask, FailCompanionTaskOutcome, FieldProfile, HnswConfig, HydratedShortIdDeletion,
     HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
     MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
     NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
