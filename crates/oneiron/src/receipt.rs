@@ -677,7 +677,7 @@ mod tests {
         let body = encode_federation_grant_body(&grant)?;
         vault
             .batch()
-            .put_replicated(
+            .put(
                 &id,
                 ENTITY_TYPE_FEDERATION_GRANT,
                 TimeRange {
