@@ -1897,6 +1897,7 @@ mod tests {
         ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_TASK, EdgeActorClass, TimeRange, VaultConfig,
         encode_companion_record_body,
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use rmpv::Value;
     use std::sync::Arc;
 
@@ -1984,6 +1985,190 @@ mod tests {
             ),
             export_classification,
         )
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_test_key(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_key_from_signing(signing: &SigningKey) -> crate::authority::AuthorityKey {
+        crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_test_device(
+        key: crate::authority::AuthorityKey,
+    ) -> crate::authority::DeviceAuthority {
+        crate::authority::DeviceAuthority {
+            key,
+            transport_key_binding: [0; 32],
+            attestation: crate::authority::AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: crate::authority::AuthorityTier::Software,
+            roles: crate::authority::ROLE_OWNER,
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_genesis_fixture(seed: u8) -> crate::authority::AuthorityLogEntry {
+        let signing = authority_test_key(seed);
+        let key = authority_key_from_signing(&signing);
+        let mut entry = crate::authority::AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: None,
+            seq: 0,
+            parent_hashes: Vec::new(),
+            op: crate::authority::AuthorityOp::Genesis {
+                device: authority_test_device(key.clone()),
+                genesis_nonce: [seed.wrapping_add(1); 32],
+                tier_floor: crate::authority::AuthorityTier::Software,
+                pending_widen_delay_secs: 86_400,
+            },
+            signer: crate::authority::AuthoritySignature {
+                suite: key.suite(),
+                public_key: key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: u64::from(seed),
+        };
+        let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+        entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+        entry
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_enroll_fixture(
+        vault_id: crate::authority::AuthorityVaultId,
+        parent: &crate::authority::AuthorityLogEntry,
+        signer: &SigningKey,
+        new_seed: u8,
+        seq: u64,
+    ) -> crate::authority::AuthorityLogEntry {
+        let signer_key = authority_key_from_signing(signer);
+        let new_key = authority_key_from_signing(&authority_test_key(new_seed));
+        let mut entry = crate::authority::AuthorityLogEntry {
+            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq,
+            parent_hashes: vec![
+                crate::authority::authority_entry_hash(parent).expect("parent hash"),
+            ],
+            op: crate::authority::AuthorityOp::EnrollDevice {
+                device: authority_test_device(new_key),
+            },
+            signer: crate::authority::AuthoritySignature {
+                suite: signer_key.suite(),
+                public_key: signer_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: u64::from(new_seed),
+        };
+        let transcript = crate::authority::authority_transcript(&entry).expect("transcript");
+        entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+        entry
+    }
+
+    #[cfg(feature = "sync")]
+    fn authority_log_entity_blob(
+        entry: &crate::authority::AuthorityLogEntry,
+        learned_at: u64,
+    ) -> Result<Vec<u8>> {
+        let body = crate::authority::encode_authority_log_entry_body(entry)?;
+        Ok(entity_blob(
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &body,
+        ))
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn over_quota_peer_rejected() -> Result<()> {
+        let vault = test_vault();
+        quota::set_maintenance_ingest_quota_config(
+            &vault,
+            quota::MaintenanceIngestQuotaConfig {
+                max_ops_per_peer_window: 1,
+                quota_window_secs: 3_600,
+            },
+        )?;
+        let owner = authority_test_key(31);
+        let genesis = authority_genesis_fixture(31);
+        let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+        vault.put_authority_log_entry(
+            &EntityId::now(),
+            &genesis,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+
+        let first = authority_enroll_fixture(vault_id, &genesis, &owner, 32, 1);
+        let second = authority_enroll_fixture(vault_id, &genesis, &owner, 33, 2);
+        let first_blob = authority_log_entity_blob(&first, 2)?;
+        let second_blob = authority_log_entity_blob(&second, 3)?;
+        let doc = LoroDoc::new();
+        let tombstones = doc.get_map("tombstones");
+
+        vault.with_write_txn(|wtxn| {
+            let wrote = materialize_entity_blob_in_txn(
+                &vault,
+                wtxn,
+                &tombstones,
+                &EntityId::now().to_hex(),
+                &first_blob,
+                crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            )?;
+            assert!(
+                wrote,
+                "first authority replay-door write should materialize"
+            );
+            Ok(())
+        })?;
+
+        let second_id = EntityId::now();
+        let err = vault
+            .with_write_txn(|wtxn| {
+                materialize_entity_blob_in_txn(
+                    &vault,
+                    wtxn,
+                    &tombstones,
+                    &second_id.to_hex(),
+                    &second_blob,
+                    crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+                )
+                .map(|_| ())
+            })
+            .expect_err("same authority signer must be capped by production replay-door quota");
+
+        assert!(matches!(
+            err,
+            Error::MaintenanceIngestQuotaExceeded {
+                accepted_count: 1,
+                max_ops_per_peer_window: 1,
+                quota_window_secs: 3_600,
+                ..
+            }
+        ));
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault
+                .store
+                .entities
+                .get(&rtxn, second_id.as_bytes())?
+                .is_none(),
+            "over-quota authority replay-door blob must not be stored"
+        );
+        Ok(())
     }
 
     /// Index-aligned metas for direct `apply_materialized_edge_ops` calls.
