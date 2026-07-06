@@ -3177,6 +3177,7 @@ dependencies = [
 name = "oneiron-bench"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "oneiron",
  "rand 0.8.5",
  "rmp-serde",
