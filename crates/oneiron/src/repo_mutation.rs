@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
+#[cfg(test)]
+use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
+use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
 use crate::types::EntityId;
 
@@ -248,7 +250,7 @@ impl Vault {
     pub fn apply_repo_mutation(&self, request: RepoMutationRequest) -> Result<RepoMutationOutcome> {
         validate_operation(&request.operation)?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
-        let repo_ref = canonical_repo_ref_for_root(&repo_root)?;
+        let repo_ref = canonical_repo_ref_for_root(&request.repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
         let lock_key = repo_lock_key(&common_dir)?;
         let lock = repo_mutation_lock(&lock_key)?;
@@ -312,7 +314,7 @@ impl Vault {
         repo_ref: &RepoRef,
     ) -> Result<Vec<RepoMutationOutcome>> {
         let repo_root = resolve_mutable_repo_root(repo_ref)?;
-        let canonical = canonical_repo_ref_for_root(&repo_root)?;
+        let canonical = canonical_repo_ref_for_root(repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
         let lock_key = repo_lock_key(&common_dir)?;
         let lock = repo_mutation_lock(&lock_key)?;
@@ -326,7 +328,7 @@ impl Vault {
     /// Reads the durable oplog for a repo in sequence order.
     pub fn repo_mutation_oplog(&self, repo_ref: &RepoRef) -> Result<Vec<RepoMutationOplogEntry>> {
         let repo_root = resolve_mutable_repo_root(repo_ref)?;
-        let canonical = canonical_repo_ref_for_root(&repo_root)?;
+        let canonical = canonical_repo_ref_for_root(repo_ref, &repo_root)?;
         self.repo_mutation_oplog_for_canonical(&canonical)
     }
 
@@ -1155,23 +1157,43 @@ fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
     Ok(PathBuf::from(root).canonicalize()?)
 }
 
-fn canonical_repo_ref_for_root(repo_root: &Path) -> Result<RepoRef> {
+fn canonical_repo_ref_for_root(repo_ref: &RepoRef, repo_root: &Path) -> Result<RepoRef> {
+    let RepoRef::LocalFolder { commit, .. } = repo_ref else {
+        return Err(Error::InvalidRepoMutationRecord(
+            "only local repo_refs can be mutated",
+        ));
+    };
     let path = repo_root
         .to_str()
         .ok_or(Error::InvalidRepoMutationRecord(
             "local repo path must be UTF-8",
         ))?
         .to_owned();
-    let output = run_git(repo_root, &["rev-parse".to_owned(), "HEAD".to_owned()])?;
-    let commit = utf8_trimmed(output, "git HEAD commit must be UTF-8")?.to_ascii_lowercase();
+    Ok(RepoRef::LocalFolder {
+        path,
+        commit: commit.clone(),
+    })
+}
+
+#[cfg(test)]
+fn current_head_commit(repo_root: &Path) -> Result<String> {
+    let output = run_git(
+        repo_root,
+        &[
+            "rev-parse".to_owned(),
+            "--verify".to_owned(),
+            "HEAD".to_owned(),
+        ],
+    )?;
+    let commit = utf8_trimmed(output, "git HEAD commit must be UTF-8")?;
     if commit.len() != CODEBASE_COMMIT_HASH_HEX_LEN
-        || !commit.bytes().all(|b| b.is_ascii_hexdigit())
+        || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(Error::InvalidRepoMutationRecord(
-            "git HEAD commit must be a 40-character hexadecimal hash",
+            "git HEAD commit must be a 40-hex hash",
         ));
     }
-    Ok(RepoRef::LocalFolder { path, commit })
+    Ok(commit.to_ascii_lowercase())
 }
 
 fn validate_relative_repo_path(path: &str) -> Result<()> {
@@ -1352,9 +1374,13 @@ fn repo_key_hash(repo_key: &str) -> String {
 }
 
 fn repo_mutation_repo_key_hash(repo_ref: &RepoRef) -> String {
+    repo_key_hash(&repo_mutation_repo_key(repo_ref))
+}
+
+fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
     match repo_ref {
-        RepoRef::LocalFolder { path, .. } => repo_key_hash(&format!("local:{path}")),
-        RepoRef::GitHubAtCommit { .. } => repo_key_hash(&repo_ref.canonical()),
+        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
+        RepoRef::GitHubAtCommit { .. } => repo_ref.canonical(),
     }
 }
 
@@ -1493,14 +1519,9 @@ mod tests {
     }
 
     fn repo_ref(repo: &TempDir) -> RepoRef {
-        let output = run_git_at_path(repo.path(), &["rev-parse".to_owned(), "HEAD".to_owned()])
-            .expect("git rev-parse HEAD");
-        let commit = utf8_trimmed(output, "git HEAD commit must be UTF-8")
-            .expect("UTF-8 HEAD commit")
-            .to_ascii_lowercase();
         RepoRef::LocalFolder {
             path: repo.path().to_string_lossy().into_owned(),
-            commit,
+            commit: current_head_commit(repo.path()).expect("repo head commit"),
         }
     }
 
@@ -1647,8 +1668,10 @@ mod tests {
         let repo = init_repo();
         let tracked = repo.path().join("README.md");
         let before = fs::read_to_string(&tracked).expect("read before");
-        let repo_root = resolve_mutable_repo_root(&repo_ref(&repo)).expect("repo root");
-        let canonical = canonical_repo_ref_for_root(&repo_root).expect("canonical repo");
+        let input_ref = repo_ref(&repo);
+        let repo_root = resolve_mutable_repo_root(&input_ref).expect("repo root");
+        let canonical =
+            canonical_repo_ref_for_root(&input_ref, &repo_root).expect("canonical repo");
         let request = RepoMutationRequest::new(
             canonical.clone(),
             RepoMutationOperation::CommitFile {
