@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
+use crate::outbound::OutboundIntent;
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, PendingGateConsentRecord,
 };
@@ -33,6 +35,9 @@ const FIELD_RUN_REF: &str = "run_ref";
 const FIELD_INTENT_REF: &str = "intent_ref";
 const FIELD_PARENT_REF: &str = "parent_ref";
 const FIELD_COUNTERPARTY_REF: &str = "counterparty_ref";
+const FIELD_IDENTITY_REF: &str = "identity_ref";
+const FIELD_CHANNEL_IDENTITY_REF: &str = "channel_identity_ref";
+const FIELD_RECEIVING_IDENTITY_REF: &str = "receiving_identity_ref";
 const FIELD_GRANT_REF: &str = "grant_ref";
 const FIELD_BUNDLE_REF: &str = "bundle_ref";
 const FIELD_BUDGET_DEBIT: &str = "budget_debit";
@@ -187,11 +192,6 @@ impl ReceiptQuery {
         }
         if let Some(outcome) = self.outcome.as_deref()
             && receipt.outcome != outcome
-        {
-            return false;
-        }
-        if let Some(job_ref) = self.job_ref.as_deref()
-            && !direct_brief_ref(receipt).is_some_and(|value| refs_match(&value, job_ref))
         {
             return false;
         }
@@ -390,7 +390,12 @@ impl Vault {
         &self,
         query: ReceiptQuery,
     ) -> Result<Vec<CounterpartyReceiptProjection>> {
-        Ok(project_receipts_by_counterparty(self.receipts(query)?))
+        let receipts = self.receipts(query)?;
+        let contact_records = counterparty_contact_records_for_receipts(self, &receipts)?;
+        Ok(project_receipts_by_counterparty_with_contacts(
+            receipts,
+            &contact_records,
+        ))
     }
 
     /// Computes the per-grant receipt projection from the unified family.
@@ -399,7 +404,51 @@ impl Vault {
         grant_ref: impl Into<String>,
         query: ReceiptQuery,
     ) -> Result<GrantReceiptProjection> {
-        Ok(project_receipts_by_grant(grant_ref, self.receipts(query)?))
+        let limit = query.limit;
+        if limit == 0 {
+            return Ok(project_receipts_by_grant_limited(
+                grant_ref,
+                Vec::new(),
+                limit,
+            ));
+        }
+        Ok(project_receipts_by_grant_limited(
+            grant_ref,
+            self.receipts(projection_scan_query(query))?,
+            limit,
+        ))
+    }
+}
+
+/// Builds an outbound receipt row from the OF-327 intent spine.
+///
+/// The helper keeps `job_ref` propagation explicit for brief-rooted runs while
+/// preserving legacy compatibility: callers that pass an older intent without a
+/// job ref still emit a receipt with `job_ref: None`.
+#[must_use]
+pub fn outbound_intent_receipt(
+    receipt_id: impl Into<String>,
+    intent: &OutboundIntent,
+    occurred_at: u64,
+    outcome: impl Into<String>,
+) -> ReceiptRecord {
+    let mut fields = BTreeMap::new();
+    fields.insert("verb".to_owned(), intent.verb.clone());
+    fields.insert("channel".to_owned(), intent.channel.clone());
+    fields.insert("target".to_owned(), intent.target.clone());
+    fields.insert("intent_source".to_owned(), intent.intent_source.clone());
+
+    ReceiptRecord {
+        receipt_id: receipt_id.into(),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at,
+        actor: Some(intent.actor.clone()),
+        on_behalf_of: intent.on_behalf_of.clone(),
+        outcome: outcome.into(),
+        job_ref: intent.job_ref.clone(),
+        trigger_ref: Some(intent.trigger_ref.clone()),
+        policy_trace: Vec::new(),
+        fields,
     }
 }
 
@@ -432,6 +481,13 @@ pub fn project_receipts_by_brief(
 pub fn project_receipts_by_counterparty(
     receipts: impl IntoIterator<Item = ReceiptRecord>,
 ) -> Vec<CounterpartyReceiptProjection> {
+    project_receipts_by_counterparty_with_contacts(receipts, &BTreeMap::new())
+}
+
+fn project_receipts_by_counterparty_with_contacts(
+    receipts: impl IntoIterator<Item = ReceiptRecord>,
+    contact_records: &BTreeMap<String, CounterpartyContactRecord>,
+) -> Vec<CounterpartyReceiptProjection> {
     let mut projections = BTreeMap::<String, CounterpartyProjectionBuilder>::new();
 
     for receipt in receipts {
@@ -442,6 +498,12 @@ pub fn project_receipts_by_counterparty(
             .entry(counterparty_ref.clone())
             .or_insert_with(|| CounterpartyProjectionBuilder::new(counterparty_ref))
             .push(receipt);
+    }
+
+    for (counterparty_ref, contact) in contact_records {
+        if let Some(builder) = projections.get_mut(counterparty_ref) {
+            builder.apply_contact(contact);
+        }
     }
 
     projections
@@ -455,6 +517,14 @@ pub fn project_receipts_by_counterparty(
 pub fn project_receipts_by_grant(
     grant_ref: impl Into<String>,
     receipts: impl IntoIterator<Item = ReceiptRecord>,
+) -> GrantReceiptProjection {
+    project_receipts_by_grant_limited(grant_ref, receipts, usize::MAX)
+}
+
+fn project_receipts_by_grant_limited(
+    grant_ref: impl Into<String>,
+    receipts: impl IntoIterator<Item = ReceiptRecord>,
+    limit: usize,
 ) -> GrantReceiptProjection {
     let grant_ref = grant_ref.into();
     let mut projection = GrantReceiptProjection {
@@ -471,6 +541,12 @@ pub fn project_receipts_by_grant(
             projection.receipts.push(receipt);
         }
     }
+    projection.receipts.truncate(limit);
+    projection.budget_debit_total = projection
+        .receipts
+        .iter()
+        .map(receipt_budget_debit)
+        .fold(0_u64, u64::saturating_add);
 
     projection
 }
@@ -478,6 +554,7 @@ pub fn project_receipts_by_grant(
 #[derive(Debug, Default)]
 struct ReceiptProjectionIndex {
     run_to_brief: BTreeMap<String, String>,
+    run_to_parent_run: BTreeMap<String, String>,
     intent_to_run: BTreeMap<String, String>,
     intent_to_brief: BTreeMap<String, String>,
 }
@@ -525,29 +602,44 @@ impl ReceiptProjectionIndex {
                             .entry(intent_ref.to_owned())
                             .or_insert_with(|| parent_ref.to_owned());
                     }
-                } else if parent_ref.starts_with("run:")
-                    && let Some(intent_ref) = intent_ref.as_deref()
-                {
-                    index
-                        .intent_to_run
-                        .entry(intent_ref.to_owned())
-                        .or_insert_with(|| parent_ref.to_owned());
+                } else if parent_ref.starts_with("run:") {
+                    if let Some(run_ref) = run_ref.as_deref() {
+                        index
+                            .run_to_parent_run
+                            .entry(run_ref.to_owned())
+                            .or_insert_with(|| parent_ref.to_owned());
+                    }
+                    if let Some(intent_ref) = intent_ref.as_deref() {
+                        index
+                            .intent_to_run
+                            .entry(intent_ref.to_owned())
+                            .or_insert_with(|| parent_ref.to_owned());
+                    }
                 }
             }
         }
 
-        let inferred = index
-            .intent_to_run
-            .iter()
-            .filter_map(|(intent_ref, run_ref)| {
-                index
-                    .run_to_brief
-                    .get(run_ref)
-                    .map(|brief_ref| (intent_ref.clone(), brief_ref.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (intent_ref, brief_ref) in inferred {
-            index.intent_to_brief.entry(intent_ref).or_insert(brief_ref);
+        loop {
+            let mut changed = false;
+            for (run_ref, parent_run_ref) in index.run_to_parent_run.clone() {
+                if let Some(brief_ref) = index.run_to_brief.get(&parent_run_ref).cloned()
+                    && !index.run_to_brief.contains_key(&run_ref)
+                {
+                    index.run_to_brief.insert(run_ref, brief_ref);
+                    changed = true;
+                }
+            }
+            for (intent_ref, run_ref) in index.intent_to_run.clone() {
+                if let Some(brief_ref) = index.run_to_brief.get(&run_ref).cloned()
+                    && !index.intent_to_brief.contains_key(&intent_ref)
+                {
+                    index.intent_to_brief.insert(intent_ref, brief_ref);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
         }
 
         index
@@ -756,15 +848,21 @@ impl CounterpartyProjectionBuilder {
             self.first_touch = Some(first_touch.to_owned());
         }
         if let Some(opt_out) = bool_field(&receipt, FIELD_OPT_OUT) {
-            self.opt_out = Some(opt_out);
+            self.opt_out.get_or_insert(opt_out);
         }
         if let Some(promo_consent) = bool_field(&receipt, FIELD_PROMO_CONSENT) {
-            self.promo_consent = Some(promo_consent);
+            self.promo_consent.get_or_insert(promo_consent);
         }
         self.budget_debit_total = self
             .budget_debit_total
             .saturating_add(receipt_budget_debit(&receipt));
         self.receipts.push(receipt);
+    }
+
+    fn apply_contact(&mut self, contact: &CounterpartyContactRecord) {
+        self.first_touch = Some(contact.first_touch.as_str().to_owned());
+        self.opt_out = Some(contact.is_opted_out());
+        self.promo_consent = Some(contact.promo_consent);
     }
 
     fn finish(self) -> CounterpartyReceiptProjection {
@@ -806,6 +904,16 @@ fn receipt_counterparty_ref(receipt: &ReceiptRecord) -> Option<String> {
     field_ref(receipt, FIELD_COUNTERPARTY_REF)
         .or_else(|| field_ref(receipt, "target"))
         .map(str::to_owned)
+}
+
+fn receipt_identity_ref(receipt: &ReceiptRecord) -> Option<EntityId> {
+    [
+        FIELD_CHANNEL_IDENTITY_REF,
+        FIELD_RECEIVING_IDENTITY_REF,
+        FIELD_IDENTITY_REF,
+    ]
+    .iter()
+    .find_map(|key| field_ref(receipt, key).and_then(entity_ref_from_str))
 }
 
 fn receipt_matches_grant(receipt: &ReceiptRecord, grant_ref: &str) -> bool {
@@ -871,6 +979,64 @@ fn strip_ref_prefix(value: &str) -> &str {
         .map_or(value, |(_prefix, suffix)| suffix)
 }
 
+fn entity_ref_from_str(value: &str) -> Option<EntityId> {
+    EntityId::from_hex(strip_ref_prefix(value)).ok()
+}
+
+fn projection_scan_query(mut query: ReceiptQuery) -> ReceiptQuery {
+    query.limit = MAX_RECEIPT_QUERY_SCAN;
+    query
+}
+
+fn finalize_receipt_query_records(
+    mut records: Vec<ReceiptRecord>,
+    query: &ReceiptQuery,
+) -> Vec<ReceiptRecord> {
+    records.sort_by(|left, right| {
+        right
+            .occurred_at
+            .cmp(&left.occurred_at)
+            .then_with(|| left.receipt_kind.cmp(&right.receipt_kind))
+            .then_with(|| left.receipt_id.cmp(&right.receipt_id))
+    });
+    if let Some(job_ref) = query.job_ref.as_deref() {
+        let index = ReceiptProjectionIndex::new(&records);
+        records.retain(|receipt| index.receipt_matches_brief(receipt, job_ref));
+    }
+    records.truncate(query.limit);
+    records
+}
+
+fn counterparty_contact_records_for_receipts(
+    vault: &Vault,
+    receipts: &[ReceiptRecord],
+) -> Result<BTreeMap<String, CounterpartyContactRecord>> {
+    let mut contacts = BTreeMap::new();
+    for receipt in receipts {
+        let (Some(counterparty_ref), Some(identity_ref)) = (
+            receipt_counterparty_ref(receipt),
+            receipt_identity_ref(receipt),
+        ) else {
+            continue;
+        };
+        let Some((_contact_id, contact)) =
+            vault.find_counterparty_contact(&identity_ref, &counterparty_ref)?
+        else {
+            continue;
+        };
+        let replace =
+            contacts
+                .get(&counterparty_ref)
+                .is_none_or(|existing: &CounterpartyContactRecord| {
+                    existing.updated_at < contact.updated_at
+                });
+        if replace {
+            contacts.insert(counterparty_ref, contact);
+        }
+    }
+    Ok(contacts)
+}
+
 fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     if query.limit == 0 {
         return Ok(Vec::new());
@@ -896,15 +1062,7 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
     }
 
-    records.sort_by(|left, right| {
-        right
-            .occurred_at
-            .cmp(&left.occurred_at)
-            .then_with(|| left.receipt_kind.cmp(&right.receipt_kind))
-            .then_with(|| left.receipt_id.cmp(&right.receipt_id))
-    });
-    records.truncate(query.limit);
-    Ok(records)
+    Ok(finalize_receipt_query_records(records, query))
 }
 
 fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
@@ -1383,6 +1541,7 @@ mod tests {
     use crate::access_grant::AccessGrant;
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
     use crate::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
         encode_federation_grant_body,
@@ -1616,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn receipt_query_job_ref_matches_legacy_projection_fields() {
+    fn receipt_query_job_ref_filter_matches_legacy_projection_fields() {
         let receipt = projected_receipt(
             "outbound:intent:legacy",
             ReceiptKind::Outbound,
@@ -1626,8 +1785,94 @@ mod tests {
             Some("intent:legacy"),
             &[("brief_ref", "brief:party")],
         );
+        let unrelated = projected_receipt(
+            "outbound:intent:other",
+            ReceiptKind::Outbound,
+            11,
+            "delivered_to_channel",
+            None,
+            Some("intent:other"),
+            &[("brief_ref", "brief:other")],
+        );
 
-        assert!(ReceiptQuery::new(1).with_job_ref("party").matches(&receipt));
+        let filtered = finalize_receipt_query_records(
+            vec![unrelated, receipt],
+            &ReceiptQuery::new(10).with_job_ref("party"),
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].receipt_id, "outbound:intent:legacy");
+    }
+
+    #[test]
+    fn receipt_query_job_ref_filter_chain_walks_before_limit() {
+        let records = vec![
+            projected_receipt(
+                "outbound:intent:unrelated",
+                ReceiptKind::Outbound,
+                50,
+                "delivered_to_channel",
+                None,
+                Some("intent:unrelated"),
+                &[("brief_ref", "brief:other")],
+            ),
+            projected_receipt(
+                "gate:run-planning",
+                ReceiptKind::Gate,
+                10,
+                "started",
+                None,
+                Some("run:planning"),
+                &[("parent_ref", "brief:party")],
+            ),
+            projected_receipt(
+                "outbound:intent:invite-aki",
+                ReceiptKind::Outbound,
+                11,
+                "delivered_to_channel",
+                None,
+                Some("intent:invite-aki"),
+                &[("run_ref", "run:planning"), ("budget_debit", "4")],
+            ),
+        ];
+
+        let filtered =
+            finalize_receipt_query_records(records, &ReceiptQuery::new(2).with_job_ref("party"));
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].receipt_id, "outbound:intent:invite-aki");
+        assert_eq!(filtered[1].receipt_id, "gate:run-planning");
+    }
+
+    #[test]
+    fn outbound_intent_receipt_propagates_job_ref() {
+        let intent = OutboundIntent {
+            actor: "agent-alpha".to_owned(),
+            on_behalf_of: Some("owner".to_owned()),
+            verb: "send".to_owned(),
+            channel: "email".to_owned(),
+            target: "kenji@example.com".to_owned(),
+            intent_source: "brief_run".to_owned(),
+            trigger_ref: "intent:invite-kenji".to_owned(),
+            job_ref: Some("brief:party".to_owned()),
+        };
+
+        let receipt = outbound_intent_receipt(
+            "outbound:intent:invite-kenji",
+            &intent,
+            42,
+            "delivered_to_channel",
+        );
+
+        assert_eq!(receipt.receipt_kind, ReceiptKind::Outbound);
+        assert_eq!(receipt.actor.as_deref(), Some("agent-alpha"));
+        assert_eq!(receipt.on_behalf_of.as_deref(), Some("owner"));
+        assert_eq!(receipt.job_ref.as_deref(), Some("brief:party"));
+        assert_eq!(receipt.trigger_ref.as_deref(), Some("intent:invite-kenji"));
+        assert_eq!(
+            receipt.fields.get("target").map(String::as_str),
+            Some("kenji@example.com")
+        );
     }
 
     #[test]
@@ -2009,6 +2254,112 @@ mod tests {
     }
 
     #[test]
+    fn counterparty_projection_preserves_latest_contact_flags() {
+        let receipts = vec![
+            projected_receipt(
+                "outbound:newer",
+                ReceiptKind::Outbound,
+                20,
+                "delivered_to_channel",
+                Some("brief:party"),
+                Some("intent:newer"),
+                &[
+                    ("counterparty_ref", "kenji@example.com"),
+                    ("opt_out", "false"),
+                    ("promo_consent", "true"),
+                ],
+            ),
+            projected_receipt(
+                "outbound:older",
+                ReceiptKind::Outbound,
+                10,
+                "delivered_to_channel",
+                Some("brief:party"),
+                Some("intent:older"),
+                &[
+                    ("counterparty_ref", "kenji@example.com"),
+                    ("opt_out", "true"),
+                    ("promo_consent", "false"),
+                ],
+            ),
+        ];
+
+        let projections = project_receipts_by_counterparty(receipts);
+
+        assert_eq!(projections.len(), 1);
+        assert_eq!(projections[0].opt_out, Some(false));
+        assert_eq!(projections[0].promo_consent, Some(true));
+    }
+
+    #[test]
+    fn counterparty_projection_joins_contact_records() -> Result<()> {
+        let (_tmp, vault) = temp_vault()?;
+        let identity_ref = entity(0x91);
+        let contact =
+            CounterpartyContactRecord::user_introduction(identity_ref, "kenji@example.com", 10)?
+                .with_promo_consent(true, 11)?
+                .opted_out(CounterpartyOptOutReason::Stop, 12)?;
+        vault.create_counterparty_contact(&entity(0x92), &contact)?;
+        let identity_ref_hex = identity_ref.to_hex();
+        let receipts = vec![projected_receipt(
+            "outbound:joined-contact",
+            ReceiptKind::Outbound,
+            20,
+            "delivered_to_channel",
+            Some("brief:party"),
+            Some("intent:joined-contact"),
+            &[
+                ("counterparty_ref", "kenji@example.com"),
+                ("channel_identity_ref", identity_ref_hex.as_str()),
+                ("budget_debit", "2"),
+            ],
+        )];
+
+        let contacts = counterparty_contact_records_for_receipts(&vault, &receipts)?;
+        let projections = project_receipts_by_counterparty_with_contacts(receipts, &contacts);
+
+        assert_eq!(projections.len(), 1);
+        assert_eq!(
+            projections[0].first_touch.as_deref(),
+            Some("user_introduction")
+        );
+        assert_eq!(projections[0].opt_out, Some(true));
+        assert_eq!(projections[0].promo_consent, Some(true));
+        assert_eq!(projections[0].budget_debit_total, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn grant_projection_filters_before_projection_limit() {
+        let receipts = vec![
+            projected_receipt(
+                "outbound:unrelated-newer",
+                ReceiptKind::Outbound,
+                50,
+                "delivered_to_channel",
+                Some("brief:other"),
+                Some("intent:unrelated"),
+                &[("grant_ref", "other-grant"), ("budget_debit", "9")],
+            ),
+            projected_receipt(
+                "outbound:grant-older",
+                ReceiptKind::Outbound,
+                10,
+                "delivered_to_channel",
+                Some("brief:party"),
+                Some("intent:grant-older"),
+                &[("grant_ref", "party-grant"), ("budget_debit", "2")],
+            ),
+        ];
+
+        let projection = project_receipts_by_grant_limited("party-grant", receipts, 1);
+
+        assert_eq!(projection.receipts.len(), 1);
+        assert_eq!(projection.receipts[0].receipt_id, "outbound:grant-older");
+        assert_eq!(projection.budget_debit_total, 2);
+    }
+
+    #[test]
     fn brief_projection_chain_walks_when_job_ref_is_absent() {
         let receipts = vec![
             projected_receipt(
@@ -2047,5 +2398,54 @@ mod tests {
             Some("intent:invite-aki")
         );
         assert_eq!(projection.budget_debit_total, 4);
+    }
+
+    #[test]
+    fn brief_projection_chain_walks_nested_runs() {
+        let receipts = vec![
+            projected_receipt(
+                "gate:run-parent",
+                ReceiptKind::Gate,
+                10,
+                "started",
+                None,
+                Some("run:parent"),
+                &[("parent_ref", "brief:party")],
+            ),
+            projected_receipt(
+                "gate:run-child",
+                ReceiptKind::Gate,
+                11,
+                "started",
+                None,
+                Some("run:child"),
+                &[("parent_ref", "run:parent")],
+            ),
+            projected_receipt(
+                "outbound:intent:child",
+                ReceiptKind::Outbound,
+                12,
+                "delivered_to_channel",
+                None,
+                Some("intent:child"),
+                &[
+                    ("run_ref", "run:child"),
+                    ("intent_ref", "intent:child"),
+                    ("budget_debit", "5"),
+                ],
+            ),
+        ];
+
+        let projection = project_receipts_by_brief("brief:party", receipts);
+        let child = projection
+            .runs
+            .iter()
+            .find(|run| run.run_ref == "run:child")
+            .expect("child run should chain back to brief");
+
+        assert_eq!(child.intents.len(), 1);
+        assert_eq!(child.intents[0].intent_ref, "intent:child");
+        assert_eq!(child.intents[0].receipts.len(), 1);
+        assert_eq!(projection.budget_debit_total, 5);
     }
 }

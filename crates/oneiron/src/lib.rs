@@ -335,8 +335,8 @@ pub use crate::provenance::{
 pub use crate::receipt::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, PendingTrayAsk,
     PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery,
-    ReceiptRecord, ReceiptView, project_receipts_by_brief, project_receipts_by_counterparty,
-    project_receipts_by_grant,
+    ReceiptRecord, ReceiptView, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
