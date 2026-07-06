@@ -267,9 +267,11 @@ pub use crate::recovery::{
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
 pub use crate::repo_mutation::{
-    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS,
-    REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoForkHash, RepoMutationOperation,
-    RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus,
+    REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,
+    REPO_CONFLICT_RESOLUTION_VALUE_KEYS, REPO_MUTATION_ALLOWED_OPERATION_KINDS,
+    REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoConflictClaim,
+    RepoConflictResolutionClaim, RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry,
+    RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus,
 };
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
