@@ -35,6 +35,7 @@ const CODEBASE_PROJECT_INDEX_KEY_PREFIX: &[u8] = b"codebase:project:v1:";
 pub enum RepoRef {
     LocalFolder {
         path: String,
+        commit: String,
     },
     GitHubAtCommit {
         owner: String,
@@ -72,10 +73,30 @@ impl RepoRef {
         parse_github_repo_ref(input)
     }
 
+    pub fn from_task_list_repo_url(repo_url: &str, commit_ref: &str) -> Result<Self> {
+        validate_bounded_text(
+            repo_url,
+            CODEBASE_REPO_REF_MAX_BYTES,
+            "TASK_LIST repoUrl must be non-empty and at most 1024 bytes",
+        )?;
+        if repo_url.trim() != repo_url {
+            return Err(Error::InvalidCodebaseSnapshotBody(
+                "TASK_LIST repoUrl must not have leading or trailing whitespace",
+            ));
+        }
+        if repo_url.contains('#') {
+            return Err(Error::InvalidCodebaseSnapshotBody(
+                "TASK_LIST repoUrl migration requires commit_ref separately",
+            ));
+        }
+        let commit = normalize_commit_hash(commit_ref)?;
+        Self::parse(&format!("{repo_url}#{commit}"))
+    }
+
     #[must_use]
     pub fn canonical(&self) -> String {
         match self {
-            Self::LocalFolder { path } => format!("local:{path}"),
+            Self::LocalFolder { path, commit } => format!("local:{path}#{commit}"),
             Self::GitHubAtCommit {
                 owner,
                 repo,
@@ -89,7 +110,7 @@ impl RepoRef {
     #[must_use]
     pub fn commit_hash(&self) -> Option<&str> {
         match self {
-            Self::LocalFolder { .. } => None,
+            Self::LocalFolder { commit, .. } => Some(commit.as_str()),
             Self::GitHubAtCommit { commit, .. } => Some(commit.as_str()),
         }
     }
@@ -536,7 +557,7 @@ fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
         && snapshot.commit_hash.as_deref() != Some(repo_commit)
     {
         return Err(Error::InvalidCodebaseSnapshotBody(
-            "GitHub repo_ref commit must match snapshot commit_hash",
+            "repo_ref commit must match snapshot commit_hash",
         ));
     }
     if snapshot.files.len() > CODEBASE_SNAPSHOT_MAX_FILES {
@@ -621,7 +642,13 @@ fn validate_bounded_text(text: &str, max_bytes: usize, context: &'static str) ->
     Ok(())
 }
 
-fn parse_local_repo_ref(path: &str) -> Result<RepoRef> {
+fn parse_local_repo_ref(input: &str) -> Result<RepoRef> {
+    let (path, commit) = input
+        .split_once('#')
+        .ok_or(Error::InvalidCodebaseSnapshotBody(
+            "local repo_ref must include #<40-hex-commit>",
+        ))?;
+    let commit = normalize_commit_hash(commit)?;
     validate_bounded_text(
         path,
         CODEBASE_FILE_PATH_MAX_BYTES,
@@ -634,6 +661,7 @@ fn parse_local_repo_ref(path: &str) -> Result<RepoRef> {
     }
     Ok(RepoRef::LocalFolder {
         path: path.to_owned(),
+        commit,
     })
 }
 
@@ -821,9 +849,15 @@ fn codebase_ids_by_index_prefix(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
+    use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
     use crate::error::{Error, ErrorKind};
-    use crate::types::{HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig};
+    use crate::types::{
+        ClaimCandidate, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EdgeActorClass, EdgeKind,
+        HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig, WriteActor,
+        WriteEnvelope, WriteProvenance,
+    };
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -844,6 +878,16 @@ mod tests {
     fn repo_ref_b() -> RepoRef {
         RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .expect("repo ref")
+    }
+
+    fn local_repo_ref() -> RepoRef {
+        RepoRef::parse("local:/Users/example/project#9d561405a81ffbf29d1369cd848e0ef9fca4f277")
+            .expect("local repo ref")
+    }
+
+    fn local_repo_ref_b() -> RepoRef {
+        RepoRef::parse("local:/Users/example/project#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("local repo ref")
     }
 
     fn entity_id(byte: u8) -> EntityId {
@@ -893,16 +937,81 @@ mod tests {
         )
     }
 
+    fn put_session(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_SESSION,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"session",
+        )
+    }
+
+    fn put_code_revision_claim(
+        vault: &Vault,
+        id: EntityId,
+        subject: EntityId,
+        learned_at: u64,
+    ) -> Result<()> {
+        let actor = EntityId::now();
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"repo ref reviewer",
+        )?;
+        let candidate = ClaimCandidate::new(
+            CODE_REVISION_CLAIM_PREDICATE,
+            ClaimSubject::Entity(subject),
+            Value::from("repo_ref changed"),
+            0.9,
+        );
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(actor, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("repo-ref-change"))?,
+            ClaimApprovalStatus::Auto,
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+            )
+            .commit()?;
+        vault.put_edge(&id, EdgeKind::ClaimOf, &subject, 1.0)
+    }
+
     #[test]
     fn codebase_repo_ref_parse_validates_local_and_github_at_commit() -> Result<()> {
-        let local = RepoRef::parse("local:/Users/example/project")?;
+        let local = local_repo_ref();
         assert_eq!(
             local,
             RepoRef::LocalFolder {
-                path: "/Users/example/project".to_owned()
+                path: "/Users/example/project".to_owned(),
+                commit: "9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned(),
             }
         );
-        assert_eq!(local.canonical(), "local:/Users/example/project");
+        assert_eq!(
+            local.canonical(),
+            "local:/Users/example/project#9d561405a81ffbf29d1369cd848e0ef9fca4f277"
+        );
+        let err = RepoRef::parse("local:/Users/example/project")
+            .expect_err("local repo refs must be pinned to a commit");
+        assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
 
         let github = RepoRef::parse(
             "https://github.com/oneiron-dev/oneiron.git#9D561405A81FFBF29D1369CD848E0EF9FCA4F277",
@@ -916,6 +1025,22 @@ mod tests {
         let err = RepoRef::parse("github:oneiron-dev/oneiron#main")
             .expect_err("branch names are not commit-pinned repo refs");
         assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+        Ok(())
+    }
+
+    #[test]
+    fn task_list_repo_url_migrates_to_repo_ref_with_commit() -> Result<()> {
+        let migrated = RepoRef::from_task_list_repo_url(
+            "https://github.com/oneiron-dev/oneiron.git",
+            "9D561405A81FFBF29D1369CD848E0EF9FCA4F277",
+        )?;
+        assert_eq!(migrated, repo_ref());
+
+        let local = RepoRef::from_task_list_repo_url(
+            "file:///Users/example/project",
+            "9d561405a81ffbf29d1369cd848e0ef9fca4f277",
+        )?;
+        assert_eq!(local, local_repo_ref());
         Ok(())
     }
 
@@ -1040,6 +1165,64 @@ mod tests {
             vault.codebase_snapshots_by_project_id("project.alpha")?,
             vec![id]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn repo_ref_change_records_version_history_edges_and_consent_record() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let session = EntityId::now();
+        let first_revision_id = EntityId::now();
+        let second_revision_id = EntityId::now();
+        let provenance_claim_id = EntityId::now();
+        let first_repo = local_repo_ref();
+        let second_repo = local_repo_ref_b();
+
+        put_session(&vault, session, 90)?;
+        vault.put_code_artifact(
+            &first_revision_id,
+            &code_body(&first_repo),
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )?;
+        vault.put_code_artifact(
+            &second_revision_id,
+            &code_body(&second_repo),
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+        )?;
+        put_code_revision_claim(&vault, provenance_claim_id, second_revision_id, 201)?;
+
+        let first_revision = CodeRevision::commit(first_revision_id, session, 100);
+        let second_revision =
+            CodeRevision::commit_child(second_revision_id, session, first_revision_id, 200)
+                .with_provenance_claim_id(provenance_claim_id);
+        vault.commit_code_revision(&first_revision)?;
+        vault.commit_code_revision(&second_revision)?;
+
+        assert_eq!(
+            vault.child_code_revisions(&first_revision_id)?,
+            vec![second_revision]
+        );
+        assert_eq!(
+            vault.targets(&second_revision_id, EdgeKind::Supersedes, None)?,
+            vec![first_revision_id]
+        );
+        assert_eq!(
+            vault.claims_for_subject(&second_revision_id)?,
+            vec![provenance_claim_id]
+        );
+        let provenance = vault
+            .get_claim(&provenance_claim_id)?
+            .ok_or(Error::EntityNotFound)?;
+        assert_eq!(provenance.approval, ClaimApprovalStatus::Auto);
+        assert_eq!(provenance.source, Some(ClaimSource::UserStated));
         Ok(())
     }
 
