@@ -1492,6 +1492,10 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/register/records/{record_id}", "get"),
         ("/v1/companion/register/records/{record_id}", "post"),
         ("/v1/companion/register/records/{record_id}/retire", "post"),
+        (
+            "/v1/companion/register/records/{record_id}/end-relationship",
+            "post",
+        ),
     ] {
         if let Some(operation) = spec
             .get_mut("paths")
@@ -13390,6 +13394,7 @@ mod tests {
             "/v1/companion/register/records",
             "/v1/companion/register/records/{record_id}",
             "/v1/companion/register/records/{record_id}/retire",
+            "/v1/companion/register/records/{record_id}/end-relationship",
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
@@ -13535,6 +13540,10 @@ mod tests {
             ("/v1/companion/register/records/{record_id}", "get"),
             ("/v1/companion/register/records/{record_id}", "post"),
             ("/v1/companion/register/records/{record_id}/retire", "post"),
+            (
+                "/v1/companion/register/records/{record_id}/end-relationship",
+                "post",
+            ),
         ] {
             assert_eq!(
                 spec["paths"][path][method]["security"],
@@ -13689,6 +13698,9 @@ mod tests {
             "CompanionRegisterCreateRecordRequest",
             "CompanionRegisterUpdateRecordRequest",
             "CompanionRegisterRetireRecordRequest",
+            "CompanionEndRelationshipRequest",
+            "CompanionGoodbyeArtifactHookPayload",
+            "CompanionEndRelationshipResponse",
             "CompanionRegisterRecordResponse",
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
