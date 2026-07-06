@@ -10,46 +10,12 @@ ONE-1512 implements Slack as an OF-347 `shared_presence` channel:
 ## Manifest Flow
 
 Hosts build the manifest payload with `SlackSharedPresenceAdapter::apps_manifest_create_payload()`.
-The returned JSON is the request body for Slack's `apps.manifest.create` method:
+Slack's `apps.manifest.create` method expects the `manifest` argument to be a JSON-encoded string,
+so the returned request body has this shape:
 
 ```json
 {
-  "manifest": {
-    "display_information": { "name": "Oneiron" },
-    "features": {
-      "bot_user": {
-        "display_name": "Oneiron",
-        "always_online": false
-      }
-    },
-    "oauth_config": {
-      "redirect_urls": ["https://example.com/slack/oauth/callback"],
-      "scopes": {
-        "bot": [
-          "app_mentions:read",
-          "channels:history",
-          "chat:write",
-          "chat:write.customize",
-          "commands",
-          "im:history",
-          "im:write"
-        ]
-      }
-    },
-    "settings": {
-      "event_subscriptions": {
-        "request_url": "https://example.com/slack/events",
-        "bot_events": ["app_mention", "message.im"]
-      },
-      "interactivity": {
-        "is_enabled": true,
-        "request_url": "https://example.com/slack/events"
-      },
-      "org_deploy_enabled": false,
-      "socket_mode_enabled": false,
-      "token_rotation_enabled": true
-    }
-  }
+  "manifest": "{\"display_information\":{\"name\":\"Oneiron\"},\"features\":{\"bot_user\":{\"display_name\":\"Oneiron\",\"always_online\":false}},\"oauth_config\":{\"redirect_urls\":[\"https://example.com/slack/oauth/callback\"],\"scopes\":{\"bot\":[\"app_mentions:read\",\"channels:history\",\"chat:write\",\"chat:write.customize\",\"commands\",\"im:history\",\"im:write\"]}},\"settings\":{\"event_subscriptions\":{\"request_url\":\"https://example.com/slack/events\",\"bot_events\":[\"app_mention\",\"message.im\"]},\"interactivity\":{\"is_enabled\":true,\"request_url\":\"https://example.com/slack/events\"},\"org_deploy_enabled\":false,\"socket_mode_enabled\":false,\"token_rotation_enabled\":true}}"
 }
 ```
 
@@ -85,11 +51,19 @@ This makes two agents in one workspace distinguishable while still sharing the o
 
 ## Outbound Attribution
 
-Build outbound Slack payloads with `SlackSharedPresenceAdapter::persona_outbound()`. The payload targets `chat.postMessage` and stamps:
+Build outbound Slack payloads with `SlackSharedPresenceAdapter::persona_outbound()`. The payload targets `chat.postMessage` and stamps the visible persona fields:
 
 - `username` from `SlackPersonaAttribution::display_name`
 - either `icon_url` or `icon_emoji`, when configured
-- Slack message metadata with `workspace_ref`, `identity_key`, and `persona_handle`
+
+The returned `SlackPersonaOutbound` also carries sidecar identity stamps: `workspace_ref`,
+`identity_key`, and `persona_handle`. These are available to the host for receipts, idempotency, and
+audit even when they are not embedded into the Slack Web API body.
+
+Slack accepts message metadata only on app-level token paths. If the host is using a supported
+app-level token/path and wants Slack-native message metadata, call
+`SlackSharedPresenceAdapter::persona_outbound_with_metadata()`. Bot-token callers should use
+`persona_outbound()` and keep the sidecar stamps outside Slack's request body.
 
 Hosts still execute the Web API call and own retries/rate limits. The adapter only produces the payload shape and identity stamps.
 
@@ -143,7 +117,7 @@ payloads, and builds two outbound `chat.postMessage` payloads. It verifies:
 - both personas route to distinct active identities in the same workspace
 - inbound receipts and SurfaceEvents carry the expected `workspace_ref`
 - Enterprise Grid identities include `slack:enterprise:<ENTERPRISE_ID>` consistently when configured
-- outbound payloads carry persona-specific `username` and metadata `identity_key`
+- outbound payloads carry persona-specific `username`, sidecar `identity_key`, and optional metadata stamps
 
 For a live end-to-end workspace smoke, perform one additional host-side check after the seam passes:
 send one message per persona using the generated outbound body, trigger one app mention or DM event

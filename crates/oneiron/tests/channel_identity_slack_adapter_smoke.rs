@@ -284,12 +284,17 @@ fn run_two_agent_smoke(case: SlackSmokeCase) -> Result<()> {
     assert_eq!(outbound_a.workspace_ref, workspace_ref);
     assert_eq!(outbound_a.identity_key, identity_key_a);
     assert_eq!(outbound_b.identity_key, identity_key_b);
+    assert!(outbound_a.body.get("metadata").is_none());
+    assert!(outbound_b.body.get("metadata").is_none());
+
+    let outbound_a_with_metadata = adapter.persona_outbound_with_metadata(&eiri, &message)?;
+    let outbound_b_with_metadata = adapter.persona_outbound_with_metadata(&herald, &message)?;
     assert_eq!(
-        outbound_a.body["metadata"]["event_payload"]["identity_key"],
+        outbound_a_with_metadata.body["metadata"]["event_payload"]["identity_key"],
         outbound_a.identity_key
     );
     assert_eq!(
-        outbound_b.body["metadata"]["event_payload"]["identity_key"],
+        outbound_b_with_metadata.body["metadata"]["event_payload"]["identity_key"],
         outbound_b.identity_key
     );
     Ok(())

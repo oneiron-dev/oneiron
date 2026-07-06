@@ -773,7 +773,7 @@ impl SlackSharedPresenceAdapter {
     #[must_use]
     pub fn apps_manifest_create_payload(&self) -> Value {
         json!({
-            "manifest": self.app_manifest(),
+            "manifest": self.app_manifest().to_string(),
         })
     }
 
@@ -850,11 +850,32 @@ impl SlackSharedPresenceAdapter {
         ))
     }
 
-    /// Builds the exact Slack Web API payload carrying persona attribution.
+    /// Builds the Slack Web API payload plus sidecar persona attribution.
     pub fn persona_outbound(
         &self,
         attribution: &SlackPersonaAttribution,
         message: &SlackOutboundMessage,
+    ) -> Result<SlackPersonaOutbound> {
+        self.persona_outbound_body(attribution, message, false)
+    }
+
+    /// Builds a Slack Web API payload that also includes Slack message metadata.
+    ///
+    /// Slack requires message metadata to be sent with an app-level token. Bot-token callers should
+    /// use [`Self::persona_outbound`] and read the identity stamps from [`SlackPersonaOutbound`].
+    pub fn persona_outbound_with_metadata(
+        &self,
+        attribution: &SlackPersonaAttribution,
+        message: &SlackOutboundMessage,
+    ) -> Result<SlackPersonaOutbound> {
+        self.persona_outbound_body(attribution, message, true)
+    }
+
+    fn persona_outbound_body(
+        &self,
+        attribution: &SlackPersonaAttribution,
+        message: &SlackOutboundMessage,
+        include_slack_metadata: bool,
     ) -> Result<SlackPersonaOutbound> {
         let workspace_ref =
             slack_workspace_ref(&message.workspace_id, message.enterprise_id.as_deref())?;
@@ -867,20 +888,22 @@ impl SlackSharedPresenceAdapter {
             "channel": &message.channel_id,
             "text": &message.text,
             "username": &attribution.display_name,
-            "metadata": {
+        });
+        if include_slack_metadata {
+            body["metadata"] = json!({
                 "event_type": "oneiron_persona_message",
                 "event_payload": {
-                    "workspace_ref": workspace_ref,
-                    "identity_key": identity_key,
+                    "workspace_ref": &workspace_ref,
+                    "identity_key": &identity_key,
                     "persona_handle": &attribution.persona_handle,
                 },
-            },
-        });
+            });
+            if let Some(payload_ref) = &message.payload_ref {
+                body["metadata"]["event_payload"]["payload_ref"] = Value::from(payload_ref.clone());
+            }
+        }
         if let Some(thread_ts) = &message.thread_ts {
             body["thread_ts"] = Value::from(thread_ts.clone());
-        }
-        if let Some(payload_ref) = &message.payload_ref {
-            body["metadata"]["event_payload"]["payload_ref"] = Value::from(payload_ref.clone());
         }
         if let Some(icon_url) = &attribution.icon_url {
             body["icon_url"] = Value::from(icon_url.clone());
@@ -1663,7 +1686,11 @@ mod tests {
     fn slack_manifest_payload_is_ready_for_apps_manifest_create() -> Result<()> {
         let adapter = slack_adapter()?;
         let payload = adapter.apps_manifest_create_payload();
-        let manifest = &payload["manifest"];
+        let manifest_arg = payload["manifest"]
+            .as_str()
+            .expect("apps.manifest.create manifest argument is a string");
+        let manifest: Value = serde_json::from_str(manifest_arg)
+            .map_err(|err| Error::InvalidConfig(format!("invalid manifest json: {err}")))?;
 
         assert_eq!(manifest["display_information"]["name"], "Oneiron");
         assert_eq!(
@@ -1770,12 +1797,16 @@ mod tests {
         let outbound = adapter.persona_outbound(&attribution, &message)?;
         assert_eq!(outbound.workspace_ref, expected_workspace_ref);
         assert_eq!(outbound.identity_key, expected_identity_key);
+        assert!(outbound.body.get("metadata").is_none());
+
+        let outbound_with_metadata =
+            adapter.persona_outbound_with_metadata(&attribution, &message)?;
         assert_eq!(
-            outbound.body["metadata"]["event_payload"]["workspace_ref"],
+            outbound_with_metadata.body["metadata"]["event_payload"]["workspace_ref"],
             expected_workspace_ref
         );
         assert_eq!(
-            outbound.body["metadata"]["event_payload"]["identity_key"],
+            outbound_with_metadata.body["metadata"]["event_payload"]["identity_key"],
             expected_identity_key
         );
         Ok(())
@@ -1847,12 +1878,16 @@ mod tests {
         assert_eq!(outbound.body["channel"], "C123ABC");
         assert_eq!(outbound.body["username"], "Eiri");
         assert_eq!(outbound.body["icon_emoji"], ":sparkles:");
+        assert!(outbound.body.get("metadata").is_none());
+
+        let outbound_with_metadata =
+            adapter.persona_outbound_with_metadata(&attribution, &message)?;
         assert_eq!(
-            outbound.body["metadata"]["event_payload"]["identity_key"],
+            outbound_with_metadata.body["metadata"]["event_payload"]["identity_key"],
             "slack:workspace:T123ABC:persona:eiri"
         );
         assert_eq!(
-            outbound.body["metadata"]["event_payload"]["payload_ref"],
+            outbound_with_metadata.body["metadata"]["event_payload"]["payload_ref"],
             "outbound:one"
         );
         Ok(())
