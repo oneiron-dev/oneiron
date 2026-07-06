@@ -84,3 +84,29 @@ pub struct NapiCodebaseSnapshot {
     /// Deterministic file manifest.
     pub files: Vec<NapiCodebaseFileEntry>,
 }
+
+/// Configuration for deterministic dev-safe email identity addresses.
+#[napi(object)]
+pub struct NapiEmailIdentityAdapterConfig {
+    /// Exact product domain that owns agent email identities.
+    pub domain: String,
+    /// Secret used to sign deterministic local-parts. Never returned by bindings.
+    pub signing_secret: String,
+    /// Optional local-part prefix. Defaults to `agent`.
+    pub local_part_prefix: Option<String>,
+}
+
+/// Provider-normalized inbound email webhook data.
+#[napi(object)]
+pub struct NapiEmailInboundEvent {
+    /// Provider event id for idempotent host handling.
+    pub provider_event_id: String,
+    /// Raw envelope recipient address.
+    pub envelope_to: String,
+    /// Raw envelope sender address.
+    pub envelope_from: String,
+    /// Optional provider payload/body reference.
+    pub payload_ref: Option<String>,
+    /// Received-at timestamp (UNIX seconds).
+    pub received_at: i64,
+}
