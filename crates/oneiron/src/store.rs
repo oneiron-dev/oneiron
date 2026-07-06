@@ -1225,6 +1225,7 @@ impl Store {
         Ok((marker == current).then_some(marker.to_vec()))
     }
 
+    #[cfg(feature = "sync")]
     pub(crate) fn pending_embedding_token_in_txn(
         &self,
         wtxn: &RwTxn<'_>,

@@ -6337,6 +6337,13 @@ fn all_entity_type_prefixes() {
             TypeByteBand::Productivity,
         ),
         (
+            "CODE_SYMBOL",
+            84,
+            Some("cs"),
+            EntityClassification::Pack,
+            TypeByteBand::Productivity,
+        ),
+        (
             "REDACTION_AUDIT",
             120,
             None,
@@ -6498,7 +6505,7 @@ fn type_byte_band_allocation_matches_contract() {
 
     // is_structural_kind: false for the semantic byte 0 and for every
     // maintenance-band allocation; true for every REGISTERED core (1..=16)
-    // and pack (64/80/81/82/83) kind. The pinned maintenance allocation is:
+    // and pack (64/80/81/82/83/84) kind. The pinned maintenance allocation is:
     // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG;
     // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
     // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
@@ -6556,14 +6563,14 @@ fn type_byte_band_allocation_matches_contract() {
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
-    for byte in [64_u8, 80, 81, 82, 83] {
+    for byte in [64_u8, 80, 81, 82, 83, 84] {
         assert!(is_structural_kind(byte), "pack byte {byte}");
     }
 
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
     // with the same typed error.
-    for byte in [17_u8, 63, 79, 84, 99, 100, 119, 125, 126, 127, 130, 255] {
+    for byte in [17_u8, 63, 79, 85, 99, 100, 119, 125, 126, 127, 130, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
@@ -6631,7 +6638,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
         .expect_err("byte 100 is CRM, not companion");
     assert_eq!(err.kind(), ErrorKind::StructuralKindBandViolation);
 
-    vault.register_structural_kind(84, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(85, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(100, "cm", TypeByteBand::Crm, "crm-pack")?;
 
     let before = vault_meta_rows_with_prefix(&vault, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)?;
@@ -6821,7 +6828,7 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
-    vault.register_structural_kind(84, "pd", TypeByteBand::Productivity, "productivity-pack")?;
+    vault.register_structural_kind(85, "pd", TypeByteBand::Productivity, "productivity-pack")?;
     vault.register_structural_kind(101, "cc", TypeByteBand::Crm, "crm-pack")?;
 
     let rows = vault.structural_kind_registrations();

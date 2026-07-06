@@ -8,6 +8,7 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
+use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
@@ -485,8 +486,12 @@ impl Vault {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        let snapshot =
-            CodebaseSnapshot::new(project_id, repo_ref.clone(), Some(commit_hash), files)?;
+        let snapshot = CodebaseSnapshot::new(
+            project_id,
+            repo_ref.clone(),
+            Some(commit_hash.clone()),
+            files,
+        )?;
         let code_artifact_id = codebase_snapshot_entity_id(&snapshot)?;
         let code_body = CodeArtifactBody::new(
             "Summarize the repository snapshot.",
@@ -517,6 +522,16 @@ impl Vault {
             )
             .commit()?;
         self.put_codebase_snapshot(&code_artifact_id, &snapshot)?;
+        let symbol_sources = blobs
+            .iter()
+            .filter_map(|blob| {
+                let text = std::str::from_utf8(&blob.data).ok()?;
+                Some(CodeSymbolSource::new(blob.path.as_str(), text))
+            })
+            .collect::<Vec<_>>();
+        let symbol_graph =
+            derive_code_symbol_graph_from_sources(repo_ref, Some(commit_hash), symbol_sources)?;
+        self.put_code_symbol_graph(&code_artifact_id, &symbol_graph, occurred, learned_at)?;
 
         Ok(RepoIngestResult {
             code_artifact_id,
@@ -1349,9 +1364,9 @@ mod tests {
     use crate::error::{Error, ErrorKind};
     use crate::pipeline::WorldScope;
     use crate::types::{
-        ClaimCandidate, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EdgeActorClass, EdgeKind,
-        HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig, WriteActor,
-        WriteEnvelope, WriteProvenance,
+        ClaimCandidate, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
+        EdgeActorClass, EdgeKind, HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange,
+        VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
     };
     use std::fs;
     use std::path::Path;
@@ -1962,6 +1977,18 @@ mod tests {
             mount.read_file("src/lib.rs")?,
             Some(b"pub fn answer() -> u8 { 42 }\n".to_vec())
         );
+
+        let definitions = vault.code_symbol_definitions(&first.code_artifact_id, "answer")?;
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(
+            vault.get_entity_type(&definitions[0].entity_id)?,
+            Some(ENTITY_TYPE_CODE_SYMBOL)
+        );
+        assert!(vault.edge_exists(
+            &definitions[0].entity_id,
+            EdgeKind::PartOf,
+            &first.code_artifact_id
+        )?);
         Ok(())
     }
 
