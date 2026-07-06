@@ -103,13 +103,14 @@ pub use crate::code_run::{
     SelfMemoryWriteResult,
 };
 pub use crate::code_sandbox::{
-    FakeSandboxAdapter, SANDBOX_MNT_ROOT, SANDBOX_OUTPUTS_ROOT, SANDBOX_SKILLS_ROOT,
-    SANDBOX_UPLOADS_ROOT, SANDBOX_WORKSPACE_ROOT, SandboxBoundaryAdapter, SandboxBoundaryContract,
-    SandboxClaimProposal, SandboxCredentialCall, SandboxCredentialEffect, SandboxCredentialHandle,
-    SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead,
-    SandboxFileWriteProposal, SandboxGuestTier, SandboxImportClass, SandboxLinkedImport,
-    SandboxMount, SandboxMountTable, SandboxProposalDelta, SandboxProposalKind,
-    SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
+    FakeSandboxAdapter, PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_MNT_ROOT,
+    SANDBOX_OUTPUTS_ROOT, SANDBOX_SKILLS_ROOT, SANDBOX_UPLOADS_ROOT, SANDBOX_WIT_WORLD_NAME,
+    SANDBOX_WORKSPACE_ROOT, SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxClaimProposal,
+    SandboxComponentBoundary, SandboxCredentialCall, SandboxCredentialEffect,
+    SandboxCredentialHandle, SandboxCredentialOperation, SandboxCredentialOutcome, SandboxFileRead,
+    SandboxFileWriteProposal, SandboxGuestLanguage, SandboxGuestRuntime, SandboxGuestTier,
+    SandboxImportClass, SandboxLinkedImport, SandboxMount, SandboxMountTable, SandboxProposalDelta,
+    SandboxProposalKind, SandboxProposalWrite, SandboxReadFile, SandboxVirtualPath,
 };
 pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES,

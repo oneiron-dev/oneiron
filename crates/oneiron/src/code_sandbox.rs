@@ -1,10 +1,12 @@
 //! Sandbox boundary contract for code-mode execution.
 //!
 //! This module does not start a sandbox or link a production adapter. It pins
-//! the host/guest ABI that future runners must obey: guests target stable
-//! `/mnt` virtual paths, credential use is handle-only, first-party writes are
-//! linked as typed traps, and foreign writes leave the sandbox as reviewable
-//! proposal deltas rather than commit authority.
+//! the host/guest ABI that future runners must obey: plain JavaScript runs
+//! inside a QuickJS-class interpreter embedded as a WASM component in the
+//! existing Wasmtime/WIT boundary, guests target stable `/mnt` virtual paths,
+//! clock/random are deterministic host imports, credential use is handle-only,
+//! first-party writes are linked as typed traps, and foreign writes leave the
+//! sandbox as reviewable proposal deltas rather than commit authority.
 
 use std::{
     collections::BTreeMap,
@@ -14,13 +16,44 @@ use std::{
 
 use rmpv::Value;
 
-use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result};
+use crate::{ClaimApprovalStatus, ClaimCandidate, EntityId, Error, Result, code_run::SelfEffect};
 
 pub const SANDBOX_MNT_ROOT: &str = "/mnt";
 pub const SANDBOX_WORKSPACE_ROOT: &str = "/mnt/workspace";
 pub const SANDBOX_UPLOADS_ROOT: &str = "/mnt/uploads";
 pub const SANDBOX_OUTPUTS_ROOT: &str = "/mnt/outputs";
 pub const SANDBOX_SKILLS_ROOT: &str = "/mnt/skills";
+pub const SANDBOX_WIT_WORLD_NAME: &str = "oneiron:code-run/guest@1.0.0";
+pub const SANDBOX_JS_COMPONENT_NAME: &str = "oneiron.plain-js.quickjs-component";
+pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
+  namespace memory {
+    function search(input: { query: string; limit?: number }): Promise<{ results: unknown[] }>;
+    function putClaim(input: {
+      id: string;
+      predicate: string;
+      subject: unknown;
+      value: unknown;
+      confidence?: number;
+      occurred?: { start: number; end: number };
+      learnedAt?: number;
+    }): Promise<{ id: string }>;
+    function supersedeClaim(input: { newId: string; oldId: string; now: number }): Promise<{ id: string }>;
+    function putEdge(input: { src: string; kind: string; tgt: string; weight?: number }): Promise<{ src: string; kind: string; tgt: string }>;
+  }
+
+  function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
+}
+
+declare namespace oneiron {
+  namespace clock {
+    function nowUnixMs(): number;
+  }
+
+  namespace random {
+    function bytes(length: number): Uint8Array;
+  }
+}
+"#;
 
 const ABI_KEY_OPERATION: &str = "operation";
 const ABI_KEY_CREDENTIAL_HANDLE: &str = "credentialHandle";
@@ -55,11 +88,88 @@ impl SandboxGuestTier {
     }
 }
 
+/// Guest language accepted by the code-mode authoring surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SandboxGuestLanguage {
+    /// Full plain JavaScript interpreted inside the sandbox component.
+    PlainJavaScript,
+}
+
+impl SandboxGuestLanguage {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlainJavaScript => "plain_javascript",
+        }
+    }
+}
+
+/// Stable execution boundary used to host the guest runtime component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SandboxComponentBoundary {
+    /// Wasmtime Component Model + WIT-linked host imports.
+    WasmtimeWit,
+}
+
+impl SandboxComponentBoundary {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WasmtimeWit => "wasmtime_wit",
+        }
+    }
+}
+
+/// Runtime component selected for code-mode execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SandboxGuestRuntime {
+    /// QuickJS-class plain-JS interpreter embedded as a WASM component.
+    PlainJsQuickJsComponent,
+}
+
+impl SandboxGuestRuntime {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlainJsQuickJsComponent => SANDBOX_JS_COMPONENT_NAME,
+        }
+    }
+
+    #[must_use]
+    pub const fn language(self) -> SandboxGuestLanguage {
+        match self {
+            Self::PlainJsQuickJsComponent => SandboxGuestLanguage::PlainJavaScript,
+        }
+    }
+
+    #[must_use]
+    pub const fn boundary(self) -> SandboxComponentBoundary {
+        match self {
+            Self::PlainJsQuickJsComponent => SandboxComponentBoundary::WasmtimeWit,
+        }
+    }
+
+    #[must_use]
+    pub const fn wit_world(self) -> &'static str {
+        match self {
+            Self::PlainJsQuickJsComponent => SANDBOX_WIT_WORLD_NAME,
+        }
+    }
+
+    #[must_use]
+    pub const fn prompt_side_dts(self) -> &'static str {
+        match self {
+            Self::PlainJsQuickJsComponent => PLAIN_JS_HOST_VERB_DTS,
+        }
+    }
+}
+
 /// Class of a host import linked into a guest program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SandboxImportClass {
     ReadOnly,
     CredentialHandle,
+    Determinism,
     WriteTrap,
 }
 
@@ -92,6 +202,22 @@ impl SandboxLinkedImport {
     pub const fn class(self) -> SandboxImportClass {
         self.class
     }
+
+    #[must_use]
+    pub fn write_trap_effect(self) -> Option<SelfEffect> {
+        match (self.class, self.name) {
+            (SandboxImportClass::WriteTrap, "self.memory.put_claim") => {
+                Some(SelfEffect::MemoryPutClaim)
+            }
+            (SandboxImportClass::WriteTrap, "self.memory.supersede_claim") => {
+                Some(SelfEffect::MemorySupersedeClaim)
+            }
+            (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
+                Some(SelfEffect::MemoryPutEdge)
+            }
+            _ => None,
+        }
+    }
 }
 
 const READ_FILE_IMPORT: SandboxLinkedImport =
@@ -100,16 +226,27 @@ const CREDENTIAL_CALL_IMPORT: SandboxLinkedImport = SandboxLinkedImport::new(
     "sandbox.credential.call",
     SandboxImportClass::CredentialHandle,
 );
+const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.clock.now_unix_ms", SandboxImportClass::Determinism);
+const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 const SELF_MEMORY_PUT_CLAIM_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::WriteTrap);
 const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.supersede_claim", SandboxImportClass::WriteTrap);
 const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
-const READ_ONLY_IMPORTS: &[SandboxLinkedImport] = &[READ_FILE_IMPORT, CREDENTIAL_CALL_IMPORT];
+const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
+    READ_FILE_IMPORT,
+    CREDENTIAL_CALL_IMPORT,
+    CLOCK_NOW_UNIX_MS_IMPORT,
+    RANDOM_BYTES_IMPORT,
+];
 const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
     CREDENTIAL_CALL_IMPORT,
+    CLOCK_NOW_UNIX_MS_IMPORT,
+    RANDOM_BYTES_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
@@ -122,6 +259,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SandboxBoundaryContract {
     tier: SandboxGuestTier,
+    runtime: SandboxGuestRuntime,
     linked_imports: &'static [SandboxLinkedImport],
     proposal_delta_channel: bool,
     credential_call_effect: SandboxCredentialEffect,
@@ -134,13 +272,15 @@ impl SandboxBoundaryContract {
         match tier {
             SandboxGuestTier::FirstPartyDreamer => Self {
                 tier,
+                runtime: SandboxGuestRuntime::PlainJsQuickJsComponent,
                 linked_imports: FIRST_PARTY_IMPORTS,
                 proposal_delta_channel: false,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
             },
             SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => Self {
                 tier,
-                linked_imports: READ_ONLY_IMPORTS,
+                runtime: SandboxGuestRuntime::PlainJsQuickJsComponent,
+                linked_imports: NON_WRITE_IMPORTS,
                 proposal_delta_channel: true,
                 credential_call_effect: SandboxCredentialEffect::ReadOnly,
             },
@@ -150,6 +290,31 @@ impl SandboxBoundaryContract {
     #[must_use]
     pub const fn tier(self) -> SandboxGuestTier {
         self.tier
+    }
+
+    #[must_use]
+    pub const fn runtime(self) -> SandboxGuestRuntime {
+        self.runtime
+    }
+
+    #[must_use]
+    pub const fn guest_language(self) -> SandboxGuestLanguage {
+        self.runtime.language()
+    }
+
+    #[must_use]
+    pub const fn component_boundary(self) -> SandboxComponentBoundary {
+        self.runtime.boundary()
+    }
+
+    #[must_use]
+    pub const fn wit_world(self) -> &'static str {
+        self.runtime.wit_world()
+    }
+
+    #[must_use]
+    pub const fn prompt_side_dts(self) -> &'static str {
+        self.runtime.prompt_side_dts()
     }
 
     #[must_use]
@@ -896,6 +1061,19 @@ mod tests {
         for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
             let contract = SandboxBoundaryContract::for_tier(tier);
             assert_eq!(contract.tier(), tier);
+            assert_eq!(
+                contract.runtime(),
+                SandboxGuestRuntime::PlainJsQuickJsComponent
+            );
+            assert_eq!(
+                contract.guest_language(),
+                SandboxGuestLanguage::PlainJavaScript
+            );
+            assert_eq!(
+                contract.component_boundary(),
+                SandboxComponentBoundary::WasmtimeWit
+            );
+            assert_eq!(contract.wit_world(), SANDBOX_WIT_WORLD_NAME);
             assert!(tier.requires_zero_write_imports());
             assert!(contract.has_proposal_delta_channel());
             assert_eq!(
@@ -909,9 +1087,35 @@ mod tests {
                     .iter()
                     .all(|import| !import.class().is_write())
             );
+            assert!(
+                contract
+                    .linked_imports()
+                    .iter()
+                    .any(|import| import.name() == "oneiron.clock.now_unix_ms"
+                        && import.class() == SandboxImportClass::Determinism)
+            );
+            assert!(
+                contract
+                    .linked_imports()
+                    .iter()
+                    .any(|import| import.name() == "oneiron.random.bytes"
+                        && import.class() == SandboxImportClass::Determinism)
+            );
         }
 
         let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
+        assert_eq!(
+            first_party.runtime(),
+            SandboxGuestRuntime::PlainJsQuickJsComponent
+        );
+        assert_eq!(
+            first_party.guest_language(),
+            SandboxGuestLanguage::PlainJavaScript
+        );
+        assert_eq!(
+            first_party.component_boundary(),
+            SandboxComponentBoundary::WasmtimeWit
+        );
         assert!(!first_party.has_proposal_delta_channel());
         assert_eq!(
             first_party.credential_call_effect(),
@@ -932,11 +1136,63 @@ mod tests {
                 "self.memory.put_edge",
             ]
         );
+        let write_effects = first_party
+            .linked_imports()
+            .iter()
+            .filter_map(|import| import.write_trap_effect())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            write_effects,
+            vec![
+                SelfEffect::MemoryPutClaim,
+                SelfEffect::MemorySupersedeClaim,
+                SelfEffect::MemoryPutEdge,
+            ]
+        );
+        assert_eq!(
+            SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::ReadOnly)
+                .write_trap_effect(),
+            None
+        );
+        let deterministic_imports = first_party
+            .linked_imports()
+            .iter()
+            .filter(|import| import.class() == SandboxImportClass::Determinism)
+            .map(|import| import.name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            deterministic_imports,
+            vec!["oneiron.clock.now_unix_ms", "oneiron.random.bytes"]
+        );
         assert!(
             first_party
                 .linked_imports()
                 .iter()
                 .all(|import| !import.name().contains("bulk") && !import.name().contains("batch"))
+        );
+    }
+
+    #[test]
+    fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
+        let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
+        let dts = contract.prompt_side_dts();
+
+        assert!(dts.contains("declare namespace self"));
+        assert!(dts.contains("function putClaim"));
+        assert!(dts.contains("function supersedeClaim"));
+        assert!(dts.contains("function putEdge"));
+        assert!(dts.contains("namespace clock"));
+        assert!(dts.contains("function nowUnixMs"));
+        assert!(dts.contains("namespace random"));
+        assert!(dts.contains("function bytes"));
+        assert!(!dts.contains("actor"));
+        assert!(!dts.contains("source"));
+        assert!(!dts.contains("approval"));
+        assert!(!dts.contains("batch"));
+        assert!(!dts.contains("bulk"));
+        assert_eq!(
+            SandboxGuestRuntime::PlainJsQuickJsComponent.prompt_side_dts(),
+            PLAIN_JS_HOST_VERB_DTS
         );
     }
 
