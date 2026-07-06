@@ -2572,6 +2572,8 @@ pub struct EiriMemoryBoardRow {
     pub short_id: String,
     pub content_hash: String,
     pub entity_type: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_ref: Option<String>,
     pub score: f32,
 }
 

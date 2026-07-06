@@ -2350,6 +2350,12 @@
       },
       "CoreEiriMemoryBoardRow": {
         "properties": {
+          "asset_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "content_hash": {
             "type": "string"
           },
