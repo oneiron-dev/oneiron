@@ -118,7 +118,7 @@ pub struct OutboundCapabilityManifest {
     pub connector: String,
     pub connector_family: String,
     pub verified_at: &'static str,
-    pub schema_on_demand: &'static str,
+    pub schema_on_demand: String,
     pub foreign_content_posture: &'static str,
     pub verbs: Vec<OutboundVerbContract>,
 }
@@ -128,7 +128,7 @@ pub struct OutboundCapabilityManifest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnsupportedOutboundCapability {
     connector: String,
-    verb: String,
+    verb: Option<String>,
     connector_known: bool,
     supported_connectors: Vec<String>,
     supported_verbs: Vec<String>,
@@ -142,8 +142,8 @@ impl UnsupportedOutboundCapability {
     }
 
     #[must_use]
-    pub fn verb(&self) -> &str {
-        &self.verb
+    pub fn verb(&self) -> Option<&str> {
+        self.verb.as_deref()
     }
 
     #[must_use]
@@ -169,18 +169,24 @@ impl UnsupportedOutboundCapability {
 
 impl std::fmt::Display for UnsupportedOutboundCapability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.connector_known {
-            write!(
+        match (self.connector_known, self.verb.as_deref()) {
+            (true, Some(verb)) => write!(
                 f,
-                "outbound verb {:?} is not supported by connector {:?}",
-                self.verb, self.connector
-            )
-        } else {
-            write!(
+                "outbound verb {verb:?} is not supported by connector {:?}",
+                self.connector
+            ),
+            (false, Some(verb)) => write!(
                 f,
-                "outbound connector {:?} is not registered for verb {:?}",
-                self.connector, self.verb
-            )
+                "outbound connector {:?} is not registered for verb {verb:?}",
+                self.connector
+            ),
+            (_, None) => {
+                write!(
+                    f,
+                    "outbound connector {:?} is not registered",
+                    self.connector
+                )
+            }
         }
     }
 }
@@ -215,7 +221,7 @@ pub fn outbound_verb_contract(
     let Some(manifest) = outbound_capability_manifest(&connector_key) else {
         return Err(Box::new(unsupported_outbound_capability(
             connector_key,
-            verb_key,
+            Some(verb_key),
             None,
         )));
     };
@@ -227,15 +233,21 @@ pub fn outbound_verb_contract(
         .ok_or_else(|| {
             Box::new(unsupported_outbound_capability(
                 connector_key,
-                verb_key,
+                Some(verb_key),
                 Some(manifest),
             ))
         })
 }
 
+/// Returns a typed unsupported-capability error for connector-only discovery.
+#[must_use]
+pub fn unsupported_outbound_connector(connector: &str) -> UnsupportedOutboundCapability {
+    unsupported_outbound_capability(normalize_key(connector), None, None)
+}
+
 fn unsupported_outbound_capability(
     connector: String,
-    verb: String,
+    verb: Option<String>,
     manifest: Option<&OutboundCapabilityManifest>,
 ) -> UnsupportedOutboundCapability {
     let supported_connectors = outbound_capability_manifests()
@@ -642,7 +654,7 @@ fn manifest(
         connector: connector.to_owned(),
         connector_family: connector_family.to_owned(),
         verified_at: "2026-07-06",
-        schema_on_demand: "/v1/core/outbound/capabilities/{connector}",
+        schema_on_demand: format!("/v1/core/outbound/capabilities/{connector}"),
         foreign_content_posture,
         verbs,
     }
@@ -738,7 +750,7 @@ mod tests {
         let error = outbound_verb_contract("line", "edit").expect_err("line edit unsupported");
 
         assert_eq!(error.connector(), "line");
-        assert_eq!(error.verb(), "edit");
+        assert_eq!(error.verb(), Some("edit"));
         assert!(error.connector_known());
         assert!(
             error.supported_verbs().contains(&"send".to_owned()),
@@ -763,6 +775,23 @@ mod tests {
     }
 
     #[test]
+    fn connector_only_discovery_errors_do_not_fabricate_a_verb() {
+        let error = unsupported_outbound_connector("unknown-connector");
+
+        assert_eq!(error.connector(), "unknown_connector");
+        assert_eq!(error.verb(), None);
+        assert!(!error.connector_known());
+        assert!(error.supported_verbs().is_empty());
+        assert!(
+            error
+                .recovery_suggestions()
+                .iter()
+                .any(|suggestion| suggestion.contains("/v1/core/outbound/capabilities")),
+            "connector-only unsupported errors should advertise the manifest index"
+        );
+    }
+
+    #[test]
     fn connector_specific_verbs_live_as_manifest_data() {
         let line_narrowcast =
             outbound_verb_contract("line", "narrowcast").expect("line narrowcast manifest");
@@ -778,6 +807,16 @@ mod tests {
         assert!(
             !COMMON_OUTBOUND_VERB_KINDS.contains(&mfb_invite.kind.as_str()),
             "connector-specific verbs should not expand the common vocabulary"
+        );
+    }
+
+    #[test]
+    fn manifests_emit_concrete_schema_on_demand_links() {
+        let slack = outbound_capability_manifest("slack").expect("slack manifest");
+
+        assert_eq!(
+            slack.schema_on_demand,
+            "/v1/core/outbound/capabilities/slack"
         );
     }
 }
