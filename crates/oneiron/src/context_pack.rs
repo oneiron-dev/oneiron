@@ -18,12 +18,13 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::types::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 use crate::types::{
     CompanionScope, CompanionSubject, ContextEntity, ContextPack, ContextPackRetrievalBudget,
-    EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeConfirmationStatus, EdgeInfo,
-    EdgeKind, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EmptyContext, EmptyReason, EntityId, FieldProfile,
-    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
-    TimeRange, TokenAllocation, companion::CompanionLifecycleEvent, decode_companion_record_body,
+    EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EiriCompanionAssembly,
+    EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot,
+    EiriMemoryBoardSource, EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat,
+    PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity, TimeRange,
+    TokenAllocation, companion::CompanionLifecycleEvent, decode_companion_record_body,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 
@@ -904,8 +905,22 @@ fn eiri_memory_board_row(
         short_id: entity.short_id.clone(),
         content_hash: format!("{:02x}", entity.content_hash),
         entity_type: entity.entity_type,
+        asset_ref: eiri_memory_board_asset_ref(
+            entity.entity_type,
+            &entity.short_id,
+            entity.content_hash,
+        ),
         score: entity.score,
     }
+}
+
+fn eiri_memory_board_asset_ref(
+    entity_type: u8,
+    short_id: &str,
+    content_hash: u8,
+) -> Option<String> {
+    matches!(entity_type, ENTITY_TYPE_ASSET | ENTITY_TYPE_ASSET_TEXT)
+        .then(|| format!("{short_id}:{content_hash:02x}"))
 }
 
 fn eiri_memory_board_slot(entity_type: u8) -> EiriMemoryBoardSlot {
@@ -2275,6 +2290,36 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
+        let pack = ContextPack {
+            results: vec![
+                board_entity(0xA1, ENTITY_TYPE_ASSET, 0.9, "as15"),
+                board_entity(0xA2, ENTITY_TYPE_ASSET_TEXT, 0.8, "tx10"),
+            ],
+            neighbors: Vec::new(),
+            stats: empty_pack_stats(),
+            empty: None,
+        };
+
+        let board =
+            assemble_eiri_memory_board(&pack, EiriMemoryBoardBudget::new(0, 0, 0, 0, 0, 2), None);
+        let asset_row = board
+            .rows
+            .iter()
+            .find(|row| row.entity_type == ENTITY_TYPE_ASSET)
+            .expect("ASSET row remains present");
+        let asset_text_row = board
+            .rows
+            .iter()
+            .find(|row| row.entity_type == ENTITY_TYPE_ASSET_TEXT)
+            .expect("ASSET_TEXT row remains present");
+
+        assert_eq!(asset_row.asset_ref.as_deref(), Some("as15:a1"));
+        assert_eq!(asset_text_row.asset_ref.as_deref(), Some("tx10:a2"));
+        assert_eq!(asset_row.entity_type, ENTITY_TYPE_ASSET);
     }
 
     #[test]
