@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod access_grant;
 pub mod affect;
 pub mod analyzer;
+pub mod artifact_hosting;
 pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
@@ -79,6 +80,12 @@ pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
 };
+pub use crate::artifact_hosting::{
+    ARTIFACT_POINTER_CHANNELS, ARTIFACT_PUBLISH_VERB_FEATURE, ArtifactPointer,
+    ArtifactPointerChannel, ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest,
+    ArtifactPublishVerbStatus, ArtifactServedFile, ArtifactSnapshotRef, ArtifactSnapshotSelector,
+    artifact_hex, parse_codebase_fork_hash_hex,
+};
 pub use crate::authority::{
     AUTHORITY_FORK_ALARM_KIND, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN,
     AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
@@ -136,8 +143,8 @@ pub use crate::claim::{
 };
 pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
-    CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, decode_code_artifact_body,
-    encode_code_artifact_body,
+    CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES, CodeArtifactBody, CodeArtifactClass,
+    decode_code_artifact_body, encode_code_artifact_body,
 };
 pub use crate::code_revision::{
     CODE_REVISION_FORK_KEYS, CODE_REVISION_RECORD_KEYS, CodeRevision, CodeRevisionFork,

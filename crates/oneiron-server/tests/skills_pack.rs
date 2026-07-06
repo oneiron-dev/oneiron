@@ -9,6 +9,9 @@ const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
 
 const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
+    "/a/{artifact}",
+    "/a/{artifact}/",
+    "/a/{artifact}/{*path}",
     "/api/openapi.json",
     "/api/skills/oneiron.skills.md",
     "/api/health",
@@ -394,7 +397,7 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
         let route_len = route_start
             .char_indices()
             .take_while(|(_, ch)| {
-                ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | '{' | '}')
+                ch.is_ascii_alphanumeric() || matches!(ch, '/' | '-' | '_' | '.' | '{' | '}' | '*')
             })
             .last()
             .map_or(0, |(index, ch)| index + ch.len_utf8());
@@ -409,6 +412,7 @@ fn documented_api_literal_counts(markdown: &str) -> BTreeMap<&str, usize> {
 
 fn next_route_literal_start(markdown: &str) -> Option<usize> {
     [
+        markdown.find("/a/"),
         markdown.find("/api/"),
         markdown.find("/mcp"),
         markdown.find("/v1/"),

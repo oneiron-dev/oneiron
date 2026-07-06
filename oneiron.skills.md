@@ -52,6 +52,33 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "serve progressive disclosure pack"
 - safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
+#### local-artifact-published-root - `GET /a/{artifact}`
+
+- when-to-use: Serve the default file for a published local artifact pointer when a browser or local preview client opens the stable artifact mount without a trailing slash.
+- trigger phrases:
+  - "open published artifact"
+  - "preview local app artifact"
+  - "serve artifact index"
+- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+
+#### local-artifact-published-root-slash - `GET /a/{artifact}/`
+
+- when-to-use: Serve the default file for a published local artifact pointer when a browser or local preview client opens the stable artifact mount with a trailing slash.
+- trigger phrases:
+  - "open artifact root"
+  - "serve artifact home page"
+  - "preview published artifact"
+- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+
+#### local-artifact-file - `GET /a/{artifact}/{*path}`
+
+- when-to-use: Serve a specific file from a pinned local artifact snapshot, or select a preview pointer or explicit fork hash for immutable local inspection.
+- trigger phrases:
+  - "serve artifact file"
+  - "load artifact asset"
+  - "open pinned artifact snapshot"
+- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP and immutable cache headers.
+
 #### health - `GET /api/health`
 
 - when-to-use: Check whether the local server is reachable and learn coarse capability, format, and rate-limit metadata without requiring API authentication.
@@ -329,6 +356,29 @@ Response:
 - Content type: `text/markdown; profile=agentskills.io`.
 - Body: the committed `oneiron.skills.md` artifact.
 - Use it when an external agent needs the progressive-disclosure route catalog from a running Oneiron server rather than from the repository checkout.
+
+### Local Artifact Serving
+
+Method: `GET`
+
+Authentication: None for this local serving endpoint.
+
+Path parameters:
+
+- `artifact` required: stable artifact id segment for the local mount.
+- `path` optional: file path within the pinned snapshot. Root requests serve `index.html`.
+
+Query parameters:
+
+- `channel` optional: pointer channel to resolve, currently `published` by default or `preview`.
+- `forkHash` optional: 64-character hex immutable snapshot hash. Do not combine with `channel`.
+
+Response behavior:
+
+- Resolves the pointer or fork hash to an artifact-class code snapshot and serves bytes from that pinned snapshot only.
+- Repointing a published or preview pointer affects future stable mount reads but does not mutate old fork-hash mounts.
+- Returns `404` when the pointer, snapshot, or file is absent, and `400` for malformed selectors or mutually exclusive selector parameters.
+- Sends `Cache-Control: public, max-age=31536000, immutable`, an ETag derived from the served file content hash, and a restrictive CSP for local artifact assets.
 
 ### Core Discovery
 
