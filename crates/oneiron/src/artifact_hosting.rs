@@ -132,6 +132,7 @@ impl ArtifactPublishVerbRequest {
 #[non_exhaustive]
 pub enum ArtifactPublishVerbStatus {
     Proposed,
+    Published,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,15 +284,31 @@ impl Vault {
         request: &ArtifactPublishVerbRequest,
     ) -> Result<ArtifactPublishVerbOutcome> {
         validate_artifact_id(&request.artifact)?;
-        let _ = request.channel;
-        let _ = request.standing_grant;
         self.resolve_artifact_snapshot_by_fork(&request.artifact, &request.fork_hash)?
             .ok_or(Error::EntityNotFound)?;
+        if request.standing_grant && cfg!(feature = "artifact-publish-verb") {
+            let pointer = self.publish_artifact_pointer(
+                &request.artifact,
+                request.channel,
+                &request.fork_hash,
+            )?;
+            return Ok(ArtifactPublishVerbOutcome {
+                status: ArtifactPublishVerbStatus::Published,
+                pointer: Some(pointer),
+                dispatcher_feature_enabled: true,
+                reason: "standing grant accepted under artifact-publish-verb; artifact pointer published locally",
+            });
+        }
+        let reason = if request.standing_grant {
+            "standing grant present, but artifact-publish-verb is disabled; publish verb parks as Proposed"
+        } else {
+            "standing grant required; OF-327 outbound dispatcher is not landed; publish verb parks as Proposed"
+        };
         Ok(ArtifactPublishVerbOutcome {
             status: ArtifactPublishVerbStatus::Proposed,
             pointer: None,
             dispatcher_feature_enabled: cfg!(feature = "artifact-publish-verb"),
-            reason: "OF-327 outbound dispatcher is not landed; publish verb is feature-gated and parks as Proposed",
+            reason,
         })
     }
 }
@@ -643,6 +660,33 @@ mod tests {
                 .artifact_pointer("site", ArtifactPointerChannel::Published)?
                 .is_none(),
             "proposed publish must not make the artifact served"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "artifact-publish-verb")]
+    #[test]
+    fn publish_verb_honors_standing_grant_by_publishing_pointer() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let repo = create_test_repo(b"<h1>v1</h1>\n")?;
+        let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
+        let request = ArtifactPublishVerbRequest::new(
+            "site",
+            ArtifactPointerChannel::Published,
+            result.snapshot.fork_hash,
+            true,
+        );
+
+        let outcome = vault.request_artifact_publish(&request)?;
+
+        assert_eq!(outcome.status, ArtifactPublishVerbStatus::Published);
+        let pointer = outcome.pointer.expect("published pointer returned");
+        assert_eq!(pointer.fork_hash, result.snapshot.fork_hash);
+        assert!(
+            vault
+                .artifact_pointer("site", ArtifactPointerChannel::Published)?
+                .is_some(),
+            "standing grant publish should make the artifact served"
         );
         Ok(())
     }

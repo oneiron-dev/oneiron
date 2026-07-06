@@ -12,10 +12,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{
-    HeaderMap, HeaderValue, StatusCode,
-    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG},
+    HeaderMap, HeaderValue, StatusCode, Uri,
+    header::{
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG, IF_NONE_MATCH,
+        LOCATION,
+    },
 };
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -138,7 +141,8 @@ const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
 const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
 const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
     &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
-const ARTIFACT_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+const ARTIFACT_POINTER_CACHE_CONTROL: &str = "no-cache, max-age=0, must-revalidate";
+const ARTIFACT_IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "default-src 'self'; ",
     "script-src 'self'; ",
@@ -640,19 +644,27 @@ struct ArtifactServeQuery {
 }
 
 async fn serve_artifact_root(
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    serve_artifact_file(server, artifact, "", query)
+    check_api_auth(&headers, &server.config).map_err(EnvelopedApiError::from)?;
+    if !uri.path().ends_with('/') {
+        return artifact_root_redirect_response(&uri);
+    }
+    serve_artifact_file(server, artifact, "", query, &headers)
 }
 
 async fn serve_artifact_path(
+    headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     Path((artifact, path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
 ) -> Result<Response, EnvelopedApiError> {
-    serve_artifact_file(server, artifact, &path, query)
+    check_api_auth(&headers, &server.config).map_err(EnvelopedApiError::from)?;
+    serve_artifact_file(server, artifact, &path, query, &headers)
 }
 
 fn serve_artifact_file(
@@ -660,6 +672,7 @@ fn serve_artifact_file(
     artifact: String,
     route_path: &str,
     query: ArtifactServeQuery,
+    request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
     let selector = artifact_snapshot_selector(&query)?;
     let path = normalize_artifact_route_path(route_path);
@@ -670,7 +683,7 @@ fn serve_artifact_file(
     else {
         return Err(ApiError::not_found("artifact", Some(&artifact)).into());
     };
-    artifact_file_response(file)
+    artifact_file_response(file, request_headers)
 }
 
 fn artifact_snapshot_selector(
@@ -708,24 +721,61 @@ fn normalize_artifact_route_path(route_path: &str) -> String {
     }
 }
 
+fn artifact_root_redirect_response(uri: &Uri) -> Result<Response, EnvelopedApiError> {
+    let query_len = uri.query().map_or(0, str::len);
+    let mut target =
+        String::with_capacity(uri.path().len() + 1 + query_len + usize::from(query_len > 0));
+    target.push_str(uri.path());
+    target.push('/');
+    if let Some(query) = uri.query() {
+        target.push('?');
+        target.push_str(query);
+    }
+
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::PERMANENT_REDIRECT;
+    response.headers_mut().insert(
+        LOCATION,
+        HeaderValue::from_str(&target)
+            .map_err(|_| ApiError::internal_server_error("artifact redirect target was invalid"))?,
+    );
+    Ok(response)
+}
+
 fn artifact_file_response(
     file: oneiron::ArtifactServedFile,
+    request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
+    let cache_control = artifact_cache_control(file.selector);
+    let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
+    if request_etag_matches(request_headers, &etag) {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NOT_MODIFIED;
+        let headers = response.headers_mut();
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+        headers.insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
+        );
+        headers.insert(
+            ETAG,
+            HeaderValue::from_str(&etag)
+                .map_err(|_| ApiError::internal_server_error("artifact ETag was invalid"))?,
+        );
+        return Ok(response);
+    }
+
     let mut response = Response::new(Body::from(file.bytes));
     let headers = response.headers_mut();
     headers.insert(
         CONTENT_TYPE,
         HeaderValue::from_static(artifact_content_type(&file.path)),
     );
-    headers.insert(
-        CACHE_CONTROL,
-        HeaderValue::from_static(ARTIFACT_CACHE_CONTROL),
-    );
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
     headers.insert(
         CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
     );
-    let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
     headers.insert(
         ETAG,
         HeaderValue::from_str(&etag)
@@ -734,12 +784,33 @@ fn artifact_file_response(
     Ok(response)
 }
 
+fn artifact_cache_control(selector: oneiron::ArtifactSnapshotSelector) -> &'static str {
+    match selector {
+        oneiron::ArtifactSnapshotSelector::Channel(_) => ARTIFACT_POINTER_CACHE_CONTROL,
+        oneiron::ArtifactSnapshotSelector::ForkHash(_) => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
+        _ => ARTIFACT_POINTER_CACHE_CONTROL,
+    }
+}
+
+fn request_etag_matches(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get(IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value.split(',').any(|candidate| {
+                let candidate = candidate.trim();
+                candidate == "*" || candidate == etag || candidate.strip_prefix("W/") == Some(etag)
+            })
+        })
+}
+
 fn artifact_content_type(path: &str) -> &'static str {
     match path.rsplit_once('.').map(|(_, ext)| ext) {
         Some("html" | "htm") => "text/html; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("json" | "map") => "application/json; charset=utf-8",
+        Some("wasm") => "application/wasm",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
@@ -12008,7 +12079,7 @@ mod tests {
             headers
                 .get(CACHE_CONTROL)
                 .and_then(|value| value.to_str().ok()),
-            Some(ARTIFACT_CACHE_CONTROL)
+            Some(ARTIFACT_POINTER_CACHE_CONTROL)
         );
         assert!(
             headers
@@ -12026,6 +12097,38 @@ mod tests {
                 )
                 .as_str()
             )
+        );
+        let etag = headers.get(ETAG).cloned().expect("artifact ETag header");
+        let (status, headers, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/")
+                .header(IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_MODIFIED);
+        assert!(body.is_empty());
+        assert_eq!(
+            headers
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some(ARTIFACT_POINTER_CACHE_CONTROL)
+        );
+        let (status, headers, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site?channel=published")
+                .body(Body::empty())
+                .expect("artifact redirect request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+        assert!(body.is_empty());
+        assert_eq!(
+            headers.get(LOCATION).and_then(|value| value.to_str().ok()),
+            Some("/a/site/?channel=published")
         );
 
         commit_artifact_index(repo.path(), b"<h1>v2</h1>\n", "second");
@@ -12046,7 +12149,7 @@ mod tests {
             "/a/site/index.html?forkHash={}",
             oneiron::artifact_hex(&second.snapshot.fork_hash)
         );
-        let (status, _, body) = route_bytes(
+        let (status, headers, body) = route_bytes(
             server.clone(),
             Request::builder()
                 .uri(direct_fork_uri)
@@ -12056,6 +12159,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_ref(), b"<h1>v2</h1>\n");
+        assert_eq!(
+            headers
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some(ARTIFACT_IMMUTABLE_CACHE_CONTROL)
+        );
 
         server
             .vault
@@ -12104,6 +12213,52 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
+    }
+
+    #[tokio::test]
+    async fn local_artifact_route_requires_api_auth_when_configured() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            allow_unauthenticated: false,
+            ..Default::default()
+        });
+        let repo = create_artifact_repo(b"<h1>private</h1>\n");
+        let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+        server
+            .vault
+            .publish_artifact_pointer(
+                "site",
+                oneiron::ArtifactPointerChannel::Published,
+                &snapshot.snapshot.fork_hash,
+            )
+            .expect("publish artifact pointer");
+
+        let (status, _, _) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _, body) = route_bytes(
+            server,
+            Request::builder()
+                .uri("/a/site/")
+                .header("x-oneiron-secret", "secret")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>private</h1>\n");
+    }
+
+    #[test]
+    fn artifact_content_type_maps_wasm() {
+        assert_eq!(artifact_content_type("pkg/module.wasm"), "application/wasm");
     }
 
     #[tokio::test]
