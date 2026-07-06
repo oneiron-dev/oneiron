@@ -205,10 +205,16 @@ impl SandboxLinkedImport {
 
     #[must_use]
     pub fn write_trap_effect(self) -> Option<SelfEffect> {
-        match self.name {
-            "self.memory.put_claim" => Some(SelfEffect::MemoryPutClaim),
-            "self.memory.supersede_claim" => Some(SelfEffect::MemorySupersedeClaim),
-            "self.memory.put_edge" => Some(SelfEffect::MemoryPutEdge),
+        match (self.class, self.name) {
+            (SandboxImportClass::WriteTrap, "self.memory.put_claim") => {
+                Some(SelfEffect::MemoryPutClaim)
+            }
+            (SandboxImportClass::WriteTrap, "self.memory.supersede_claim") => {
+                Some(SelfEffect::MemorySupersedeClaim)
+            }
+            (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
+                Some(SelfEffect::MemoryPutEdge)
+            }
             _ => None,
         }
     }
@@ -1142,6 +1148,11 @@ mod tests {
                 SelfEffect::MemorySupersedeClaim,
                 SelfEffect::MemoryPutEdge,
             ]
+        );
+        assert_eq!(
+            SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::ReadOnly)
+                .write_trap_effect(),
+            None
         );
         let deterministic_imports = first_party
             .linked_imports()
