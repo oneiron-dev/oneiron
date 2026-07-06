@@ -35,6 +35,7 @@ pub mod maintain;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod provenance;
+pub mod receipt;
 pub mod recovery;
 pub mod repo_mutation;
 pub mod run_tree;
@@ -249,6 +250,7 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
+pub use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
