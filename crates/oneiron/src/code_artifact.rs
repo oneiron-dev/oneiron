@@ -5,7 +5,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::types::{ENTITY_TYPE_CODE_ARTIFACT, EntityId, TimeRange};
 
-pub const CODE_ARTIFACT_BODY_KEYS: [&str; 3] = ["summary_prompt", "summary_hash", "repo_ref"];
+pub const CODE_ARTIFACT_BODY_KEYS: [&str; 4] =
+    ["summary_prompt", "summary_hash", "repo_ref", "class"];
 pub const CODE_ARTIFACT_SUMMARY_HASH_LEN: usize = 32;
 pub const CODE_ARTIFACT_SUMMARY_PROMPT_MAX_BYTES: usize = 16 * 1024;
 pub const CODE_ARTIFACT_REPO_REF_MAX_BYTES: usize = 1024;
@@ -13,6 +14,35 @@ pub const CODE_ARTIFACT_REPO_REF_MAX_BYTES: usize = 1024;
 const KEY_SUMMARY_PROMPT: &str = CODE_ARTIFACT_BODY_KEYS[0];
 const KEY_SUMMARY_HASH: &str = CODE_ARTIFACT_BODY_KEYS[1];
 const KEY_REPO_REF: &str = CODE_ARTIFACT_BODY_KEYS[2];
+const KEY_CLASS: &str = CODE_ARTIFACT_BODY_KEYS[3];
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CodeArtifactClass {
+    #[default]
+    Codebase,
+    Artifact,
+}
+
+impl CodeArtifactClass {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Codebase => "codebase",
+            Self::Artifact => "artifact",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "codebase" => Ok(Self::Codebase),
+            "artifact" => Ok(Self::Artifact),
+            _ => Err(Error::InvalidCodeArtifactBody(
+                "class must be codebase or artifact",
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -20,6 +50,7 @@ pub struct CodeArtifactBody {
     pub summary_prompt: String,
     pub summary_hash: [u8; CODE_ARTIFACT_SUMMARY_HASH_LEN],
     pub repo_ref: String,
+    pub class: CodeArtifactClass,
 }
 
 impl CodeArtifactBody {
@@ -33,7 +64,14 @@ impl CodeArtifactBody {
             summary_prompt: summary_prompt.into(),
             summary_hash,
             repo_ref: repo_ref.into(),
+            class: CodeArtifactClass::Codebase,
         }
+    }
+
+    #[must_use]
+    pub fn with_class(mut self, class: CodeArtifactClass) -> Self {
+        self.class = class;
+        self
     }
 }
 
@@ -52,6 +90,7 @@ pub fn encode_code_artifact_body(body: &CodeArtifactBody) -> Result<Vec<u8>> {
             Value::from(KEY_REPO_REF),
             Value::from(body.repo_ref.as_str()),
         ),
+        (Value::from(KEY_CLASS), Value::from(body.class.as_str())),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -85,6 +124,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
     let mut summary_prompt: Option<String> = None;
     let mut summary_hash: Option<[u8; CODE_ARTIFACT_SUMMARY_HASH_LEN]> = None;
     let mut repo_ref: Option<String> = None;
+    let mut class: Option<CodeArtifactClass> = None;
     let mut seen = [false; CODE_ARTIFACT_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -130,6 +170,12 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
                 )?;
                 repo_ref = Some(text.to_owned());
             }
+            KEY_CLASS => {
+                let text = value.as_str().ok_or(Error::InvalidCodeArtifactBody(
+                    "class must be a UTF-8 string",
+                ))?;
+                class = Some(CodeArtifactClass::parse(text)?);
+            }
             _ => unreachable!("index resolved from CODE_ARTIFACT_BODY_KEYS"),
         }
     }
@@ -144,6 +190,7 @@ fn decode_code_artifact_body_value(value: &Value) -> Result<CodeArtifactBody> {
         repo_ref: repo_ref.ok_or(Error::InvalidCodeArtifactBody(
             "missing required replay key repo_ref",
         ))?,
+        class: class.unwrap_or_default(),
     };
     validate_code_artifact_body(&body)?;
     Ok(body)
@@ -304,6 +351,7 @@ mod tests {
             ),
             (KEY_SUMMARY_HASH, Value::Binary(body.summary_hash.to_vec())),
             (KEY_REPO_REF, Value::from(body.repo_ref.as_str())),
+            (KEY_CLASS, Value::from(body.class.as_str())),
             ("content", Value::from("fn main() {}")),
         ]);
         let err = decode_code_artifact_body(&encoded_with_content)
@@ -314,7 +362,7 @@ mod tests {
 
     #[test]
     fn code_artifact_decode_rejects_missing_replay_keys() {
-        for missing_key in CODE_ARTIFACT_BODY_KEYS {
+        for missing_key in [KEY_SUMMARY_PROMPT, KEY_SUMMARY_HASH, KEY_REPO_REF] {
             let entries: Vec<(&str, Value)> = CODE_ARTIFACT_BODY_KEYS
                 .into_iter()
                 .filter(|key| *key != missing_key)
@@ -325,6 +373,7 @@ mod tests {
                         Value::Binary(vec![0xA5; CODE_ARTIFACT_SUMMARY_HASH_LEN]),
                     ),
                     KEY_REPO_REF => (key, Value::from("repo")),
+                    KEY_CLASS => (key, Value::from("codebase")),
                     _ => unreachable!("iterates pinned CODE artifact keys"),
                 })
                 .collect();
@@ -333,6 +382,45 @@ mod tests {
                 .expect_err("missing replay key must fail closed");
             assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
         }
+    }
+
+    #[test]
+    fn code_artifact_class_is_backward_compatible_and_validated() {
+        let body = test_body().with_class(CodeArtifactClass::Artifact);
+        let encoded = encode_code_artifact_body(&body).expect("encode artifact class");
+        let decoded = decode_code_artifact_body(&encoded).expect("decode artifact class");
+        assert_eq!(decoded.class, CodeArtifactClass::Artifact);
+
+        let legacy = code_artifact_map(vec![
+            (KEY_SUMMARY_PROMPT, Value::from("prompt")),
+            (
+                KEY_SUMMARY_HASH,
+                Value::Binary(vec![0xA5; CODE_ARTIFACT_SUMMARY_HASH_LEN]),
+            ),
+            (
+                KEY_REPO_REF,
+                Value::from("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277"),
+            ),
+        ]);
+        let decoded_legacy =
+            decode_code_artifact_body(&legacy).expect("legacy classless body decodes");
+        assert_eq!(decoded_legacy.class, CodeArtifactClass::Codebase);
+
+        let invalid = code_artifact_map(vec![
+            (KEY_SUMMARY_PROMPT, Value::from("prompt")),
+            (
+                KEY_SUMMARY_HASH,
+                Value::Binary(vec![0xA5; CODE_ARTIFACT_SUMMARY_HASH_LEN]),
+            ),
+            (
+                KEY_REPO_REF,
+                Value::from("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277"),
+            ),
+            (KEY_CLASS, Value::from("website")),
+        ]);
+        let err = decode_code_artifact_body(&invalid)
+            .expect_err("unknown CODE artifact class must fail closed");
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
     }
 
     #[test]

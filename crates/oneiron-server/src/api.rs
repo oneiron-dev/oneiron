@@ -10,12 +10,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{
-    HeaderMap, StatusCode,
-    header::{AUTHORIZATION, CONTENT_TYPE},
+    HeaderMap, HeaderValue, StatusCode,
+    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG},
 };
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -138,6 +138,19 @@ const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
 const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
 const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
     &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
+const ARTIFACT_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; ",
+    "script-src 'self'; ",
+    "style-src 'self'; ",
+    "img-src 'self' data: blob:; ",
+    "font-src 'self' data:; ",
+    "connect-src 'none'; ",
+    "object-src 'none'; ",
+    "base-uri 'none'; ",
+    "form-action 'none'; ",
+    "frame-ancestors 'none'"
+);
 static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
 
 #[derive(Default)]
@@ -520,6 +533,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/api/openapi.json", get(openapi_json))
         .route("/api/skills/oneiron.skills.md", get(skills_pack))
         .route("/api/health", get(health))
+        .route("/a/{artifact}", get(serve_artifact_root))
+        .route("/a/{artifact}/", get(serve_artifact_root))
+        .route("/a/{artifact}/{*path}", get(serve_artifact_path))
         .route("/mcp", post(mcp_gateway))
         .route("/api/core/discover", get(discover))
         .route("/api/search/vector", get(search_vector))
@@ -614,6 +630,124 @@ async fn skills_pack(
         [(CONTENT_TYPE, skills_pack_artifact::MEDIA_TYPE)],
         skills_pack_artifact::CONTENT,
     ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactServeQuery {
+    channel: Option<String>,
+    fork_hash: Option<String>,
+}
+
+async fn serve_artifact_root(
+    State(server): State<Arc<SyncServer>>,
+    Path(artifact): Path<String>,
+    Query(query): Query<ArtifactServeQuery>,
+) -> Result<Response, EnvelopedApiError> {
+    serve_artifact_file(server, artifact, "", query)
+}
+
+async fn serve_artifact_path(
+    State(server): State<Arc<SyncServer>>,
+    Path((artifact, path)): Path<(String, String)>,
+    Query(query): Query<ArtifactServeQuery>,
+) -> Result<Response, EnvelopedApiError> {
+    serve_artifact_file(server, artifact, &path, query)
+}
+
+fn serve_artifact_file(
+    server: Arc<SyncServer>,
+    artifact: String,
+    route_path: &str,
+    query: ArtifactServeQuery,
+) -> Result<Response, EnvelopedApiError> {
+    let selector = artifact_snapshot_selector(&query)?;
+    let path = normalize_artifact_route_path(route_path);
+    let Some(file) = server
+        .vault
+        .resolve_artifact_file(&artifact, selector, &path)
+        .map_err(|error| core_engine_error("artifact serving failed", error))?
+    else {
+        return Err(ApiError::not_found("artifact", Some(&artifact)).into());
+    };
+    artifact_file_response(file)
+}
+
+fn artifact_snapshot_selector(
+    query: &ArtifactServeQuery,
+) -> Result<oneiron::ArtifactSnapshotSelector, EnvelopedApiError> {
+    if query.channel.is_some() && query.fork_hash.is_some() {
+        return Err(ApiError::bad_request(
+            "channel and forkHash cannot be combined",
+            Some("forkHash"),
+        )
+        .into());
+    }
+    if let Some(fork_hash) = &query.fork_hash {
+        return Ok(oneiron::ArtifactSnapshotSelector::ForkHash(
+            oneiron::parse_codebase_fork_hash_hex(fork_hash)
+                .map_err(|error| ApiError::bad_request(error.to_string(), Some("forkHash")))?,
+        ));
+    }
+    let channel = match query.channel.as_deref() {
+        Some(channel) => oneiron::ArtifactPointerChannel::parse(channel)
+            .map_err(|error| ApiError::bad_request(error.to_string(), Some("channel")))?,
+        None => oneiron::ArtifactPointerChannel::Published,
+    };
+    Ok(oneiron::ArtifactSnapshotSelector::Channel(channel))
+}
+
+fn normalize_artifact_route_path(route_path: &str) -> String {
+    let path = route_path.trim_start_matches('/');
+    if path.is_empty() {
+        "index.html".to_owned()
+    } else if path.ends_with('/') {
+        format!("{path}index.html")
+    } else {
+        path.to_owned()
+    }
+}
+
+fn artifact_file_response(
+    file: oneiron::ArtifactServedFile,
+) -> Result<Response, EnvelopedApiError> {
+    let mut response = Response::new(Body::from(file.bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(artifact_content_type(&file.path)),
+    );
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static(ARTIFACT_CACHE_CONTROL),
+    );
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
+    );
+    let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
+    headers.insert(
+        ETAG,
+        HeaderValue::from_str(&etag)
+            .map_err(|_| ApiError::internal_server_error("artifact ETag was invalid"))?,
+    );
+    Ok(response)
+}
+
+fn artifact_content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("html" | "htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("json" | "map") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn openapi_document() -> Value {
@@ -11182,6 +11316,100 @@ mod tests {
         (dir, server)
     }
 
+    fn run_artifact_git(repo_dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo_dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git test command starts");
+        assert!(status.success(), "git test command failed: git {args:?}");
+    }
+
+    fn create_artifact_repo(index: &[u8]) -> tempfile::TempDir {
+        let repo_dir = tempfile::tempdir().expect("artifact repo dir");
+        std::fs::write(repo_dir.path().join("index.html"), index).expect("write index");
+        std::fs::write(
+            repo_dir.path().join("app.js"),
+            b"document.body.dataset.bundle = 'served';\n",
+        )
+        .expect("write app");
+        run_artifact_git(repo_dir.path(), &["init"]);
+        run_artifact_git(
+            repo_dir.path(),
+            &["config", "user.email", "oneiron@example.test"],
+        );
+        run_artifact_git(repo_dir.path(), &["config", "user.name", "Oneiron Test"]);
+        run_artifact_git(repo_dir.path(), &["add", "."]);
+        run_artifact_git(repo_dir.path(), &["commit", "-m", "initial"]);
+        repo_dir
+    }
+
+    fn commit_artifact_index(repo_dir: &std::path::Path, index: &[u8], message: &str) {
+        std::fs::write(repo_dir.join("index.html"), index).expect("write index revision");
+        run_artifact_git(repo_dir, &["add", "index.html"]);
+        run_artifact_git(repo_dir, &["commit", "-m", message]);
+    }
+
+    fn ingest_artifact_snapshot(
+        server: &SyncServer,
+        repo_dir: &std::path::Path,
+        artifact: &str,
+        learned_at: u64,
+    ) -> oneiron::RepoIngestResult {
+        let config = oneiron::RepoIngestConfig::new(repo_dir, ["index.html", "app.js"])
+            .expect("repo ingest config");
+        let result = server
+            .vault
+            .ingest_local_repo_at_commit(
+                artifact,
+                &config,
+                "HEAD",
+                oneiron::TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+            )
+            .expect("ingest artifact repo");
+        let body = server
+            .vault
+            .get_code_artifact(&result.code_artifact_id)
+            .expect("read CODE artifact")
+            .expect("CODE artifact exists")
+            .with_class(oneiron::CodeArtifactClass::Artifact);
+        server
+            .vault
+            .put_code_artifact(
+                &result.code_artifact_id,
+                &body,
+                oneiron::TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+            )
+            .expect("mark CODE artifact hostable");
+        result
+    }
+
+    async fn route_bytes(
+        server: Arc<SyncServer>,
+        request: Request<Body>,
+    ) -> (StatusCode, HeaderMap, Bytes) {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        (status, headers, body)
+    }
+
     fn assert_default_policy_manifest_fixture(vault: &oneiron::Vault) {
         assert_eq!(
             vault
@@ -11744,6 +11972,180 @@ mod tests {
             error["suggestions"], error["details"]["recovery_suggestions"],
             "top-level suggestions should mirror typed recovery_suggestions"
         );
+    }
+
+    #[tokio::test]
+    async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
+        let (_dir, server) = test_server();
+        let repo = create_artifact_repo(b"<h1>v1</h1>\n");
+        let first = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+        server
+            .vault
+            .publish_artifact_pointer(
+                "site",
+                oneiron::ArtifactPointerChannel::Published,
+                &first.snapshot.fork_hash,
+            )
+            .expect("publish first artifact pointer");
+
+        let (status, headers, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
+        assert_eq!(
+            headers
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/html; charset=utf-8")
+        );
+        assert_eq!(
+            headers
+                .get(CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some(ARTIFACT_CACHE_CONTROL)
+        );
+        assert!(
+            headers
+                .get(CONTENT_SECURITY_POLICY)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("connect-src 'none'")),
+            "artifact route must block vault API calls from served bundles"
+        );
+        assert_eq!(
+            headers.get(ETAG).and_then(|value| value.to_str().ok()),
+            Some(
+                format!(
+                    "\"{}\"",
+                    oneiron::artifact_hex(blake3::hash(b"<h1>v1</h1>\n").as_bytes())
+                )
+                .as_str()
+            )
+        );
+
+        commit_artifact_index(repo.path(), b"<h1>v2</h1>\n", "second");
+        let second = ingest_artifact_snapshot(&server, repo.path(), "site", 20);
+
+        let (status, _, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/index.html")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
+
+        let direct_fork_uri = format!(
+            "/a/site/index.html?forkHash={}",
+            oneiron::artifact_hex(&second.snapshot.fork_hash)
+        );
+        let (status, _, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(direct_fork_uri)
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>v2</h1>\n");
+
+        server
+            .vault
+            .publish_artifact_pointer(
+                "site",
+                oneiron::ArtifactPointerChannel::Published,
+                &second.snapshot.fork_hash,
+            )
+            .expect("repoint artifact pointer");
+        let (status, _, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>v2</h1>\n");
+
+        server
+            .vault
+            .unpublish_artifact_pointer("site", oneiron::ArtifactPointerChannel::Published)
+            .expect("unpublish artifact pointer");
+        let (status, _, _) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/")
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let old_fork_uri = format!(
+            "/a/site/index.html?forkHash={}",
+            oneiron::artifact_hex(&first.snapshot.fork_hash)
+        );
+        let (status, _, body) = route_bytes(
+            server,
+            Request::builder()
+                .uri(old_fork_uri)
+                .body(Body::empty())
+                .expect("artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>v1</h1>\n");
+    }
+
+    #[tokio::test]
+    async fn local_artifact_route_serves_preview_pointer_and_rejects_ambiguous_selector() {
+        let (_dir, server) = test_server();
+        let repo = create_artifact_repo(b"<h1>preview</h1>\n");
+        let ingest = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+        server
+            .vault
+            .publish_artifact_pointer(
+                "site",
+                oneiron::ArtifactPointerChannel::Preview,
+                &ingest.snapshot.fork_hash,
+            )
+            .expect("publish preview pointer");
+
+        let (status, _, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri("/a/site/index.html?channel=preview")
+                .body(Body::empty())
+                .expect("preview request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), b"<h1>preview</h1>\n");
+
+        let ambiguous = format!(
+            "/a/site/index.html?channel=preview&forkHash={}",
+            oneiron::artifact_hex(&ingest.snapshot.fork_hash)
+        );
+        let (status, _, body) = route_bytes(
+            server,
+            Request::builder()
+                .uri(ambiguous)
+                .body(Body::empty())
+                .expect("ambiguous request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let error: Value = serde_json::from_slice(&body).expect("error JSON");
+        assert_error_envelope(&error, "BAD_REQUEST");
     }
 
     fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
