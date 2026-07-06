@@ -1,17 +1,35 @@
 use oneiron::{
     ChannelIdentityFulfillment, ChannelIdentityLifecycleActor, ChannelIdentityProviderAdapter,
     ChannelIdentityProviderInbound, ChannelIdentityState, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EmailProviderInbound, EntityId, InboundSurfaceRouteOutcome,
-    ProvisionIntent, Vault, VaultConfig,
+    DevEmailIdentityAdapterConfig, EmailProviderInbound, EntityId, Error,
+    InboundSurfaceRouteOutcome, ProvisionIntent, Result, Vault, VaultConfig,
 };
 
-fn smoke_config() -> Option<DevEmailIdentityAdapterConfig> {
-    let domain = std::env::var("ONEIRON_CID3_EMAIL_DOMAIN").ok()?;
-    let signing_secret = std::env::var("ONEIRON_CID3_EMAIL_SIGNING_SECRET").ok()?;
-    if signing_secret.trim().is_empty() {
-        return None;
+fn smoke_config() -> Result<Option<DevEmailIdentityAdapterConfig>> {
+    smoke_config_from_env(
+        std::env::var("ONEIRON_CID3_EMAIL_DOMAIN").ok(),
+        std::env::var("ONEIRON_CID3_EMAIL_SIGNING_SECRET").ok(),
+    )
+}
+
+fn smoke_config_from_env(
+    domain: Option<String>,
+    signing_secret: Option<String>,
+) -> Result<Option<DevEmailIdentityAdapterConfig>> {
+    match (domain, signing_secret) {
+        (None, None) => Ok(None),
+        (Some(domain), Some(signing_secret)) => {
+            if domain.trim().is_empty() || signing_secret.trim().is_empty() {
+                return Err(Error::InvalidConfig(
+                    "CID-3 email smoke env must be non-empty when configured".to_owned(),
+                ));
+            }
+            DevEmailIdentityAdapterConfig::new(domain, signing_secret).map(Some)
+        }
+        _ => Err(Error::InvalidConfig(
+            "CID-3 email smoke env must set domain and signing secret together".to_owned(),
+        )),
     }
-    DevEmailIdentityAdapterConfig::new(domain, signing_secret).ok()
 }
 
 fn entity(seed: u8) -> EntityId {
@@ -29,8 +47,8 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
 }
 
 #[test]
-fn cid3_email_adapter_env_gated_smoke() -> oneiron::Result<()> {
-    let Some(config) = smoke_config() else {
+fn cid3_email_adapter_env_gated_smoke() -> Result<()> {
+    let Some(config) = smoke_config()? else {
         return Ok(());
     };
 
@@ -77,4 +95,31 @@ fn cid3_email_adapter_env_gated_smoke() -> oneiron::Result<()> {
     assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
     assert!(receipt.surface_event.is_some());
     Ok(())
+}
+
+#[test]
+fn cid3_email_adapter_smoke_fails_when_env_is_partially_or_invalid_configured() {
+    assert!(matches!(smoke_config_from_env(None, None), Ok(None)));
+    assert!(matches!(
+        smoke_config_from_env(
+            Some("agents.example.test".to_owned()),
+            Some("dev-secret".to_owned())
+        ),
+        Ok(Some(_))
+    ));
+    assert!(matches!(
+        smoke_config_from_env(Some("agents.example.test".to_owned()), None),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(matches!(
+        smoke_config_from_env(Some("agents.example.test".to_owned()), Some(" ".to_owned())),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(matches!(
+        smoke_config_from_env(
+            Some("*.example.test".to_owned()),
+            Some("dev-secret".to_owned())
+        ),
+        Err(Error::InvalidConfig(_))
+    ));
 }

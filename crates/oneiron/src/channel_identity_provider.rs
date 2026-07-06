@@ -172,10 +172,9 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
         verb: ChannelIdentityLifecycleVerb,
     ) -> Option<ChannelIdentityFulfillment> {
         match verb {
-            ChannelIdentityLifecycleVerb::Provision | ChannelIdentityLifecycleVerb::Bind => {
-                Some(self.provision_mode)
-            }
-            ChannelIdentityLifecycleVerb::Rotate
+            ChannelIdentityLifecycleVerb::Provision => Some(self.provision_mode),
+            ChannelIdentityLifecycleVerb::Bind
+            | ChannelIdentityLifecycleVerb::Rotate
             | ChannelIdentityLifecycleVerb::Release
             | ChannelIdentityLifecycleVerb::RouteInbound => None,
         }
@@ -382,10 +381,9 @@ impl ChannelIdentityProviderAdapter for DevEmailIdentityAdapter {
         verb: ChannelIdentityLifecycleVerb,
     ) -> Option<ChannelIdentityFulfillment> {
         match verb {
-            ChannelIdentityLifecycleVerb::Provision | ChannelIdentityLifecycleVerb::Bind => {
-                Some(ChannelIdentityFulfillment::Api)
-            }
-            ChannelIdentityLifecycleVerb::Rotate
+            ChannelIdentityLifecycleVerb::Provision => Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityLifecycleVerb::Bind
+            | ChannelIdentityLifecycleVerb::Rotate
             | ChannelIdentityLifecycleVerb::Release
             | ChannelIdentityLifecycleVerb::RouteInbound => None,
         }
@@ -644,6 +642,10 @@ mod tests {
         assert_eq!(
             adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Provision),
             Some(ChannelIdentityFulfillment::Api)
+        );
+        assert_eq!(
+            adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Bind),
+            None
         );
         let provision = adapter.provision(&intent, 2_000)?;
         assert_eq!(provision.identity_id, intent.identity_id);
