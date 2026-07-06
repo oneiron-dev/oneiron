@@ -1348,7 +1348,34 @@ fn validate_conflict_claim_structure(body: &ClaimBody) -> Result<()> {
             "conflict claim value must not be nil",
         ));
     }
+    if conflict_value_uses_repo_schema(&body.value) {
+        crate::repo_mutation::validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
+    }
     Ok(())
+}
+
+fn conflict_value_uses_repo_schema(value: &Value) -> bool {
+    let Value::Map(entries) = value else {
+        return false;
+    };
+    entries.iter().any(|(key, value)| {
+        matches!(
+            key.as_str(),
+            Some(
+                "schema_version"
+                    | "kind"
+                    | "repo_ref"
+                    | "branch"
+                    | "base_tree"
+                    | "ours_tree"
+                    | "theirs_tree"
+                    | "conflicted_paths"
+                    | "open_conflict_claim_id"
+                    | "resolved_tree"
+                    | "resolved_paths"
+            )
+        ) || value.as_str() == Some("repo_branch")
+    })
 }
 
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {

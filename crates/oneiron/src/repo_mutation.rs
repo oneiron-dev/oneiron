@@ -16,27 +16,57 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-#[cfg(test)]
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED, decode_claim_body, encode_claim_body,
+};
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
-use crate::types::EntityId;
+use crate::types::{ENTITY_TYPE_CLAIM, EdgeKind, EntityId, TimeRange, Vad};
+
+use rmpv::Value;
 
 pub type RepoForkHash = [u8; 32];
 
 pub const REPO_MUTATION_OPLOG_SCHEMA_VERSION: u8 = 1;
-pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 4] = [
+pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 6] = [
     "commit_file",
     "create_worktree",
+    "record_conflict",
     "remove_worktree",
     "recover_snapshot",
+    "resolve_conflict_file",
 ];
 pub const REPO_MUTATION_FORBIDDEN_GIT_COMMANDS: [&str; 3] =
     ["git clean", "git reset --hard", "git checkout -- ."];
+pub const REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION: u8 = 1;
+pub const REPO_CONFLICT_OPEN_VALUE_KEYS: [&str; 8] = [
+    "schema_version",
+    "kind",
+    "repo_ref",
+    "branch",
+    "base_tree",
+    "ours_tree",
+    "theirs_tree",
+    "conflicted_paths",
+];
+pub const REPO_CONFLICT_RESOLUTION_VALUE_KEYS: [&str; 7] = [
+    "schema_version",
+    "kind",
+    "repo_ref",
+    "branch",
+    "open_conflict_claim_id",
+    "resolved_tree",
+    "resolved_paths",
+];
 
 const REPO_MUTATION_SEQ_KEY_PREFIX: &[u8] = b"repo_mutation:seq:v1:";
 const REPO_MUTATION_OPLOG_KEY_PREFIX: &[u8] = b"repo_mutation:oplog:v1:";
 const REPO_MUTATION_SNAPSHOT_KEY_PREFIX: &[u8] = b"repo_mutation:snapshot:v1:";
+const REPO_CONFLICT_KIND_REPO_BRANCH: &str = "repo_branch";
+const MAX_REPO_CONFLICT_PATHS: usize = 1024;
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4096;
 const MAX_BASE_REF_BYTES: usize = 256;
 const MAX_REPO_MUTATION_FAILURE_BYTES: usize = 4096;
@@ -111,11 +141,25 @@ pub enum RepoMutationOperation {
         worktree_path: PathBuf,
         base_ref: String,
     },
+    RecordConflict {
+        branch_subject: EntityId,
+        branch_name: String,
+        ours_ref: String,
+        theirs_ref: String,
+    },
     RemoveWorktree {
         worktree_path: PathBuf,
     },
     RecoverSnapshot {
         fork_hash: RepoForkHash,
+    },
+    ResolveConflictFile {
+        branch_subject: EntityId,
+        open_conflict_claim_id: EntityId,
+        branch_name: String,
+        path: String,
+        content: Vec<u8>,
+        message: String,
     },
 }
 
@@ -125,8 +169,10 @@ impl RepoMutationOperation {
         match self {
             Self::CommitFile { .. } => "commit_file",
             Self::CreateWorktree { .. } => "create_worktree",
+            Self::RecordConflict { .. } => "record_conflict",
             Self::RemoveWorktree { .. } => "remove_worktree",
             Self::RecoverSnapshot { .. } => "recover_snapshot",
+            Self::ResolveConflictFile { .. } => "resolve_conflict_file",
         }
     }
 }
@@ -184,6 +230,51 @@ pub struct RepoMutationOplogEntry {
 #[non_exhaustive]
 pub struct RepoMutationOutcome {
     pub entry: RepoMutationOplogEntry,
+    pub repo_conflict_claim_id: Option<EntityId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepoConflictClaim {
+    pub claim_id: EntityId,
+    pub subject: EntityId,
+    pub repo_ref: RepoRef,
+    pub branch: String,
+    pub base_tree: String,
+    pub ours_tree: String,
+    pub theirs_tree: String,
+    pub conflicted_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepoConflictResolutionClaim {
+    pub claim_id: EntityId,
+    pub subject: EntityId,
+    pub repo_ref: RepoRef,
+    pub branch: String,
+    pub open_conflict_claim_id: EntityId,
+    pub resolved_tree: String,
+    pub resolved_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoConflictOpenValue {
+    repo_ref: RepoRef,
+    branch: String,
+    base_tree: String,
+    ours_tree: String,
+    theirs_tree: String,
+    conflicted_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoConflictResolutionValue {
+    repo_ref: RepoRef,
+    branch: String,
+    open_conflict_claim_id: EntityId,
+    resolved_tree: String,
+    resolved_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -268,14 +359,17 @@ impl Vault {
 
         let prepared = self.prepare_repo_mutation(&repo_ref, &request, &repo_root)?;
         match execute_repo_mutation(self, &repo_ref, &repo_root, &request.operation) {
-            Ok(()) => {
+            Ok(repo_conflict_claim_id) => {
                 let entry = self.finish_repo_mutation(
                     &prepared,
                     RepoMutationStatus::Applied,
                     None,
                     now_millis(),
                 )?;
-                Ok(RepoMutationOutcome { entry })
+                Ok(RepoMutationOutcome {
+                    entry,
+                    repo_conflict_claim_id,
+                })
             }
             Err(error) => {
                 let failure = truncate_failure(&error.to_string());
@@ -332,6 +426,80 @@ impl Vault {
         self.repo_mutation_oplog_for_canonical(&canonical)
     }
 
+    /// Lists active typed repo conflict claims attached to a branch subject.
+    pub fn repo_conflict_claims(
+        &self,
+        branch_subject: &EntityId,
+    ) -> Result<Vec<RepoConflictClaim>> {
+        let mut claims = Vec::new();
+        for claim_id in self.claims_for_subject(branch_subject)? {
+            let Some(body) = self.get_claim(&claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_CONFLICT_OPEN
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.subject != ClaimSubject::Entity(*branch_subject)
+            {
+                continue;
+            }
+            let Ok(value) = decode_repo_conflict_open_value(&body.value) else {
+                continue;
+            };
+            claims.push(RepoConflictClaim {
+                claim_id,
+                subject: *branch_subject,
+                repo_ref: value.repo_ref,
+                branch: value.branch,
+                base_tree: value.base_tree,
+                ours_tree: value.ours_tree,
+                theirs_tree: value.theirs_tree,
+                conflicted_paths: value.conflicted_paths,
+            });
+        }
+        claims.sort_by(|left, right| {
+            left.branch
+                .cmp(&right.branch)
+                .then_with(|| left.claim_id.as_bytes().cmp(right.claim_id.as_bytes()))
+        });
+        Ok(claims)
+    }
+
+    /// Lists typed conflict resolution claims attached to a branch subject.
+    pub fn repo_conflict_resolution_claims(
+        &self,
+        branch_subject: &EntityId,
+    ) -> Result<Vec<RepoConflictResolutionClaim>> {
+        let mut claims = Vec::new();
+        for claim_id in self.claims_for_subject(branch_subject)? {
+            let Some(body) = self.get_claim(&claim_id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_CONFLICT_RESOLVED
+                || body.subject != ClaimSubject::Entity(*branch_subject)
+            {
+                continue;
+            }
+            let Ok(value) = decode_repo_conflict_resolution_value(&body.value) else {
+                continue;
+            };
+            claims.push(RepoConflictResolutionClaim {
+                claim_id,
+                subject: *branch_subject,
+                repo_ref: value.repo_ref,
+                branch: value.branch,
+                open_conflict_claim_id: value.open_conflict_claim_id,
+                resolved_tree: value.resolved_tree,
+                resolved_paths: value.resolved_paths,
+            });
+        }
+        claims.sort_by(|left, right| {
+            left.branch
+                .cmp(&right.branch)
+                .then_with(|| left.claim_id.as_bytes().cmp(right.claim_id.as_bytes()))
+        });
+        Ok(claims)
+    }
+
     fn repo_mutation_oplog_for_canonical(
         &self,
         repo_ref: &RepoRef,
@@ -370,7 +538,7 @@ impl Vault {
             };
             let recovery = self.prepare_repo_mutation(repo_ref, &request, repo_root)?;
             match execute_repo_mutation(self, repo_ref, repo_root, &request.operation) {
-                Ok(()) => {
+                Ok(_) => {
                     let entry = self.finish_repo_mutation(
                         &recovery,
                         RepoMutationStatus::Applied,
@@ -386,7 +554,10 @@ impl Vault {
                         Some("auto-recovered pre-action forkHash after incomplete mutation".into()),
                         now_millis(),
                     )?;
-                    outcomes.push(RepoMutationOutcome { entry });
+                    outcomes.push(RepoMutationOutcome {
+                        entry,
+                        repo_conflict_claim_id: None,
+                    });
                 }
                 Err(error) => {
                     let failure = truncate_failure(&error.to_string());
@@ -471,7 +642,7 @@ fn execute_repo_mutation(
     repo_ref: &RepoRef,
     repo_root: &Path,
     operation: &RepoMutationOperation,
-) -> Result<()> {
+) -> Result<Option<EntityId>> {
     match operation {
         RepoMutationOperation::CommitFile {
             path,
@@ -480,7 +651,8 @@ fn execute_repo_mutation(
         } => {
             validate_relative_repo_path(path)?;
             validate_commit_message(message)?;
-            commit_file_through_queue_worktree(repo_root, path, content, message)
+            commit_file_through_queue_worktree(repo_root, path, content, message)?;
+            Ok(None)
         }
         RepoMutationOperation::CreateWorktree {
             worktree_path,
@@ -499,7 +671,24 @@ fn execute_repo_mutation(
                     base_ref.clone(),
                 ],
             )?;
-            Ok(())
+            Ok(None)
+        }
+        RepoMutationOperation::RecordConflict {
+            branch_subject,
+            branch_name,
+            ours_ref,
+            theirs_ref,
+        } => {
+            let claim_id = record_repo_conflict(
+                vault,
+                repo_ref,
+                repo_root,
+                *branch_subject,
+                branch_name,
+                ours_ref,
+                theirs_ref,
+            )?;
+            Ok(Some(claim_id))
         }
         RepoMutationOperation::RemoveWorktree { worktree_path } => {
             validate_worktree_path(worktree_path)?;
@@ -513,10 +702,32 @@ fn execute_repo_mutation(
                     path_arg(worktree_path)?,
                 ],
             )?;
-            Ok(())
+            Ok(None)
         }
         RepoMutationOperation::RecoverSnapshot { fork_hash } => {
-            restore_repo_snapshot(vault, repo_ref, repo_root, *fork_hash)
+            restore_repo_snapshot(vault, repo_ref, repo_root, *fork_hash)?;
+            Ok(None)
+        }
+        RepoMutationOperation::ResolveConflictFile {
+            branch_subject,
+            open_conflict_claim_id,
+            branch_name,
+            path,
+            content,
+            message,
+        } => {
+            let claim_id = resolve_repo_conflict_file(
+                vault,
+                repo_ref,
+                repo_root,
+                *branch_subject,
+                *open_conflict_claim_id,
+                branch_name,
+                path,
+                content,
+                message,
+            )?;
+            Ok(Some(claim_id))
         }
     }
 }
@@ -534,11 +745,354 @@ fn validate_operation(operation: &RepoMutationOperation) -> Result<()> {
             validate_worktree_path(worktree_path)?;
             validate_base_ref(base_ref)
         }
+        RepoMutationOperation::RecordConflict {
+            branch_name,
+            ours_ref,
+            theirs_ref,
+            ..
+        } => {
+            validate_git_ref_label(branch_name)?;
+            validate_base_ref(ours_ref)?;
+            validate_base_ref(theirs_ref)
+        }
         RepoMutationOperation::RemoveWorktree { worktree_path } => {
             validate_worktree_path(worktree_path)
         }
         RepoMutationOperation::RecoverSnapshot { .. } => Ok(()),
+        RepoMutationOperation::ResolveConflictFile {
+            branch_name,
+            path,
+            message,
+            ..
+        } => {
+            validate_git_ref_label(branch_name)?;
+            validate_relative_repo_path(path)?;
+            validate_commit_message(message)
+        }
     }
+}
+
+fn record_repo_conflict(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    branch_subject: EntityId,
+    branch_name: &str,
+    ours_ref: &str,
+    theirs_ref: &str,
+) -> Result<EntityId> {
+    validate_git_ref_label(branch_name)?;
+    validate_base_ref(ours_ref)?;
+    validate_base_ref(theirs_ref)?;
+
+    let base_commit = merge_base_commit(repo_root, ours_ref, theirs_ref)?;
+    let base_tree = tree_hash_for_ref(repo_root, &base_commit)?;
+    let ours_tree = tree_hash_for_ref(repo_root, ours_ref)?;
+    let theirs_tree = tree_hash_for_ref(repo_root, theirs_ref)?;
+    let conflicted_paths = merge_conflicted_paths(
+        repo_root,
+        &base_commit,
+        ours_ref,
+        theirs_ref,
+        &ours_tree,
+        &theirs_tree,
+    )?;
+    if conflicted_paths.is_empty() {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo conflict record requires at least one conflicted path",
+        ));
+    }
+
+    let claim_id = EntityId::now();
+    put_repo_conflict_open_claim(
+        vault,
+        claim_id,
+        branch_subject,
+        RepoConflictOpenValue {
+            repo_ref: repo_ref.clone(),
+            branch: branch_name.to_owned(),
+            base_tree,
+            ours_tree,
+            theirs_tree,
+            conflicted_paths,
+        },
+    )?;
+    Ok(claim_id)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "operation payload fields stay explicit at the mutation boundary"
+)]
+fn resolve_repo_conflict_file(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    branch_subject: EntityId,
+    open_conflict_claim_id: EntityId,
+    branch_name: &str,
+    path: &str,
+    content: &[u8],
+    message: &str,
+) -> Result<EntityId> {
+    validate_git_ref_label(branch_name)?;
+    validate_relative_repo_path(path)?;
+    validate_commit_message(message)?;
+    let open = require_active_repo_conflict_claim(vault, &open_conflict_claim_id, branch_subject)?;
+    if open.repo_ref != *repo_ref || open.branch != branch_name {
+        return Err(Error::InvalidRepoMutationRecord(
+            "open conflict claim does not match this repo branch",
+        ));
+    }
+    if !open
+        .conflicted_paths
+        .iter()
+        .any(|conflict| conflict == path)
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "resolved path must be one of the recorded conflicted paths",
+        ));
+    }
+    let current_branch = current_branch(repo_root)?;
+    if current_branch != branch_name {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo conflict resolution must run on the recorded branch",
+        ));
+    }
+
+    commit_file_through_queue_worktree(repo_root, path, content, message)?;
+    let resolved_tree = tree_hash_for_ref(repo_root, "HEAD")?;
+    let claim_id = EntityId::now();
+    put_repo_conflict_resolution_claim(
+        vault,
+        claim_id,
+        branch_subject,
+        RepoConflictResolutionValue {
+            repo_ref: repo_ref.clone(),
+            branch: branch_name.to_owned(),
+            open_conflict_claim_id,
+            resolved_tree,
+            resolved_paths: normalize_repo_conflict_paths(vec![path.to_owned()])?,
+        },
+    )?;
+    supersede_repo_conflict_claim(vault, claim_id, open_conflict_claim_id, now_secs())?;
+    Ok(claim_id)
+}
+
+fn require_active_repo_conflict_claim(
+    vault: &Vault,
+    claim_id: &EntityId,
+    branch_subject: EntityId,
+) -> Result<RepoConflictClaim> {
+    let body = vault.get_claim(claim_id)?.ok_or(Error::EntityNotFound)?;
+    if body.predicate != PREDICATE_CONFLICT_OPEN
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.subject != ClaimSubject::Entity(branch_subject)
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "open conflict claim must be active and attached to the branch subject",
+        ));
+    }
+    let value = decode_repo_conflict_open_value(&body.value)?;
+    Ok(RepoConflictClaim {
+        claim_id: *claim_id,
+        subject: branch_subject,
+        repo_ref: value.repo_ref,
+        branch: value.branch,
+        base_tree: value.base_tree,
+        ours_tree: value.ours_tree,
+        theirs_tree: value.theirs_tree,
+        conflicted_paths: value.conflicted_paths,
+    })
+}
+
+fn put_repo_conflict_open_claim(
+    vault: &Vault,
+    claim_id: EntityId,
+    branch_subject: EntityId,
+    value: RepoConflictOpenValue,
+) -> Result<()> {
+    let learned_at = now_secs();
+    let body = ClaimBody::new(
+        PREDICATE_CONFLICT_OPEN,
+        ClaimSubject::Entity(branch_subject),
+        encode_repo_conflict_open_value(&value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
+    put_engine_repo_conflict_claim(vault, claim_id, branch_subject, &body, learned_at)
+}
+
+fn put_repo_conflict_resolution_claim(
+    vault: &Vault,
+    claim_id: EntityId,
+    branch_subject: EntityId,
+    value: RepoConflictResolutionValue,
+) -> Result<()> {
+    let learned_at = now_secs();
+    let body = ClaimBody::new(
+        PREDICATE_CONFLICT_RESOLVED,
+        ClaimSubject::Entity(branch_subject),
+        encode_repo_conflict_resolution_value(&value),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
+    put_engine_repo_conflict_claim(vault, claim_id, branch_subject, &body, learned_at)
+}
+
+fn put_engine_repo_conflict_claim(
+    vault: &Vault,
+    claim_id: EntityId,
+    branch_subject: EntityId,
+    body: &ClaimBody,
+    learned_at: u64,
+) -> Result<()> {
+    let data = encode_claim_body(body)?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    if vault
+        .store
+        .entities
+        .get(&wtxn, branch_subject.as_bytes())?
+        .is_none()
+    {
+        return Err(Error::EntityNotFound);
+    }
+    let claim_of_weight = EdgeKind::ClaimOf
+        .default_weight()
+        .ok_or(Error::InvariantViolation(
+            "ClaimOf edge missing default weight",
+        ))?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        vec![
+            BatchOp::Put {
+                id: claim_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+            },
+            BatchOp::Edge {
+                src: claim_id,
+                kind: EdgeKind::ClaimOf,
+                tgt: branch_subject,
+                weight: claim_of_weight,
+                vad: Vad::NEUTRAL,
+            },
+        ],
+        vault.text_index_trusted.load(Ordering::Acquire),
+        false,
+        true,
+    )?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+fn supersede_repo_conflict_claim(
+    vault: &Vault,
+    new_id: EntityId,
+    old_id: EntityId,
+    now: u64,
+) -> Result<()> {
+    if new_id == old_id {
+        return Err(Error::ClaimSelfSupersession);
+    }
+    let mut wtxn = vault.store.env.write_txn()?;
+    let new_raw = vault
+        .store
+        .entities
+        .get(&wtxn, new_id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let new_header =
+        EntityMetadataHeader::parse(new_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if new_header.entity_type != ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+    }
+    let new_body = decode_claim_body(&new_raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if new_body.predicate != PREDICATE_CONFLICT_RESOLVED
+        || new_body.lifecycle != ClaimLifecycleStatus::Active
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "new repo conflict claim must be an active resolution claim",
+        ));
+    }
+
+    let old_raw = vault
+        .store
+        .entities
+        .get(&wtxn, old_id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let old_header =
+        EntityMetadataHeader::parse(old_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if old_header.entity_type != ENTITY_TYPE_CLAIM {
+        return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+    }
+    let mut old_body = decode_claim_body(&old_raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if old_body.predicate != PREDICATE_CONFLICT_OPEN {
+        return Err(Error::InvalidRepoMutationRecord(
+            "old repo conflict claim must be an open conflict claim",
+        ));
+    }
+    if old_body.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(Error::ClaimAlreadyClosed {
+            status: old_body.lifecycle,
+        });
+    }
+    old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+    old_body.valid_to = Some(now);
+    let data = encode_claim_body(&old_body)?;
+    let supersedes_weight =
+        EdgeKind::Supersedes
+            .default_weight()
+            .ok_or(Error::InvariantViolation(
+                "Supersedes edge missing default weight",
+            ))?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        vec![
+            BatchOp::Put {
+                id: old_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: old_header.occurred_start,
+                    end: now,
+                },
+                learned_at: old_header.learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: true,
+            },
+            BatchOp::EdgeWithCreatedAt {
+                src: new_id,
+                kind: EdgeKind::Supersedes,
+                tgt: old_id,
+                weight: supersedes_weight,
+                created_at: now,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        ],
+        vault.text_index_trusted.load(Ordering::Acquire),
+        false,
+        true,
+    )?;
+    wtxn.commit()?;
+    Ok(())
 }
 
 fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, Vec<u8>)> {
@@ -806,6 +1360,406 @@ fn commit_file_through_queue_worktree(
         (Ok(()), Err(error)) => Err(error),
         (Ok(()), Ok(())) => Ok(()),
     }
+}
+
+fn merge_base_commit(repo_root: &Path, ours_ref: &str, theirs_ref: &str) -> Result<String> {
+    let base = utf8_trimmed(
+        run_git(
+            repo_root,
+            &[
+                "merge-base".to_owned(),
+                ours_ref.to_owned(),
+                theirs_ref.to_owned(),
+            ],
+        )?,
+        "git merge-base must be UTF-8",
+    )?;
+    validate_git_object_hash(&base, "merge-base must be a 40-hex commit")?;
+    Ok(base)
+}
+
+fn tree_hash_for_ref(repo_root: &Path, git_ref: &str) -> Result<String> {
+    let tree_ref = format!("{git_ref}^{{tree}}");
+    let tree = utf8_trimmed(
+        run_git(
+            repo_root,
+            &["rev-parse".to_owned(), "--verify".to_owned(), tree_ref],
+        )?,
+        "git tree hash must be UTF-8",
+    )?;
+    validate_git_object_hash(&tree, "tree hash must be a 40-hex object id")?;
+    Ok(tree)
+}
+
+fn current_branch(repo_root: &Path) -> Result<String> {
+    let branch = utf8_trimmed(
+        run_git(
+            repo_root,
+            &["branch".to_owned(), "--show-current".to_owned()],
+        )?,
+        "git branch name must be UTF-8",
+    )?;
+    validate_git_ref_label(&branch)?;
+    Ok(branch)
+}
+
+fn merge_conflicted_paths(
+    repo_root: &Path,
+    base_commit: &str,
+    ours_ref: &str,
+    theirs_ref: &str,
+    ours_tree: &str,
+    theirs_tree: &str,
+) -> Result<Vec<String>> {
+    let output = run_git_allow_exit_codes(
+        repo_root,
+        &[
+            "merge-tree".to_owned(),
+            "--write-tree".to_owned(),
+            "--name-only".to_owned(),
+            "--no-messages".to_owned(),
+            "-z".to_owned(),
+            "--merge-base".to_owned(),
+            base_commit.to_owned(),
+            ours_ref.to_owned(),
+            theirs_ref.to_owned(),
+        ],
+        &[0, 1],
+    )?;
+
+    let mut paths = Vec::new();
+    for token in output.split(|byte| *byte == 0) {
+        if token.is_empty() {
+            continue;
+        }
+        let Ok(path) = std::str::from_utf8(token) else {
+            continue;
+        };
+        if validate_relative_repo_path(path).is_err() {
+            continue;
+        }
+        if path_exists_in_tree(repo_root, ours_tree, path)?
+            || path_exists_in_tree(repo_root, theirs_tree, path)?
+        {
+            paths.push(path.to_owned());
+        }
+    }
+    normalize_repo_conflict_paths(paths)
+}
+
+fn path_exists_in_tree(repo_root: &Path, tree_hash: &str, path: &str) -> Result<bool> {
+    validate_git_object_hash(tree_hash, "tree hash must be a 40-hex object id")?;
+    validate_relative_repo_path(path)?;
+    let spec = format!("{tree_hash}:{path}");
+    git_status_success(repo_root, &["cat-file".to_owned(), "-e".to_owned(), spec])
+}
+
+fn normalize_repo_conflict_paths(paths: Vec<String>) -> Result<Vec<String>> {
+    let mut normalized = BTreeSet::new();
+    for path in paths {
+        validate_relative_repo_path(&path)?;
+        normalized.insert(path);
+        if normalized.len() > MAX_REPO_CONFLICT_PATHS {
+            return Err(Error::InvalidRepoMutationRecord(
+                "repo conflict path list exceeds max count",
+            ));
+        }
+    }
+    Ok(normalized.into_iter().collect())
+}
+
+fn encode_repo_conflict_open_value(value: &RepoConflictOpenValue) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[0]),
+            Value::from(u64::from(REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION)),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[1]),
+            Value::from(REPO_CONFLICT_KIND_REPO_BRANCH),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[2]),
+            Value::from(value.repo_ref.canonical()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[3]),
+            Value::from(value.branch.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[4]),
+            Value::from(value.base_tree.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[5]),
+            Value::from(value.ours_tree.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[6]),
+            Value::from(value.theirs_tree.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[7]),
+            Value::Array(
+                value
+                    .conflicted_paths
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn encode_repo_conflict_resolution_value(value: &RepoConflictResolutionValue) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[0]),
+            Value::from(u64::from(REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION)),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[1]),
+            Value::from(REPO_CONFLICT_KIND_REPO_BRANCH),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[2]),
+            Value::from(value.repo_ref.canonical()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[3]),
+            Value::from(value.branch.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[4]),
+            Value::Binary(value.open_conflict_claim_id.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[5]),
+            Value::from(value.resolved_tree.clone()),
+        ),
+        (
+            Value::from(REPO_CONFLICT_RESOLUTION_VALUE_KEYS[6]),
+            Value::Array(
+                value
+                    .resolved_paths
+                    .iter()
+                    .cloned()
+                    .map(Value::from)
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+pub(crate) fn validate_repo_conflict_claim_value(predicate: &str, value: &Value) -> Result<()> {
+    match predicate {
+        PREDICATE_CONFLICT_OPEN => decode_repo_conflict_open_value(value).map(|_| ()),
+        PREDICATE_CONFLICT_RESOLVED => decode_repo_conflict_resolution_value(value).map(|_| ()),
+        _ => Ok(()),
+    }
+}
+
+fn decode_repo_conflict_open_value(value: &Value) -> Result<RepoConflictOpenValue> {
+    let map = collect_value_map(value, &REPO_CONFLICT_OPEN_VALUE_KEYS)?;
+    validate_schema_version(&map)?;
+    validate_kind(&map)?;
+    let repo_ref = RepoRef::parse(string_field(
+        &map,
+        REPO_CONFLICT_OPEN_VALUE_KEYS[2],
+        "repo conflict repo_ref must be a string",
+    )?)?;
+    let branch = string_field_owned(
+        &map,
+        REPO_CONFLICT_OPEN_VALUE_KEYS[3],
+        "repo conflict branch must be a string",
+    )?;
+    validate_git_ref_label(&branch)?;
+    let base_tree = hash_field(&map, REPO_CONFLICT_OPEN_VALUE_KEYS[4])?;
+    let ours_tree = hash_field(&map, REPO_CONFLICT_OPEN_VALUE_KEYS[5])?;
+    let theirs_tree = hash_field(&map, REPO_CONFLICT_OPEN_VALUE_KEYS[6])?;
+    let conflicted_paths = string_array_field(&map, REPO_CONFLICT_OPEN_VALUE_KEYS[7])?;
+    if conflicted_paths.is_empty() {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict claim requires at least one conflicted path",
+        ));
+    }
+    Ok(RepoConflictOpenValue {
+        repo_ref,
+        branch,
+        base_tree,
+        ours_tree,
+        theirs_tree,
+        conflicted_paths,
+    })
+}
+
+fn decode_repo_conflict_resolution_value(value: &Value) -> Result<RepoConflictResolutionValue> {
+    let map = collect_value_map(value, &REPO_CONFLICT_RESOLUTION_VALUE_KEYS)?;
+    validate_schema_version(&map)?;
+    validate_kind(&map)?;
+    let repo_ref = RepoRef::parse(string_field(
+        &map,
+        REPO_CONFLICT_RESOLUTION_VALUE_KEYS[2],
+        "repo conflict resolution repo_ref must be a string",
+    )?)?;
+    let branch = string_field_owned(
+        &map,
+        REPO_CONFLICT_RESOLUTION_VALUE_KEYS[3],
+        "repo conflict resolution branch must be a string",
+    )?;
+    validate_git_ref_label(&branch)?;
+    let open_conflict_claim_id = entity_id_field(&map, REPO_CONFLICT_RESOLUTION_VALUE_KEYS[4])?;
+    let resolved_tree = hash_field(&map, REPO_CONFLICT_RESOLUTION_VALUE_KEYS[5])?;
+    let resolved_paths = string_array_field(&map, REPO_CONFLICT_RESOLUTION_VALUE_KEYS[6])?;
+    if resolved_paths.is_empty() {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict resolution requires at least one resolved path",
+        ));
+    }
+    Ok(RepoConflictResolutionValue {
+        repo_ref,
+        branch,
+        open_conflict_claim_id,
+        resolved_tree,
+        resolved_paths,
+    })
+}
+
+fn collect_value_map<'a>(
+    value: &'a Value,
+    expected_keys: &[&str],
+) -> Result<HashMap<&'a str, &'a Value>> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict claim value must be a map",
+        ));
+    };
+    if entries.len() != expected_keys.len() {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict claim value keys must match the pinned schema",
+        ));
+    }
+
+    let mut map = HashMap::with_capacity(entries.len());
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidClaimBody(
+                "repo conflict claim value keys must be strings",
+            ));
+        };
+        if !expected_keys.contains(&key) {
+            return Err(Error::InvalidClaimBody(
+                "repo conflict claim value contains an unknown key",
+            ));
+        }
+        if map.insert(key, value).is_some() {
+            return Err(Error::InvalidClaimBody(
+                "repo conflict claim value contains a duplicate key",
+            ));
+        }
+    }
+    for expected in expected_keys {
+        if !map.contains_key(expected) {
+            return Err(Error::InvalidClaimBody(
+                "repo conflict claim value is missing a required key",
+            ));
+        }
+    }
+    Ok(map)
+}
+
+fn validate_schema_version(map: &HashMap<&str, &Value>) -> Result<()> {
+    let raw = map
+        .get("schema_version")
+        .and_then(|value| value.as_u64())
+        .ok_or(Error::InvalidClaimBody(
+            "repo conflict schema_version must be an integer",
+        ))?;
+    if raw == u64::from(REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION) {
+        Ok(())
+    } else {
+        Err(Error::InvalidClaimBody(
+            "unsupported repo conflict claim schema_version",
+        ))
+    }
+}
+
+fn validate_kind(map: &HashMap<&str, &Value>) -> Result<()> {
+    let kind = string_field(map, "kind", "repo conflict kind must be repo_branch")?;
+    if kind == REPO_CONFLICT_KIND_REPO_BRANCH {
+        Ok(())
+    } else {
+        Err(Error::InvalidClaimBody(
+            "repo conflict kind must be repo_branch",
+        ))
+    }
+}
+
+fn string_field<'a>(
+    map: &'a HashMap<&str, &Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<&'a str> {
+    map.get(key)
+        .and_then(|value| value.as_str())
+        .ok_or(Error::InvalidClaimBody(context))
+}
+
+fn string_field_owned(
+    map: &HashMap<&str, &Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<String> {
+    Ok(string_field(map, key, context)?.to_owned())
+}
+
+fn hash_field(map: &HashMap<&str, &Value>, key: &str) -> Result<String> {
+    let hash = string_field(map, key, "repo conflict tree hash must be a string")?.to_owned();
+    validate_git_object_hash(&hash, "repo conflict tree hash must be a 40-hex object id")?;
+    Ok(hash)
+}
+
+fn entity_id_field(map: &HashMap<&str, &Value>, key: &str) -> Result<EntityId> {
+    let Value::Binary(bytes) = map
+        .get(key)
+        .ok_or(Error::InvalidClaimBody("repo conflict entity id missing"))?
+    else {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict entity id must be binary",
+        ));
+    };
+    let raw: [u8; 16] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| Error::InvalidClaimBody("repo conflict entity id must be 16 bytes"))?;
+    EntityId::from_bytes(raw).map_err(|_| Error::InvalidClaimBody("invalid entity id"))
+}
+
+fn string_array_field(map: &HashMap<&str, &Value>, key: &str) -> Result<Vec<String>> {
+    let Value::Array(values) = map
+        .get(key)
+        .ok_or(Error::InvalidClaimBody("repo conflict path array missing"))?
+    else {
+        return Err(Error::InvalidClaimBody(
+            "repo conflict paths must be an array",
+        ));
+    };
+    let mut paths = Vec::with_capacity(values.len());
+    for value in values {
+        let Some(path) = value.as_str() else {
+            return Err(Error::InvalidClaimBody(
+                "repo conflict paths must be strings",
+            ));
+        };
+        paths.push(path.to_owned());
+    }
+    normalize_repo_conflict_paths(paths).map_err(|error| match error {
+        Error::InvalidRepoMutationRecord(_) => {
+            Error::InvalidClaimBody("repo conflict path is invalid")
+        }
+        other => other,
+    })
 }
 
 fn create_queue_worktree(repo_root: &Path) -> Result<PathBuf> {
@@ -1261,6 +2215,39 @@ fn validate_base_ref(base_ref: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_git_ref_label(label: &str) -> Result<()> {
+    validate_base_ref(label)?;
+    if label.starts_with('/')
+        || label.ends_with('/')
+        || label.contains("//")
+        || label.contains("..")
+        || label.contains("@{")
+        || label.ends_with(".lock")
+        || label.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "git ref label must be a safe branch/ref label",
+        ));
+    }
+    for part in label.split('/') {
+        if part.is_empty() || part == "." || part.ends_with(".lock") {
+            return Err(Error::InvalidRepoMutationRecord(
+                "git ref label must be a safe branch/ref label",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_git_object_hash(hash: &str, context: &'static str) -> Result<()> {
+    if hash.len() != CODEBASE_COMMIT_HASH_HEX_LEN
+        || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(Error::InvalidRepoMutationRecord(context));
+    }
+    Ok(())
+}
+
 fn validate_worktree_path(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty() {
         return Err(Error::InvalidRepoMutationRecord(
@@ -1278,7 +2265,14 @@ fn operation_subject(operation: &RepoMutationOperation) -> String {
         | RepoMutationOperation::RemoveWorktree { worktree_path } => {
             worktree_path.to_string_lossy().into_owned()
         }
+        RepoMutationOperation::RecordConflict {
+            branch_name,
+            ours_ref,
+            theirs_ref,
+            ..
+        } => format!("{branch_name}:{ours_ref}..{theirs_ref}"),
         RepoMutationOperation::RecoverSnapshot { fork_hash } => hex_bytes(fork_hash),
+        RepoMutationOperation::ResolveConflictFile { path, .. } => path.clone(),
     }
 }
 
@@ -1307,6 +2301,40 @@ fn repo_relative_path(repo_root: &Path, path: &Path) -> Result<String> {
 
 fn run_git(repo_root: &Path, args: &[String]) -> Result<Vec<u8>> {
     run_git_at_path(repo_root, args)
+}
+
+fn git_status_success(path: &Path, args: &[String]) -> Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()?;
+    Ok(output.status.success())
+}
+
+fn run_git_allow_exit_codes(
+    path: &Path,
+    args: &[String],
+    allowed_codes: &[i32],
+) -> Result<Vec<u8>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()?;
+    if output
+        .status
+        .code()
+        .is_some_and(|code| allowed_codes.contains(&code))
+    {
+        return Ok(output.stdout);
+    }
+    if output.status.success() && allowed_codes.contains(&0) {
+        return Ok(output.stdout);
+    }
+    Err(Error::InvalidRepoMutationRecord(
+        "git command failed with an unexpected exit code",
+    ))
 }
 
 fn run_git_at_path(path: &Path, args: &[String]) -> Result<Vec<u8>> {
@@ -1435,6 +2463,12 @@ fn now_millis() -> u64 {
         })
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
 fn is_executable(metadata: &fs::Metadata) -> bool {
     #[cfg(unix)]
     {
@@ -1485,6 +2519,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::types::ENTITY_TYPE_TASK;
     use crate::{ErrorKind, VaultConfig};
 
     fn open_test_vault() -> (TempDir, Vault) {
@@ -1523,6 +2558,109 @@ mod tests {
             path: repo.path().to_string_lossy().into_owned(),
             commit: current_head_commit(repo.path()).expect("repo head commit"),
         }
+    }
+
+    fn commit_file_at(repo: &TempDir, branch: &str, path: &str, content: &str, message: &str) {
+        run_git_at_path(repo.path(), &["checkout".to_owned(), branch.to_owned()])
+            .expect("checkout branch");
+        fs::write(repo.path().join(path), content).expect("write branch file");
+        run_git_at_path(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), path.to_owned()],
+        )
+        .expect("git add branch file");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                message.to_owned(),
+            ],
+        )
+        .expect("git commit branch file");
+    }
+
+    fn create_conflicting_branches(repo: &TempDir) {
+        let base = current_head_commit(repo.path()).expect("base commit");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "checkout".to_owned(),
+                "-B".to_owned(),
+                "left".to_owned(),
+                base.clone(),
+            ],
+        )
+        .expect("checkout left from base");
+        fs::write(repo.path().join("README.md"), "left branch\n").expect("write left");
+        run_git_at_path(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), "README.md".to_owned()],
+        )
+        .expect("add left");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                "left edit".to_owned(),
+            ],
+        )
+        .expect("commit left");
+
+        run_git_at_path(
+            repo.path(),
+            &[
+                "checkout".to_owned(),
+                "-B".to_owned(),
+                "right".to_owned(),
+                base,
+            ],
+        )
+        .expect("checkout right from base");
+        fs::write(repo.path().join("README.md"), "right branch\n").expect("write right");
+        run_git_at_path(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), "README.md".to_owned()],
+        )
+        .expect("add right");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                "right edit".to_owned(),
+            ],
+        )
+        .expect("commit right");
+        run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+            .expect("return left");
+    }
+
+    fn put_branch_subject(vault: &Vault) -> EntityId {
+        let branch_subject = EntityId::now();
+        vault
+            .put_entity(
+                &branch_subject,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"repo branch",
+            )
+            .expect("branch subject");
+        branch_subject
     }
 
     #[test]
@@ -1855,14 +2993,202 @@ mod tests {
     }
 
     #[test]
+    fn repo_conflict_record_keeps_branches_mountable_and_queryable() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        create_conflicting_branches(&repo);
+        let branch_subject = put_branch_subject(&vault);
+
+        let outcome = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::RecordConflict {
+                    branch_subject,
+                    branch_name: "left".to_owned(),
+                    ours_ref: "left".to_owned(),
+                    theirs_ref: "right".to_owned(),
+                },
+            ))
+            .expect("record conflict");
+        assert_eq!(outcome.entry.status, RepoMutationStatus::Applied);
+        let claim_id = outcome
+            .repo_conflict_claim_id
+            .expect("record conflict claim id");
+
+        let conflicts = vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("conflict claims");
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].claim_id, claim_id);
+        assert_eq!(conflicts[0].branch, "left");
+        assert_eq!(conflicts[0].conflicted_paths, vec!["README.md"]);
+        assert_eq!(conflicts[0].base_tree.len(), CODEBASE_COMMIT_HASH_HEX_LEN);
+        assert_eq!(conflicts[0].ours_tree.len(), CODEBASE_COMMIT_HASH_HEX_LEN);
+        assert_eq!(conflicts[0].theirs_tree.len(), CODEBASE_COMMIT_HASH_HEX_LEN);
+
+        let worktree_parent = tempfile::tempdir().expect("worktree parent");
+        let left_mount = worktree_parent.path().join("left");
+        let right_mount = worktree_parent.path().join("right");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "worktree".to_owned(),
+                "add".to_owned(),
+                "--detach".to_owned(),
+                "--".to_owned(),
+                left_mount.to_string_lossy().into_owned(),
+                "left".to_owned(),
+            ],
+        )
+        .expect("mount left");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "worktree".to_owned(),
+                "add".to_owned(),
+                "--detach".to_owned(),
+                "--".to_owned(),
+                right_mount.to_string_lossy().into_owned(),
+                "right".to_owned(),
+            ],
+        )
+        .expect("mount right");
+        assert_eq!(
+            fs::read_to_string(left_mount.join("README.md")).expect("left readme"),
+            "left branch\n"
+        );
+        assert_eq!(
+            fs::read_to_string(right_mount.join("README.md")).expect("right readme"),
+            "right branch\n"
+        );
+
+        commit_file_at(
+            &repo,
+            "left",
+            "left.txt",
+            "left descendant\n",
+            "left descendant",
+        );
+        commit_file_at(
+            &repo,
+            "right",
+            "right.txt",
+            "right descendant\n",
+            "right descendant",
+        );
+        let left_log = run_git_at_path(
+            repo.path(),
+            &[
+                "log".to_owned(),
+                "--format=%s".to_owned(),
+                "left".to_owned(),
+            ],
+        )
+        .expect("left log");
+        let right_log = run_git_at_path(
+            repo.path(),
+            &[
+                "log".to_owned(),
+                "--format=%s".to_owned(),
+                "right".to_owned(),
+            ],
+        )
+        .expect("right log");
+        assert!(
+            String::from_utf8(left_log)
+                .expect("utf8 left log")
+                .contains("left descendant")
+        );
+        assert!(
+            String::from_utf8(right_log)
+                .expect("utf8 right log")
+                .contains("right descendant")
+        );
+    }
+
+    #[test]
+    fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        create_conflicting_branches(&repo);
+        let branch_subject = put_branch_subject(&vault);
+        let open = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::RecordConflict {
+                    branch_subject,
+                    branch_name: "left".to_owned(),
+                    ours_ref: "left".to_owned(),
+                    theirs_ref: "right".to_owned(),
+                },
+            ))
+            .expect("record conflict")
+            .repo_conflict_claim_id
+            .expect("open claim id");
+
+        run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+            .expect("checkout left");
+        let resolved = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::ResolveConflictFile {
+                    branch_subject,
+                    open_conflict_claim_id: open,
+                    branch_name: "left".to_owned(),
+                    path: "README.md".to_owned(),
+                    content: b"resolved branch\n".to_vec(),
+                    message: "resolve readme conflict".to_owned(),
+                },
+            ))
+            .expect("resolve conflict")
+            .repo_conflict_claim_id
+            .expect("resolution claim id");
+
+        let status = run_git_at_path(
+            repo.path(),
+            &["status".to_owned(), "--porcelain".to_owned()],
+        )
+        .expect("git status");
+        assert_eq!(String::from_utf8(status).expect("utf8 status"), "");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("README.md")).expect("resolved file"),
+            "resolved branch\n"
+        );
+        assert!(
+            vault
+                .repo_conflict_claims(&branch_subject)
+                .expect("active open conflicts")
+                .is_empty()
+        );
+        let open_body = vault
+            .get_claim(&open)
+            .expect("get open claim")
+            .expect("open claim exists");
+        assert_eq!(open_body.lifecycle, ClaimLifecycleStatus::Superseded);
+        let resolutions = vault
+            .repo_conflict_resolution_claims(&branch_subject)
+            .expect("resolution claims");
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].claim_id, resolved);
+        assert_eq!(resolutions[0].open_conflict_claim_id, open);
+        assert_eq!(resolutions[0].resolved_paths, vec!["README.md"]);
+        assert_eq!(
+            resolutions[0].resolved_tree,
+            tree_hash_for_ref(repo.path(), "HEAD").expect("resolved tree")
+        );
+    }
+
+    #[test]
     fn repo_mutation_api_has_no_forbidden_raw_git_operations() {
         assert_eq!(
             REPO_MUTATION_ALLOWED_OPERATION_KINDS,
             [
                 "commit_file",
                 "create_worktree",
+                "record_conflict",
                 "remove_worktree",
-                "recover_snapshot"
+                "recover_snapshot",
+                "resolve_conflict_file"
             ]
         );
         for forbidden in REPO_MUTATION_FORBIDDEN_GIT_COMMANDS {
