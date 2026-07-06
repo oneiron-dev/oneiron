@@ -1172,6 +1172,7 @@ fn consent_receipt(
         actor: Some(request.actor.actor_ref().to_owned()),
         on_behalf_of: Some(principal_ref.to_owned()),
         outcome: decision.outcome().to_owned(),
+        job_ref: None,
         trigger_ref: Some(format!("of336:{component_id}")),
         policy_trace: reason
             .map(|reason| vec![reason.to_owned()])
@@ -1270,6 +1271,7 @@ mod tests {
             actor: Some("owner".to_owned()),
             on_behalf_of: Some("owner".to_owned()),
             outcome: "held".to_owned(),
+            job_ref: None,
             trigger_ref: Some("brief:party".to_owned()),
             policy_trace: vec!["quiet_hours".to_owned()],
             fields: BTreeMap::new(),
