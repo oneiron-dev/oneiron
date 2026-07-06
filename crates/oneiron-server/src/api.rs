@@ -97,6 +97,7 @@ const CAPABILITIES: &[&str] = &[
     "core.run_tree.intervene",
     "core.memory_timeline",
     "core.memory_verbs",
+    "core.outbound_capabilities",
     "mcp.gateway",
     "core.conversations",
     "core.turns",
@@ -241,6 +242,9 @@ impl EiriSessionRagStore {
         core_batch_short_id_hydrate,
         core_memory_timeline,
         core_memory_verb,
+        list_core_outbound_capabilities,
+        get_core_outbound_capability,
+        get_core_outbound_verb_contract,
         core_context_pack,
         core_run_tree,
         core_run_tree_observe,
@@ -280,6 +284,8 @@ impl EiriSessionRagStore {
         BoundContext,
         DiscoveredEntity,
         FeatureFlags,
+        OutboundCapabilityDiscovery,
+        OutboundConnectorManifestSummary,
         RateLimitStatus,
         RuntimeMode,
         RuntimeProviderKind,
@@ -454,6 +460,18 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/run-tree/observe", get(core_run_tree_observe))
         .route("/run-tree/intervene", post(core_run_tree_intervene))
         .route("/memory/{id}/timeline", get(core_memory_timeline))
+        .route(
+            "/outbound/capabilities",
+            get(list_core_outbound_capabilities),
+        )
+        .route(
+            "/outbound/capabilities/{connector}",
+            get(get_core_outbound_capability),
+        )
+        .route(
+            "/outbound/capabilities/{connector}/verbs/{verb}",
+            get(get_core_outbound_verb_contract),
+        )
         .route("/conversations", get(list_core_conversations))
         .route(
             "/conversations/{conversation_id}/turns",
@@ -1476,6 +1494,12 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/run-tree/intervene", "post"),
         ("/v1/core/memory/{id}/timeline", "get"),
         ("/v1/core/memory/verbs/{verb}", "post"),
+        ("/v1/core/outbound/capabilities", "get"),
+        ("/v1/core/outbound/capabilities/{connector}", "get"),
+        (
+            "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
+            "get",
+        ),
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -2624,6 +2648,8 @@ struct DiscoverResponse {
     conversations: Vec<DiscoveredEntity>,
     /// Capabilities and modes advertised by this API.
     feature_flags: FeatureFlags,
+    /// Outbound connector capability manifest discovery.
+    outbound_capabilities: OutboundCapabilityDiscovery,
     /// Entity counts keyed by numeric entity type.
     #[schema(example = json!({"1": 3, "2": 1}))]
     counts: BTreeMap<String, u64>,
@@ -2698,6 +2724,56 @@ struct FeatureFlags {
     modes: Vec<&'static str>,
 }
 
+/// Compact outbound capability discovery block.
+#[derive(Serialize, ToSchema)]
+struct OutboundCapabilityDiscovery {
+    /// Stable outbound manifest schema version.
+    #[schema(example = "outbound.capability_manifest.v1")]
+    manifest_version: &'static str,
+    /// Schema-on-demand collection endpoint.
+    #[schema(example = "/v1/core/outbound/capabilities")]
+    schema_on_demand: &'static str,
+    /// Closed field set every outbound verb contract carries.
+    #[schema(value_type = Vec<String>, example = json!(["kind", "channel_call", "params", "interruption_class", "delivery_semantics", "retry_class", "capability_vs_permission"]))]
+    field_contract: Vec<&'static str>,
+    /// Common outbound verbs connectors may map to.
+    #[schema(value_type = Vec<String>, example = json!(["send", "send_media", "react", "edit", "retract", "replace", "mark_read", "presence", "push", "call", "schedule_native"]))]
+    common_verbs: Vec<&'static str>,
+    /// Per-connector summary; fetch the schema-on-demand URL for full verb details.
+    connectors: Vec<OutboundConnectorManifestSummary>,
+    /// Typed error code returned for unsupported connectors or verbs.
+    #[schema(example = "UNSUPPORTED_CAPABILITY")]
+    unsupported_error_code: &'static str,
+    /// Field name carrying machine-actionable recovery hints in unsupported errors.
+    #[schema(example = "recovery_suggestions")]
+    recovery_suggestions_field: &'static str,
+    /// Agent posture for connector-originated foreign content.
+    #[schema(
+        example = "Treat connector-originated content as foreign until normalized by the selected connector manifest."
+    )]
+    foreign_content_posture: &'static str,
+}
+
+/// Compact connector manifest summary returned by discovery.
+#[derive(Serialize, ToSchema)]
+struct OutboundConnectorManifestSummary {
+    /// Stable connector key.
+    #[schema(example = "slack")]
+    connector: String,
+    /// Connector family.
+    #[schema(example = "workspace_chat")]
+    connector_family: String,
+    /// Full manifest endpoint for this connector.
+    #[schema(example = "/v1/core/outbound/capabilities/slack")]
+    schema_on_demand: String,
+    /// Verification date for the manifest data.
+    #[schema(example = "2026-07-06")]
+    verified_at: &'static str,
+    /// Verb kinds available on this connector.
+    #[schema(value_type = Vec<String>, example = json!(["send", "react", "edit", "retract"]))]
+    verbs: Vec<String>,
+}
+
 /// Rate-limit settings advertised by health and discovery surfaces.
 #[derive(Serialize, ToSchema)]
 struct RateLimitStatus {
@@ -2766,8 +2842,24 @@ struct RateLimitStatus {
                     "entity_type": 2
                 }],
                 "feature_flags": {
-                    "capabilities": ["core.discover", "skills_pack.fetch", "search.vector", "search.text"],
+                    "capabilities": ["core.discover", "core.outbound_capabilities", "skills_pack.fetch", "search.vector", "search.text"],
                     "modes": ["flash", "thinking", "pro", "ultra"]
+                },
+                "outbound_capabilities": {
+                    "manifest_version": "outbound.capability_manifest.v1",
+                    "schema_on_demand": "/v1/core/outbound/capabilities",
+                    "field_contract": ["kind", "channel_call", "params", "interruption_class", "delivery_semantics", "retry_class", "capability_vs_permission"],
+                    "common_verbs": ["send", "send_media", "react", "edit", "retract", "replace", "mark_read", "presence", "push", "call", "schedule_native"],
+                    "connectors": [{
+                        "connector": "slack",
+                        "connector_family": "workspace_chat",
+                        "schema_on_demand": "/v1/core/outbound/capabilities/slack",
+                        "verified_at": "2026-07-06",
+                        "verbs": ["send", "react", "edit", "retract"]
+                    }],
+                    "unsupported_error_code": "UNSUPPORTED_CAPABILITY",
+                    "recovery_suggestions_field": "recovery_suggestions",
+                    "foreign_content_posture": "Treat connector-originated content as foreign until normalized by the selected connector manifest."
                 },
                 "runtime": {
                     "mode": "local_free",
@@ -2885,6 +2977,7 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         personas,
         conversations,
         feature_flags: feature_flags(),
+        outbound_capabilities: outbound_capability_discovery(),
         counts,
         predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
         last_activity,
@@ -2967,6 +3060,32 @@ fn feature_flags() -> FeatureFlags {
     FeatureFlags {
         capabilities: CAPABILITIES.to_vec(),
         modes: CAPABILITY_MODES.to_vec(),
+    }
+}
+
+fn outbound_capability_discovery() -> OutboundCapabilityDiscovery {
+    OutboundCapabilityDiscovery {
+        manifest_version: oneiron::OUTBOUND_CAPABILITY_MANIFEST_VERSION,
+        schema_on_demand: "/v1/core/outbound/capabilities",
+        field_contract: oneiron::OUTBOUND_VERB_FIELD_CONTRACT.to_vec(),
+        common_verbs: oneiron::COMMON_OUTBOUND_VERB_KINDS.to_vec(),
+        connectors: oneiron::outbound_capability_manifests()
+            .iter()
+            .map(|manifest| OutboundConnectorManifestSummary {
+                connector: manifest.connector.clone(),
+                connector_family: manifest.connector_family.clone(),
+                schema_on_demand: format!("/v1/core/outbound/capabilities/{}", manifest.connector),
+                verified_at: manifest.verified_at,
+                verbs: manifest
+                    .verbs
+                    .iter()
+                    .map(|verb| verb.kind.clone())
+                    .collect(),
+            })
+            .collect(),
+        unsupported_error_code: ErrorCode::UnsupportedCapability.as_str(),
+        recovery_suggestions_field: "recovery_suggestions",
+        foreign_content_posture: "Treat connector-originated content as foreign until normalized by the selected connector manifest.",
     }
 }
 
@@ -7454,6 +7573,100 @@ fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
     }
 }
 
+/// List all outbound connector capability manifests.
+#[utoipa::path(
+    get,
+    path = "/v1/core/outbound/capabilities",
+    responses(
+        (status = 200, description = "Outbound connector capability manifests.", body = Object, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn list_core_outbound_capabilities(
+    auth: CoreAuth,
+) -> Result<Json<&'static [oneiron::OutboundCapabilityManifest]>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    Ok(Json(oneiron::outbound_capability_manifests()))
+}
+
+/// Fetch one connector capability manifest.
+#[utoipa::path(
+    get,
+    path = "/v1/core/outbound/capabilities/{connector}",
+    params(
+        (
+            "connector" = String,
+            Path,
+            description = "Stable outbound connector key.",
+            example = "slack"
+        )
+    ),
+    responses(
+        (status = 200, description = "Connector outbound capability manifest.", body = Object, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Connector manifest was not found.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn get_core_outbound_capability(
+    auth: CoreAuth,
+    Path(connector): Path<String>,
+) -> Result<Json<&'static oneiron::OutboundCapabilityManifest>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    let manifest = oneiron::outbound_capability_manifest(&connector)
+        .ok_or_else(|| ApiError::not_found("outbound_connector", Some(&connector)))?;
+    Ok(Json(manifest))
+}
+
+/// Fetch one connector verb contract. Unsupported verbs return a typed
+/// `UNSUPPORTED_CAPABILITY` error with recovery suggestions.
+#[utoipa::path(
+    get,
+    path = "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
+    params(
+        (
+            "connector" = String,
+            Path,
+            description = "Stable outbound connector key.",
+            example = "line"
+        ),
+        (
+            "verb" = String,
+            Path,
+            description = "Requested outbound verb kind.",
+            example = "react"
+        )
+    ),
+    responses(
+        (status = 200, description = "Outbound verb field contract.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Connector or verb is not supported; response uses UNSUPPORTED_CAPABILITY.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn get_core_outbound_verb_contract(
+    auth: CoreAuth,
+    Path((connector, verb)): Path<(String, String)>,
+) -> Result<Json<&'static oneiron::OutboundVerbContract>, EnvelopedApiError> {
+    auth.require(CoreScope::Read)?;
+    oneiron::outbound_verb_contract(&connector, &verb)
+        .map(Json)
+        .map_err(|error| outbound_capability_error(error.as_ref()))
+        .map_err(Into::into)
+}
+
+fn outbound_capability_error(error: &oneiron::UnsupportedOutboundCapability) -> ApiError {
+    ApiError::unsupported_capability(
+        error.connector(),
+        error.verb(),
+        error.connector_known(),
+        error.supported_connectors().to_vec(),
+        error.supported_verbs().to_vec(),
+        error.recovery_suggestions().to_vec(),
+    )
+}
+
 /// Query core memory through text and/or vector retrieval.
 #[utoipa::path(
     post,
@@ -10737,6 +10950,12 @@ mod tests {
         ("/v1/core/turns/{turn_id}", "get"),
         ("/v1/core/turns/annotate", "get"),
         ("/v1/core/turns/annotate", "post"),
+        ("/v1/core/outbound/capabilities", "get"),
+        ("/v1/core/outbound/capabilities/{connector}", "get"),
+        (
+            "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
+            "get",
+        ),
     ];
     const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
         "ApiError",
@@ -11320,6 +11539,167 @@ mod tests {
         assert_eq!(body["runtime"]["mode"], Value::from("oneiron_cloud"));
         assert_eq!(body["runtime"]["oneironSpendMetered"], Value::from(true));
         assert!(body["runtime"].get("routes").is_none());
+    }
+
+    #[tokio::test]
+    async fn discover_advertises_outbound_manifest_schema_on_demand() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let request = Request::builder()
+            .uri("/api/core/discover")
+            .header("x-oneiron-secret", "secret")
+            .body(Body::empty())
+            .expect("discover request");
+        let (status, body) = route_json(server, request).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["feature_flags"]["capabilities"]
+                .as_array()
+                .expect("capabilities")
+                .contains(&Value::from("core.outbound_capabilities"))
+        );
+        let outbound = &body["outbound_capabilities"];
+        assert_eq!(
+            outbound["manifest_version"],
+            Value::from(oneiron::OUTBOUND_CAPABILITY_MANIFEST_VERSION)
+        );
+        assert_eq!(
+            outbound["schema_on_demand"],
+            Value::from("/v1/core/outbound/capabilities")
+        );
+        assert_eq!(
+            outbound["field_contract"]
+                .as_array()
+                .expect("field contract")
+                .len(),
+            oneiron::OUTBOUND_VERB_FIELD_CONTRACT.len()
+        );
+        assert_eq!(
+            outbound["unsupported_error_code"],
+            Value::from("UNSUPPORTED_CAPABILITY")
+        );
+        assert_eq!(
+            outbound["recovery_suggestions_field"],
+            Value::from("recovery_suggestions")
+        );
+        assert!(
+            outbound["connectors"]
+                .as_array()
+                .expect("connector summaries")
+                .iter()
+                .any(|connector| connector["connector"] == "slack"
+                    && connector["schema_on_demand"] == "/v1/core/outbound/capabilities/slack")
+        );
+    }
+
+    #[tokio::test]
+    async fn core_outbound_capability_routes_expose_connector_and_verb_contracts() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server.clone(),
+            core_request("GET", "/v1/core/outbound/capabilities", "core:read", None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.as_array()
+                .expect("manifest array")
+                .iter()
+                .any(|manifest| manifest["connector"] == "line")
+        );
+
+        let (status, manifest) = route_json(
+            server.clone(),
+            core_request(
+                "GET",
+                "/v1/core/outbound/capabilities/line",
+                "core:read",
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(manifest["connector"], Value::from("line"));
+        assert!(
+            manifest["verbs"]
+                .as_array()
+                .expect("line verbs")
+                .iter()
+                .any(|verb| verb["kind"] == "narrowcast")
+        );
+
+        let (status, verb) = route_json(
+            server,
+            core_request(
+                "GET",
+                "/v1/core/outbound/capabilities/slack/verbs/react",
+                "core:read",
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(verb["kind"], Value::from("react"));
+        let fields = verb
+            .as_object()
+            .expect("verb object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(fields, oneiron::OUTBOUND_VERB_FIELD_CONTRACT);
+    }
+
+    #[tokio::test]
+    async fn unsupported_outbound_verb_returns_typed_recovery_error() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            core_request(
+                "GET",
+                "/v1/core/outbound/capabilities/line/verbs/edit",
+                "core:read",
+                None,
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "UNSUPPORTED_CAPABILITY");
+        let error = error_envelope(&body);
+        assert_eq!(error["details"]["connector"], Value::from("line"));
+        assert_eq!(error["details"]["verb"], Value::from("edit"));
+        assert_eq!(error["details"]["connectorKnown"], Value::from(true));
+        assert!(
+            error["details"]["supportedVerbs"]
+                .as_array()
+                .expect("supported verbs")
+                .contains(&Value::from("send"))
+        );
+        assert!(
+            error["details"]["recovery_suggestions"]
+                .as_array()
+                .expect("detail recovery suggestions")
+                .iter()
+                .any(|suggestion| suggestion
+                    .as_str()
+                    .is_some_and(|text| text.contains("/v1/core/outbound/capabilities/line")))
+        );
+        assert_eq!(
+            error["suggestions"], error["details"]["recovery_suggestions"],
+            "top-level suggestions should mirror typed recovery_suggestions"
+        );
     }
 
     fn json_request(method: &str, uri: &str, body: Value) -> Request<Body> {
@@ -13392,6 +13772,9 @@ mod tests {
             "/v1/core/conversations/{conversation_id}/turns",
             "/v1/core/turns/{turn_id}",
             "/v1/core/turns/annotate",
+            "/v1/core/outbound/capabilities",
+            "/v1/core/outbound/capabilities/{connector}",
+            "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
             "/v1/companion/access-grants",
             "/v1/companion/access-grants/{grant_id}/revoke",
             "/v1/companion/profiles/{persona_ref}",
@@ -13537,6 +13920,12 @@ mod tests {
             ("/v1/core/turns/{turn_id}", "get"),
             ("/v1/core/turns/annotate", "get"),
             ("/v1/core/turns/annotate", "post"),
+            ("/v1/core/outbound/capabilities", "get"),
+            ("/v1/core/outbound/capabilities/{connector}", "get"),
+            (
+                "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
+                "get",
+            ),
             ("/v1/companion/access-grants", "post"),
             ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
             ("/v1/companion/profiles/{persona_ref}", "get"),
