@@ -326,7 +326,7 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     "reply",
                     "reply_message",
                     json!({
-                        "replyToken": "string",
+                        "reply_token_ref": "payload_ref host-local reply token handle",
                         "messages": [{"type": "text", "text": "string"}],
                         "quota": {
                             "plan_tier": "all",
@@ -369,32 +369,69 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     "send",
                     "reply_message | push_message",
                     json!({
-                        "to": "line_user_id | line_group_id",
+                        "mode": "reply | push",
                         "messages": [{"type": "text", "text": "string"}],
-                        "replyToken": "optional string"
+                        "reply": {
+                            "reply_token_ref": "payload_ref host-local reply token handle",
+                            "quota": {
+                                "plan_tier": "all",
+                                "metered": false,
+                                "quota_debit": false,
+                                "notes": "Reactive replies are free and require a live reply-token handle."
+                            }
+                        },
+                        "push": {
+                            "to": "line_user_id | line_group_id",
+                            "quota": {
+                                "plan_tier": "free_or_paid",
+                                "metered": true,
+                                "quota_debit": true,
+                                "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+                                "overage_policy": "requires_metered_plan"
+                            }
+                        }
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
                     OutboundRetryClass::NonIdempotentInterrupt,
-                    OutboundPermissionState::Allowed,
+                    OutboundPermissionState::Conditional,
                     false,
-                    "LINE supports reply and push text sends when account permissions allow recipient reachability.",
+                    "Compatibility send requires callers to choose reply or push; push-mode sends debit monthly quota and require plan-tier checks.",
                 ),
                 verb(
                     "send_media",
                     "reply_message | push_message",
                     json!({
-                        "to": "line_user_id | line_group_id",
-                        "messages": [{"type": "image|video|audio|file", "originalContentUrl": "https://..."}]
+                        "mode": "reply | push",
+                        "messages": [{"type": "image|video|audio|file", "originalContentUrl": "https://..."}],
+                        "reply": {
+                            "reply_token_ref": "payload_ref host-local reply token handle",
+                            "quota": {
+                                "plan_tier": "all",
+                                "metered": false,
+                                "quota_debit": false,
+                                "notes": "Reactive replies are free and require a live reply-token handle."
+                            }
+                        },
+                        "push": {
+                            "to": "line_user_id | line_group_id",
+                            "quota": {
+                                "plan_tier": "free_or_paid",
+                                "metered": true,
+                                "quota_debit": true,
+                                "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+                                "overage_policy": "requires_metered_plan"
+                            }
+                        }
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
                     OutboundRetryClass::NonIdempotentInterrupt,
-                    OutboundPermissionState::Allowed,
+                    OutboundPermissionState::Conditional,
                     true,
-                    "Media sends require hosted content and may be subject to platform content checks.",
+                    "Compatibility media sends require callers to choose reply or push; push-mode sends debit monthly quota and require plan-tier checks.",
                 ),
                 verb(
                     "narrowcast",
@@ -910,6 +947,11 @@ mod tests {
         assert_eq!(line_reply.params["quota"]["quota_debit"], false);
         assert_eq!(line_reply.params["quota"]["metered"], false);
         assert_eq!(line_reply.params["quota"]["plan_tier"], "all");
+        assert!(line_reply.params.get("replyToken").is_none());
+        assert_eq!(
+            line_reply.params["reply_token_ref"],
+            "payload_ref host-local reply token handle"
+        );
 
         let line_push = outbound_verb_contract("line", "push").expect("line push manifest");
         assert_eq!(line_push.channel_call, "push_message");
@@ -925,6 +967,54 @@ mod tests {
         );
         assert_eq!(
             line_push.params["quota"]["overage_policy"],
+            "requires_metered_plan"
+        );
+
+        let legacy_send = outbound_verb_contract("line", "send").expect("legacy line send");
+        assert_eq!(legacy_send.channel_call, "reply_message | push_message");
+        assert_eq!(
+            legacy_send.capability_vs_permission.permission,
+            OutboundPermissionState::Conditional
+        );
+        assert_eq!(legacy_send.params["mode"], "reply | push");
+        assert_eq!(
+            legacy_send.params["reply"]["reply_token_ref"],
+            "payload_ref host-local reply token handle"
+        );
+        assert_eq!(legacy_send.params["reply"]["quota"]["quota_debit"], false);
+        assert_eq!(legacy_send.params["push"]["quota"]["quota_debit"], true);
+        assert_eq!(legacy_send.params["push"]["quota"]["metered"], true);
+        assert_eq!(
+            legacy_send.params["push"]["quota"]["free_monthly_allowance"],
+            crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE
+        );
+        assert_eq!(
+            legacy_send.params["push"]["quota"]["overage_policy"],
+            "requires_metered_plan"
+        );
+
+        let legacy_send_media =
+            outbound_verb_contract("line", "send_media").expect("legacy line send_media");
+        assert_eq!(
+            legacy_send_media.capability_vs_permission.permission,
+            OutboundPermissionState::Conditional
+        );
+        assert_eq!(legacy_send_media.params["mode"], "reply | push");
+        assert_eq!(
+            legacy_send_media.params["reply"]["reply_token_ref"],
+            "payload_ref host-local reply token handle"
+        );
+        assert_eq!(
+            legacy_send_media.params["reply"]["quota"]["quota_debit"],
+            false
+        );
+        assert_eq!(
+            legacy_send_media.params["push"]["quota"]["quota_debit"],
+            true
+        );
+        assert_eq!(legacy_send_media.params["push"]["quota"]["metered"], true);
+        assert_eq!(
+            legacy_send_media.params["push"]["quota"]["overage_policy"],
             "requires_metered_plan"
         );
     }
