@@ -308,6 +308,67 @@ pub enum WorldScope {
     World(EntityId),
 }
 
+/// Opaque Dreamer working-set cursor.
+///
+/// The cursor is an offset into the caller's bounded working set. It is not a
+/// vault snapshot handle and cannot be used to request the whole vault.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DreamerWorkingSetCursor {
+    offset: usize,
+}
+
+impl DreamerWorkingSetCursor {
+    #[must_use]
+    pub const fn start() -> Self {
+        Self { offset: 0 }
+    }
+
+    #[must_use]
+    pub const fn from_offset(offset: usize) -> Self {
+        Self { offset }
+    }
+
+    #[must_use]
+    pub const fn offset(self) -> usize {
+        self.offset
+    }
+}
+
+/// Hard cap for one Dreamer ingress working set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DreamerWorkingSetBudget {
+    max_items: usize,
+}
+
+impl DreamerWorkingSetBudget {
+    #[must_use]
+    pub const fn new(max_items: usize) -> Self {
+        Self { max_items }
+    }
+
+    #[must_use]
+    pub const fn max_items(self) -> usize {
+        self.max_items
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DreamerWorkingSetStopReason {
+    BudgetExhausted,
+    EndOfWorkingSet,
+}
+
+/// Budget-capped page of retrieval candidates for Dreamer ingress.
+#[derive(Debug, Clone)]
+pub struct DreamerWorkingSet {
+    pub cursor: DreamerWorkingSetCursor,
+    pub next_cursor: Option<DreamerWorkingSetCursor>,
+    pub budget: DreamerWorkingSetBudget,
+    pub rows: Vec<ScoredEntity>,
+    pub stop_reason: Option<DreamerWorkingSetStopReason>,
+    pub telemetry_run_id: Option<RetrievalRunId>,
+}
+
 /// A claim's facet scope relative to the query's active facet, derived from
 /// its outgoing `FacetOf` (`CLAIM → FACET`, u8 17) adjacency.
 enum ClaimFacetScope {
@@ -783,6 +844,67 @@ impl<'a> PipelineBuilder<'a> {
             pending_vector_ids,
             pending_vectors: output.pending_vectors,
             run_id: output.telemetry_run_id,
+        })
+    }
+
+    pub fn run_dreamer_working_set(
+        mut self,
+        cursor: DreamerWorkingSetCursor,
+        budget: DreamerWorkingSetBudget,
+        page_limit: usize,
+    ) -> Result<DreamerWorkingSet> {
+        if page_limit == 0 {
+            return Err(Error::InvalidConfig(
+                "dreamer working-set page_limit must be greater than zero".to_owned(),
+            ));
+        }
+
+        let remaining = budget.max_items().saturating_sub(cursor.offset());
+        if remaining == 0 {
+            return Ok(DreamerWorkingSet {
+                cursor,
+                next_cursor: None,
+                budget,
+                rows: Vec::new(),
+                stop_reason: Some(DreamerWorkingSetStopReason::BudgetExhausted),
+                telemetry_run_id: None,
+            });
+        }
+
+        let ingress_limit = page_limit.min(remaining);
+        let page_end = cursor.offset().saturating_add(ingress_limit);
+        let lookahead = usize::from(page_end < budget.max_items());
+        let fetch_limit = page_end.saturating_add(lookahead);
+        self.result_limit = fetch_limit;
+
+        let output = self.run_for_pack()?;
+        let loaded = output.scores.len();
+        let rows: Vec<_> = output
+            .scores
+            .into_iter()
+            .skip(cursor.offset())
+            .take(ingress_limit)
+            .collect();
+        let next_offset = cursor.offset().saturating_add(rows.len());
+        let budget_exhausted = next_offset >= budget.max_items();
+        let stop_reason = if budget_exhausted {
+            Some(DreamerWorkingSetStopReason::BudgetExhausted)
+        } else if loaded <= next_offset {
+            Some(DreamerWorkingSetStopReason::EndOfWorkingSet)
+        } else {
+            None
+        };
+        let next_cursor = stop_reason
+            .is_none()
+            .then(|| DreamerWorkingSetCursor::from_offset(next_offset));
+
+        Ok(DreamerWorkingSet {
+            cursor,
+            next_cursor,
+            budget,
+            rows,
+            stop_reason,
+            telemetry_run_id: output.telemetry_run_id,
         })
     }
 
@@ -4107,6 +4229,107 @@ mod tests {
         let results = vault.query().search_text("alpha", 10).run()?;
         assert!(!results.is_empty());
         assert_eq!(results[0].id, a);
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_ingress_api_is_working_set_only() {
+        let source = include_str!("pipeline.rs");
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("pipeline source has production section");
+        let public_dreamer_methods: Vec<_> = production_source
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("pub fn") && line.contains("dreamer"))
+            .collect();
+
+        assert_eq!(
+            public_dreamer_methods,
+            vec!["pub fn run_dreamer_working_set("]
+        );
+        for forbidden in [
+            "DreamerVault",
+            "run_dreamer_vault",
+            "dreamer_whole_vault",
+            "dreamer_all_vault",
+        ] {
+            assert!(
+                !production_source.contains(forbidden),
+                "Dreamer ingress must not expose {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn dreamer_working_set_cursor_advances_incrementally() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        for seed in [0xD1, 0xD2, 0xD3] {
+            put_text(&vault, entity_id(seed), "dreamer cursor needle")?;
+        }
+
+        let budget = DreamerWorkingSetBudget::new(10);
+        let first = vault
+            .query()
+            .search_text("dreamer", 10)
+            .run_dreamer_working_set(DreamerWorkingSetCursor::start(), budget, 1)?;
+
+        assert_eq!(first.cursor.offset(), 0);
+        assert_eq!(first.rows.len(), 1);
+        assert_eq!(first.stop_reason, None);
+        let next_cursor = first.next_cursor.expect("first page has a cursor");
+        assert_eq!(next_cursor.offset(), 1);
+
+        let second = vault
+            .query()
+            .search_text("dreamer", 10)
+            .run_dreamer_working_set(next_cursor, budget, 1)?;
+
+        assert_eq!(second.cursor.offset(), 1);
+        assert_eq!(second.rows.len(), 1);
+        assert_ne!(first.rows[0].id, second.rows[0].id);
+        assert_eq!(
+            second
+                .next_cursor
+                .expect("second page has a cursor")
+                .offset(),
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dreamer_working_set_budget_cap_stops_ingress() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        for seed in [0xE1, 0xE2, 0xE3] {
+            put_text(&vault, entity_id(seed), "dreamer budget needle")?;
+        }
+
+        let budget = DreamerWorkingSetBudget::new(2);
+        let capped = vault
+            .query()
+            .search_text("dreamer", 10)
+            .run_dreamer_working_set(DreamerWorkingSetCursor::start(), budget, 10)?;
+
+        assert_eq!(capped.rows.len(), 2);
+        assert_eq!(
+            capped.stop_reason,
+            Some(DreamerWorkingSetStopReason::BudgetExhausted)
+        );
+        assert_eq!(capped.next_cursor, None);
+
+        let stopped = vault
+            .query()
+            .search_text("dreamer", 10)
+            .run_dreamer_working_set(DreamerWorkingSetCursor::from_offset(2), budget, 1)?;
+
+        assert!(stopped.rows.is_empty());
+        assert_eq!(
+            stopped.stop_reason,
+            Some(DreamerWorkingSetStopReason::BudgetExhausted)
+        );
+        assert_eq!(stopped.telemetry_run_id, None);
         Ok(())
     }
 
