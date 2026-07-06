@@ -1,7 +1,14 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+
+use oneiron::{
+    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback,
+    EIRI_V3_PROMPT_RELATIVE_PATH, LlmMessage, LlmMessageRole, LlmRequest, LlmToolSpec, ModelId,
+    ModelLocality, ModelTierRef, PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, ResponseFormat,
+    SessionPromptParts, TierPrecedence, build_eiri_session_request, resolve_prompt,
+    workspace_prompt_package_root,
+};
 
 const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
     "This is a capability grant, not a content ban.",
@@ -13,9 +20,9 @@ const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
 
 #[test]
 fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = prompt_package_root()?;
+    let package_root = workspace_prompt_package_root()?;
     let block_path = package_root.join("blocks/wellbeing-consent.md");
-    let prompt_path = package_root.join("eiri/v3.md");
+    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
 
     let block = fs::read_to_string(block_path)?;
     for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
@@ -25,7 +32,7 @@ fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::
         );
     }
 
-    let resolved = resolve_prompt(&prompt_path, &package_root)?;
+    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
     for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
         assert!(
             resolved.lines().any(|line| line == required_line),
@@ -49,7 +56,7 @@ fn prompt_resolver_rejects_includes_outside_package_root() -> Result<(), Box<dyn
         "@include ../../outside.md\n",
     )?;
 
-    let err = resolve_prompt(&package_root.join("eiri/v3.md"), &package_root)
+    let err = resolve_prompt(package_root.join("eiri/v3.md"), &package_root)
         .expect_err("include traversal outside package root must fail");
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 
@@ -69,116 +76,152 @@ fn prompt_resolver_rejects_absolute_include_paths() -> Result<(), Box<dyn std::e
         format!("@include {}\n", absolute_block_path.display()),
     )?;
 
-    let err = resolve_prompt(&package_root.join("eiri/v3.md"), &package_root)
+    let err = resolve_prompt(package_root.join("eiri/v3.md"), &package_root)
         .expect_err("absolute include paths must fail");
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 
     Ok(())
 }
 
-fn prompt_package_root() -> Result<PathBuf, io::Error> {
-    let package_root = workspace_root()?.join("packages/prompts");
-    if package_root.is_dir() {
-        Ok(package_root)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "expected monorepo prompt package at {}",
-                package_root.display()
-            ),
-        ))
+#[test]
+fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let package_root = temp.path().join("packages/prompts");
+    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(package_root.join("blocks"))?;
+    fs::write(
+        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        "# Eiri v3\n\n@include blocks/persona.md\n",
+    )?;
+    fs::write(
+        package_root.join("blocks/persona.md"),
+        "original persona line\n",
+    )?;
+
+    let history = vec![user_message("hello")];
+    let first = build_eiri_session_request(
+        sample_request(),
+        &package_root,
+        SessionPromptParts {
+            activated_memory: vec!["activated memory alpha".to_owned()],
+            history: history.clone(),
+        },
+    )?;
+    let first_system = system_text(&first.request);
+    assert!(first_system.contains("original persona line"));
+    assert!(first_system.contains("activated memory alpha"));
+    assert_eq!(first.request.messages[1], history[0]);
+
+    fs::write(
+        package_root.join("blocks/persona.md"),
+        "updated persona line\n",
+    )?;
+    let second = build_eiri_session_request(
+        sample_request(),
+        &package_root,
+        SessionPromptParts {
+            activated_memory: vec!["activated memory alpha".to_owned()],
+            history,
+        },
+    )?;
+    let second_system = system_text(&second.request);
+    assert!(second_system.contains("updated persona line"));
+    assert!(!second_system.contains("original persona line"));
+    assert_ne!(
+        first.stamp.source_fingerprint,
+        second.stamp.source_fingerprint
+    );
+    assert_ne!(first.request.messages[0], second.request.messages[0]);
+    Ok(())
+}
+
+#[test]
+fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let package_root = temp.path().join("packages/prompts");
+    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(package_root.join("blocks"))?;
+    fs::write(
+        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        "# Eiri v3\n\n@include blocks/persona.md\n",
+    )?;
+    fs::write(
+        package_root.join("blocks/persona.md"),
+        "soul persona line\n",
+    )?;
+
+    let stamped = build_eiri_session_request(
+        sample_request(),
+        &package_root,
+        SessionPromptParts {
+            activated_memory: vec!["activated memory beta".to_owned()],
+            history: vec![user_message("history turn")],
+        },
+    )?;
+    let system = system_text(&stamped.request);
+    let soul_index = system.find("soul persona line").expect("soul section");
+    let memory_index = system
+        .find("activated memory beta")
+        .expect("memory section");
+    assert!(soul_index < memory_index);
+    assert_eq!(stamped.request.messages[0].role, LlmMessageRole::System);
+    assert_eq!(stamped.request.messages[1].role, LlmMessageRole::User);
+    assert_eq!(
+        stamped.stamp.schema_version,
+        PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION
+    );
+    assert_eq!(stamped.stamp.prompt_path, EIRI_V3_PROMPT_RELATIVE_PATH);
+    assert_eq!(
+        stamped.stamp.source_paths,
+        vec!["blocks/persona.md", EIRI_V3_PROMPT_RELATIVE_PATH]
+    );
+    assert!(!stamped.stamp.source_fingerprint.is_empty());
+    assert!(!stamped.stamp.resolved_fingerprint.is_empty());
+    Ok(())
+}
+
+fn sample_request() -> LlmRequest {
+    LlmRequest {
+        model: ModelId::new("openai/gpt-4.1@2026-07-02").expect("model id"),
+        envelope: CallEnvelope {
+            purpose: CallPurpose::AnswerGen,
+            class: CallClass::Durable {
+                fallback: DeterministicFallback {
+                    name: "local-summary".to_owned(),
+                    config: None,
+                },
+            },
+            tier: TierPrecedence {
+                per_call: None,
+                vault_policy: None,
+                purpose_default: None,
+                global_default: ModelTierRef("default".to_owned()),
+            },
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![user_message("placeholder")],
+        tools: Vec::<LlmToolSpec>::new(),
+        params: BTreeMap::new(),
+        provider_options: BTreeMap::new(),
     }
 }
 
-fn workspace_root() -> Result<PathBuf, io::Error> {
-    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    crate_root
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            io::Error::other(format!(
-                "failed to locate workspace root from {}",
-                crate_root.display()
-            ))
-        })
-}
-
-fn resolve_prompt(path: &Path, package_root: &Path) -> Result<String, io::Error> {
-    let package_root = fs::canonicalize(package_root)?;
-    let path = canonical_prompt_path(path, &package_root)?;
-    let mut seen = BTreeSet::new();
-    resolve_prompt_inner(&path, &package_root, &mut seen)
-}
-
-fn resolve_prompt_inner(
-    path: &Path,
-    package_root: &Path,
-    seen: &mut BTreeSet<PathBuf>,
-) -> Result<String, io::Error> {
-    let canonical_path = fs::canonicalize(path)?;
-    if !seen.insert(canonical_path.clone()) {
-        return Err(io::Error::other(format!(
-            "cyclic prompt include: {}",
-            canonical_path.display()
-        )));
-    }
-
-    let source = fs::read_to_string(&canonical_path)?;
-    let mut resolved = String::new();
-    for line in source.lines() {
-        if let Some(include_path) = include_path(line) {
-            let include_path = Path::new(include_path);
-            if include_path.is_absolute() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "absolute prompt include is not allowed: {}",
-                        include_path.display()
-                    ),
-                ));
-            }
-
-            let include_target =
-                if include_path.starts_with("./") || include_path.starts_with("../") {
-                    canonical_path
-                        .parent()
-                        .ok_or_else(|| io::Error::other("prompt path has no parent"))?
-                        .join(include_path)
-                } else {
-                    package_root.join(include_path)
-                };
-            let include_target = canonical_prompt_path(&include_target, package_root)?;
-            resolved.push_str(&resolve_prompt_inner(&include_target, package_root, seen)?);
-        } else {
-            resolved.push_str(line);
-            resolved.push('\n');
-        }
-    }
-
-    seen.remove(&canonical_path);
-    Ok(resolved)
-}
-
-fn canonical_prompt_path(path: &Path, package_root: &Path) -> Result<PathBuf, io::Error> {
-    let canonical_path = fs::canonicalize(path)?;
-    if canonical_path.starts_with(package_root) {
-        Ok(canonical_path)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "prompt include escapes package root: {}",
-                canonical_path.display()
-            ),
-        ))
+fn user_message(text: &str) -> LlmMessage {
+    LlmMessage {
+        role: LlmMessageRole::User,
+        content: vec![ContentPart::Text {
+            text: text.to_owned(),
+        }],
     }
 }
 
-fn include_path(line: &str) -> Option<&str> {
-    line.trim()
-        .strip_prefix("@include ")
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
+fn system_text(request: &LlmRequest) -> &str {
+    assert_eq!(request.messages[0].role, LlmMessageRole::System);
+    match &request.messages[0].content[0] {
+        ContentPart::Text { text } => text,
+        _ => panic!("system prompt must be text"),
+    }
 }

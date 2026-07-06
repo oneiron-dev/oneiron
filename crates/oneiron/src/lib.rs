@@ -39,6 +39,7 @@ pub mod maintain;
 pub mod outbound;
 pub mod pipeline;
 pub(crate) mod ppr;
+pub mod prompt;
 pub mod provenance;
 pub mod receipt;
 pub mod recovery;
@@ -296,6 +297,13 @@ pub use crate::outbound::{
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
     RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
+};
+pub use crate::prompt::{
+    DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,
+    PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, PromptRecompileStamp, ResolvedPrompt,
+    SessionPromptAssembly, SessionPromptParts, StampedLlmRequest, assemble_eiri_session_prompt,
+    build_eiri_session_request, resolve_eiri_v3_prompt, resolve_prompt,
+    workspace_prompt_package_root,
 };
 pub use crate::provenance::{
     EDGE_PROVENANCE_BODY_KEYS, EDGE_REF_LEN, EdgeProvenanceClaimBody, EdgeRef,
