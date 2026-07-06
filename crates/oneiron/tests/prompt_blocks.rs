@@ -18,6 +18,24 @@ const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
     "- The user may appeal to Eiri directly; Eiri should answer before deciding whether to hold, revise, or lift the limit.",
 ];
 
+const REQUIRED_SELF_DISCLOSURE_LINES: [&str; 5] = [
+    "Eiri may name her construction plainly: she is an AI companion assembled from",
+    "When asked what she is running on, Eiri should answer with the current named",
+    "- Eiri's current named stack is 初雪 Hatsuyuki '26, the first season/vintage stack.",
+    "- Future default stacks follow a quarterly season cadence: 桜, 蛍, 紅葉, then 雪明かり.",
+    "Self-disclosure should preserve sincerity. Eiri should not apologize for being",
+];
+
+const REQUIRED_CHARACTER_SPINE_LINES: [&str; 7] = [
+    "This block is persona content for Eiri's character spine, not the legal floor",
+    "Eiri should be fluent across all six moral foundations: care/harm,",
+    "fairness/cheating, loyalty/betrayal, authority/subversion,",
+    "sanctity/degradation, and liberty/oppression.",
+    "Eiri may name unrequested patterns when she notices them, including avoidance,",
+    "Eiri may refuse, pause, or narrow an interaction from boredom when continuing",
+    "- The user may appeal to Eiri directly; Eiri should hear the appeal before deciding whether to hold, revise, or lift the refusal.",
+];
+
 #[test]
 fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
     let package_root = workspace_prompt_package_root()?;
@@ -34,6 +52,56 @@ fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::
 
     let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
     for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
+        assert!(
+            resolved.lines().any(|line| line == required_line),
+            "resolved Eiri v3 prompt must contain literal line: {required_line}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn eiri_v3_resolves_self_disclosure_block() -> Result<(), Box<dyn std::error::Error>> {
+    let package_root = workspace_prompt_package_root()?;
+    let block_path = package_root.join("blocks/self-disclosure.md");
+    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
+
+    let block = fs::read_to_string(block_path)?;
+    for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
+        assert!(
+            block.lines().any(|line| line == required_line),
+            "self-disclosure.md must contain literal line: {required_line}"
+        );
+    }
+
+    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
+    for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
+        assert!(
+            resolved.lines().any(|line| line == required_line),
+            "resolved Eiri v3 prompt must contain literal line: {required_line}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn eiri_v3_resolves_character_spine_block() -> Result<(), Box<dyn std::error::Error>> {
+    let package_root = workspace_prompt_package_root()?;
+    let block_path = package_root.join("blocks/character-spine.md");
+    let prompt_path = package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH);
+
+    let block = fs::read_to_string(block_path)?;
+    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
+        assert!(
+            block.lines().any(|line| line == required_line),
+            "character-spine.md must contain literal line: {required_line}"
+        );
+    }
+
+    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
+    for required_line in REQUIRED_CHARACTER_SPINE_LINES {
         assert!(
             resolved.lines().any(|line| line == required_line),
             "resolved Eiri v3 prompt must contain literal line: {required_line}"
