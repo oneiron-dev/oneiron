@@ -8,7 +8,7 @@
 use std::{collections::BTreeMap, fmt};
 
 use oneiron::{
-    EdgeActorClass, EntityId, WriteActor,
+    EdgeActorClass, EdgeKind, EntityId, WriteActor,
     context_pack::{MCP_CONTEXT_PACK_REF_SCHEMA_VERSION, McpContextPackRef},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -18,6 +18,37 @@ pub const MCP_TOOL_ARGS_SCHEMA_VERSION: &str = "mcp_tool_args.v1";
 const MCP_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 const ENTITY_ID_PATTERN: &str = "^[0-9a-f]{32}$";
 const SHORT_REF_PATTERN: &str = "^[a-z]{2}[0-9]+:[0-9A-Fa-f]{2}$";
+const EDIT_ACTION_FIELDS: &[&str] = &[
+    "subject",
+    "predicate",
+    "value",
+    "confidence",
+    "evidence",
+    "valid_from",
+    "valid_to",
+    "salience",
+    "world",
+    "scope",
+    "old_claim_id",
+    "claim_id",
+    "reason",
+    "explanation",
+    "entity_type",
+    "occurred",
+    "data",
+    "initial_claims",
+    "brief",
+    "job_id",
+    "outcome",
+    "summary",
+    "result_claims",
+    "channel",
+    "payload",
+    "supersession_status",
+    "source_revision_ref",
+    "body_snapshot_ref",
+    "reasoning_effort",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpToolName {
@@ -119,7 +150,7 @@ pub fn mcp_tool_schema(tool: McpToolName) -> McpToolSchema {
 pub enum McpValidatedToolArgs {
     Nav(McpNavToolArgs),
     Read(McpReadToolArgs),
-    Edit(McpEditToolArgs),
+    Edit(Box<McpEditToolArgs>),
     Ask(McpAskToolArgs),
     RoutedAsk(McpRoutedAskToolArgs),
 }
@@ -135,9 +166,9 @@ pub fn validate_mcp_tool_args(
         McpToolName::Read => {
             decode_tool_args::<McpReadToolArgs>(tool, args).map(McpValidatedToolArgs::Read)
         }
-        McpToolName::Edit => {
-            decode_tool_args::<McpEditToolArgs>(tool, args).map(McpValidatedToolArgs::Edit)
-        }
+        McpToolName::Edit => decode_tool_args::<McpEditToolArgs>(tool, args)
+            .map(Box::new)
+            .map(McpValidatedToolArgs::Edit),
         McpToolName::Ask => {
             decode_tool_args::<McpAskToolArgs>(tool, args).map(McpValidatedToolArgs::Ask)
         }
@@ -225,64 +256,100 @@ pub struct McpEditToolArgs {
     #[serde(default)]
     pub dry_run: bool,
     #[serde(default)]
-    pub entity: Option<McpEditEntityInput>,
+    pub subject: Option<McpEditSubject>,
     #[serde(default)]
-    pub id: Option<String>,
+    pub predicate: Option<String>,
     #[serde(default)]
-    pub new_id: Option<String>,
+    pub value: Option<Value>,
     #[serde(default)]
-    pub old_id: Option<String>,
+    pub confidence: Option<f32>,
     #[serde(default)]
-    pub at: Option<u64>,
+    pub evidence: Option<Value>,
     #[serde(default)]
-    pub reason: Option<McpDeleteReason>,
+    pub valid_from: Option<u64>,
+    #[serde(default)]
+    pub valid_to: Option<u64>,
+    #[serde(default)]
+    pub salience: Option<f32>,
+    #[serde(default)]
+    pub world: Option<String>,
+    #[serde(default)]
+    pub scope: Option<Value>,
+    #[serde(default)]
+    pub old_claim_id: Option<String>,
+    #[serde(default)]
+    pub claim_id: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub explanation: Option<String>,
+    #[serde(default)]
+    pub entity_type: Option<u8>,
+    #[serde(default)]
+    pub occurred: Option<McpOccurredRange>,
+    #[serde(default)]
+    pub data: Option<Value>,
+    #[serde(default)]
+    pub initial_claims: Option<Vec<Value>>,
+    #[serde(default)]
+    pub brief: Option<Value>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub result_claims: Option<Vec<Value>>,
+    #[serde(default)]
+    pub channel: Option<String>,
+    #[serde(default)]
+    pub payload: Option<Value>,
+    #[serde(default)]
+    pub supersession_status: Option<String>,
+    #[serde(default)]
+    pub source_revision_ref: Option<String>,
+    #[serde(default)]
+    pub body_snapshot_ref: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpEditVerb {
-    Remember,
-    Supersede,
-    Retract,
-    Delete,
-    HardDelete,
+    ProposeClaim,
+    AttestEdgeProvenance,
+    SupersedeClaim,
+    RetractClaim,
+    ProposeEntity,
+    PostTask,
+    ReportTask,
+    ChannelSend,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpEditEntityInput {
+pub struct McpEditSubject {
     #[serde(default)]
-    pub id: Option<String>,
-    pub entity_type: u8,
+    pub entity: Option<String>,
     #[serde(default)]
-    pub occurred_start: Option<u64>,
-    #[serde(default)]
-    pub occurred_end: Option<u64>,
-    #[serde(default)]
-    pub learned_at: Option<u64>,
-    pub body: Value,
-    #[serde(default)]
-    pub text: Vec<McpTextField>,
+    pub edge: Option<McpEditEdgeSubject>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpTextField {
-    pub field: String,
-    pub value: String,
+pub struct McpEditEdgeSubject {
+    pub source: String,
+    pub kind: u8,
+    pub target: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpDeleteReason {
-    #[serde(rename = "user_delete")]
-    User,
-    #[serde(rename = "user_hard_delete")]
-    UserHard,
-    #[serde(rename = "gdpr_delete")]
-    Gdpr,
-    #[serde(rename = "policy_delete")]
-    Policy,
+#[serde(deny_unknown_fields)]
+pub struct McpOccurredRange {
+    pub start: u64,
+    pub end: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -421,70 +488,359 @@ impl ValidateMcpArgs for McpEditToolArgs {
         validate_nonblank(tool, "idempotency_key", &self.idempotency_key)?;
 
         match self.verb {
-            McpEditVerb::Remember => {
-                let entity = self.entity.as_ref().ok_or_else(|| {
-                    McpToolValidationError::field(tool, "entity", "is required for remember")
-                })?;
-                entity.validate(tool)?;
-                validate_absent(tool, "id", self.id.is_some())?;
-                validate_absent(tool, "new_id", self.new_id.is_some())?;
-                validate_absent(tool, "old_id", self.old_id.is_some())?;
-                validate_absent(tool, "at", self.at.is_some())?;
-                validate_absent(tool, "reason", self.reason.is_some())
-            }
-            McpEditVerb::Supersede => {
-                validate_absent(tool, "entity", self.entity.is_some())?;
-                validate_absent(tool, "id", self.id.is_some())?;
-                validate_absent(tool, "reason", self.reason.is_some())?;
-                validate_required_entity_ref(tool, "new_id", self.new_id.as_deref())?;
-                validate_required_entity_ref(tool, "old_id", self.old_id.as_deref())
-            }
-            McpEditVerb::Retract => {
-                validate_absent(tool, "entity", self.entity.is_some())?;
-                validate_absent(tool, "new_id", self.new_id.is_some())?;
-                validate_absent(tool, "old_id", self.old_id.is_some())?;
-                validate_absent(tool, "reason", self.reason.is_some())?;
-                validate_required_entity_ref(tool, "id", self.id.as_deref())
-            }
-            McpEditVerb::Delete => {
-                self.validate_delete_family(tool)?;
-                let reason = self.reason.ok_or_else(|| {
-                    McpToolValidationError::field(tool, "reason", "is required for delete")
-                })?;
-                if reason != McpDeleteReason::User {
-                    return Err(McpToolValidationError::field(
-                        tool,
-                        "reason",
-                        "delete only accepts user_delete",
-                    ));
-                }
-                Ok(())
-            }
-            McpEditVerb::HardDelete => {
-                self.validate_delete_family(tool)?;
-                let reason = self.reason.ok_or_else(|| {
-                    McpToolValidationError::field(tool, "reason", "is required for hard_delete")
-                })?;
-                if reason == McpDeleteReason::User {
-                    return Err(McpToolValidationError::field(
-                        tool,
-                        "reason",
-                        "hard_delete requires user_hard_delete, gdpr_delete, or policy_delete",
-                    ));
-                }
-                Ok(())
-            }
+            McpEditVerb::ProposeClaim => self.validate_propose_claim(tool),
+            McpEditVerb::AttestEdgeProvenance => self.validate_attest_edge_provenance(tool),
+            McpEditVerb::SupersedeClaim => self.validate_supersede_claim(tool),
+            McpEditVerb::RetractClaim => self.validate_retract_claim(tool),
+            McpEditVerb::ProposeEntity => self.validate_propose_entity(tool),
+            McpEditVerb::PostTask => self.validate_post_task(tool),
+            McpEditVerb::ReportTask => self.validate_report_task(tool),
+            McpEditVerb::ChannelSend => self.validate_channel_send(tool),
         }
     }
 }
 
 impl McpEditToolArgs {
-    fn validate_delete_family(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
-        validate_absent(tool, "entity", self.entity.is_some())?;
-        validate_absent(tool, "new_id", self.new_id.is_some())?;
-        validate_absent(tool, "old_id", self.old_id.is_some())?;
-        validate_absent(tool, "at", self.at.is_some())?;
-        validate_required_entity_ref(tool, "id", self.id.as_deref())
+    fn validate_propose_claim(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(
+            tool,
+            &[
+                "subject",
+                "predicate",
+                "value",
+                "confidence",
+                "evidence",
+                "valid_from",
+                "valid_to",
+                "salience",
+                "world",
+                "scope",
+            ],
+        )?;
+        self.validate_required_subject(tool, "subject")?
+            .validate(tool)?;
+        self.validate_required_predicate(tool)?;
+        self.validate_required_value(tool, "value")?;
+        self.validate_required_confidence(tool)?;
+        validate_optional_entity_ref(tool, "world", self.world.as_deref())?;
+        self.validate_optional_salience(tool)
+    }
+
+    fn validate_attest_edge_provenance(
+        &self,
+        tool: McpToolName,
+    ) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(
+            tool,
+            &[
+                "subject",
+                "confidence",
+                "supersession_status",
+                "source_revision_ref",
+                "body_snapshot_ref",
+                "reasoning_effort",
+            ],
+        )?;
+        self.validate_required_subject(tool, "subject")?
+            .validate_edge_only(tool, "subject")?;
+        self.validate_required_confidence(tool)?;
+        validate_optional_nonblank(
+            tool,
+            "supersession_status",
+            self.supersession_status.as_deref(),
+        )?;
+        validate_optional_nonblank(
+            tool,
+            "source_revision_ref",
+            self.source_revision_ref.as_deref(),
+        )?;
+        validate_optional_nonblank(tool, "body_snapshot_ref", self.body_snapshot_ref.as_deref())?;
+        validate_optional_nonblank(tool, "reasoning_effort", self.reasoning_effort.as_deref())
+    }
+
+    fn validate_supersede_claim(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(
+            tool,
+            &[
+                "old_claim_id",
+                "predicate",
+                "value",
+                "confidence",
+                "evidence",
+                "valid_from",
+                "valid_to",
+                "salience",
+                "reason",
+            ],
+        )?;
+        validate_required_entity_ref(tool, "old_claim_id", self.old_claim_id.as_deref())?;
+        self.validate_required_predicate(tool)?;
+        self.validate_required_value(tool, "value")?;
+        self.validate_required_confidence(tool)?;
+        validate_optional_nonblank(tool, "reason", self.reason.as_deref())?;
+        self.validate_optional_salience(tool)
+    }
+
+    fn validate_retract_claim(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(tool, &["claim_id", "reason", "explanation"])?;
+        validate_required_entity_ref(tool, "claim_id", self.claim_id.as_deref())?;
+        validate_nonblank(
+            tool,
+            "reason",
+            self.reason
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "reason", "is required"))?,
+        )?;
+        validate_optional_nonblank(tool, "explanation", self.explanation.as_deref())
+    }
+
+    fn validate_propose_entity(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(
+            tool,
+            &["entity_type", "occurred", "data", "initial_claims"],
+        )?;
+        self.entity_type
+            .ok_or_else(|| McpToolValidationError::field(tool, "entity_type", "is required"))?;
+        self.occurred
+            .as_ref()
+            .ok_or_else(|| McpToolValidationError::field(tool, "occurred", "is required"))?
+            .validate(tool)?;
+        self.validate_required_value(tool, "data")?;
+        if self
+            .initial_claims
+            .as_ref()
+            .is_some_and(|initial_claims| initial_claims.len() > 16)
+        {
+            return Err(McpToolValidationError::field(
+                tool,
+                "initial_claims",
+                "must contain at most 16 claims",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_post_task(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(tool, &["brief"])?;
+        self.validate_required_value(tool, "brief")
+    }
+
+    fn validate_report_task(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(tool, &["job_id", "outcome", "summary", "result_claims"])?;
+        validate_nonblank(
+            tool,
+            "job_id",
+            self.job_id
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "job_id", "is required"))?,
+        )?;
+        validate_nonblank(
+            tool,
+            "outcome",
+            self.outcome
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "outcome", "is required"))?,
+        )?;
+        validate_nonblank(
+            tool,
+            "summary",
+            self.summary
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "summary", "is required"))?,
+        )?;
+        if self
+            .result_claims
+            .as_ref()
+            .is_some_and(|result_claims| result_claims.len() > 8)
+        {
+            return Err(McpToolValidationError::field(
+                tool,
+                "result_claims",
+                "must contain at most 8 claims",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_channel_send(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        self.validate_only_edit_fields(tool, &["channel", "payload"])?;
+        validate_nonblank(
+            tool,
+            "channel",
+            self.channel
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "channel", "is required"))?,
+        )?;
+        self.validate_required_value(tool, "payload")
+    }
+
+    fn validate_only_edit_fields(
+        &self,
+        tool: McpToolName,
+        allowed: &[&'static str],
+    ) -> Result<(), McpToolValidationError> {
+        for (field, present) in self.present_edit_fields() {
+            if present && !allowed.contains(&field) {
+                validate_absent(tool, field, true)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn present_edit_fields(&self) -> [(&'static str, bool); 29] {
+        [
+            ("subject", self.subject.is_some()),
+            ("predicate", self.predicate.is_some()),
+            ("value", self.value.is_some()),
+            ("confidence", self.confidence.is_some()),
+            ("evidence", self.evidence.is_some()),
+            ("valid_from", self.valid_from.is_some()),
+            ("valid_to", self.valid_to.is_some()),
+            ("salience", self.salience.is_some()),
+            ("world", self.world.is_some()),
+            ("scope", self.scope.is_some()),
+            ("old_claim_id", self.old_claim_id.is_some()),
+            ("claim_id", self.claim_id.is_some()),
+            ("reason", self.reason.is_some()),
+            ("explanation", self.explanation.is_some()),
+            ("entity_type", self.entity_type.is_some()),
+            ("occurred", self.occurred.is_some()),
+            ("data", self.data.is_some()),
+            ("initial_claims", self.initial_claims.is_some()),
+            ("brief", self.brief.is_some()),
+            ("job_id", self.job_id.is_some()),
+            ("outcome", self.outcome.is_some()),
+            ("summary", self.summary.is_some()),
+            ("result_claims", self.result_claims.is_some()),
+            ("channel", self.channel.is_some()),
+            ("payload", self.payload.is_some()),
+            ("supersession_status", self.supersession_status.is_some()),
+            ("source_revision_ref", self.source_revision_ref.is_some()),
+            ("body_snapshot_ref", self.body_snapshot_ref.is_some()),
+            ("reasoning_effort", self.reasoning_effort.is_some()),
+        ]
+    }
+
+    fn validate_required_subject(
+        &self,
+        tool: McpToolName,
+        field: &'static str,
+    ) -> Result<&McpEditSubject, McpToolValidationError> {
+        self.subject
+            .as_ref()
+            .ok_or_else(|| McpToolValidationError::field(tool, field, "is required"))
+    }
+
+    fn validate_required_predicate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        validate_nonblank(
+            tool,
+            "predicate",
+            self.predicate
+                .as_deref()
+                .ok_or_else(|| McpToolValidationError::field(tool, "predicate", "is required"))?,
+        )
+    }
+
+    fn validate_required_value(
+        &self,
+        tool: McpToolName,
+        field: &'static str,
+    ) -> Result<(), McpToolValidationError> {
+        match field {
+            "value" if self.value.is_some() => Ok(()),
+            "data" if self.data.is_some() => Ok(()),
+            "brief" if self.brief.is_some() => Ok(()),
+            "payload" if self.payload.is_some() => Ok(()),
+            _ => Err(McpToolValidationError::field(tool, field, "is required")),
+        }
+    }
+
+    fn validate_required_confidence(
+        &self,
+        tool: McpToolName,
+    ) -> Result<(), McpToolValidationError> {
+        let confidence = self
+            .confidence
+            .ok_or_else(|| McpToolValidationError::field(tool, "confidence", "is required"))?;
+        validate_confidence(tool, "confidence", confidence)
+    }
+
+    fn validate_optional_salience(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        match self.salience {
+            Some(salience) if salience.is_finite() => Ok(()),
+            Some(_) => Err(McpToolValidationError::field(
+                tool,
+                "salience",
+                "must be finite",
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
+impl McpEditSubject {
+    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        match (self.entity.as_deref(), self.edge.as_ref()) {
+            (Some(entity), None) => validate_entity_ref(tool, "subject.entity", entity),
+            (None, Some(edge)) => edge.validate(tool, "subject.edge", false),
+            _ => Err(McpToolValidationError::field(
+                tool,
+                "subject",
+                "must include exactly one of entity or edge",
+            )),
+        }
+    }
+
+    fn validate_edge_only(
+        &self,
+        tool: McpToolName,
+        field: &'static str,
+    ) -> Result<(), McpToolValidationError> {
+        match (&self.entity, &self.edge) {
+            (None, Some(edge)) => edge.validate(tool, "subject.edge", true),
+            _ => Err(McpToolValidationError::field(
+                tool,
+                field,
+                "must include an edge subject",
+            )),
+        }
+    }
+}
+
+impl McpEditEdgeSubject {
+    fn validate(
+        &self,
+        tool: McpToolName,
+        field: &'static str,
+        provenance_only: bool,
+    ) -> Result<(), McpToolValidationError> {
+        validate_entity_ref(tool, "subject.edge.source", &self.source)?;
+        validate_entity_ref(tool, "subject.edge.target", &self.target)?;
+        if EdgeKind::try_from_u8(self.kind).is_none()
+            || self.kind > 19
+            || (provenance_only && self.kind < 9)
+        {
+            let message = if provenance_only {
+                "must be a registered provenance edge kind in 9..=19"
+            } else {
+                "must be a registered edge kind in 0..=19"
+            };
+            return Err(McpToolValidationError::field(tool, field, message));
+        }
+        Ok(())
+    }
+}
+
+impl McpOccurredRange {
+    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
+        if self.start > self.end {
+            return Err(McpToolValidationError::field(
+                tool,
+                "occurred.start",
+                "must be less than or equal to occurred.end",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -531,32 +887,6 @@ impl McpReadTarget {
                 "must include exactly one of entity_ref, short_ref, or context_pack",
             )),
         }
-    }
-}
-
-impl McpEditEntityInput {
-    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
-        validate_optional_entity_ref(tool, "entity.id", self.id.as_deref())?;
-        if let (Some(start), Some(end)) = (self.occurred_start, self.occurred_end)
-            && start > end
-        {
-            return Err(McpToolValidationError::field(
-                tool,
-                "entity.occurred_start",
-                "must be less than or equal to entity.occurred_end",
-            ));
-        }
-        for text in &self.text {
-            text.validate(tool)?;
-        }
-        Ok(())
-    }
-}
-
-impl McpTextField {
-    fn validate(&self, tool: McpToolName) -> Result<(), McpToolValidationError> {
-        validate_nonblank(tool, "entity.text.field", &self.field)?;
-        validate_nonblank(tool, "entity.text.value", &self.value)
     }
 }
 
@@ -736,6 +1066,22 @@ fn validate_optional_nonblank(
     }
 }
 
+fn validate_confidence(
+    tool: McpToolName,
+    field: &'static str,
+    value: f32,
+) -> Result<(), McpToolValidationError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(McpToolValidationError::field(
+            tool,
+            field,
+            "must be a finite number in 0..=1",
+        ))
+    }
+}
+
 fn validate_required_entity_ref(
     tool: McpToolName,
     field: &'static str,
@@ -829,15 +1175,50 @@ fn edit_tool_schema() -> Value {
             "schema_version": schema_version_property(),
             "actor": actor_schema(),
             "consent": consent_schema(),
-            "verb": { "type": "string", "enum": ["remember", "supersede", "retract", "delete", "hard_delete"] },
+            "verb": {
+                "type": "string",
+                "enum": [
+                    "propose_claim",
+                    "attest_edge_provenance",
+                    "supersede_claim",
+                    "retract_claim",
+                    "propose_entity",
+                    "post_task",
+                    "report_task",
+                    "channel_send",
+                ],
+            },
             "idempotency_key": nonblank_string_schema(),
             "dry_run": { "type": "boolean" },
-            "entity": edit_entity_schema(),
-            "id": entity_id_schema(),
-            "new_id": entity_id_schema(),
-            "old_id": entity_id_schema(),
-            "at": { "type": "integer", "minimum": 0 },
-            "reason": { "type": "string", "enum": ["user_delete", "user_hard_delete", "gdpr_delete", "policy_delete"] },
+            "subject": edit_subject_schema(),
+            "predicate": nonblank_string_schema(),
+            "value": {},
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "evidence": {},
+            "valid_from": { "type": "integer", "minimum": 0 },
+            "valid_to": { "type": "integer", "minimum": 0 },
+            "salience": { "type": "number" },
+            "world": entity_id_schema(),
+            "scope": {},
+            "old_claim_id": entity_id_schema(),
+            "claim_id": entity_id_schema(),
+            "reason": nonblank_string_schema(),
+            "explanation": nonblank_string_schema(),
+            "entity_type": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "occurred": occurred_range_schema(),
+            "data": {},
+            "initial_claims": { "type": "array", "maxItems": 16, "items": {} },
+            "brief": {},
+            "job_id": nonblank_string_schema(),
+            "outcome": nonblank_string_schema(),
+            "summary": nonblank_string_schema(),
+            "result_claims": { "type": "array", "maxItems": 8, "items": {} },
+            "channel": nonblank_string_schema(),
+            "payload": {},
+            "supersession_status": nonblank_string_schema(),
+            "source_revision_ref": nonblank_string_schema(),
+            "body_snapshot_ref": nonblank_string_schema(),
+            "reasoning_effort": nonblank_string_schema(),
         }),
         &[
             "schema_version",
@@ -855,58 +1236,118 @@ fn edit_tool_schema() -> Value {
             json!([
                 {
                     "if": {
-                        "properties": { "verb": { "const": "remember" } },
+                        "properties": { "verb": { "const": "propose_claim" } },
                         "required": ["verb"],
                     },
                     "then": {
-                        "required": ["entity"],
-                        "not": forbidden_properties_schema(&["id", "new_id", "old_id", "at", "reason"]),
+                        "required": ["subject", "predicate", "value", "confidence"],
+                        "not": edit_forbidden_except(&[
+                            "subject",
+                            "predicate",
+                            "value",
+                            "confidence",
+                            "evidence",
+                            "valid_from",
+                            "valid_to",
+                            "salience",
+                            "world",
+                            "scope",
+                        ]),
                     },
                 },
                 {
                     "if": {
-                        "properties": { "verb": { "const": "supersede" } },
+                        "properties": { "verb": { "const": "attest_edge_provenance" } },
                         "required": ["verb"],
                     },
                     "then": {
-                        "required": ["new_id", "old_id"],
-                        "not": forbidden_properties_schema(&["entity", "id", "reason"]),
-                    },
-                },
-                {
-                    "if": {
-                        "properties": { "verb": { "const": "retract" } },
-                        "required": ["verb"],
-                    },
-                    "then": {
-                        "required": ["id"],
-                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "reason"]),
-                    },
-                },
-                {
-                    "if": {
-                        "properties": { "verb": { "const": "delete" } },
-                        "required": ["verb"],
-                    },
-                    "then": {
-                        "required": ["id", "reason"],
-                        "properties": { "reason": { "const": "user_delete" } },
-                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "at"]),
-                    },
-                },
-                {
-                    "if": {
-                        "properties": { "verb": { "const": "hard_delete" } },
-                        "required": ["verb"],
-                    },
-                    "then": {
-                        "required": ["id", "reason"],
+                        "required": ["subject", "confidence"],
                         "properties": {
-                            "reason": {
-                                "enum": ["user_hard_delete", "gdpr_delete", "policy_delete"],
-                            },
+                            "subject": edit_provenance_subject_schema(),
                         },
-                        "not": forbidden_properties_schema(&["entity", "new_id", "old_id", "at"]),
+                        "not": edit_forbidden_except(&[
+                            "subject",
+                            "confidence",
+                            "supersession_status",
+                            "source_revision_ref",
+                            "body_snapshot_ref",
+                            "reasoning_effort",
+                        ]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "supersede_claim" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["old_claim_id", "predicate", "value", "confidence"],
+                        "not": edit_forbidden_except(&[
+                            "old_claim_id",
+                            "predicate",
+                            "value",
+                            "confidence",
+                            "evidence",
+                            "valid_from",
+                            "valid_to",
+                            "salience",
+                            "reason",
+                        ]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "retract_claim" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["claim_id", "reason"],
+                        "not": edit_forbidden_except(&["claim_id", "reason", "explanation"]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "propose_entity" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["entity_type", "occurred", "data"],
+                        "not": edit_forbidden_except(&[
+                            "entity_type",
+                            "occurred",
+                            "data",
+                            "initial_claims",
+                        ]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "post_task" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["brief"],
+                        "not": edit_forbidden_except(&["brief"]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "report_task" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["job_id", "outcome", "summary"],
+                        "not": edit_forbidden_except(&["job_id", "outcome", "summary", "result_claims"]),
+                    },
+                },
+                {
+                    "if": {
+                        "properties": { "verb": { "const": "channel_send" } },
+                        "required": ["verb"],
+                    },
+                    "then": {
+                        "required": ["channel", "payload"],
+                        "not": edit_forbidden_except(&["channel", "payload"]),
                     },
                 },
             ]),
@@ -971,7 +1412,16 @@ fn tool_schema_root(id: &'static str, properties: Value, required: &[&'static st
     })
 }
 
-fn forbidden_properties_schema(properties: &[&'static str]) -> Value {
+fn edit_forbidden_except(allowed: &[&str]) -> Value {
+    let forbidden = EDIT_ACTION_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| !allowed.contains(field))
+        .collect::<Vec<_>>();
+    forbidden_properties_schema(&forbidden)
+}
+
+fn forbidden_properties_schema(properties: &[&str]) -> Value {
     let disallowed = properties
         .iter()
         .map(|field| json!({ "required": [field] }))
@@ -1119,34 +1569,66 @@ fn read_target_schema() -> Value {
     })
 }
 
-fn edit_entity_schema() -> Value {
+fn edit_subject_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["entity_type", "body"],
+        "oneOf": [
+            { "required": ["entity"] },
+            { "required": ["edge"] },
+        ],
         "properties": {
-            "id": entity_id_schema(),
-            "entity_type": { "type": "integer", "minimum": 0, "maximum": 255 },
-            "occurred_start": { "type": "integer", "minimum": 0 },
-            "occurred_end": { "type": "integer", "minimum": 0 },
-            "learned_at": { "type": "integer", "minimum": 0 },
-            "body": {},
-            "text": {
-                "type": "array",
-                "items": text_field_schema(),
-            },
+            "entity": entity_id_schema(),
+            "edge": edit_edge_subject_schema(),
         },
     })
 }
 
-fn text_field_schema() -> Value {
+fn edit_provenance_subject_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["field", "value"],
+        "required": ["edge"],
         "properties": {
-            "field": nonblank_string_schema(),
-            "value": nonblank_string_schema(),
+            "edge": edit_provenance_edge_subject_schema(),
+        },
+    })
+}
+
+fn edit_edge_subject_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "kind", "target"],
+        "properties": {
+            "source": entity_id_schema(),
+            "kind": { "type": "integer", "minimum": 0, "maximum": 19 },
+            "target": entity_id_schema(),
+        },
+    })
+}
+
+fn edit_provenance_edge_subject_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "kind", "target"],
+        "properties": {
+            "source": entity_id_schema(),
+            "kind": { "type": "integer", "minimum": 9, "maximum": 19 },
+            "target": entity_id_schema(),
+        },
+    })
+}
+
+fn occurred_range_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start", "end"],
+        "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 },
         },
     })
 }
@@ -1637,8 +2119,109 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             edit_verbs,
-            vec!["remember", "supersede", "retract", "delete", "hard_delete"]
+            vec![
+                "propose_claim",
+                "attest_edge_provenance",
+                "supersede_claim",
+                "retract_claim",
+                "propose_entity",
+                "post_task",
+                "report_task",
+                "channel_send"
+            ]
         );
+        let attest_branch = &edit["allOf"]
+            .as_array()
+            .expect("edit verb-specific constraints")[1];
+        assert_eq!(
+            attest_branch["then"]["properties"]["subject"]["required"],
+            json!(["edge"])
+        );
+        assert_eq!(
+            attest_branch["then"]["properties"]["subject"]["properties"]["edge"]["properties"]["kind"]
+                ["minimum"],
+            Value::from(9)
+        );
+    }
+
+    #[test]
+    fn edit_accepts_exact_canonical_write_verbs() {
+        let base = || {
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("write_memory"),
+                "idempotency_key": "mcp-test-canonical-verb",
+            })
+        };
+        let cases = [
+            json!({
+                "verb": "propose_claim",
+                "subject": { "entity": ACTOR_ID },
+                "predicate": "profile.fixture",
+                "value": true,
+                "confidence": 0.8,
+            }),
+            json!({
+                "verb": "attest_edge_provenance",
+                "subject": {
+                    "edge": {
+                        "source": ACTOR_ID,
+                        "kind": 9,
+                        "target": RESULT_ID
+                    }
+                },
+                "confidence": 0.8,
+            }),
+            json!({
+                "verb": "supersede_claim",
+                "old_claim_id": RESULT_ID,
+                "predicate": "profile.fixture",
+                "value": "updated",
+                "confidence": 0.8,
+            }),
+            json!({
+                "verb": "retract_claim",
+                "claim_id": RESULT_ID,
+                "reason": "user_retraction",
+            }),
+            json!({
+                "verb": "propose_entity",
+                "entity_type": 1,
+                "occurred": { "start": 10, "end": 10 },
+                "data": { "txt": "fixture" },
+            }),
+            json!({
+                "verb": "post_task",
+                "brief": {
+                    "objective": "fixture",
+                    "intent": "test validation",
+                    "constraints": [],
+                    "success_criteria": ["accepted"],
+                    "escalation_rule": "none"
+                },
+            }),
+            json!({
+                "verb": "report_task",
+                "job_id": "job:fixture",
+                "outcome": "succeeded",
+                "summary": "done",
+            }),
+            json!({
+                "verb": "channel_send",
+                "channel": "fixture",
+                "payload": { "txt": "hello" },
+            }),
+        ];
+
+        for case in cases {
+            let mut args = base();
+            args.as_object_mut()
+                .expect("base args object")
+                .extend(case.as_object().expect("case object").clone());
+            validate_mcp_tool_args(McpToolName::Edit, args)
+                .expect("canonical edit verb should validate");
+        }
     }
 
     #[test]
@@ -1711,7 +2294,7 @@ mod tests {
     }
 
     #[test]
-    fn remember_rejects_impossible_occurrence_range() {
+    fn edit_rejects_legacy_remember_verb() {
         let error = validate_mcp_tool_args(
             McpToolName::Edit,
             json!({
@@ -1719,14 +2302,32 @@ mod tests {
                 "actor": actor_json(),
                 "consent": consent_json("write_memory"),
                 "verb": "remember",
+                "idempotency_key": "mcp-test-legacy-remember",
+                "subject": { "entity": ACTOR_ID },
+                "predicate": "profile.legacy",
+                "value": true,
+                "confidence": 0.9,
+            }),
+        )
+        .expect_err("legacy remember verb should fail");
+
+        assert!(error.to_string().contains("unknown variant"), "{error}");
+    }
+
+    #[test]
+    fn propose_entity_rejects_impossible_occurrence_range() {
+        let error = validate_mcp_tool_args(
+            McpToolName::Edit,
+            json!({
+                "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
+                "actor": actor_json(),
+                "consent": consent_json("write_memory"),
+                "verb": "propose_entity",
                 "idempotency_key": "mcp-test-impossible-range",
-                "entity": {
-                    "entity_type": 1,
-                    "occurred_start": 20,
-                    "occurred_end": 10,
-                    "body": {
-                        "txt": "Impossible range"
-                    },
+                "entity_type": 1,
+                "occurred": { "start": 20, "end": 10 },
+                "data": {
+                    "txt": "Impossible range"
                 },
             }),
         )
@@ -1735,7 +2336,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("entity.occurred_start: must be less than or equal"),
+                .contains("occurred.start: must be less than or equal"),
             "{error}"
         );
     }
