@@ -323,6 +323,49 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
             "LINE Messaging API outbound schema; adapter may require channel review for narrowcast.",
             vec![
                 verb(
+                    "reply",
+                    "reply_message",
+                    json!({
+                        "replyToken": "string",
+                        "messages": [{"type": "text", "text": "string"}],
+                        "quota": {
+                            "plan_tier": "all",
+                            "metered": false,
+                            "quota_debit": false,
+                            "notes": "Reactive replies are free and require a live reply token."
+                        }
+                    }),
+                    OutboundInterruptionClass::Interrupt,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundPermissionState::Allowed,
+                    false,
+                    "LINE reply messages are reactive, free, and bounded by reply-token validity.",
+                ),
+                verb(
+                    "push",
+                    "push_message",
+                    json!({
+                        "to": "line_user_id | line_group_id",
+                        "messages": [{"type": "text", "text": "string"}],
+                        "quota": {
+                            "plan_tier": "free_or_paid",
+                            "metered": true,
+                            "quota_debit": true,
+                            "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+                            "overage_policy": "requires_metered_plan"
+                        }
+                    }),
+                    OutboundInterruptionClass::Interrupt,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundPermissionState::Conditional,
+                    false,
+                    "LINE push messages debit the monthly push quota and require plan-tier checks before dispatch.",
+                ),
+                verb(
                     "send",
                     "reply_message | push_message",
                     json!({
@@ -853,6 +896,36 @@ mod tests {
         assert!(
             !COMMON_OUTBOUND_VERB_KINDS.contains(&mfb_invite.kind.as_str()),
             "connector-specific verbs should not expand the common vocabulary"
+        );
+    }
+
+    #[test]
+    fn line_reply_and_push_manifests_separate_quota_semantics() {
+        let line_reply = outbound_verb_contract("line", "reply").expect("line reply manifest");
+        assert_eq!(line_reply.channel_call, "reply_message");
+        assert_eq!(
+            line_reply.capability_vs_permission.permission,
+            OutboundPermissionState::Allowed
+        );
+        assert_eq!(line_reply.params["quota"]["quota_debit"], false);
+        assert_eq!(line_reply.params["quota"]["metered"], false);
+        assert_eq!(line_reply.params["quota"]["plan_tier"], "all");
+
+        let line_push = outbound_verb_contract("line", "push").expect("line push manifest");
+        assert_eq!(line_push.channel_call, "push_message");
+        assert_eq!(
+            line_push.capability_vs_permission.permission,
+            OutboundPermissionState::Conditional
+        );
+        assert_eq!(line_push.params["quota"]["quota_debit"], true);
+        assert_eq!(line_push.params["quota"]["metered"], true);
+        assert_eq!(
+            line_push.params["quota"]["free_monthly_allowance"],
+            crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE
+        );
+        assert_eq!(
+            line_push.params["quota"]["overage_policy"],
+            "requires_metered_plan"
         );
     }
 

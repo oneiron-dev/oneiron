@@ -133,8 +133,10 @@ pub use crate::channel_identity_manifest::{
 pub use crate::channel_identity_provider::{
     CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, ChannelIdentityProviderAdapter,
     ChannelIdentityProviderInbound, ChannelIdentityProviderProvision,
-    DEFAULT_EMAIL_LOCAL_PART_PREFIX, DEV_EMAIL_PROVIDER_KEY, DevEmailIdentityAdapter,
-    DevEmailIdentityAdapterConfig, EMAIL_CHANNEL, EmailProviderInbound,
+    DEFAULT_EMAIL_LOCAL_PART_PREFIX, DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, DEV_EMAIL_PROVIDER_KEY,
+    DevEmailIdentityAdapter, DevEmailIdentityAdapterConfig, EMAIL_CHANNEL, EmailProviderInbound,
+    LINE_CHANNEL, LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY, LineOfficialAccountAdapter,
+    LineOfficialAccountAdapterConfig, LineOfficialAccountInbound, LineOfficialAccountPlanTier,
     MockChannelIdentityProviderAdapter, SLACK_CHANNEL, SLACK_SHARED_PRESENCE_PROVIDER_KEY,
     SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackProviderInbound,
     SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig,

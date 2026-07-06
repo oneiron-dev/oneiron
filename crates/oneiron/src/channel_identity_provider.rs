@@ -29,14 +29,23 @@ pub const DEV_EMAIL_PROVIDER_KEY: &str = "dev_email";
 /// Stable key for the built-in Slack shared-presence adapter.
 pub const SLACK_SHARED_PRESENCE_PROVIDER_KEY: &str = "slack_shared_presence";
 
+/// Stable key for the LINE Official Account adapter.
+pub const LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY: &str = "line_oa";
+
 /// Stable channel key for email identities.
 pub const EMAIL_CHANNEL: &str = "email";
 
 /// Stable channel key for Slack shared-presence identities.
 pub const SLACK_CHANNEL: &str = "slack";
 
+/// Stable channel key for LINE Official Account identities.
+pub const LINE_CHANNEL: &str = "line";
+
 /// Default deterministic local-part prefix for dev-safe email identities.
 pub const DEFAULT_EMAIL_LOCAL_PART_PREFIX: &str = "agent";
+
+/// Default LINE monthly push allowance for the free Messaging API plan.
+pub const DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE: u32 = 200;
 
 const SIGNATURE_HEX_BYTES: usize = 6;
 const SIGNATURE_HEX_LEN: usize = SIGNATURE_HEX_BYTES * 2;
@@ -45,6 +54,10 @@ const MAX_EMAIL_LOCAL_PART_BYTES: usize = 64;
 const MAX_EMAIL_DOMAIN_BYTES: usize = 253;
 const MAX_EMAIL_PROVIDER_EVENT_ID_BYTES: usize = 128;
 const MAX_EMAIL_PAYLOAD_REF_BYTES: usize = 512;
+const MAX_LINE_PROVIDER_EVENT_ID_BYTES: usize = 128;
+const MAX_LINE_COMPONENT_BYTES: usize = 128;
+const MAX_LINE_REPLY_TOKEN_BYTES: usize = 256;
+const MAX_LINE_PAYLOAD_REF_BYTES: usize = 512;
 const IDENTITY_HEX_LEN: usize = 32;
 const LOCAL_PART_SEPARATOR_BYTES: usize = 2;
 const MAX_LOCAL_PART_PREFIX_BYTES: usize =
@@ -64,6 +77,7 @@ const MAX_SLACK_PAYLOAD_REF_BYTES: usize = 512;
 pub enum ChannelIdentityProviderInbound {
     Email(EmailProviderInbound),
     Slack(SlackProviderInbound),
+    Line(LineOfficialAccountInbound),
 }
 
 /// Email webhook payload fields the adapter needs for fail-closed routing.
@@ -145,6 +159,71 @@ impl SlackProviderInbound {
     #[must_use]
     pub fn with_enterprise_id(mut self, enterprise_id: impl Into<String>) -> Self {
         self.enterprise_id = Some(enterprise_id.into());
+        self
+    }
+
+    /// Attaches an adapter-local payload reference.
+    #[must_use]
+    pub fn with_payload_ref(mut self, payload_ref: impl Into<String>) -> Self {
+        self.payload_ref = Some(payload_ref.into());
+        self
+    }
+}
+
+/// LINE Messaging API webhook event fields used by the adapter.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineOfficialAccountInbound {
+    pub provider_event_id: String,
+    /// LINE webhook `destination` value for the product OA.
+    pub destination: String,
+    /// Provider-native LINE user id from the event source.
+    pub source_user_id: String,
+    #[serde(default, skip_serializing)]
+    pub reply_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_ref: Option<String>,
+    pub received_at: u64,
+}
+
+impl fmt::Debug for LineOfficialAccountInbound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LineOfficialAccountInbound")
+            .field("provider_event_id", &self.provider_event_id)
+            .field("destination", &self.destination)
+            .field("source_user_id", &self.source_user_id)
+            .field(
+                "reply_token",
+                &self.reply_token.as_ref().map(|_| "[redacted]"),
+            )
+            .field("payload_ref", &self.payload_ref)
+            .field("received_at", &self.received_at)
+            .finish()
+    }
+}
+
+impl LineOfficialAccountInbound {
+    /// Builds a LINE OA webhook event payload.
+    #[must_use]
+    pub fn new(
+        provider_event_id: impl Into<String>,
+        destination: impl Into<String>,
+        source_user_id: impl Into<String>,
+        received_at: u64,
+    ) -> Self {
+        Self {
+            provider_event_id: provider_event_id.into(),
+            destination: destination.into(),
+            source_user_id: source_user_id.into(),
+            reply_token: None,
+            payload_ref: None,
+            received_at,
+        }
+    }
+
+    /// Attaches the provider reply token without exposing it to SurfaceEvent stamps.
+    #[must_use]
+    pub fn with_reply_token(mut self, reply_token: impl Into<String>) -> Self {
+        self.reply_token = Some(reply_token.into());
         self
     }
 
@@ -276,7 +355,7 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
     ) -> Result<InboundSurfaceEventInput> {
         let email = match inbound {
             ChannelIdentityProviderInbound::Email(email) => email,
-            ChannelIdentityProviderInbound::Slack(_) => {
+            ChannelIdentityProviderInbound::Slack(_) | ChannelIdentityProviderInbound::Line(_) => {
                 return Err(Error::InvalidConfig(
                     "email adapter rejects non-email inbound".to_owned(),
                 ));
@@ -493,7 +572,7 @@ impl ChannelIdentityProviderAdapter for DevEmailIdentityAdapter {
     ) -> Result<InboundSurfaceEventInput> {
         let email = match inbound {
             ChannelIdentityProviderInbound::Email(email) => email,
-            ChannelIdentityProviderInbound::Slack(_) => {
+            ChannelIdentityProviderInbound::Slack(_) | ChannelIdentityProviderInbound::Line(_) => {
                 return Err(Error::InvalidConfig(
                     "email adapter rejects non-email inbound".to_owned(),
                 ));
@@ -965,7 +1044,7 @@ impl ChannelIdentityProviderAdapter for SlackSharedPresenceAdapter {
     ) -> Result<InboundSurfaceEventInput> {
         let slack = match inbound {
             ChannelIdentityProviderInbound::Slack(slack) => slack,
-            ChannelIdentityProviderInbound::Email(_) => {
+            ChannelIdentityProviderInbound::Email(_) | ChannelIdentityProviderInbound::Line(_) => {
                 return Err(Error::InvalidConfig(
                     "slack adapter rejects non-slack inbound".to_owned(),
                 ));
@@ -1237,6 +1316,226 @@ fn normalize_slack_payload_ref(value: &str) -> Result<String> {
     Ok(value.to_owned())
 }
 
+/// LINE Messaging API plan tier used for quota-aware runtime manifests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineOfficialAccountPlanTier {
+    Free,
+    Paid,
+    Enterprise,
+}
+
+impl LineOfficialAccountPlanTier {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Free => "free",
+            Self::Paid => "paid",
+            Self::Enterprise => "enterprise",
+        }
+    }
+}
+
+/// Non-secret LINE Official Account adapter configuration.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LineOfficialAccountAdapterConfig {
+    messaging_api_destination: String,
+    plan_tier: LineOfficialAccountPlanTier,
+    monthly_push_allowance: u32,
+}
+
+impl fmt::Debug for LineOfficialAccountAdapterConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LineOfficialAccountAdapterConfig")
+            .field("messaging_api_destination", &self.messaging_api_destination)
+            .field("plan_tier", &self.plan_tier)
+            .field("monthly_push_allowance", &self.monthly_push_allowance)
+            .finish()
+    }
+}
+
+impl LineOfficialAccountAdapterConfig {
+    /// Builds LINE OA config for a console-minted Messaging API channel.
+    pub fn new(
+        messaging_api_destination: impl Into<String>,
+        plan_tier: LineOfficialAccountPlanTier,
+    ) -> Result<Self> {
+        Self::with_monthly_push_allowance(
+            messaging_api_destination,
+            plan_tier,
+            DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+        )
+    }
+
+    /// Builds LINE OA config with an explicit monthly push allowance.
+    pub fn with_monthly_push_allowance(
+        messaging_api_destination: impl Into<String>,
+        plan_tier: LineOfficialAccountPlanTier,
+        monthly_push_allowance: u32,
+    ) -> Result<Self> {
+        if monthly_push_allowance == 0 {
+            return Err(Error::InvalidConfig(
+                "LINE OA monthly push allowance must be greater than zero".to_owned(),
+            ));
+        }
+        let messaging_api_destination = normalize_line_component(
+            &messaging_api_destination.into(),
+            "LINE OA Messaging API destination",
+            MAX_LINE_COMPONENT_BYTES,
+        )?;
+        Ok(Self {
+            messaging_api_destination,
+            plan_tier,
+            monthly_push_allowance,
+        })
+    }
+
+    /// Returns the LINE webhook destination this adapter accepts.
+    #[must_use]
+    pub fn messaging_api_destination(&self) -> &str {
+        &self.messaging_api_destination
+    }
+
+    /// Returns the configured LINE plan tier.
+    #[must_use]
+    pub const fn plan_tier(&self) -> LineOfficialAccountPlanTier {
+        self.plan_tier
+    }
+
+    /// Returns the configured monthly push allowance.
+    #[must_use]
+    pub const fn monthly_push_allowance(&self) -> u32 {
+        self.monthly_push_allowance
+    }
+}
+
+/// LINE Official Account adapter for console-minted OA binding plus API runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineOfficialAccountAdapter {
+    config: LineOfficialAccountAdapterConfig,
+}
+
+impl LineOfficialAccountAdapter {
+    /// Builds a LINE OA adapter.
+    #[must_use]
+    pub const fn new(config: LineOfficialAccountAdapterConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns the adapter config.
+    #[must_use]
+    pub fn config(&self) -> &LineOfficialAccountAdapterConfig {
+        &self.config
+    }
+
+    /// Builds the per-LINE-user shared_presence route key.
+    pub fn address_for_line_user(&self, source_user_id: impl AsRef<str>) -> Result<String> {
+        let source_user_id = normalize_line_component(
+            source_user_id.as_ref(),
+            "LINE source user id",
+            MAX_LINE_COMPONENT_BYTES,
+        )?;
+        Ok(line_shared_presence_address(
+            &self.config.messaging_api_destination,
+            &source_user_id,
+        ))
+    }
+
+    /// Builds a requested per-user persona identity on the shared product OA.
+    pub fn requested_identity(
+        &self,
+        _identity_id: EntityId,
+        agent_ref: EntityId,
+        source_user_id: impl AsRef<str>,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let address_or_handle = self.address_for_line_user(source_user_id)?;
+        Ok(ChannelIdentity::requested(
+            LINE_CHANNEL,
+            address_or_handle,
+            ChannelIdentityShape::SharedPresence,
+            ChannelIdentityBinding::agent(agent_ref),
+            requested_at,
+        ))
+    }
+
+    fn provider_identity_ref(&self) -> String {
+        format!("line-oa:{}", self.config.messaging_api_destination)
+    }
+}
+
+impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
+    fn provider_key(&self) -> &'static str {
+        LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY
+    }
+
+    fn fulfillment_mode(
+        &self,
+        verb: ChannelIdentityLifecycleVerb,
+    ) -> Option<ChannelIdentityFulfillment> {
+        match verb {
+            ChannelIdentityLifecycleVerb::Provision | ChannelIdentityLifecycleVerb::Bind => {
+                Some(ChannelIdentityFulfillment::Manual)
+            }
+            ChannelIdentityLifecycleVerb::Rotate
+            | ChannelIdentityLifecycleVerb::Release
+            | ChannelIdentityLifecycleVerb::RouteInbound => None,
+        }
+    }
+
+    fn provision(
+        &self,
+        intent: &ProvisionIntent,
+        fulfilled_at: u64,
+    ) -> Result<ChannelIdentityProviderProvision> {
+        validate_line_provision_intent(intent, &self.config.messaging_api_destination)?;
+        Ok(ChannelIdentityProviderProvision {
+            provider_key: self.provider_key().to_owned(),
+            identity_id: intent.identity_id,
+            channel: LINE_CHANNEL.to_owned(),
+            address_or_handle: intent.identity.address_or_handle.clone(),
+            fulfillment_mode: ChannelIdentityFulfillment::Manual,
+            provider_identity_ref: self.provider_identity_ref(),
+            fulfilled_at,
+        })
+    }
+
+    fn parse_inbound(
+        &self,
+        inbound: ChannelIdentityProviderInbound,
+    ) -> Result<InboundSurfaceEventInput> {
+        let line = expect_line_inbound(inbound)?;
+        validate_line_inbound_metadata(&line)?;
+        let destination = normalize_line_component(
+            &line.destination,
+            "LINE OA Messaging API destination",
+            MAX_LINE_COMPONENT_BYTES,
+        )?;
+        if destination != self.config.messaging_api_destination {
+            return Err(Error::InvalidConfig(
+                "LINE inbound destination is not managed by this adapter".to_owned(),
+            ));
+        }
+        let source_user_id = normalize_line_component(
+            &line.source_user_id,
+            "LINE source user id",
+            MAX_LINE_COMPONENT_BYTES,
+        )?;
+        let receiving_address_or_handle =
+            line_shared_presence_address(&destination, &source_user_id);
+        let mut input = InboundSurfaceEventInput::new(
+            line.provider_event_id,
+            LINE_CHANNEL,
+            receiving_address_or_handle,
+            SurfaceCounterpartyStamp::unknown(format!("line:user:{source_user_id}")),
+            line.received_at,
+            true,
+        );
+        input.payload_ref = line.payload_ref;
+        Ok(input)
+    }
+}
+
 fn validate_provision_intent(
     intent: &ProvisionIntent,
     expected_channel: &str,
@@ -1272,6 +1571,51 @@ fn validate_provision_intent(
         ));
     }
     intent.identity.validate()
+}
+
+fn validate_line_provision_intent(
+    intent: &ProvisionIntent,
+    expected_destination: &str,
+) -> Result<()> {
+    if intent.fulfillment_mode != ChannelIdentityFulfillment::Manual {
+        return Err(Error::InvalidConfig(
+            "LINE OA adapter requires manual fulfillment".to_owned(),
+        ));
+    }
+    if intent.identity.channel != LINE_CHANNEL {
+        return Err(Error::InvalidConfig(
+            "LINE OA adapter channel does not match ProvisionIntent".to_owned(),
+        ));
+    }
+    if intent.identity.shape != ChannelIdentityShape::SharedPresence {
+        return Err(Error::InvalidConfig(
+            "LINE OA adapter requires shared_presence identities".to_owned(),
+        ));
+    }
+    if !matches!(
+        intent.identity.binding,
+        ChannelIdentityBinding::Agent { .. }
+    ) {
+        return Err(Error::InvalidConfig(
+            "LINE OA adapter requires agent-scoped identities".to_owned(),
+        ));
+    }
+    validate_line_shared_presence_address(
+        &intent.identity.address_or_handle,
+        expected_destination,
+    )?;
+    intent.identity.validate()
+}
+
+fn expect_line_inbound(
+    inbound: ChannelIdentityProviderInbound,
+) -> Result<LineOfficialAccountInbound> {
+    match inbound {
+        ChannelIdentityProviderInbound::Line(line) => Ok(line),
+        ChannelIdentityProviderInbound::Email(_) | ChannelIdentityProviderInbound::Slack(_) => Err(
+            Error::InvalidConfig("LINE OA adapter received non-LINE inbound".to_owned()),
+        ),
+    }
 }
 
 fn normalize_domain(domain: &str) -> Result<String> {
@@ -1396,6 +1740,91 @@ fn validate_email_inbound_metadata(email: &EmailProviderInbound) -> Result<()> {
     Ok(())
 }
 
+fn validate_line_inbound_metadata(line: &LineOfficialAccountInbound) -> Result<()> {
+    validate_non_blank(
+        &line.provider_event_id,
+        "provider event id must be non-empty",
+    )?;
+    validate_max_bytes(
+        &line.provider_event_id,
+        MAX_LINE_PROVIDER_EVENT_ID_BYTES,
+        "provider event id exceeds maximum length",
+    )?;
+    if let Some(reply_token) = &line.reply_token {
+        validate_non_blank(reply_token, "LINE reply token must be non-empty")?;
+        validate_max_bytes(
+            reply_token,
+            MAX_LINE_REPLY_TOKEN_BYTES,
+            "LINE reply token exceeds maximum length",
+        )?;
+        if line.payload_ref.is_none() {
+            return Err(Error::InvalidConfig(
+                "LINE reply token requires payload_ref host-local handle".to_owned(),
+            ));
+        }
+    }
+    if let Some(payload_ref) = &line.payload_ref {
+        validate_non_blank(payload_ref, "LINE payload_ref must be non-empty")?;
+        validate_max_bytes(
+            payload_ref,
+            MAX_LINE_PAYLOAD_REF_BYTES,
+            "LINE payload_ref exceeds maximum length",
+        )?;
+    }
+    Ok(())
+}
+
+fn normalize_line_component(value: &str, label: &'static str, max: usize) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, "LINE component must be non-empty")?;
+    validate_line_component_max_bytes(value, max, label)?;
+    if !value.bytes().all(|byte| {
+        matches!(
+            byte,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'@'
+        )
+    }) {
+        return Err(Error::InvalidConfig(format!(
+            "{label} must use LINE id-safe characters"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn validate_line_component_max_bytes(value: &str, max: usize, label: &'static str) -> Result<()> {
+    if value.len() > max {
+        return Err(Error::InvalidConfig(format!(
+            "{label} exceeds maximum length: {max} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn line_shared_presence_address(destination: &str, source_user_id: &str) -> String {
+    format!("line:oa:{destination}:user:{source_user_id}")
+}
+
+fn validate_line_shared_presence_address(address: &str, expected_destination: &str) -> Result<()> {
+    validate_non_blank(address, "LINE shared_presence address must be non-empty")?;
+    let prefix = format!("line:oa:{expected_destination}:user:");
+    let Some(source_user_id) = address.strip_prefix(&prefix) else {
+        return Err(Error::InvalidConfig(
+            "LINE shared_presence address does not match adapter destination".to_owned(),
+        ));
+    };
+    let source_user_id = normalize_line_component(
+        source_user_id,
+        "LINE source user id",
+        MAX_LINE_COMPONENT_BYTES,
+    )?;
+    if address != line_shared_presence_address(expected_destination, &source_user_id) {
+        return Err(Error::InvalidConfig(
+            "LINE shared_presence address is not normalized".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn normalize_email_address(address: &str, normalized_domain: &str) -> Result<String> {
     let (local_part, domain) = split_email_address(address)?;
     if domain != normalized_domain {
@@ -1424,9 +1853,53 @@ fn validate_max_bytes(value: &str, max: usize, reason: &'static str) -> Result<(
 mod tests {
     use super::*;
     use crate::channel_identity::ChannelIdentityState;
+    use crate::surface_event::{InboundSurfaceRouteOutcome, SurfaceCounterpartyStamp};
+    use crate::{Vault, VaultConfig};
 
     fn entity(seed: u8) -> EntityId {
         EntityId::from_bytes([seed; 16]).expect("valid test id")
+    }
+
+    fn temp_vault() -> (tempfile::TempDir, Vault) {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let mut cfg = VaultConfig::device();
+        cfg.map_size = 16 * 1024 * 1024;
+        cfg.dimensions = 4;
+        cfg.embedding_model = None;
+        let vault = Vault::open(tmp.path(), cfg).expect("open vault");
+        (tmp, vault)
+    }
+
+    fn activate_line_identity(
+        adapter: &LineOfficialAccountAdapter,
+        vault: &Vault,
+        identity_id: EntityId,
+        agent_ref: EntityId,
+        source_user_id: &str,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let identity =
+            adapter.requested_identity(identity_id, agent_ref, source_user_id, requested_at)?;
+        vault.create_channel_identity(&identity_id, &identity)?;
+        vault.transition_channel_identity(
+            &identity_id,
+            ChannelIdentityState::PendingFulfillment,
+            Some(ChannelIdentityFulfillment::Manual),
+            requested_at + 1,
+            None,
+        )?;
+        let provision = adapter.provision(
+            &ProvisionIntent {
+                identity_id,
+                identity: identity.clone(),
+                fulfillment_mode: ChannelIdentityFulfillment::Manual,
+            },
+            requested_at + 2,
+        )?;
+        vault.fulfill_channel_identity(
+            provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(agent_ref)),
+        )?;
+        Ok(identity)
     }
 
     fn assert_provider_conformance<A: ChannelIdentityProviderAdapter>(
@@ -1890,6 +2363,215 @@ mod tests {
             outbound_with_metadata.body["metadata"]["event_payload"]["payload_ref"],
             "outbound:one"
         );
+        Ok(())
+    }
+    #[test]
+    fn line_oa_adapter_manual_fulfillment_and_inbound_stamping() -> Result<()> {
+        let config = LineOfficialAccountAdapterConfig::new(
+            "Uproductoa123",
+            LineOfficialAccountPlanTier::Free,
+        )?;
+        let adapter = LineOfficialAccountAdapter::new(config);
+        let identity_id = entity(0x61);
+        let agent_ref = entity(0xA6);
+        let source_user_id = "UlineUserA";
+        let address = adapter.address_for_line_user(source_user_id)?;
+
+        assert_eq!(
+            adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Provision),
+            Some(ChannelIdentityFulfillment::Manual)
+        );
+        assert_eq!(
+            adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::Bind),
+            Some(ChannelIdentityFulfillment::Manual)
+        );
+        assert_eq!(
+            adapter.fulfillment_mode(ChannelIdentityLifecycleVerb::RouteInbound),
+            None
+        );
+
+        let identity = adapter.requested_identity(identity_id, agent_ref, source_user_id, 1_000)?;
+        assert_eq!(identity.channel, LINE_CHANNEL);
+        assert_eq!(identity.address_or_handle, address);
+        assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
+        assert!(matches!(
+            identity.binding,
+            ChannelIdentityBinding::Agent { agent_ref: bound } if bound == agent_ref
+        ));
+
+        let provision = adapter.provision(
+            &ProvisionIntent {
+                identity_id,
+                identity: identity.clone(),
+                fulfillment_mode: ChannelIdentityFulfillment::Manual,
+            },
+            1_002,
+        )?;
+        assert_eq!(provision.provider_key, LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY);
+        assert_eq!(
+            provision.fulfillment_mode,
+            ChannelIdentityFulfillment::Manual
+        );
+        assert_eq!(provision.provider_identity_ref, "line-oa:Uproductoa123");
+
+        let (_tmp, vault) = temp_vault();
+        vault.create_channel_identity(&identity_id, &identity)?;
+        vault.transition_channel_identity(
+            &identity_id,
+            ChannelIdentityState::PendingFulfillment,
+            Some(ChannelIdentityFulfillment::Manual),
+            1_001,
+            None,
+        )?;
+        vault.fulfill_channel_identity(
+            provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(agent_ref)),
+        )?;
+
+        let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Line(
+            LineOfficialAccountInbound::new("line-event-1", "Uproductoa123", source_user_id, 1_003)
+                .with_reply_token("reply-token-redacted")
+                .with_payload_ref("provider:line-event-1"),
+        ))?;
+
+        assert_eq!(parsed.channel, LINE_CHANNEL);
+        assert_eq!(parsed.receiving_address_or_handle, address);
+        assert_eq!(
+            parsed.counterparty,
+            SurfaceCounterpartyStamp::unknown("line:user:UlineUserA")
+        );
+        assert!(parsed.foreign_inbound);
+
+        let receipt = vault.route_inbound_surface_event(parsed)?;
+        assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+        assert_eq!(receipt.receiving_identity_ref, Some(identity_id.to_hex()));
+        assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
+        let surface_event = receipt.surface_event.expect("routed event");
+        assert_eq!(surface_event.receiving_identity_ref, identity_id.to_hex());
+        assert_eq!(surface_event.agent_ref, agent_ref.to_hex());
+        assert_eq!(
+            surface_event.payload_ref.as_deref(),
+            Some("provider:line-event-1")
+        );
+        assert!(surface_event.claims_not_instructions);
+
+        let serialized = serde_json::to_value(ChannelIdentityProviderInbound::Line(
+            LineOfficialAccountInbound::new(
+                "line-event-serialized",
+                "Uproductoa123",
+                source_user_id,
+                1_004,
+            )
+            .with_reply_token("reply-token-secret")
+            .with_payload_ref("provider:line-event-serialized"),
+        ))
+        .expect("serialize LINE inbound");
+        assert!(serialized.get("reply_token").is_none());
+        assert_eq!(
+            serialized
+                .get("payload_ref")
+                .and_then(serde_json::Value::as_str),
+            Some("provider:line-event-serialized")
+        );
+
+        let missing_handle_err = adapter
+            .parse_inbound(ChannelIdentityProviderInbound::Line(
+                LineOfficialAccountInbound::new(
+                    "line-event-missing-handle",
+                    "Uproductoa123",
+                    source_user_id,
+                    1_005,
+                )
+                .with_reply_token("reply-token-without-host-handle"),
+            ))
+            .expect_err("LINE reply token without payload_ref must fail closed");
+        assert!(matches!(
+            missing_handle_err,
+            Error::InvalidConfig(reason)
+                if reason == "LINE reply token requires payload_ref host-local handle"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn line_oa_shared_presence_routes_users_to_separate_personas() -> Result<()> {
+        let adapter = LineOfficialAccountAdapter::new(LineOfficialAccountAdapterConfig::new(
+            "Uproductoa123",
+            LineOfficialAccountPlanTier::Paid,
+        )?);
+        let (_tmp, vault) = temp_vault();
+
+        let identity_a = entity(0x71);
+        let identity_b = entity(0x72);
+        let agent_a = entity(0xA7);
+        let agent_b = entity(0xB7);
+        activate_line_identity(&adapter, &vault, identity_a, agent_a, "UlineUserA", 2_000)?;
+        activate_line_identity(&adapter, &vault, identity_b, agent_b, "UlineUserB", 2_100)?;
+
+        let parsed_a = adapter.parse_inbound(ChannelIdentityProviderInbound::Line(
+            LineOfficialAccountInbound::new("line-event-a", "Uproductoa123", "UlineUserA", 2_200),
+        ))?;
+        let parsed_b = adapter.parse_inbound(ChannelIdentityProviderInbound::Line(
+            LineOfficialAccountInbound::new("line-event-b", "Uproductoa123", "UlineUserB", 2_201),
+        ))?;
+        assert_ne!(
+            parsed_a.receiving_address_or_handle,
+            parsed_b.receiving_address_or_handle
+        );
+
+        let receipt_a = vault.route_inbound_surface_event(parsed_a)?;
+        let receipt_b = vault.route_inbound_surface_event(parsed_b)?;
+        assert_eq!(receipt_a.receiving_identity_ref, Some(identity_a.to_hex()));
+        assert_eq!(receipt_a.agent_ref, Some(agent_a.to_hex()));
+        assert_eq!(receipt_b.receiving_identity_ref, Some(identity_b.to_hex()));
+        assert_eq!(receipt_b.agent_ref, Some(agent_b.to_hex()));
+        Ok(())
+    }
+
+    #[test]
+    fn line_oa_adapter_rejects_wrong_destination_and_non_shared_presence() -> Result<()> {
+        let adapter = LineOfficialAccountAdapter::new(LineOfficialAccountAdapterConfig::new(
+            "Uproductoa123",
+            LineOfficialAccountPlanTier::Free,
+        )?);
+        let inbound_err = adapter
+            .parse_inbound(ChannelIdentityProviderInbound::Line(
+                LineOfficialAccountInbound::new(
+                    "line-event-wrong",
+                    "Uotheroa",
+                    "UlineUserA",
+                    3_000,
+                ),
+            ))
+            .expect_err("wrong OA destination must fail closed");
+        assert!(matches!(inbound_err, Error::InvalidConfig(_)));
+
+        let identity_id = entity(0x81);
+        let mut identity =
+            adapter.requested_identity(identity_id, entity(0xA8), "UlineUserA", 3_100)?;
+        identity.shape = ChannelIdentityShape::DedicatedHandle;
+        let provision_err = adapter
+            .provision(
+                &ProvisionIntent {
+                    identity_id,
+                    identity,
+                    fulfillment_mode: ChannelIdentityFulfillment::Manual,
+                },
+                3_101,
+            )
+            .expect_err("dedicated per-companion OA is out of v1 shared_presence scope");
+        assert!(matches!(provision_err, Error::InvalidConfig(_)));
+
+        let overlong_user_id = "U".repeat(MAX_LINE_COMPONENT_BYTES + 1);
+        let length_err = adapter
+            .address_for_line_user(&overlong_user_id)
+            .expect_err("overlong LINE source user id must fail clearly");
+        assert!(matches!(
+            length_err,
+            Error::InvalidConfig(reason)
+                if reason == format!(
+                    "LINE source user id exceeds maximum length: {MAX_LINE_COMPONENT_BYTES} bytes"
+                )
+        ));
         Ok(())
     }
 }
