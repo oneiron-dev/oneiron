@@ -1344,7 +1344,7 @@ impl Vault {
         Ok(None)
     }
 
-    fn channel_identity_assignment_conflict_in_txn(
+    pub(crate) fn channel_identity_assignment_conflict_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         id: &EntityId,
@@ -1732,7 +1732,7 @@ impl Vault {
         )
     }
 
-    fn apply_channel_identity_body(
+    pub(crate) fn apply_channel_identity_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

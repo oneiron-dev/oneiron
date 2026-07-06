@@ -12,7 +12,9 @@ use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_bod
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
-use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
+use crate::store::{
+    ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, PendingGateConsentRecord,
+};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_FEDERATION_GRANT, EntityId,
@@ -296,6 +298,10 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
         records.extend(gate_receipts(vault, query)?);
     }
 
+    if query.includes_kind(ReceiptKind::IdentityLifecycle) {
+        records.extend(channel_identity_lifecycle_receipts(vault, query)?);
+    }
+
     let rtxn = vault.store.env.read_txn()?;
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
@@ -476,6 +482,77 @@ fn companion_lifecycle_receipt(
         on_behalf_of: None,
         outcome: event.kind.as_str().to_owned(),
         trigger_ref: Some(format!("entity:{}", id.to_hex())),
+        policy_trace: Vec::new(),
+        fields,
+    }
+}
+
+fn channel_identity_lifecycle_receipts(
+    vault: &Vault,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut receipts = Vec::new();
+    for record in vault
+        .store
+        .channel_identity_lifecycle_receipts(MAX_RECEIPT_QUERY_SCAN)?
+    {
+        let receipt = channel_identity_lifecycle_receipt(&record);
+        if query.matches(&receipt) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}
+
+fn channel_identity_lifecycle_receipt(
+    record: &ChannelIdentityLifecycleReceiptRecord,
+) -> ReceiptRecord {
+    let mut fields = BTreeMap::new();
+    fields.insert("actor_class".to_owned(), record.actor_class.clone());
+    fields.insert("verb".to_owned(), record.verb.clone());
+    fields.insert("intent_kind".to_owned(), record.intent_kind.clone());
+    fields.insert("channel".to_owned(), record.channel.clone());
+    fields.insert(
+        "address_or_handle".to_owned(),
+        record.address_or_handle.clone(),
+    );
+    fields.insert("state".to_owned(), record.state.clone());
+    fields.insert(
+        "owner_visible_state".to_owned(),
+        record.owner_visible_state.clone(),
+    );
+    fields.insert(
+        "outbound_closed".to_owned(),
+        record.outbound_closed.to_string(),
+    );
+    fields.insert(
+        "identity_retiring".to_owned(),
+        record.identity_retiring.to_string(),
+    );
+    if let Some(mode) = record.fulfillment_mode.as_ref() {
+        fields.insert("fulfillment_mode".to_owned(), mode.clone());
+    }
+    if let Some(until) = record.quarantine_until {
+        fields.insert("quarantine_until".to_owned(), until.to_string());
+    }
+    if let Some(decision_id) = record.gate_decision_id {
+        fields.insert(
+            "gate_decision_ref".to_owned(),
+            format!("gate:{}", decision_id.to_hex()),
+        );
+    }
+
+    ReceiptRecord {
+        receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),
+        receipt_kind: ReceiptKind::IdentityLifecycle,
+        occurred_at: record.created_at,
+        actor: record
+            .actor_ref
+            .clone()
+            .or_else(|| Some(record.actor_class.clone())),
+        on_behalf_of: None,
+        outcome: record.outcome.clone(),
+        trigger_ref: Some(format!("entity:{}", hex_lower(&record.identity_id))),
         policy_trace: Vec::new(),
         fields,
     }
