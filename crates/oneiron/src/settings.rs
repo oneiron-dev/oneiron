@@ -8,6 +8,16 @@ use crate::error::{Error, Result};
 use crate::types::EntityId;
 use crate::{Vault, unix_seconds_now};
 
+pub mod model_versioning;
+
+pub use model_versioning::{
+    DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
+    ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,
+    ModelStackIdError, ModelStackModel, ModelStackPreference, ModelStackRegistry,
+    ModelStackRegistryError, ModelStackResolution, default_model_stack_registry,
+    try_default_model_stack_registry,
+};
+
 /// Version of the persisted customization settings record.
 pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
 
