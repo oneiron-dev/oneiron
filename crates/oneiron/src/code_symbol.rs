@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ops::Range;
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -108,6 +109,62 @@ impl CodeChunk {
             end_line,
             sha256_bytes(text.as_bytes()),
         ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeEmbeddingInput {
+    pub entity_id: EntityId,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub content_hash: [u8; CODE_SYMBOL_TEXT_HASH_LEN],
+    pub text: String,
+}
+
+impl CodeEmbeddingInput {
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        entity_id: EntityId,
+        path: impl Into<String>,
+        name: impl Into<String>,
+        kind: impl Into<String>,
+        start_line: u32,
+        end_line: u32,
+        content_hash: [u8; CODE_SYMBOL_TEXT_HASH_LEN],
+        text: impl Into<String>,
+    ) -> Self {
+        Self {
+            entity_id,
+            path: path.into(),
+            name: name.into(),
+            kind: kind.into(),
+            start_line,
+            end_line,
+            content_hash,
+            text: text.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct CodeEmbeddingVector {
+    pub entity_id: EntityId,
+    pub vector: Vec<f32>,
+}
+
+impl CodeEmbeddingVector {
+    #[must_use]
+    pub fn new(entity_id: EntityId, vector: impl Into<Vec<f32>>) -> Self {
+        Self {
+            entity_id,
+            vector: vector.into(),
+        }
     }
 }
 
@@ -375,6 +432,49 @@ pub fn derive_code_chunks_from_text_diff(
         return Ok(Vec::new());
     }
 
+    if is_tree_sitter_rust_source(path) {
+        return derive_rust_code_chunks_from_text_diff(path, old_text, new_text);
+    }
+
+    derive_line_diff_code_chunks(path, old_text, new_text)
+}
+
+pub fn derive_code_embedding_inputs_from_text_diff(
+    repo_ref: &RepoRef,
+    path: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<Vec<CodeEmbeddingInput>> {
+    validate_manifest_path(path)?;
+    if old_text == new_text || !is_tree_sitter_rust_source(path) {
+        return Ok(Vec::new());
+    }
+    let changed_ranges = changed_line_ranges(old_text, new_text);
+    rust_code_embedding_inputs(repo_ref, path, new_text, &changed_ranges)
+}
+
+pub fn embed_code_chunks(
+    inputs: &[CodeEmbeddingInput],
+    embedder: impl FnOnce(&[CodeEmbeddingInput]) -> Result<Vec<Vec<f32>>>,
+) -> Result<Vec<CodeEmbeddingVector>> {
+    let vectors = embedder(inputs)?;
+    if vectors.len() != inputs.len() {
+        return Err(Error::InvariantViolation(
+            "code embedder returned mismatched vector count",
+        ));
+    }
+    Ok(inputs
+        .iter()
+        .zip(vectors)
+        .map(|(input, vector)| CodeEmbeddingVector::new(input.entity_id, vector))
+        .collect())
+}
+
+fn derive_line_diff_code_chunks(
+    path: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<Vec<CodeChunk>> {
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
     if old_lines.len() == new_lines.len() {
@@ -662,6 +762,17 @@ impl Vault {
         self.put_code_symbol_manifest(code_artifact_id, &graph.manifest)
     }
 
+    pub fn put_code_symbol_embedding_vectors(
+        &self,
+        embeddings: &[CodeEmbeddingVector],
+    ) -> Result<()> {
+        let mut batch = self.batch();
+        for embedding in embeddings {
+            batch = batch.vector(&embedding.entity_id, &embedding.vector);
+        }
+        batch.commit()
+    }
+
     pub fn get_code_symbol_manifest(
         &self,
         code_artifact_id: &EntityId,
@@ -875,6 +986,11 @@ struct ExtractedCodeSymbol {
     end_line: u32,
 }
 
+struct RustDefinitionChunk<'a> {
+    chunk: CodeChunk,
+    text: &'a str,
+}
+
 struct ParsedRustSource<'a> {
     text: &'a str,
     tree: tree_sitter::Tree,
@@ -885,6 +1001,160 @@ fn is_tree_sitter_rust_source(path: &str) -> bool {
     path.ends_with(".rs")
 }
 
+fn parse_rust_source(source: &str) -> Result<tree_sitter::Tree> {
+    let mut parser = tree_sitter::Parser::new();
+    let language = tree_sitter_rust::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter Rust language rejected"))?;
+    parser
+        .parse(source, None)
+        .ok_or(Error::InvalidCodeSymbolManifestBody(
+            "tree-sitter Rust parse failed",
+        ))
+}
+
+fn derive_rust_code_chunks_from_text_diff(
+    path: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<Vec<CodeChunk>> {
+    let changed_ranges = changed_line_ranges(old_text, new_text);
+    let tree = parse_rust_source(new_text)?;
+    let mut chunks = Vec::new();
+    collect_changed_rust_chunks(
+        tree.root_node(),
+        path,
+        new_text,
+        &changed_ranges,
+        &mut chunks,
+    )?;
+    chunks.sort_by(compare_chunks);
+    chunks.dedup_by(|left, right| {
+        left.path == right.path
+            && left.start_line == right.start_line
+            && left.end_line == right.end_line
+            && left.content_hash == right.content_hash
+    });
+    if chunks.is_empty() && !changed_ranges.is_empty() {
+        chunks.push(CodeChunk::from_text(
+            path,
+            1,
+            source_end_line(new_text)?,
+            new_text,
+        )?);
+    }
+    Ok(chunks)
+}
+
+fn rust_code_embedding_inputs(
+    repo_ref: &RepoRef,
+    path: &str,
+    source: &str,
+    changed_ranges: &[Range<usize>],
+) -> Result<Vec<CodeEmbeddingInput>> {
+    let tree = parse_rust_source(source)?;
+    let mut inputs = Vec::new();
+    collect_changed_rust_embedding_inputs(
+        tree.root_node(),
+        repo_ref,
+        path,
+        source,
+        changed_ranges,
+        &mut inputs,
+    )?;
+    inputs.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.start_line.cmp(&right.start_line))
+            .then_with(|| left.end_line.cmp(&right.end_line))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.content_hash.cmp(&right.content_hash))
+    });
+    Ok(inputs)
+}
+
+fn collect_changed_rust_chunks(
+    node: tree_sitter::Node<'_>,
+    path: &str,
+    source: &str,
+    changed_ranges: &[Range<usize>],
+    chunks: &mut Vec<CodeChunk>,
+) -> Result<()> {
+    if rust_definition_identity(node, source)?.is_some() {
+        let definition = rust_definition_chunk(path, source, node)?;
+        if definition_has_uncovered_changed_lines(
+            node,
+            source,
+            definition.chunk.start_line,
+            definition.chunk.end_line,
+            changed_ranges,
+        )? {
+            chunks.push(definition.chunk);
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_changed_rust_chunks(child, path, source, changed_ranges, chunks)?;
+    }
+    Ok(())
+}
+
+fn collect_changed_rust_embedding_inputs(
+    node: tree_sitter::Node<'_>,
+    repo_ref: &RepoRef,
+    path: &str,
+    source: &str,
+    changed_ranges: &[Range<usize>],
+    inputs: &mut Vec<CodeEmbeddingInput>,
+) -> Result<()> {
+    if let Some((name, kind)) = rust_definition_identity(node, source)? {
+        let definition = rust_definition_chunk(path, source, node)?;
+        if definition_has_uncovered_changed_lines(
+            node,
+            source,
+            definition.chunk.start_line,
+            definition.chunk.end_line,
+            changed_ranges,
+        )? {
+            let fingerprint = derive_symbol_fingerprint(
+                path,
+                &name,
+                kind,
+                std::slice::from_ref(&definition.chunk),
+            )?;
+            let revision =
+                CodeSymbolRevision::new(path, name.clone(), kind, fingerprint, vec![0], None, None);
+            let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
+            inputs.push(CodeEmbeddingInput::new(
+                entity_id,
+                path,
+                name,
+                kind,
+                definition.chunk.start_line,
+                definition.chunk.end_line,
+                definition.chunk.content_hash,
+                definition.text,
+            ));
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_changed_rust_embedding_inputs(
+            child,
+            repo_ref,
+            path,
+            source,
+            changed_ranges,
+            inputs,
+        )?;
+    }
+    Ok(())
+}
+
 fn collect_rust_definitions(
     node: tree_sitter::Node<'_>,
     path: &str,
@@ -893,23 +1163,20 @@ fn collect_rust_definitions(
     symbols: &mut Vec<ExtractedCodeSymbol>,
     source_symbol_indexes: &mut Vec<usize>,
 ) -> Result<()> {
-    if let Some(kind) = rust_definition_kind(node.kind())
-        && let Some(name_node) = node.child_by_field_name("name")
-    {
-        let name = node_text(name_node, source)?.to_owned();
+    if let Some((name, kind)) = rust_definition_identity(node, source)? {
         validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
-        let text = node_text(node, source)?;
-        let start_line = tree_sitter_line_number(node.start_position().row)?;
-        let end_line = tree_sitter_line_number(node.end_position().row)?;
-        let chunk = CodeChunk::from_text(path, start_line, end_line, text)?;
+        let definition = rust_definition_chunk(path, source, node)?;
+        let chunk = definition.chunk;
         let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
             Error::InvalidCodeSymbolManifestBody("tree-sitter chunk index exceeds u32")
         })?;
         let fingerprint =
             derive_symbol_fingerprint(path, &name, kind, std::slice::from_ref(&chunk))?;
+        let start_line = chunk.start_line;
+        let end_line = chunk.end_line;
         chunks.push(chunk);
         let byte_range = node.byte_range();
-        let name_range = name_node.byte_range();
+        let name_range = rust_definition_name_range(node).unwrap_or(byte_range.clone());
         let symbol_index = symbols.len();
         symbols.push(ExtractedCodeSymbol {
             revision: CodeSymbolRevision::new(
@@ -936,6 +1203,104 @@ fn collect_rust_definitions(
         collect_rust_definitions(child, path, source, chunks, symbols, source_symbol_indexes)?;
     }
     Ok(())
+}
+
+fn rust_definition_identity(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<(String, &'static str)>> {
+    if let Some(kind) = rust_definition_kind(node.kind())
+        && let Some(name_node) = node.child_by_field_name("name")
+    {
+        let name = node_text(name_node, source)?.to_owned();
+        return Ok(Some((name, kind)));
+    }
+    if node.kind() != "impl_item" {
+        return Ok(None);
+    }
+    let trait_text = node
+        .child_by_field_name("trait")
+        .map(|child| node_text(child, source).map(str::trim).map(str::to_owned))
+        .transpose()?;
+    let type_text = node
+        .child_by_field_name("type")
+        .map(|child| node_text(child, source).map(str::trim).map(str::to_owned))
+        .transpose()?;
+    let name = match (trait_text, type_text) {
+        (Some(trait_text), Some(type_text)) if !trait_text.is_empty() && !type_text.is_empty() => {
+            format!("impl {trait_text} for {type_text}")
+        }
+        (_, Some(type_text)) if !type_text.is_empty() => format!("impl {type_text}"),
+        _ => format!(
+            "impl@{}:{}",
+            node.start_position().row + 1,
+            node.end_position().row + 1
+        ),
+    };
+    Ok(Some((name, "impl")))
+}
+
+fn rust_definition_name_range(node: tree_sitter::Node<'_>) -> Option<Range<usize>> {
+    node.child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("type"))
+        .map(|name_node| name_node.byte_range())
+}
+
+fn rust_definition_chunk<'a>(
+    path: &str,
+    source: &'a str,
+    node: tree_sitter::Node<'_>,
+) -> Result<RustDefinitionChunk<'a>> {
+    let start_byte = rust_doc_context_start_byte(node, source);
+    let text =
+        source
+            .get(start_byte..node.end_byte())
+            .ok_or(Error::InvalidCodeSymbolManifestBody(
+                "tree-sitter definition byte range is invalid",
+            ))?;
+    let start_line = source[..start_byte]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let start_line = u32::try_from(start_line)
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))?;
+    let end_line = tree_sitter_line_number(node.end_position().row)?;
+    Ok(RustDefinitionChunk {
+        chunk: CodeChunk::from_text(path, start_line, end_line, text)?,
+        text,
+    })
+}
+
+fn rust_doc_context_start_byte(node: tree_sitter::Node<'_>, source: &str) -> usize {
+    let mut start_byte = node.start_byte();
+    let mut previous = node.prev_named_sibling();
+    while let Some(candidate) = previous {
+        if !is_rust_doc_context_node(candidate.kind()) {
+            break;
+        }
+        let between = source
+            .get(candidate.end_byte()..start_byte)
+            .unwrap_or_default();
+        if between
+            .lines()
+            .filter(|line| line.trim().is_empty())
+            .count()
+            > 1
+        {
+            break;
+        }
+        start_byte = candidate.start_byte();
+        previous = candidate.prev_named_sibling();
+    }
+    start_byte
+}
+
+fn is_rust_doc_context_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "line_comment" | "block_comment" | "attribute_item" | "inner_attribute_item"
+    )
 }
 
 fn rust_definition_kind(kind: &str) -> Option<&'static str> {
@@ -1683,6 +2048,139 @@ fn validate_normalized_commit_hash(input: &str) -> Result<()> {
     Ok(())
 }
 
+fn changed_line_ranges(old_text: &str, new_text: &str) -> Vec<Range<usize>> {
+    if old_text == new_text {
+        return Vec::new();
+    }
+
+    let old_lines: Vec<&str> = old_text.lines().collect();
+    let new_lines: Vec<&str> = new_text.lines().collect();
+    if old_lines.len() == new_lines.len() {
+        let mut ranges = Vec::new();
+        let mut index = 0;
+        while index < new_lines.len() {
+            if old_lines[index] == new_lines[index] {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            index += 1;
+            while index < new_lines.len() && old_lines[index] != new_lines[index] {
+                index += 1;
+            }
+            ranges.push(start..index);
+        }
+        return ranges;
+    }
+
+    let mut prefix = 0;
+    let min_len = old_lines.len().min(new_lines.len());
+    while prefix < min_len && old_lines[prefix] == new_lines[prefix] {
+        prefix += 1;
+    }
+
+    let mut suffix = 0;
+    while suffix < old_lines.len().saturating_sub(prefix)
+        && suffix < new_lines.len().saturating_sub(prefix)
+        && old_lines[old_lines.len() - 1 - suffix] == new_lines[new_lines.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let new_end = new_lines.len().saturating_sub(suffix);
+    let mut ranges = Vec::with_capacity(1);
+    if prefix == new_end {
+        ranges.push(prefix..prefix.saturating_add(1));
+    } else {
+        ranges.push(prefix..new_end);
+    }
+    ranges
+}
+
+fn definition_has_uncovered_changed_lines(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+    start_line: u32,
+    end_line: u32,
+    changed_ranges: &[Range<usize>],
+) -> Result<bool> {
+    let start = usize::try_from(start_line.saturating_sub(1)).unwrap_or(usize::MAX);
+    let end = usize::try_from(end_line).unwrap_or(usize::MAX);
+    let mut uncovered = changed_ranges
+        .iter()
+        .filter_map(|changed| {
+            let range_start = changed.start.max(start);
+            let range_end = changed.end.min(end);
+            (range_start < range_end).then_some(range_start..range_end)
+        })
+        .collect::<Vec<_>>();
+    if uncovered.is_empty() {
+        return Ok(false);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        subtract_descendant_definition_lines(child, source, &mut uncovered)?;
+        if uncovered.is_empty() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn subtract_descendant_definition_lines(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+    uncovered: &mut Vec<Range<usize>>,
+) -> Result<()> {
+    if rust_definition_identity(node, source)?.is_some() {
+        subtract_line_range(uncovered, rust_definition_line_range(source, node)?);
+        return Ok(());
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        subtract_descendant_definition_lines(child, source, uncovered)?;
+        if uncovered.is_empty() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn rust_definition_line_range(source: &str, node: tree_sitter::Node<'_>) -> Result<Range<usize>> {
+    let start_byte = rust_doc_context_start_byte(node, source);
+    let start_line = source[..start_byte]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    let end_line = usize::try_from(tree_sitter_line_number(node.end_position().row)?)
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds usize"))?;
+    Ok(start_line..end_line)
+}
+
+fn subtract_line_range(ranges: &mut Vec<Range<usize>>, covered: Range<usize>) {
+    let mut remaining = Vec::with_capacity(ranges.len());
+    for range in ranges.drain(..) {
+        if covered.end <= range.start || covered.start >= range.end {
+            remaining.push(range);
+            continue;
+        }
+        if range.start < covered.start {
+            remaining.push(range.start..covered.start);
+        }
+        if covered.end < range.end {
+            remaining.push(covered.end..range.end);
+        }
+    }
+    *ranges = remaining;
+}
+
+fn source_end_line(source: &str) -> Result<u32> {
+    u32::try_from(source.lines().count().max(1))
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("line number exceeds u32"))
+}
+
 fn changed_equal_length_chunks(
     path: &str,
     old_lines: &[&str],
@@ -2103,26 +2601,133 @@ mod tests {
         let chunks = derive_code_chunks_from_text_diff("src/lib.rs", old, new)?;
 
         assert_eq!(chunks.len(), 2);
-        assert_eq!((chunks[0].start_line, chunks[0].end_line), (2, 2));
+        assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 3));
         assert_eq!(
             chunks[0].content_hash,
-            sha256_bytes("    one_more();".as_bytes())
+            sha256_bytes("fn a() {\n    one_more();\n}".as_bytes())
         );
-        assert_eq!((chunks[1].start_line, chunks[1].end_line), (5, 5));
+        assert_eq!((chunks[1].start_line, chunks[1].end_line), (4, 6));
         assert_eq!(
             chunks[1].content_hash,
-            sha256_bytes("    two_more();".as_bytes())
+            sha256_bytes("fn b() {\n    two_more();\n}".as_bytes())
         );
         Ok(())
     }
 
     #[test]
     fn text_diff_preserves_equal_length_eof_newline_in_chunk_hash() -> Result<()> {
-        let chunks = derive_code_chunks_from_text_diff("src/lib.rs", "a\nb\n", "a\nc\n")?;
+        let chunks = derive_code_chunks_from_text_diff("README.md", "a\nb\n", "a\nc\n")?;
 
         assert_eq!(chunks.len(), 1);
         assert_eq!((chunks[0].start_line, chunks[0].end_line), (2, 2));
         assert_eq!(chunks[0].content_hash, sha256_bytes("c\n".as_bytes()));
+        Ok(())
+    }
+
+    #[test]
+    fn rust_ast_chunks_include_doc_context() -> Result<()> {
+        let old = "/// Old budget docs\npub fn budget_depletion() -> u8 { 1 }\n";
+        let new = "/// Budget depletion is handled here\npub fn budget_depletion() -> u8 { 1 }\n";
+
+        let chunks = derive_code_chunks_from_text_diff("src/llm/budget.rs", old, new)?;
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 2));
+        assert_eq!(
+            chunks[0].content_hash,
+            sha256_bytes(
+                "/// Budget depletion is handled here\npub fn budget_depletion() -> u8 { 1 }"
+                    .as_bytes()
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_ast_incremental_chunks_skip_parent_impl_for_method_body_change() -> Result<()> {
+        let repo_ref = repo_ref();
+        let path = "src/runner.rs";
+        let old = "pub struct Runner;\n\
+                   impl Runner {\n\
+                       pub fn budget_depletion(&self) -> u8 { 1 }\n\
+                       pub fn unrelated(&self) -> u8 { 2 }\n\
+                   }\n";
+        let new = "pub struct Runner;\n\
+                   impl Runner {\n\
+                       pub fn budget_depletion(&self) -> u8 { 3 }\n\
+                       pub fn unrelated(&self) -> u8 { 2 }\n\
+                   }\n";
+
+        let chunks = derive_code_chunks_from_text_diff(path, old, new)?;
+        let inputs = derive_code_embedding_inputs_from_text_diff(&repo_ref, path, old, new)?;
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!((chunks[0].start_line, chunks[0].end_line), (3, 3));
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "budget_depletion");
+        assert_eq!((inputs[0].start_line, inputs[0].end_line), (3, 3));
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let code_artifact_id = entity(0xD5);
+        let repo_ref = repo_ref();
+        let path = "src/llm/budget.rs";
+        let old = "pub fn budget_depletion() -> &'static str { \"old budget path\" }\n\
+                   pub fn unrelated() -> &'static str { \"unchanged\" }\n";
+        let new = "pub fn budget_depletion() -> &'static str { \"budget depletion handled here\" }\n\
+                   pub fn unrelated() -> &'static str { \"unchanged\" }\n";
+
+        let inputs = derive_code_embedding_inputs_from_text_diff(&repo_ref, path, old, new)?;
+
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].path, path);
+        assert_eq!(inputs[0].name, "budget_depletion");
+        assert!(inputs[0].text.contains("budget depletion handled here"));
+
+        let mut embed_call_count = 0;
+        let vectors = embed_code_chunks(&inputs, |batch| {
+            embed_call_count += batch.len();
+            Ok(batch
+                .iter()
+                .map(|input| {
+                    if input.text.contains("budget depletion") {
+                        vec![1.0, 0.0, 0.0, 0.0]
+                    } else {
+                        vec![0.0, 1.0, 0.0, 0.0]
+                    }
+                })
+                .collect())
+        })?;
+        assert_eq!(embed_call_count, 1);
+
+        let graph = derive_code_symbol_graph_from_sources(
+            repo_ref.clone(),
+            Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            [CodeSymbolSource::new(path, new)],
+        )?;
+        vault.put_code_artifact(
+            &code_artifact_id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_code_symbol_graph(
+            &code_artifact_id,
+            &graph,
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_code_symbol_embedding_vectors(&vectors)?;
+
+        let top5 = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 5)?;
+        assert!(
+            top5.iter()
+                .take(5)
+                .any(|result| result.id == inputs[0].entity_id)
+        );
         Ok(())
     }
 
