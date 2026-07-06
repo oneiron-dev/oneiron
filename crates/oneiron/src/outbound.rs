@@ -315,6 +315,25 @@ fn unsupported_outbound_capability(
     }
 }
 
+fn line_reply_quota() -> Value {
+    json!({
+        "plan_tier": "all",
+        "metered": false,
+        "quota_debit": false,
+        "notes": "Reactive replies are free and require a live reply-token handle."
+    })
+}
+
+fn line_push_quota() -> Value {
+    json!({
+        "plan_tier": "free_or_paid",
+        "metered": true,
+        "quota_debit": true,
+        "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+        "overage_policy": "requires_metered_plan"
+    })
+}
+
 fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
     vec![
         manifest(
@@ -328,12 +347,7 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     json!({
                         "reply_token_ref": "payload_ref host-local reply token handle",
                         "messages": [{"type": "text", "text": "string"}],
-                        "quota": {
-                            "plan_tier": "all",
-                            "metered": false,
-                            "quota_debit": false,
-                            "notes": "Reactive replies are free and require a live reply token."
-                        }
+                        "quota": line_reply_quota()
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
@@ -349,13 +363,7 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     json!({
                         "to": "line_user_id | line_group_id",
                         "messages": [{"type": "text", "text": "string"}],
-                        "quota": {
-                            "plan_tier": "free_or_paid",
-                            "metered": true,
-                            "quota_debit": true,
-                            "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
-                            "overage_policy": "requires_metered_plan"
-                        }
+                        "quota": line_push_quota()
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
@@ -373,22 +381,11 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                         "messages": [{"type": "text", "text": "string"}],
                         "reply": {
                             "reply_token_ref": "payload_ref host-local reply token handle",
-                            "quota": {
-                                "plan_tier": "all",
-                                "metered": false,
-                                "quota_debit": false,
-                                "notes": "Reactive replies are free and require a live reply-token handle."
-                            }
+                            "quota": line_reply_quota()
                         },
                         "push": {
                             "to": "line_user_id | line_group_id",
-                            "quota": {
-                                "plan_tier": "free_or_paid",
-                                "metered": true,
-                                "quota_debit": true,
-                                "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
-                                "overage_policy": "requires_metered_plan"
-                            }
+                            "quota": line_push_quota()
                         }
                     }),
                     OutboundInterruptionClass::Interrupt,
@@ -407,22 +404,11 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                         "messages": [{"type": "image|video|audio|file", "originalContentUrl": "https://..."}],
                         "reply": {
                             "reply_token_ref": "payload_ref host-local reply token handle",
-                            "quota": {
-                                "plan_tier": "all",
-                                "metered": false,
-                                "quota_debit": false,
-                                "notes": "Reactive replies are free and require a live reply-token handle."
-                            }
+                            "quota": line_reply_quota()
                         },
                         "push": {
                             "to": "line_user_id | line_group_id",
-                            "quota": {
-                                "plan_tier": "free_or_paid",
-                                "metered": true,
-                                "quota_debit": true,
-                                "free_monthly_allowance": crate::channel_identity_provider::DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
-                                "overage_policy": "requires_metered_plan"
-                            }
+                            "quota": line_push_quota()
                         }
                     }),
                     OutboundInterruptionClass::Interrupt,
@@ -981,6 +967,14 @@ mod tests {
             legacy_send.params["reply"]["reply_token_ref"],
             "payload_ref host-local reply token handle"
         );
+        assert_eq!(
+            legacy_send.params["reply"]["quota"],
+            line_reply.params["quota"]
+        );
+        assert_eq!(
+            legacy_send.params["push"]["quota"],
+            line_push.params["quota"]
+        );
         assert_eq!(legacy_send.params["reply"]["quota"]["quota_debit"], false);
         assert_eq!(legacy_send.params["push"]["quota"]["quota_debit"], true);
         assert_eq!(legacy_send.params["push"]["quota"]["metered"], true);
@@ -1003,6 +997,14 @@ mod tests {
         assert_eq!(
             legacy_send_media.params["reply"]["reply_token_ref"],
             "payload_ref host-local reply token handle"
+        );
+        assert_eq!(
+            legacy_send_media.params["reply"]["quota"],
+            line_reply.params["quota"]
+        );
+        assert_eq!(
+            legacy_send_media.params["push"]["quota"],
+            line_push.params["quota"]
         );
         assert_eq!(
             legacy_send_media.params["reply"]["quota"]["quota_debit"],
