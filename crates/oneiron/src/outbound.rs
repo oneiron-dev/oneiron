@@ -433,14 +433,14 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                 verb(
                     "send",
                     "chat.postMessage",
-                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string"}),
+                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string", "username": "persona display name", "icon_url": "optional persona avatar URL", "icon_emoji": "optional persona emoji", "metadata": {"event_payload": {"identity_key": "slack workspace/persona identity key"}}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
                     OutboundRetryClass::NonIdempotentInterrupt,
                     OutboundPermissionState::Conditional,
                     false,
-                    "Requires chat:write scope and channel posting permission.",
+                    "Requires chat:write, chat:write.customize for persona attribution, and channel posting permission.",
                 ),
                 verb(
                     "react",

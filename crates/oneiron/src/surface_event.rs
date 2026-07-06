@@ -66,6 +66,8 @@ pub struct InboundSurfaceEventInput {
     pub event_id: String,
     pub channel: String,
     pub receiving_address_or_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_ref: Option<String>,
     pub counterparty: SurfaceCounterpartyStamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
@@ -89,11 +91,19 @@ impl InboundSurfaceEventInput {
             event_id: event_id.into(),
             channel: channel.into(),
             receiving_address_or_handle: receiving_address_or_handle.into(),
+            workspace_ref: None,
             counterparty,
             payload_ref: None,
             received_at,
             foreign_inbound,
         }
+    }
+
+    /// Attaches a provider-native workspace/team stamp.
+    #[must_use]
+    pub fn with_workspace_ref(mut self, workspace_ref: impl Into<String>) -> Self {
+        self.workspace_ref = Some(workspace_ref.into());
+        self
     }
 
     /// Attaches an adapter-local payload reference.
@@ -113,6 +123,12 @@ impl InboundSurfaceEventInput {
         if let Some(payload_ref) = &self.payload_ref {
             validate_non_blank(payload_ref, "surface event payload ref must be non-empty")?;
         }
+        if let Some(workspace_ref) = &self.workspace_ref {
+            validate_non_blank(
+                workspace_ref,
+                "surface event workspace ref must be non-empty",
+            )?;
+        }
         self.counterparty.validate()
     }
 }
@@ -124,6 +140,8 @@ pub struct SurfaceEvent {
     pub event_id: String,
     pub channel: String,
     pub receiving_address_or_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_ref: Option<String>,
     /// ChannelIdentity entity addressed by this inbound payload.
     pub receiving_identity_ref: String,
     /// Agent resolved from the receiving ChannelIdentity binding.
@@ -181,6 +199,8 @@ pub struct InboundSurfaceRouteReceipt {
     pub outcome: InboundSurfaceRouteOutcome,
     pub channel: String,
     pub receiving_address_or_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiving_identity_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -296,6 +316,7 @@ fn routed_receipt(
         event_id: input.event_id.clone(),
         channel: input.channel.clone(),
         receiving_address_or_handle: input.receiving_address_or_handle.clone(),
+        workspace_ref: input.workspace_ref.clone(),
         receiving_identity_ref: identity_ref.to_hex(),
         agent_ref: agent_ref.to_hex(),
         counterparty: input.counterparty.clone(),
@@ -313,6 +334,7 @@ fn routed_receipt(
         outcome: InboundSurfaceRouteOutcome::Routed,
         channel: input.channel,
         receiving_address_or_handle: input.receiving_address_or_handle,
+        workspace_ref: input.workspace_ref,
         receiving_identity_ref: Some(identity_ref.to_hex()),
         agent_ref: Some(agent_ref.to_hex()),
         counterparty: input.counterparty,
@@ -339,6 +361,7 @@ fn rejected_receipt(
         outcome: InboundSurfaceRouteOutcome::Rejected,
         channel: input.channel,
         receiving_address_or_handle: input.receiving_address_or_handle,
+        workspace_ref: input.workspace_ref,
         receiving_identity_ref: identity_ref.map(|id| id.to_hex()),
         agent_ref: agent_ref.map(|id| id.to_hex()),
         counterparty: input.counterparty,

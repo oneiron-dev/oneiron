@@ -7,6 +7,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape,
@@ -25,8 +26,14 @@ pub const CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION: &str = "channel_identity.pr
 /// Stable key for the built-in dev-safe email adapter.
 pub const DEV_EMAIL_PROVIDER_KEY: &str = "dev_email";
 
+/// Stable key for the built-in Slack shared-presence adapter.
+pub const SLACK_SHARED_PRESENCE_PROVIDER_KEY: &str = "slack_shared_presence";
+
 /// Stable channel key for email identities.
 pub const EMAIL_CHANNEL: &str = "email";
+
+/// Stable channel key for Slack shared-presence identities.
+pub const SLACK_CHANNEL: &str = "slack";
 
 /// Default deterministic local-part prefix for dev-safe email identities.
 pub const DEFAULT_EMAIL_LOCAL_PART_PREFIX: &str = "agent";
@@ -42,6 +49,13 @@ const IDENTITY_HEX_LEN: usize = 32;
 const LOCAL_PART_SEPARATOR_BYTES: usize = 2;
 const MAX_LOCAL_PART_PREFIX_BYTES: usize =
     MAX_EMAIL_LOCAL_PART_BYTES - IDENTITY_HEX_LEN - SIGNATURE_HEX_LEN - LOCAL_PART_SEPARATOR_BYTES;
+const MAX_SLACK_ID_BYTES: usize = 128;
+const MAX_SLACK_PERSONA_HANDLE_BYTES: usize = 80;
+const MAX_SLACK_DISPLAY_NAME_BYTES: usize = 80;
+const MAX_SLACK_URL_BYTES: usize = 512;
+const MAX_SLACK_TEXT_BYTES: usize = 40_000;
+const MAX_SLACK_EVENT_ID_BYTES: usize = 128;
+const MAX_SLACK_PAYLOAD_REF_BYTES: usize = 512;
 
 /// Provider-normalized inbound payload before engine routing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +63,7 @@ const MAX_LOCAL_PART_PREFIX_BYTES: usize =
 #[non_exhaustive]
 pub enum ChannelIdentityProviderInbound {
     Email(EmailProviderInbound),
+    Slack(SlackProviderInbound),
 }
 
 /// Email webhook payload fields the adapter needs for fail-closed routing.
@@ -78,6 +93,59 @@ impl EmailProviderInbound {
             payload_ref: None,
             received_at,
         }
+    }
+
+    /// Attaches an adapter-local payload reference.
+    #[must_use]
+    pub fn with_payload_ref(mut self, payload_ref: impl Into<String>) -> Self {
+        self.payload_ref = Some(payload_ref.into());
+        self
+    }
+}
+
+/// Slack Events API payload fields needed for shared-presence routing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackProviderInbound {
+    pub provider_event_id: String,
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enterprise_id: Option<String>,
+    pub channel_id: String,
+    pub user_id: String,
+    pub persona_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_ref: Option<String>,
+    pub received_at: u64,
+}
+
+impl SlackProviderInbound {
+    /// Builds a Slack inbound event after the host has resolved the persona.
+    #[must_use]
+    pub fn new(
+        provider_event_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        channel_id: impl Into<String>,
+        user_id: impl Into<String>,
+        persona_handle: impl Into<String>,
+        received_at: u64,
+    ) -> Self {
+        Self {
+            provider_event_id: provider_event_id.into(),
+            workspace_id: workspace_id.into(),
+            enterprise_id: None,
+            channel_id: channel_id.into(),
+            user_id: user_id.into(),
+            persona_handle: persona_handle.into(),
+            payload_ref: None,
+            received_at,
+        }
+    }
+
+    /// Attaches an Enterprise Grid org id when Slack supplies one.
+    #[must_use]
+    pub fn with_enterprise_id(mut self, enterprise_id: impl Into<String>) -> Self {
+        self.enterprise_id = Some(enterprise_id.into());
+        self
     }
 
     /// Attaches an adapter-local payload reference.
@@ -206,7 +274,14 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
         &self,
         inbound: ChannelIdentityProviderInbound,
     ) -> Result<InboundSurfaceEventInput> {
-        let ChannelIdentityProviderInbound::Email(email) = inbound;
+        let email = match inbound {
+            ChannelIdentityProviderInbound::Email(email) => email,
+            ChannelIdentityProviderInbound::Slack(_) => {
+                return Err(Error::InvalidConfig(
+                    "email adapter rejects non-email inbound".to_owned(),
+                ));
+            }
+        };
         validate_email_inbound_metadata(&email)?;
         let (_, sender_domain) = split_email_address(&email.envelope_from)?;
         let normalized_from = normalize_email_address(&email.envelope_from, &sender_domain)?;
@@ -416,7 +491,14 @@ impl ChannelIdentityProviderAdapter for DevEmailIdentityAdapter {
         &self,
         inbound: ChannelIdentityProviderInbound,
     ) -> Result<InboundSurfaceEventInput> {
-        let ChannelIdentityProviderInbound::Email(email) = inbound;
+        let email = match inbound {
+            ChannelIdentityProviderInbound::Email(email) => email,
+            ChannelIdentityProviderInbound::Slack(_) => {
+                return Err(Error::InvalidConfig(
+                    "email adapter rejects non-email inbound".to_owned(),
+                ));
+            }
+        };
         validate_email_inbound_metadata(&email)?;
         let (local_part, domain) = split_email_address(&email.envelope_to)?;
         if domain != self.config.domain {
@@ -440,6 +522,642 @@ impl ChannelIdentityProviderAdapter for DevEmailIdentityAdapter {
         input.payload_ref = email.payload_ref;
         Ok(input)
     }
+}
+
+/// Slack app manifest config used with `apps.manifest.create`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SlackSharedPresenceAdapterConfig {
+    app_name: String,
+    bot_display_name: String,
+    event_request_url: String,
+    redirect_urls: Vec<String>,
+}
+
+impl fmt::Debug for SlackSharedPresenceAdapterConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SlackSharedPresenceAdapterConfig")
+            .field("app_name", &self.app_name)
+            .field("bot_display_name", &self.bot_display_name)
+            .field("event_request_url", &self.event_request_url)
+            .field("redirect_urls", &self.redirect_urls)
+            .finish()
+    }
+}
+
+impl SlackSharedPresenceAdapterConfig {
+    /// Builds config for the one product-level Slack app manifest.
+    pub fn new(
+        app_name: impl Into<String>,
+        bot_display_name: impl Into<String>,
+        event_request_url: impl Into<String>,
+        redirect_urls: Vec<String>,
+    ) -> Result<Self> {
+        let app_name =
+            normalize_slack_display_name(&app_name.into(), "slack app name must be non-empty")?;
+        let bot_display_name = normalize_slack_display_name(
+            &bot_display_name.into(),
+            "slack bot display name must be non-empty",
+        )?;
+        let event_request_url =
+            normalize_slack_url(&event_request_url.into(), "slack event request url")?;
+        if redirect_urls.is_empty() {
+            return Err(Error::InvalidConfig(
+                "slack manifest requires at least one OAuth redirect URL".to_owned(),
+            ));
+        }
+        let redirect_urls = redirect_urls
+            .into_iter()
+            .map(|url| normalize_slack_url(&url, "slack OAuth redirect URL"))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            app_name,
+            bot_display_name,
+            event_request_url,
+            redirect_urls,
+        })
+    }
+
+    /// Product-level app display name.
+    #[must_use]
+    pub fn app_name(&self) -> &str {
+        &self.app_name
+    }
+
+    /// Slack bot user display name for the shared app identity.
+    #[must_use]
+    pub fn bot_display_name(&self) -> &str {
+        &self.bot_display_name
+    }
+}
+
+/// Persona metadata applied to outbound Slack messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackPersonaAttribution {
+    pub persona_handle: String,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_emoji: Option<String>,
+}
+
+impl SlackPersonaAttribution {
+    /// Builds a Slack persona stamp for outbound authorship.
+    pub fn new(persona_handle: impl Into<String>, display_name: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            persona_handle: normalize_slack_persona_handle(&persona_handle.into())?,
+            display_name: normalize_slack_display_name(
+                &display_name.into(),
+                "slack persona display name must be non-empty",
+            )?,
+            icon_url: None,
+            icon_emoji: None,
+        })
+    }
+
+    /// Uses a hosted avatar URL for Slack `chat.postMessage`.
+    pub fn with_icon_url(mut self, icon_url: impl Into<String>) -> Result<Self> {
+        if self.icon_emoji.is_some() {
+            return Err(Error::InvalidConfig(
+                "slack persona may set icon_url or icon_emoji, not both".to_owned(),
+            ));
+        }
+        self.icon_url = Some(normalize_slack_url(
+            &icon_url.into(),
+            "slack persona icon_url",
+        )?);
+        Ok(self)
+    }
+
+    /// Uses a Slack emoji shortcode for Slack `chat.postMessage`.
+    pub fn with_icon_emoji(mut self, icon_emoji: impl Into<String>) -> Result<Self> {
+        if self.icon_url.is_some() {
+            return Err(Error::InvalidConfig(
+                "slack persona may set icon_url or icon_emoji, not both".to_owned(),
+            ));
+        }
+        self.icon_emoji = Some(normalize_slack_icon_emoji(&icon_emoji.into())?);
+        Ok(self)
+    }
+}
+
+/// Outbound Slack message before persona attribution is applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackOutboundMessage {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enterprise_id: Option<String>,
+    pub channel_id: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_ts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_ref: Option<String>,
+}
+
+impl SlackOutboundMessage {
+    /// Builds a Slack `chat.postMessage` intent.
+    pub fn new(
+        workspace_id: impl Into<String>,
+        channel_id: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Result<Self> {
+        Ok(Self {
+            workspace_id: normalize_slack_id(&workspace_id.into(), "slack workspace id")?,
+            enterprise_id: None,
+            channel_id: normalize_slack_id(&channel_id.into(), "slack channel id")?,
+            text: normalize_slack_text(&text.into())?,
+            thread_ts: None,
+            payload_ref: None,
+        })
+    }
+
+    /// Attaches an Enterprise Grid org id when posting into a grid workspace.
+    pub fn with_enterprise_id(mut self, enterprise_id: impl Into<String>) -> Result<Self> {
+        self.enterprise_id = Some(normalize_slack_id(
+            &enterprise_id.into(),
+            "slack enterprise id",
+        )?);
+        Ok(self)
+    }
+
+    /// Posts as a threaded reply.
+    pub fn with_thread_ts(mut self, thread_ts: impl Into<String>) -> Result<Self> {
+        self.thread_ts = Some(normalize_slack_ts(&thread_ts.into())?);
+        Ok(self)
+    }
+
+    /// Attaches an adapter-local payload reference.
+    pub fn with_payload_ref(mut self, payload_ref: impl Into<String>) -> Result<Self> {
+        self.payload_ref = Some(normalize_slack_payload_ref(&payload_ref.into())?);
+        Ok(self)
+    }
+}
+
+/// Slack Web API call body after persona attribution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlackPersonaOutbound {
+    pub method: String,
+    pub workspace_ref: String,
+    pub identity_key: String,
+    pub persona_handle: String,
+    pub body: Value,
+}
+
+/// Oneiron-first Slack shared-presence adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackSharedPresenceAdapter {
+    config: SlackSharedPresenceAdapterConfig,
+}
+
+impl SlackSharedPresenceAdapter {
+    /// Builds a Slack shared-presence adapter.
+    #[must_use]
+    pub const fn new(config: SlackSharedPresenceAdapterConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns the adapter config.
+    #[must_use]
+    pub fn config(&self) -> &SlackSharedPresenceAdapterConfig {
+        &self.config
+    }
+
+    /// Returns the Slack manifest body passed as the `manifest` argument.
+    #[must_use]
+    pub fn app_manifest(&self) -> Value {
+        json!({
+            "display_information": {
+                "name": &self.config.app_name,
+            },
+            "features": {
+                "bot_user": {
+                    "display_name": &self.config.bot_display_name,
+                    "always_online": false,
+                },
+            },
+            "oauth_config": {
+                "redirect_urls": &self.config.redirect_urls,
+                "scopes": {
+                    "bot": [
+                        "app_mentions:read",
+                        "channels:history",
+                        "chat:write",
+                        "chat:write.customize",
+                        "commands",
+                        "im:history",
+                        "im:write",
+                    ],
+                },
+            },
+            "settings": {
+                "event_subscriptions": {
+                    "request_url": self.config.event_request_url,
+                    "bot_events": [
+                        "app_mention",
+                        "message.im",
+                    ],
+                },
+                "interactivity": {
+                    "is_enabled": true,
+                    "request_url": self.config.event_request_url,
+                },
+                "org_deploy_enabled": false,
+                "socket_mode_enabled": false,
+                "token_rotation_enabled": true,
+            },
+        })
+    }
+
+    /// Returns the `apps.manifest.create` request body.
+    #[must_use]
+    pub fn apps_manifest_create_payload(&self) -> Value {
+        json!({
+            "manifest": self.app_manifest(),
+        })
+    }
+
+    /// Builds the requested ChannelIdentity row for one agent persona in a workspace.
+    pub fn requested_identity(
+        &self,
+        agent_ref: EntityId,
+        workspace_id: impl Into<String>,
+        persona_handle: impl Into<String>,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let address_or_handle =
+            slack_identity_key(&workspace_id.into(), None, &persona_handle.into())?;
+        Ok(ChannelIdentity::requested(
+            SLACK_CHANNEL,
+            address_or_handle,
+            ChannelIdentityShape::SharedPresence,
+            ChannelIdentityBinding::agent(agent_ref),
+            requested_at,
+        ))
+    }
+
+    /// Builds the exact Slack Web API payload carrying persona attribution.
+    pub fn persona_outbound(
+        &self,
+        attribution: &SlackPersonaAttribution,
+        message: &SlackOutboundMessage,
+    ) -> Result<SlackPersonaOutbound> {
+        let workspace_ref =
+            slack_workspace_ref(&message.workspace_id, message.enterprise_id.as_deref())?;
+        let identity_key = slack_identity_key(
+            &message.workspace_id,
+            message.enterprise_id.as_deref(),
+            &attribution.persona_handle,
+        )?;
+        let mut body = json!({
+            "channel": &message.channel_id,
+            "text": &message.text,
+            "username": &attribution.display_name,
+            "metadata": {
+                "event_type": "oneiron_persona_message",
+                "event_payload": {
+                    "workspace_ref": workspace_ref,
+                    "identity_key": identity_key,
+                    "persona_handle": &attribution.persona_handle,
+                },
+            },
+        });
+        if let Some(thread_ts) = &message.thread_ts {
+            body["thread_ts"] = Value::from(thread_ts.clone());
+        }
+        if let Some(payload_ref) = &message.payload_ref {
+            body["metadata"]["event_payload"]["payload_ref"] = Value::from(payload_ref.clone());
+        }
+        if let Some(icon_url) = &attribution.icon_url {
+            body["icon_url"] = Value::from(icon_url.clone());
+        }
+        if let Some(icon_emoji) = &attribution.icon_emoji {
+            body["icon_emoji"] = Value::from(icon_emoji.clone());
+        }
+        Ok(SlackPersonaOutbound {
+            method: "chat.postMessage".to_owned(),
+            workspace_ref,
+            identity_key,
+            persona_handle: attribution.persona_handle.clone(),
+            body,
+        })
+    }
+}
+
+impl ChannelIdentityProviderAdapter for SlackSharedPresenceAdapter {
+    fn provider_key(&self) -> &'static str {
+        SLACK_SHARED_PRESENCE_PROVIDER_KEY
+    }
+
+    fn fulfillment_mode(
+        &self,
+        verb: ChannelIdentityLifecycleVerb,
+    ) -> Option<ChannelIdentityFulfillment> {
+        match verb {
+            ChannelIdentityLifecycleVerb::Provision => Some(ChannelIdentityFulfillment::Api),
+            ChannelIdentityLifecycleVerb::Bind
+            | ChannelIdentityLifecycleVerb::Rotate
+            | ChannelIdentityLifecycleVerb::Release
+            | ChannelIdentityLifecycleVerb::RouteInbound => None,
+        }
+    }
+
+    fn provision(
+        &self,
+        intent: &ProvisionIntent,
+        fulfilled_at: u64,
+    ) -> Result<ChannelIdentityProviderProvision> {
+        validate_slack_provision_intent(intent)?;
+        Ok(ChannelIdentityProviderProvision {
+            provider_key: self.provider_key().to_owned(),
+            identity_id: intent.identity_id,
+            channel: SLACK_CHANNEL.to_owned(),
+            address_or_handle: intent.identity.address_or_handle.clone(),
+            fulfillment_mode: ChannelIdentityFulfillment::Api,
+            provider_identity_ref: format!(
+                "slack-shared-presence:{}",
+                intent.identity.address_or_handle
+            ),
+            fulfilled_at,
+        })
+    }
+
+    fn parse_inbound(
+        &self,
+        inbound: ChannelIdentityProviderInbound,
+    ) -> Result<InboundSurfaceEventInput> {
+        let slack = match inbound {
+            ChannelIdentityProviderInbound::Slack(slack) => slack,
+            ChannelIdentityProviderInbound::Email(_) => {
+                return Err(Error::InvalidConfig(
+                    "slack adapter rejects non-slack inbound".to_owned(),
+                ));
+            }
+        };
+        let normalized = normalize_slack_inbound(slack)?;
+        let mut input = InboundSurfaceEventInput::new(
+            normalized.provider_event_id.clone(),
+            SLACK_CHANNEL,
+            normalized.identity_key.clone(),
+            SurfaceCounterpartyStamp::unknown(normalized.counterparty_key),
+            normalized.received_at,
+            true,
+        )
+        .with_workspace_ref(normalized.workspace_ref);
+        input.payload_ref = Some(normalized.payload_ref);
+        Ok(input)
+    }
+}
+
+struct NormalizedSlackInbound {
+    provider_event_id: String,
+    workspace_ref: String,
+    identity_key: String,
+    counterparty_key: String,
+    payload_ref: String,
+    received_at: u64,
+}
+
+fn normalize_slack_inbound(slack: SlackProviderInbound) -> Result<NormalizedSlackInbound> {
+    let provider_event_id = normalize_slack_payload_ref(&slack.provider_event_id)?;
+    validate_max_bytes(
+        &provider_event_id,
+        MAX_SLACK_EVENT_ID_BYTES,
+        "slack event id exceeds maximum length",
+    )?;
+    let workspace_id = normalize_slack_id(&slack.workspace_id, "slack workspace id")?;
+    let enterprise_id = slack
+        .enterprise_id
+        .as_deref()
+        .map(|enterprise_id| normalize_slack_id(enterprise_id, "slack enterprise id"))
+        .transpose()?;
+    let channel_id = normalize_slack_id(&slack.channel_id, "slack channel id")?;
+    let user_id = normalize_slack_id(&slack.user_id, "slack user id")?;
+    let persona_handle = normalize_slack_persona_handle(&slack.persona_handle)?;
+    let workspace_ref = slack_workspace_ref(&workspace_id, enterprise_id.as_deref())?;
+    let identity_key =
+        slack_identity_key(&workspace_id, enterprise_id.as_deref(), &persona_handle)?;
+    let counterparty_key = format!("{workspace_ref}:user:{user_id}");
+    let payload_ref = slack
+        .payload_ref
+        .as_deref()
+        .map(normalize_slack_payload_ref)
+        .transpose()?
+        .unwrap_or_else(|| {
+            format!("{workspace_ref}:channel:{channel_id}:event:{provider_event_id}")
+        });
+    Ok(NormalizedSlackInbound {
+        provider_event_id,
+        workspace_ref,
+        identity_key,
+        counterparty_key,
+        payload_ref,
+        received_at: slack.received_at,
+    })
+}
+
+fn validate_slack_provision_intent(intent: &ProvisionIntent) -> Result<()> {
+    if intent.fulfillment_mode != ChannelIdentityFulfillment::Api {
+        return Err(Error::InvalidConfig(
+            "slack adapter fulfillment mode does not match ProvisionIntent".to_owned(),
+        ));
+    }
+    if intent.identity.channel != SLACK_CHANNEL {
+        return Err(Error::InvalidConfig(
+            "slack adapter channel does not match ProvisionIntent".to_owned(),
+        ));
+    }
+    if intent.identity.shape != ChannelIdentityShape::SharedPresence {
+        return Err(Error::InvalidConfig(
+            "slack adapter requires shared_presence identities".to_owned(),
+        ));
+    }
+    if !matches!(
+        intent.identity.binding,
+        ChannelIdentityBinding::Agent { .. }
+    ) {
+        return Err(Error::InvalidConfig(
+            "slack adapter requires agent-scoped personas".to_owned(),
+        ));
+    }
+    validate_slack_identity_key(&intent.identity.address_or_handle)?;
+    intent.identity.validate()
+}
+
+fn slack_workspace_ref(workspace_id: &str, enterprise_id: Option<&str>) -> Result<String> {
+    let workspace_id = normalize_slack_id(workspace_id, "slack workspace id")?;
+    match enterprise_id {
+        Some(enterprise_id) => {
+            let enterprise_id = normalize_slack_id(enterprise_id, "slack enterprise id")?;
+            Ok(format!(
+                "slack:enterprise:{enterprise_id}:workspace:{workspace_id}"
+            ))
+        }
+        None => Ok(format!("slack:workspace:{workspace_id}")),
+    }
+}
+
+fn slack_identity_key(
+    workspace_id: &str,
+    enterprise_id: Option<&str>,
+    persona_handle: &str,
+) -> Result<String> {
+    let workspace_ref = slack_workspace_ref(workspace_id, enterprise_id)?;
+    let persona_handle = normalize_slack_persona_handle(persona_handle)?;
+    Ok(format!("{workspace_ref}:persona:{persona_handle}"))
+}
+
+fn validate_slack_identity_key(identity_key: &str) -> Result<()> {
+    let parts = identity_key.split(':').collect::<Vec<_>>();
+    let expected = match parts.as_slice() {
+        [
+            "slack",
+            "workspace",
+            workspace_id,
+            "persona",
+            persona_handle,
+        ] => slack_identity_key(workspace_id, None, persona_handle)?,
+        [
+            "slack",
+            "enterprise",
+            enterprise_id,
+            "workspace",
+            workspace_id,
+            "persona",
+            persona_handle,
+        ] => slack_identity_key(workspace_id, Some(enterprise_id), persona_handle)?,
+        _ => {
+            return Err(Error::InvalidConfig(
+                "slack identity key must include workspace and persona".to_owned(),
+            ));
+        }
+    };
+    if expected != identity_key {
+        return Err(Error::InvalidConfig(
+            "slack identity key is not normalized".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_slack_id(value: &str, field: &'static str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, field)?;
+    validate_max_bytes(value, MAX_SLACK_ID_BYTES, "slack id exceeds maximum length")?;
+    if !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(Error::InvalidConfig(format!(
+            "{field} must contain only ascii letters and digits"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_persona_handle(value: &str) -> Result<String> {
+    let value = value.trim().trim_start_matches('@').to_ascii_lowercase();
+    validate_non_blank(&value, "slack persona handle must be non-empty")?;
+    validate_max_bytes(
+        &value,
+        MAX_SLACK_PERSONA_HANDLE_BYTES,
+        "slack persona handle exceeds maximum length",
+    )?;
+    if !value
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.'))
+    {
+        return Err(Error::InvalidConfig(
+            "slack persona handle must be ascii lowercase letters, digits, hyphen, underscore, or dot".to_owned(),
+        ));
+    }
+    Ok(value)
+}
+
+fn normalize_slack_display_name(value: &str, reason: &'static str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, reason)?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_DISPLAY_NAME_BYTES,
+        "slack display name exceeds maximum length",
+    )?;
+    if value.chars().any(char::is_control) {
+        return Err(Error::InvalidConfig(
+            "slack display name must not contain control characters".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_url(value: &str, field: &'static str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, field)?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_URL_BYTES,
+        "slack URL exceeds maximum length",
+    )?;
+    if !value.starts_with("https://") || value.chars().any(char::is_whitespace) {
+        return Err(Error::InvalidConfig(format!(
+            "{field} must be an https URL without whitespace"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_icon_emoji(value: &str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, "slack persona icon_emoji must be non-empty")?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_DISPLAY_NAME_BYTES,
+        "slack persona icon_emoji exceeds maximum length",
+    )?;
+    if value.len() <= 2
+        || !value.starts_with(':')
+        || !value.ends_with(':')
+        || !value.bytes().all(|byte| byte.is_ascii())
+    {
+        return Err(Error::InvalidConfig(
+            "slack persona icon_emoji must be a Slack emoji shortcode".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_text(value: &str) -> Result<String> {
+    validate_non_blank(value, "slack outbound text must be non-empty")?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_TEXT_BYTES,
+        "slack outbound text exceeds maximum length",
+    )?;
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_ts(value: &str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, "slack thread timestamp must be non-empty")?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_ID_BYTES,
+        "slack thread timestamp exceeds maximum length",
+    )?;
+    if !value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'.')) {
+        return Err(Error::InvalidConfig(
+            "slack thread timestamp must contain only digits and dot".to_owned(),
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_slack_payload_ref(value: &str) -> Result<String> {
+    let value = value.trim();
+    validate_non_blank(value, "slack payload ref must be non-empty")?;
+    validate_max_bytes(
+        value,
+        MAX_SLACK_PAYLOAD_REF_BYTES,
+        "slack payload ref exceeds maximum length",
+    )?;
+    Ok(value.to_owned())
 }
 
 fn validate_provision_intent(
@@ -873,6 +1591,158 @@ mod tests {
             )
             .expect_err("vault-scoped email identity must be rejected");
         assert!(matches!(err, Error::InvalidConfig(_)));
+        Ok(())
+    }
+
+    fn slack_adapter() -> Result<SlackSharedPresenceAdapter> {
+        Ok(SlackSharedPresenceAdapter::new(
+            SlackSharedPresenceAdapterConfig::new(
+                "Oneiron",
+                "Oneiron",
+                "https://oneiron.example.test/slack/events",
+                vec!["https://oneiron.example.test/slack/oauth/callback".to_owned()],
+            )?,
+        ))
+    }
+
+    #[test]
+    fn slack_manifest_payload_is_ready_for_apps_manifest_create() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let payload = adapter.apps_manifest_create_payload();
+        let manifest = &payload["manifest"];
+
+        assert_eq!(manifest["display_information"]["name"], "Oneiron");
+        assert_eq!(
+            manifest["settings"]["event_subscriptions"]["request_url"],
+            "https://oneiron.example.test/slack/events"
+        );
+        assert_eq!(
+            manifest["settings"]["token_rotation_enabled"],
+            Value::Bool(true)
+        );
+        let scopes = manifest["oauth_config"]["scopes"]["bot"]
+            .as_array()
+            .expect("bot scopes");
+        assert!(scopes.contains(&Value::from("chat:write")));
+        assert!(scopes.contains(&Value::from("chat:write.customize")));
+        assert!(scopes.contains(&Value::from("app_mentions:read")));
+        Ok(())
+    }
+
+    #[test]
+    fn slack_shared_presence_identities_distinguish_agents_in_one_workspace() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let agent_a = entity(0xB1);
+        let agent_b = entity(0xB2);
+        let identity_a = adapter.requested_identity(agent_a, "T123ABC", "@eiri", 1_000)?;
+        let identity_b = adapter.requested_identity(agent_b, "T123ABC", "herald", 1_000)?;
+
+        assert_eq!(identity_a.channel, SLACK_CHANNEL);
+        assert_eq!(identity_a.shape, ChannelIdentityShape::SharedPresence);
+        assert_eq!(identity_a.binding, ChannelIdentityBinding::agent(agent_a));
+        assert_eq!(
+            identity_a.address_or_handle,
+            "slack:workspace:T123ABC:persona:eiri"
+        );
+        assert_eq!(
+            identity_b.address_or_handle,
+            "slack:workspace:T123ABC:persona:herald"
+        );
+
+        let identity_id = entity(0x61);
+        let provision = adapter.provision(
+            &ProvisionIntent {
+                identity_id,
+                identity: identity_a,
+                fulfillment_mode: ChannelIdentityFulfillment::Api,
+            },
+            2_000,
+        )?;
+        assert_eq!(provision.provider_key, SLACK_SHARED_PRESENCE_PROVIDER_KEY);
+        assert_eq!(provision.channel, SLACK_CHANNEL);
+        assert_eq!(provision.fulfillment_mode, ChannelIdentityFulfillment::Api);
+        assert!(
+            provision
+                .provider_identity_ref
+                .contains("slack:workspace:T123ABC:persona:eiri")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn slack_adapter_rejects_non_shared_presence_provision() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let mut identity = adapter.requested_identity(entity(0xB1), "T123ABC", "eiri", 1_000)?;
+        identity.shape = ChannelIdentityShape::DedicatedHandle;
+
+        let err = adapter
+            .provision(
+                &ProvisionIntent {
+                    identity_id: entity(0x62),
+                    identity,
+                    fulfillment_mode: ChannelIdentityFulfillment::Api,
+                },
+                2_000,
+            )
+            .expect_err("slack adapter must require shared_presence");
+        assert!(matches!(err, Error::InvalidConfig(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn slack_inbound_stamps_workspace_and_persona_identity() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Slack(
+            SlackProviderInbound::new("Ev123", "T123ABC", "C123ABC", "U123ABC", "@Eiri", 2_001)
+                .with_payload_ref("slack:event:Ev123"),
+        ))?;
+
+        assert_eq!(parsed.channel, SLACK_CHANNEL);
+        assert_eq!(
+            parsed.receiving_address_or_handle,
+            "slack:workspace:T123ABC:persona:eiri"
+        );
+        assert_eq!(
+            parsed.workspace_ref.as_deref(),
+            Some("slack:workspace:T123ABC")
+        );
+        assert_eq!(parsed.payload_ref.as_deref(), Some("slack:event:Ev123"));
+        assert_eq!(
+            parsed.counterparty,
+            SurfaceCounterpartyStamp::unknown("slack:workspace:T123ABC:user:U123ABC")
+        );
+        assert!(parsed.foreign_inbound);
+        Ok(())
+    }
+
+    #[test]
+    fn slack_outbound_payload_carries_persona_attribution() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let attribution =
+            SlackPersonaAttribution::new("@Eiri", "Eiri")?.with_icon_emoji(":sparkles:")?;
+        let message = SlackOutboundMessage::new("T123ABC", "C123ABC", "I can take this.")?
+            .with_thread_ts("1719860000.000100")?
+            .with_payload_ref("outbound:one")?;
+
+        let outbound = adapter.persona_outbound(&attribution, &message)?;
+
+        assert_eq!(outbound.method, "chat.postMessage");
+        assert_eq!(outbound.workspace_ref, "slack:workspace:T123ABC");
+        assert_eq!(
+            outbound.identity_key,
+            "slack:workspace:T123ABC:persona:eiri"
+        );
+        assert_eq!(outbound.body["channel"], "C123ABC");
+        assert_eq!(outbound.body["username"], "Eiri");
+        assert_eq!(outbound.body["icon_emoji"], ":sparkles:");
+        assert_eq!(
+            outbound.body["metadata"]["event_payload"]["identity_key"],
+            "slack:workspace:T123ABC:persona:eiri"
+        );
+        assert_eq!(
+            outbound.body["metadata"]["event_payload"]["payload_ref"],
+            "outbound:one"
+        );
         Ok(())
     }
 }
