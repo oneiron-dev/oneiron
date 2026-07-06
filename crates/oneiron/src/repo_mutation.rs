@@ -1,10 +1,14 @@
 use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,10 +38,14 @@ const REPO_MUTATION_SNAPSHOT_KEY_PREFIX: &[u8] = b"repo_mutation:snapshot:v1:";
 const MAX_COMMIT_MESSAGE_BYTES: usize = 4096;
 const MAX_BASE_REF_BYTES: usize = 256;
 const MAX_REPO_MUTATION_FAILURE_BYTES: usize = 4096;
+const MAX_REPO_MUTATION_SNAPSHOT_FILES: usize = 100_000;
+const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const REPO_MUTATION_LOCK_FILE_NAME: &str = "oneiron-repo-mutation.lock";
 
 static REPO_MUTATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static REPO_MUTATION_WORKTREE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(unix)]
 struct RepoMutationFileLock {
@@ -221,6 +229,12 @@ enum StoredRepoSnapshotEntryKind {
     Symlink,
 }
 
+#[derive(Debug, Default)]
+struct SnapshotStats {
+    files: usize,
+    total_bytes: u64,
+}
+
 impl Vault {
     /// Runs a named repo mutation through the single-writer queue.
     ///
@@ -228,21 +242,30 @@ impl Vault {
     /// oplog row before the mutation reaches git. The queue also holds a
     /// per-repo advisory lock in Git's common directory, so independent engine
     /// processes serialize through the same repo mutation point. A process death
-    /// after the pre-action row leaves the row in `prepared`; callers can
-    /// remount it via [`Vault::recover_repo_snapshot`].
+    /// after the pre-action row leaves the row in `prepared`; the next queued
+    /// non-recovery mutation automatically remounts prepared rows first, and
+    /// callers can explicitly invoke [`Vault::recover_prepared_repo_mutations`].
     pub fn apply_repo_mutation(&self, request: RepoMutationRequest) -> Result<RepoMutationOutcome> {
         validate_operation(&request.operation)?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
         let repo_ref = canonical_repo_ref_for_root(&repo_root)?;
-        let repo_key = repo_ref.canonical();
-        let lock = repo_mutation_lock(&repo_key)?;
+        let common_dir = git_common_dir(&repo_root)?;
+        let lock_key = repo_lock_key(&common_dir)?;
+        let lock = repo_mutation_lock(&lock_key)?;
         let _guard = lock
             .lock()
             .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
-        let _file_guard = repo_mutation_file_lock(&repo_root)?;
+        let _file_guard = repo_mutation_file_lock(&common_dir)?;
+
+        if !matches!(
+            request.operation,
+            RepoMutationOperation::RecoverSnapshot { .. }
+        ) {
+            self.recover_prepared_repo_mutations_locked(&repo_ref, &repo_root)?;
+        }
 
         let prepared = self.prepare_repo_mutation(&repo_ref, &request, &repo_root)?;
-        match execute_repo_mutation(self, &repo_root, &request.operation) {
+        match execute_repo_mutation(self, &repo_ref, &repo_root, &request.operation) {
             Ok(()) => {
                 let entry = self.finish_repo_mutation(
                     &prepared,
@@ -278,11 +301,40 @@ impl Vault {
         ))
     }
 
+    /// Detects prepared repo mutation oplog rows and remounts each recorded
+    /// pre-action forkHash through the same queue.
+    ///
+    /// Successfully recovered prepared rows are marked `failed` with a recovery
+    /// note, and each remount also receives its own applied `recover_snapshot`
+    /// oplog row.
+    pub fn recover_prepared_repo_mutations(
+        &self,
+        repo_ref: &RepoRef,
+    ) -> Result<Vec<RepoMutationOutcome>> {
+        let repo_root = resolve_mutable_repo_root(repo_ref)?;
+        let canonical = canonical_repo_ref_for_root(&repo_root)?;
+        let common_dir = git_common_dir(&repo_root)?;
+        let lock_key = repo_lock_key(&common_dir)?;
+        let lock = repo_mutation_lock(&lock_key)?;
+        let _guard = lock
+            .lock()
+            .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
+        let _file_guard = repo_mutation_file_lock(&common_dir)?;
+        self.recover_prepared_repo_mutations_locked(&canonical, &repo_root)
+    }
+
     /// Reads the durable oplog for a repo in sequence order.
     pub fn repo_mutation_oplog(&self, repo_ref: &RepoRef) -> Result<Vec<RepoMutationOplogEntry>> {
         let repo_root = resolve_mutable_repo_root(repo_ref)?;
         let canonical = canonical_repo_ref_for_root(&repo_root)?;
-        let repo_key_hash = repo_key_hash(&canonical.canonical());
+        self.repo_mutation_oplog_for_canonical(&canonical)
+    }
+
+    fn repo_mutation_oplog_for_canonical(
+        &self,
+        repo_ref: &RepoRef,
+    ) -> Result<Vec<RepoMutationOplogEntry>> {
+        let repo_key_hash = repo_key_hash(&repo_ref.canonical());
         let prefix = repo_mutation_oplog_prefix(&repo_key_hash);
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
@@ -292,6 +344,61 @@ impl Vault {
         }
         entries.sort_by_key(|entry| entry.seq);
         Ok(entries)
+    }
+
+    fn recover_prepared_repo_mutations_locked(
+        &self,
+        repo_ref: &RepoRef,
+        repo_root: &Path,
+    ) -> Result<Vec<RepoMutationOutcome>> {
+        let prepared_entries = self
+            .repo_mutation_oplog_for_canonical(repo_ref)?
+            .into_iter()
+            .filter(|entry| entry.status == RepoMutationStatus::Prepared)
+            .collect::<Vec<_>>();
+        let mut outcomes = Vec::new();
+        for stale in prepared_entries {
+            let request = RepoMutationRequest {
+                repo_ref: repo_ref.clone(),
+                actor_id: stale.actor_id,
+                session_id: stale.session_id,
+                operation: RepoMutationOperation::RecoverSnapshot {
+                    fork_hash: stale.pre_action_fork_hash,
+                },
+            };
+            let recovery = self.prepare_repo_mutation(repo_ref, &request, repo_root)?;
+            match execute_repo_mutation(self, repo_ref, repo_root, &request.operation) {
+                Ok(()) => {
+                    let entry = self.finish_repo_mutation(
+                        &recovery,
+                        RepoMutationStatus::Applied,
+                        None,
+                        now_millis(),
+                    )?;
+                    self.finish_repo_mutation(
+                        &PreparedRepoMutation {
+                            repo_key_hash: repo_key_hash(&repo_ref.canonical()),
+                            seq: stale.seq,
+                        },
+                        RepoMutationStatus::Failed,
+                        Some("auto-recovered pre-action forkHash after incomplete mutation".into()),
+                        now_millis(),
+                    )?;
+                    outcomes.push(RepoMutationOutcome { entry });
+                }
+                Err(error) => {
+                    let failure = truncate_failure(&error.to_string());
+                    let _ = self.finish_repo_mutation(
+                        &recovery,
+                        RepoMutationStatus::Failed,
+                        Some(failure),
+                        now_millis(),
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Ok(outcomes)
     }
 
     fn prepare_repo_mutation(
@@ -359,6 +466,7 @@ impl Vault {
 
 fn execute_repo_mutation(
     vault: &Vault,
+    repo_ref: &RepoRef,
     repo_root: &Path,
     operation: &RepoMutationOperation,
 ) -> Result<()> {
@@ -370,28 +478,7 @@ fn execute_repo_mutation(
         } => {
             validate_relative_repo_path(path)?;
             validate_commit_message(message)?;
-            let target = repo_root.join(path);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&target, content)?;
-            run_git(
-                repo_root,
-                &["add".to_owned(), "--".to_owned(), path.clone()],
-            )?;
-            run_git(
-                repo_root,
-                &[
-                    "-c".to_owned(),
-                    "user.name=Oneiron".to_owned(),
-                    "-c".to_owned(),
-                    "user.email=oneiron@example.invalid".to_owned(),
-                    "commit".to_owned(),
-                    "-m".to_owned(),
-                    message.clone(),
-                ],
-            )?;
-            Ok(())
+            commit_file_through_queue_worktree(repo_root, path, content, message)
         }
         RepoMutationOperation::CreateWorktree {
             worktree_path,
@@ -405,6 +492,7 @@ fn execute_repo_mutation(
                     "worktree".to_owned(),
                     "add".to_owned(),
                     "--detach".to_owned(),
+                    "--".to_owned(),
                     path_arg(worktree_path)?,
                     base_ref.clone(),
                 ],
@@ -419,13 +507,14 @@ fn execute_repo_mutation(
                     "worktree".to_owned(),
                     "remove".to_owned(),
                     "--force".to_owned(),
+                    "--".to_owned(),
                     path_arg(worktree_path)?,
                 ],
             )?;
             Ok(())
         }
         RepoMutationOperation::RecoverSnapshot { fork_hash } => {
-            restore_repo_snapshot(vault, repo_root, *fork_hash)
+            restore_repo_snapshot(vault, repo_ref, repo_root, *fork_hash)
         }
     }
 }
@@ -462,7 +551,8 @@ fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, Vec<u8>)> {
     .map(|bytes| utf8_trimmed(bytes, "git HEAD must be UTF-8"))
     .transpose()?;
     let mut entries = Vec::new();
-    collect_snapshot_entries(repo_root, repo_root, &mut entries)?;
+    let mut stats = SnapshotStats::default();
+    collect_snapshot_entries(repo_root, repo_root, &mut entries, &mut stats)?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     let snapshot = StoredRepoSnapshot {
         schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
@@ -478,6 +568,7 @@ fn collect_snapshot_entries(
     repo_root: &Path,
     dir: &Path,
     entries: &mut Vec<StoredRepoSnapshotEntry>,
+    stats: &mut SnapshotStats,
 ) -> Result<()> {
     let mut children = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
     children.sort_by_key(|entry| entry.file_name());
@@ -488,13 +579,14 @@ fn collect_snapshot_entries(
         let path = child.path();
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
-            collect_snapshot_entries(repo_root, &path, entries)?;
+            collect_snapshot_entries(repo_root, &path, entries, stats)?;
             continue;
         }
         let relative = repo_relative_path(repo_root, &path)?;
         if metadata.file_type().is_symlink() {
             let target = fs::read_link(&path)?;
             let target = path_arg(&target)?;
+            record_snapshot_entry_size(stats, target.len() as u64)?;
             entries.push(StoredRepoSnapshotEntry {
                 path: relative,
                 kind: StoredRepoSnapshotEntryKind::Symlink,
@@ -503,6 +595,12 @@ fn collect_snapshot_entries(
                 symlink_target: Some(target),
             });
         } else if metadata.file_type().is_file() {
+            if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
+                return Err(Error::InvalidRepoMutationRecord(
+                    "repo mutation snapshot file exceeds max bytes",
+                ));
+            }
+            record_snapshot_entry_size(stats, metadata.len())?;
             entries.push(StoredRepoSnapshotEntry {
                 path: relative,
                 kind: StoredRepoSnapshotEntryKind::File,
@@ -519,7 +617,17 @@ fn collect_snapshot_entries(
     Ok(())
 }
 
-fn restore_repo_snapshot(vault: &Vault, repo_root: &Path, fork_hash: RepoForkHash) -> Result<()> {
+fn restore_repo_snapshot(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    fork_hash: RepoForkHash,
+) -> Result<()> {
+    if !snapshot_recorded_for_repo(vault, repo_ref, fork_hash)? {
+        return Err(Error::InvalidRepoMutationRecord(
+            "requested repo snapshot forkHash is not recorded for this repo",
+        ));
+    }
     let key = repo_mutation_snapshot_key(fork_hash);
     let rtxn = vault.store.env.read_txn()?;
     let raw = vault
@@ -537,6 +645,7 @@ fn restore_repo_snapshot(vault: &Vault, repo_root: &Path, fork_hash: RepoForkHas
         ));
     }
     let snapshot = decode_snapshot(&raw)?;
+    let snapshot_head = snapshot.head.clone();
     let desired: BTreeSet<String> = snapshot
         .entries
         .iter()
@@ -554,15 +663,12 @@ fn restore_repo_snapshot(vault: &Vault, repo_root: &Path, fork_hash: RepoForkHas
     for entry in snapshot.entries {
         validate_relative_repo_path(&entry.path)?;
         let target = repo_root.join(&entry.path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
         if fs::symlink_metadata(&target).is_ok() {
             remove_existing_path(&target)?;
         }
         match entry.kind {
             StoredRepoSnapshotEntryKind::File => {
-                fs::write(&target, &entry.content)?;
+                write_repo_file_no_symlink(repo_root, &entry.path, &entry.content)?;
                 set_executable(&target, entry.executable)?;
             }
             StoredRepoSnapshotEntryKind::Symlink => {
@@ -571,10 +677,263 @@ fn restore_repo_snapshot(vault: &Vault, repo_root: &Path, fork_hash: RepoForkHas
                     .ok_or(Error::InvalidRepoMutationRecord(
                         "symlink snapshot entry missing target",
                     ))?;
+                let target = ensure_repo_parent_dirs_no_symlink(repo_root, &entry.path)?;
                 create_symlink(Path::new(&target_path), &target)?;
             }
         }
     }
+    if let Some(head) = snapshot_head {
+        run_git(
+            repo_root,
+            &["update-ref".to_owned(), "HEAD".to_owned(), head],
+        )?;
+        run_git(
+            repo_root,
+            &[
+                "read-tree".to_owned(),
+                "--reset".to_owned(),
+                "HEAD".to_owned(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn record_snapshot_entry_size(stats: &mut SnapshotStats, bytes: u64) -> Result<()> {
+    stats.files = stats
+        .files
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("repo_mutation_snapshot_files"))?;
+    if stats.files > MAX_REPO_MUTATION_SNAPSHOT_FILES {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo mutation snapshot exceeds max file count",
+        ));
+    }
+    stats.total_bytes = stats
+        .total_bytes
+        .checked_add(bytes)
+        .ok_or(Error::ArithmeticOverflow("repo_mutation_snapshot_bytes"))?;
+    if stats.total_bytes > MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES {
+        return Err(Error::InvalidRepoMutationRecord(
+            "repo mutation snapshot exceeds max total bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn snapshot_recorded_for_repo(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    fork_hash: RepoForkHash,
+) -> Result<bool> {
+    Ok(vault
+        .repo_mutation_oplog_for_canonical(repo_ref)?
+        .iter()
+        .any(|entry| entry.pre_action_fork_hash == fork_hash))
+}
+
+fn commit_file_through_queue_worktree(
+    repo_root: &Path,
+    path: &str,
+    content: &[u8],
+    message: &str,
+) -> Result<()> {
+    let base_head = utf8_trimmed(
+        run_git(
+            repo_root,
+            &[
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "HEAD".to_owned(),
+            ],
+        )?,
+        "git HEAD must be UTF-8",
+    )?;
+    let worktree_path = create_queue_worktree(repo_root)?;
+    let mutation = (|| -> Result<()> {
+        write_repo_file_no_symlink(&worktree_path, path, content)?;
+        run_git(
+            &worktree_path,
+            &["add".to_owned(), "--".to_owned(), path.to_owned()],
+        )?;
+        run_git(
+            &worktree_path,
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                message.to_owned(),
+                "--only".to_owned(),
+                "--".to_owned(),
+                path.to_owned(),
+            ],
+        )?;
+        let new_head = utf8_trimmed(
+            run_git(
+                &worktree_path,
+                &[
+                    "rev-parse".to_owned(),
+                    "--verify".to_owned(),
+                    "HEAD".to_owned(),
+                ],
+            )?,
+            "git HEAD must be UTF-8",
+        )?;
+        write_repo_file_no_symlink(repo_root, path, content)?;
+        run_git(
+            repo_root,
+            &[
+                "update-ref".to_owned(),
+                "HEAD".to_owned(),
+                new_head,
+                base_head,
+            ],
+        )?;
+        run_git(
+            repo_root,
+            &["add".to_owned(), "--".to_owned(), path.to_owned()],
+        )?;
+        Ok(())
+    })();
+    let cleanup = remove_queue_worktree(repo_root, &worktree_path);
+    match (mutation, cleanup) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn create_queue_worktree(repo_root: &Path) -> Result<PathBuf> {
+    let worktree_path = queue_owned_worktree_path(repo_root)?;
+    run_git(
+        repo_root,
+        &[
+            "worktree".to_owned(),
+            "add".to_owned(),
+            "--detach".to_owned(),
+            "--".to_owned(),
+            path_arg(&worktree_path)?,
+            "HEAD".to_owned(),
+        ],
+    )?;
+    Ok(worktree_path)
+}
+
+fn remove_queue_worktree(repo_root: &Path, worktree_path: &Path) -> Result<()> {
+    let result = run_git(
+        repo_root,
+        &[
+            "worktree".to_owned(),
+            "remove".to_owned(),
+            "--force".to_owned(),
+            "--".to_owned(),
+            path_arg(worktree_path)?,
+        ],
+    );
+    if worktree_path.exists() {
+        let _ = fs::remove_dir_all(worktree_path);
+    }
+    result.map(|_| ())
+}
+
+fn queue_owned_worktree_path(repo_root: &Path) -> Result<PathBuf> {
+    let common_dir = git_common_dir(repo_root)?;
+    for _ in 0..16 {
+        let counter = REPO_MUTATION_WORKTREE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let seed = format!(
+            "{}:{}:{}:{}",
+            common_dir.display(),
+            std::process::id(),
+            now_millis(),
+            counter
+        );
+        let suffix = &hex_bytes(&sha256_bytes(seed.as_bytes()))[..24];
+        let path = std::env::temp_dir().join(format!("oneiron-repo-mutation-{suffix}"));
+        if !path.exists() {
+            return Ok(path);
+        }
+    }
+    Err(Error::InvalidRepoMutationRecord(
+        "unable to allocate queue-owned worktree path",
+    ))
+}
+
+fn write_repo_file_no_symlink(repo_root: &Path, path: &str, content: &[u8]) -> Result<()> {
+    let target = safe_repo_file_target(repo_root, path)?;
+    write_file_no_follow(&target, content)
+}
+
+fn safe_repo_file_target(repo_root: &Path, path: &str) -> Result<PathBuf> {
+    let target = ensure_repo_parent_dirs_no_symlink(repo_root, path)?;
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::InvalidRepoMutationRecord(
+            "repo mutation path must not traverse symlinks",
+        )),
+        Ok(metadata) if metadata.file_type().is_file() => Ok(target),
+        Ok(_) => Err(Error::InvalidRepoMutationRecord(
+            "repo mutation target must be a regular file or absent",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(target),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn ensure_repo_parent_dirs_no_symlink(repo_root: &Path, path: &str) -> Result<PathBuf> {
+    validate_relative_repo_path(path)?;
+    let mut current = repo_root.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(part) = component else {
+            return Err(Error::InvalidRepoMutationRecord(
+                "repo mutation path must contain only normal components",
+            ));
+        };
+        current.push(part);
+        let is_leaf = components.peek().is_none();
+        if is_leaf {
+            return Ok(current);
+        }
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::InvalidRepoMutationRecord(
+                    "repo mutation path must not traverse symlinks",
+                ));
+            }
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(Error::InvalidRepoMutationRecord(
+                    "repo mutation parent path must be a directory",
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&current)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(current)
+}
+
+#[cfg(unix)]
+fn write_file_no_follow(path: &Path, content: &[u8]) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(content)?;
+    file.flush()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_file_no_follow(path: &Path, content: &[u8]) -> Result<()> {
+    fs::write(path, content)?;
     Ok(())
 }
 
@@ -736,8 +1095,8 @@ fn repo_mutation_lock(repo_key: &str) -> Result<Arc<Mutex<()>>> {
 }
 
 #[cfg(unix)]
-fn repo_mutation_file_lock(repo_root: &Path) -> Result<RepoMutationFileLock> {
-    let lock_path = git_common_dir(repo_root)?.join(REPO_MUTATION_LOCK_FILE_NAME);
+fn repo_mutation_file_lock(git_common_dir: &Path) -> Result<RepoMutationFileLock> {
+    let lock_path = git_common_dir.join(REPO_MUTATION_LOCK_FILE_NAME);
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -755,8 +1114,17 @@ fn repo_mutation_file_lock(repo_root: &Path) -> Result<RepoMutationFileLock> {
 }
 
 #[cfg(not(unix))]
-fn repo_mutation_file_lock(_repo_root: &Path) -> Result<RepoMutationFileLock> {
+fn repo_mutation_file_lock(_git_common_dir: &Path) -> Result<RepoMutationFileLock> {
     Ok(RepoMutationFileLock)
+}
+
+fn repo_lock_key(git_common_dir: &Path) -> Result<String> {
+    git_common_dir
+        .to_str()
+        .map(str::to_owned)
+        .ok_or(Error::InvalidRepoMutationRecord(
+            "git common dir must be UTF-8",
+        ))
 }
 
 fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
@@ -850,9 +1218,13 @@ fn validate_commit_message(message: &str) -> Result<()> {
 }
 
 fn validate_base_ref(base_ref: &str) -> Result<()> {
-    if base_ref.is_empty() || base_ref.len() > MAX_BASE_REF_BYTES || base_ref.contains('\0') {
+    if base_ref.is_empty()
+        || base_ref.len() > MAX_BASE_REF_BYTES
+        || base_ref.contains('\0')
+        || base_ref.starts_with('-')
+    {
         return Err(Error::InvalidRepoMutationRecord(
-            "worktree base ref must be non-empty, bounded, and contain no NUL",
+            "worktree base ref must be non-empty, bounded, contain no NUL, and not start with '-'",
         ));
     }
     Ok(())
@@ -946,7 +1318,11 @@ fn truncate_failure(message: &str) -> String {
     if message.len() <= MAX_REPO_MUTATION_FAILURE_BYTES {
         return message.to_owned();
     }
-    let mut out = message[..MAX_REPO_MUTATION_FAILURE_BYTES].to_owned();
+    let mut end = MAX_REPO_MUTATION_FAILURE_BYTES;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = message[..end].to_owned();
     out.push_str("...");
     out
 }
@@ -1176,6 +1552,7 @@ mod tests {
                 "worktree".to_owned(),
                 "add".to_owned(),
                 "--detach".to_owned(),
+                "--".to_owned(),
                 worktree_path.to_string_lossy().into_owned(),
                 "HEAD".to_owned(),
             ],
@@ -1186,7 +1563,7 @@ mod tests {
             git_common_dir(&worktree_path).expect("worktree common dir"),
             common_dir
         );
-        let _guard = repo_mutation_file_lock(&worktree_path).expect("lock common dir");
+        let _guard = repo_mutation_file_lock(&common_dir).expect("lock common dir");
         assert!(common_dir.join(REPO_MUTATION_LOCK_FILE_NAME).exists());
     }
 
@@ -1208,6 +1585,15 @@ mod tests {
                 },
             ))
             .expect("mutate");
+        let pre_head = run_git_at_path(
+            repo.path(),
+            &[
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "HEAD^".to_owned(),
+            ],
+        )
+        .expect("pre mutation head");
         assert_eq!(
             fs::read_to_string(&tracked).expect("read mutated"),
             "mutated\n"
@@ -1220,6 +1606,182 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&tracked).expect("read recovered"),
             before
+        );
+        let recovered_head = run_git_at_path(
+            repo.path(),
+            &[
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "HEAD".to_owned(),
+            ],
+        )
+        .expect("recovered head");
+        assert_eq!(recovered_head, pre_head);
+    }
+
+    #[test]
+    fn repo_mutation_auto_recovers_prepared_rows() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let tracked = repo.path().join("README.md");
+        let before = fs::read_to_string(&tracked).expect("read before");
+        let repo_root = resolve_mutable_repo_root(&repo_ref(&repo)).expect("repo root");
+        let canonical = canonical_repo_ref_for_root(&repo_root).expect("canonical repo");
+        let request = RepoMutationRequest::new(
+            canonical.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        );
+        let prepared = vault
+            .prepare_repo_mutation(&canonical, &request, &repo_root)
+            .expect("prepared row");
+        fs::write(&tracked, "half applied\n").expect("simulate interrupted mutation");
+
+        let recovered = vault
+            .recover_prepared_repo_mutations(&canonical)
+            .expect("recover prepared");
+
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(
+            fs::read_to_string(&tracked).expect("read recovered"),
+            before
+        );
+        let log = vault.repo_mutation_oplog(&canonical).expect("oplog");
+        assert_eq!(log[0].seq, prepared.seq);
+        assert_eq!(log[0].status, RepoMutationStatus::Failed);
+        assert_eq!(log[1].operation_kind, "recover_snapshot");
+        assert_eq!(log[1].status, RepoMutationStatus::Applied);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repo_mutation_rejects_symlink_write_escape() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::os::unix::fs::symlink(outside.path(), repo.path().join("escape"))
+            .expect("repo symlink");
+        run_git_at_path(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), "escape".to_owned()],
+        )
+        .expect("git add symlink");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                "add symlink".to_owned(),
+            ],
+        )
+        .expect("git commit symlink");
+
+        let err = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::CommitFile {
+                    path: "escape/pwned".to_owned(),
+                    content: b"owned\n".to_vec(),
+                    message: "attempt escape".to_owned(),
+                },
+            ))
+            .expect_err("symlink escape rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
+        assert!(!outside.path().join("pwned").exists());
+    }
+
+    #[test]
+    fn repo_mutation_commit_file_preserves_unrelated_staged_paths() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        fs::write(repo.path().join("unrelated.txt"), "staged\n").expect("write staged");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "add".to_owned(),
+                "--".to_owned(),
+                "unrelated.txt".to_owned(),
+            ],
+        )
+        .expect("stage unrelated");
+
+        vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::CommitFile {
+                    path: "owned.txt".to_owned(),
+                    content: b"owned\n".to_vec(),
+                    message: "commit owned".to_owned(),
+                },
+            ))
+            .expect("commit owned");
+
+        let staged = run_git_at_path(
+            repo.path(),
+            &[
+                "diff".to_owned(),
+                "--cached".to_owned(),
+                "--name-only".to_owned(),
+                "--".to_owned(),
+                "unrelated.txt".to_owned(),
+            ],
+        )
+        .expect("cached diff");
+        assert_eq!(
+            String::from_utf8(staged).expect("utf8 staged"),
+            "unrelated.txt\n"
+        );
+        let unrelated_log = run_git_at_path(
+            repo.path(),
+            &[
+                "log".to_owned(),
+                "--format=%s".to_owned(),
+                "--".to_owned(),
+                "unrelated.txt".to_owned(),
+            ],
+        )
+        .expect("unrelated log");
+        assert!(
+            !String::from_utf8(unrelated_log)
+                .expect("utf8 log")
+                .contains("commit owned")
+        );
+    }
+
+    #[test]
+    fn repo_mutation_recovery_rejects_snapshot_from_other_repo() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo_a = init_repo();
+        let repo_b = init_repo();
+        let b_readme = repo_b.path().join("README.md");
+        let before_b = fs::read_to_string(&b_readme).expect("read repo b");
+
+        let outcome = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo_a),
+                RepoMutationOperation::CommitFile {
+                    path: "a.txt".to_owned(),
+                    content: b"a\n".to_vec(),
+                    message: "commit a".to_owned(),
+                },
+            ))
+            .expect("mutate repo a");
+        let err = vault
+            .recover_repo_snapshot(&repo_ref(&repo_b), outcome.entry.pre_action_fork_hash)
+            .expect_err("foreign snapshot rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
+        assert_eq!(
+            fs::read_to_string(&b_readme).expect("read repo b after"),
+            before_b
         );
     }
 
@@ -1244,6 +1806,10 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
         let err = validate_relative_repo_path("../outside").expect_err("reject parent path");
         assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
+        let err = validate_base_ref("-q").expect_err("reject option-like base ref");
+        assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
+        let truncated = truncate_failure(&format!("{}é{}", "a".repeat(4095), "b".repeat(16)));
+        assert!(truncated.ends_with("..."));
     }
 
     #[test]
