@@ -292,6 +292,7 @@ pub enum RetrievalAction {
     Pipeline,
     ContextPack,
     VaultSearch,
+    GraphFsCoreutils,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
