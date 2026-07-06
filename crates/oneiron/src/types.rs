@@ -101,6 +101,9 @@ pub const ENTITY_TYPE_CHANNEL_IDENTITY: u8 = 131;
 /// OF-347 CounterpartyContact entity. Engine-authored maintenance kind for
 /// per-(identity, counterparty) contact and consent records.
 pub const ENTITY_TYPE_COUNTERPARTY_CONTACT: u8 = 132;
+/// OF-367 StandingOutboundGrant entity. Engine-authored maintenance kind for
+/// ask-card and bundle-approval outbound consent grants.
+pub const ENTITY_TYPE_OUTBOUND_GRANT: u8 = 133;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
@@ -113,7 +116,8 @@ pub const ENTITY_TYPE_COUNTERPARTY_CONTACT: u8 = 132;
 /// ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130 reserved) are
 /// engine-authored records or reserved maintenance substrates, also not
 /// StructuralKinds. CHANNEL_IDENTITY=131 and COUNTERPARTY_CONTACT=132 are
-/// engine-authored maintenance kinds for OF-347.
+/// engine-authored maintenance kinds for OF-347; OUTBOUND_GRANT=133 is the
+/// OF-367 standing consent-grant substrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
@@ -153,7 +157,8 @@ pub enum TypeByteBand {
     /// POLICY_MANIFEST=123, FEDERATION_GRANT=124, CONNECTION_RECORD=125
     /// reserved, DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127
     /// reserved, ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130
-    /// reserved, runtime-induced and tenant-custom kinds).
+    /// reserved, CHANNEL_IDENTITY=131, COUNTERPARTY_CONTACT=132,
+    /// OUTBOUND_GRANT=133, runtime-induced and tenant-custom kinds).
     InducedDynamicMaintenance,
 }
 
@@ -204,7 +209,8 @@ pub const fn band_of(type_byte: u8) -> TypeByteBand {
 /// MODEL = 121, AUTHORITY_LOG = 122, POLICY_MANIFEST = 123,
 /// FEDERATION_GRANT = 124, CONNECTION_RECORD = 125 reserved,
 /// DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127 reserved,
-/// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved)
+/// ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130 reserved,
+/// CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132, OUTBOUND_GRANT = 133)
 /// are not StructuralKinds either. The reserved bytes are unregistered.
 /// Only registered `core` and `pack` kinds qualify. Unregistered bytes return
 /// `false` here AND remain rejected by `validate_entity_type` on every write
@@ -461,6 +467,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "COUNTERPARTY_CONTACT",
         type_byte: ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
+    EntityTypeRegistryEntry {
+        kind: "OUTBOUND_GRANT",
+        type_byte: ENTITY_TYPE_OUTBOUND_GRANT,
         short_id_prefix: None,
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,
@@ -984,8 +997,9 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// POLICY_MANIFEST = 123, FEDERATION_GRANT = 124, CONNECTION_RECORD = 125
 /// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
 /// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
-/// reserved, CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132) are
-/// engine-authored maintenance records or reserved maintenance substrates.
+/// reserved, CHANNEL_IDENTITY = 131, COUNTERPARTY_CONTACT = 132,
+/// OUTBOUND_GRANT = 133) are engine-authored maintenance records or reserved
+/// maintenance substrates.
 /// Reserved bytes are not registered yet.
 pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 
@@ -994,7 +1008,7 @@ pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 /// Genuinely unknown bytes fail with [`Error::InvalidEntityType`]; registered
 /// maintenance-band kinds (type byte ≥ 120: REDACTION_AUDIT, MODEL,
 /// POLICY_MANIFEST, FEDERATION_GRANT, ACCESS_GRANT, PSYCH_PROFILE,
-/// CHANNEL_IDENTITY, COUNTERPARTY_CONTACT) fail with the distinct
+/// CHANNEL_IDENTITY, COUNTERPARTY_CONTACT, OUTBOUND_GRANT) fail with the distinct
 /// [`Error::MaintenanceKindNotWritable`]. Reserved-unregistered
 /// maintenance bytes (AUTHORITY_LOG = 122, CONNECTION_RECORD = 125,
 /// DIAGNOSTIC = 126, FEDERATION_KEY_ENVELOPE = 127, SUSPICIOUS_WAKE = 130)

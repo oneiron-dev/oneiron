@@ -122,6 +122,11 @@ use crate::types::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v9 (ONE-1530): OUTBOUND_GRANT was registered as persistent maintenance
+/// entity type byte 133. v8 readers do not know this persistent entity kind,
+/// so v8 vaults fail closed at the ABI gate — there is no silent migration;
+/// rebuild the vault.
+///
 /// v8 (ONE-1213): job queue rows gained durable terminal states (`Completed`
 /// and `Failed`) plus retry backoff metadata. v7 queue readers only understand
 /// `Queued`/`Leased`, so v7 vaults fail closed at the ABI gate — there is no
@@ -143,7 +148,7 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 8;
+pub const STORAGE_ABI_VERSION: u16 = 9;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -641,6 +646,8 @@ pub struct GateDecisionRecord {
     pub content_kind: String,
     pub policy_manifest_version: String,
     pub claim_id: Option<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
 }
@@ -1573,6 +1580,7 @@ impl Store {
             content_kind: original.content_kind,
             policy_manifest_version: original.policy_manifest_version,
             claim_id: Some(pending.claim_id),
+            grant_ref: None,
             diff_handle: pending.diff_handle,
             read_frontier_hash: pending.read_frontier_hash,
         };
@@ -2674,6 +2682,10 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
         || record.reason_codes.is_empty()
         || record.content_kind.is_empty()
         || record.policy_manifest_version.is_empty()
+        || record
+            .grant_ref
+            .as_deref()
+            .is_some_and(|grant_ref| grant_ref.trim().is_empty())
         || record.diff_handle.is_empty()
         || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
         || !record

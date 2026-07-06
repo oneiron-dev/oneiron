@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
     sensitivity_band_from_value,
@@ -20,12 +21,19 @@ use crate::counterparty_contact::{
 };
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
 use crate::error::{Error, Result};
+use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::BudgetExhaustionPolicy;
+use crate::outbound_grant::{
+    StandingOutboundGrant, decode_standing_outbound_grant_body,
+    encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_entity_id,
+    standing_outbound_grant_principal_index_prefix,
+};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId, WriteEnvelope, bytes_to_hex_lower,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
+    WriteEnvelope, bytes_to_hex_lower,
 };
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -312,6 +320,9 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) channel: String,
     pub(crate) channel_identity_ref: Option<EntityId>,
     pub(crate) counterparty: Option<String>,
+    pub(crate) brief_ref: Option<String>,
+    pub(crate) send_ref: Option<String>,
+    pub(crate) standing_grant_ref: Option<String>,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
@@ -329,6 +340,9 @@ pub(crate) struct ExternalEffectGateInput {
     pub(crate) channel: String,
     pub(crate) channel_identity_ref: Option<EntityId>,
     pub(crate) counterparty: Option<String>,
+    pub(crate) brief_ref: Option<String>,
+    pub(crate) send_ref: Option<String>,
+    pub(crate) standing_grant_ref: Option<String>,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
@@ -353,6 +367,9 @@ impl ExternalEffectGateInput {
                 channel: self.channel.clone(),
                 channel_identity_ref: self.channel_identity_ref,
                 counterparty: self.counterparty.clone(),
+                brief_ref: self.brief_ref.clone(),
+                send_ref: self.send_ref.clone(),
+                standing_grant_ref: self.standing_grant_ref.clone(),
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
@@ -1082,9 +1099,14 @@ impl PolicyManifestResolution {
         };
         if effect.verb.trim().is_empty()
             || effect.channel.trim().is_empty()
-            || !effect.has_opted_in
             || !effect.has_permission
         {
+            return false;
+        }
+        if effect.standing_grant_ref.is_some() {
+            return true;
+        }
+        if !effect.has_opted_in {
             return false;
         }
 
@@ -1876,6 +1898,7 @@ pub(crate) fn check_claim_policy_for_write(
                     content_kind: input.content_kind.as_str().to_owned(),
                     policy_manifest_version: input.policy_manifest_version,
                     claim_id: Some(*id.as_bytes()),
+                    grant_ref: None,
                     diff_handle: binding.diff_handle.clone(),
                     read_frontier_hash: binding.read_frontier_hash,
                 },
@@ -1927,18 +1950,28 @@ pub(crate) fn check_external_effect_policy(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
 ) -> Result<(GateDecisionId, GateDecision)> {
-    let hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
+    let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
+    hydrated_effect.standing_grant_ref = None;
+    let matched_grant = standing_outbound_grant_for_effect(store, wtxn, &hydrated_effect, policy)?;
+    if let Some((grant_id, _grant)) = matched_grant.as_ref() {
+        hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
+    }
     let input = hydrated_effect.gate_input();
     let decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
+    let created_at = crate::unix_seconds_now();
+    let grant_ref = input
+        .external_effect
+        .as_ref()
+        .and_then(|effect| effect.standing_grant_ref.clone());
 
     store.append_gate_decision_in_txn(
         wtxn,
         &GateDecisionRecord {
             version: 0,
             decision_id,
-            created_at: crate::unix_seconds_now(),
+            created_at,
             outcome: decision.outcome().as_str().to_owned(),
             reason_codes: decision
                 .reason_codes()
@@ -1955,13 +1988,128 @@ pub(crate) fn check_external_effect_policy(
             content_kind: input.content_kind.as_str().to_owned(),
             policy_manifest_version: input.policy_manifest_version,
             claim_id: None,
+            grant_ref,
             diff_handle: binding.diff_handle,
             read_frontier_hash: binding.read_frontier_hash,
         },
     )?;
+    if decision.outcome() == GateOutcome::Allow
+        && let Some((grant_id, grant)) = matched_grant
+    {
+        touch_standing_outbound_grant_in_txn(store, wtxn, &grant_id, grant, created_at)?;
+    }
     record_gate_decision_metrics(&decision);
 
     Ok((decision_id, decision))
+}
+
+fn standing_outbound_grant_for_effect(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<Option<(EntityId, StandingOutboundGrant)>> {
+    let current_policy_floor = policy.read_frontier_hash()?;
+    let mut candidate_ids = Vec::new();
+    for principal_ref in standing_outbound_grant_candidate_principals(effect) {
+        let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
+        for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (key, _) = entry?;
+            let id = standing_outbound_grant_principal_index_entity_id(key, &principal_ref)?;
+            if !candidate_ids.contains(&id) {
+                candidate_ids.push(id);
+            }
+        }
+    }
+    for id in candidate_ids {
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("outbound grant entity row"));
+        };
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            return Err(Error::CorruptedIndex("outbound grant entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+            return Err(Error::CorruptedIndex("outbound grant entity type"));
+        }
+        let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if !grant.is_active_under_policy(&current_policy_floor) {
+            continue;
+        }
+        if !standing_outbound_grant_actor_matches(&grant, effect) {
+            continue;
+        }
+        if grant.scope.matches_effect(
+            &effect.verb,
+            &effect.channel,
+            effect.counterparty.as_deref(),
+            effect.brief_ref.as_deref(),
+        ) {
+            return Ok(Some((id, grant)));
+        }
+    }
+    Ok(None)
+}
+
+fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput) -> Vec<String> {
+    let mut principals = Vec::with_capacity(2);
+    if let Some(actor_ref) = effect.actor.actor_ref.as_deref()
+        && !actor_ref.trim().is_empty()
+    {
+        principals.push(actor_ref.trim().to_owned());
+    }
+    if let Some(actor_entity_ref) = effect.provenance.actor_entity_ref {
+        let actor_entity_ref = actor_entity_ref.to_hex();
+        if !principals
+            .iter()
+            .any(|principal| principal == &actor_entity_ref)
+        {
+            principals.push(actor_entity_ref);
+        }
+    }
+    principals
+}
+
+fn standing_outbound_grant_actor_matches(
+    grant: &StandingOutboundGrant,
+    effect: &ExternalEffectGateInput,
+) -> bool {
+    effect
+        .actor
+        .actor_ref
+        .as_deref()
+        .is_some_and(|actor_ref| actor_ref == grant.principal_ref)
+        || effect
+            .provenance
+            .actor_entity_ref
+            .is_some_and(|actor_entity_ref| actor_entity_ref.to_hex() == grant.principal_ref)
+}
+
+fn touch_standing_outbound_grant_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    grant: StandingOutboundGrant,
+    used_at: u64,
+) -> Result<()> {
+    let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
+        return Err(Error::EntityNotFound);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("outbound grant entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+        return Err(Error::CorruptedIndex("outbound grant entity type"));
+    }
+    let touched = grant.touched(used_at)?;
+    let body = encode_standing_outbound_grant_body(&touched)?;
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+    payload.push(ENTITY_TYPE_OUTBOUND_GRANT);
+    payload.extend_from_slice(&header.occurred_start.to_be_bytes());
+    payload.extend_from_slice(&header.occurred_end.to_be_bytes());
+    payload.extend_from_slice(&header.learned_at.to_be_bytes());
+    payload.extend_from_slice(&body);
+    store.entities.put(wtxn, id.as_bytes(), &payload)?;
+    Ok(())
 }
 
 fn hydrate_external_effect_contact(
@@ -2277,6 +2425,8 @@ impl GateConsentBinding {
                 hash_bool(&mut hasher, true);
                 hash_str(&mut hasher, effect.verb.trim());
                 hash_str(&mut hasher, effect.channel.trim());
+                hash_opt_str(&mut hasher, effect.brief_ref.as_deref());
+                hash_opt_str(&mut hasher, effect.send_ref.as_deref());
                 hash_bool(&mut hasher, effect.has_opted_in);
                 hash_bool(&mut hasher, effect.has_permission);
                 hash_str(&mut hasher, effect.policy_risk.as_str());
@@ -2288,6 +2438,51 @@ impl GateConsentBinding {
             read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
+}
+
+pub(crate) fn standing_outbound_grant_binding_parts(
+    intent: &GrantMintIntent,
+    policy: &PolicyManifestResolution,
+) -> Result<(Vec<u8>, [u8; 32])> {
+    let mut hasher = Sha256::new();
+    hash_bytes(&mut hasher, b"oneiron.gate.standing_outbound_grant.v0");
+    hash_str(&mut hasher, intent.principal_ref.trim());
+    hash_str(&mut hasher, intent.origin_component_id.trim());
+    hash_str(&mut hasher, intent.origin_action_id.trim());
+    hash_opt_str(&mut hasher, intent.origin_receipt_ref.as_deref());
+    match &intent.scope {
+        GrantMintIntentScope::JustOnce { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "non-standing grant scope is not supported",
+            ));
+        }
+        GrantMintIntentScope::Contact { contact_ref } => {
+            hash_str(&mut hasher, "contact");
+            hash_str(&mut hasher, contact_ref.trim());
+        }
+        GrantMintIntentScope::VerbClass { verb_class } => {
+            hash_str(&mut hasher, "verb_class");
+            hash_str(&mut hasher, verb_class.trim());
+        }
+        GrantMintIntentScope::Channel { channel } => {
+            hash_str(&mut hasher, "channel");
+            hash_str(&mut hasher, channel.trim());
+        }
+        GrantMintIntentScope::BundleExactSends { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "non-standing grant scope is not supported",
+            ));
+        }
+        GrantMintIntentScope::BriefVerbClass {
+            brief_ref,
+            verb_class,
+        } => {
+            hash_str(&mut hasher, "brief_verb_class");
+            hash_str(&mut hasher, brief_ref.trim());
+            hash_str(&mut hasher, verb_class.trim());
+        }
+    }
+    Ok((hasher.finalize().to_vec(), policy.read_frontier_hash()?))
 }
 
 fn enforce_claim_gate_decision_with_consent(
@@ -2890,7 +3085,7 @@ mod tests {
     };
     use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
-    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
     use crate::types::{
         ClaimCandidate, ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE,
         ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
@@ -4549,6 +4744,9 @@ mod tests {
             channel: channel.to_owned(),
             channel_identity_ref: None,
             counterparty: None,
+            brief_ref: None,
+            send_ref: None,
+            standing_grant_ref: None,
             counterparty_first_touch: None,
             counterparty_opted_out: false,
             counterparty_opt_out_receipt_reason: None,
@@ -5274,6 +5472,187 @@ mod tests {
         assert_eq!(
             decisions[0].read_frontier_hash,
             policy.read_frontier_hash()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xD8, &encode_policy_manifest(vec![]))?;
+
+        let grant_id = test_id(0xD9);
+        let intent = GrantMintIntent {
+            principal_ref: "sender".to_owned(),
+            origin_component_id: "ask-1".to_owned(),
+            origin_action_id: "escalate_always_this_verb_class".to_owned(),
+            origin_receipt_ref: Some("gate:ask-1".to_owned()),
+            scope: GrantMintIntentScope::VerbClass {
+                verb_class: "send".to_owned(),
+            },
+        };
+        vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+        let policy = resolve(&vault)?;
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        let grant = vault
+            .get_standing_outbound_grant(&grant_id)?
+            .expect("grant stored");
+        assert!(grant.last_used_at.is_some());
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let grant_ref = format!("grant:{}", grant_id.to_hex());
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].grant_ref.as_deref(), Some(grant_ref.as_str()));
+
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(
+            receipts[0].fields.get("grant_ref").map(String::as_str),
+            Some(grant_ref.as_str())
+        );
+        let projection = vault.receipt_projection_by_grant(grant_ref, ReceiptQuery::new(10))?;
+        assert_eq!(projection.receipts.len(), 2);
+        assert!(
+            projection
+                .receipts
+                .iter()
+                .any(|receipt| receipt.receipt_kind == ReceiptKind::Gate)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xDD, &encode_policy_manifest(vec![]))?;
+
+        let grant_id = test_id(0xDE);
+        let intent = GrantMintIntent {
+            principal_ref: "sender".to_owned(),
+            origin_component_id: "ask-1".to_owned(),
+            origin_action_id: "escalate_always_this_verb_class".to_owned(),
+            origin_receipt_ref: Some("gate:ask-1".to_owned()),
+            scope: GrantMintIntentScope::VerbClass {
+                verb_class: "send".to_owned(),
+            },
+        };
+        vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+        let policy = resolve(&vault)?;
+
+        vault.with_write_txn(|wtxn| {
+            let mut type_key = Vec::with_capacity(ENTITY_ID_LEN + 1);
+            type_key.push(ENTITY_TYPE_OUTBOUND_GRANT);
+            type_key.extend_from_slice(grant_id.as_bytes());
+            vault.store.type_index.delete(wtxn, &type_key)?;
+            Ok(())
+        })?;
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        Ok(())
+    }
+
+    #[test]
+    fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xD7, &encode_policy_manifest(vec![]))?;
+        let policy = resolve(&vault)?;
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.has_opted_in = false;
+        effect.standing_grant_ref = Some(format!("grant:{}", test_id(0xD7).to_hex()));
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].grant_ref, None);
+        Ok(())
+    }
+
+    #[test]
+    fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xDA, &encode_policy_manifest(vec![]))?;
+
+        let grant_id = test_id(0xDB);
+        let intent = GrantMintIntent {
+            principal_ref: "sender".to_owned(),
+            origin_component_id: "ask-1".to_owned(),
+            origin_action_id: "escalate_always_this_channel".to_owned(),
+            origin_receipt_ref: Some("gate:ask-1".to_owned()),
+            scope: GrantMintIntentScope::Channel {
+                channel: "line".to_owned(),
+            },
+        };
+        vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+        let policy = resolve(&vault)?;
+
+        let mut out_of_scope = external_effect_gate_input("sender", "send", "email");
+        out_of_scope.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &out_of_scope, &policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        let mut lifecycle_effect = external_effect_gate_input("sender", "provision", "line");
+        lifecycle_effect.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &lifecycle_effect, &policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        put_policy_manifest_bytes(&vault, 0xDC, &encode_policy_manifest(vec![]))?;
+        let stale_policy = resolve(&vault)?;
+        let mut in_scope_stale = external_effect_gate_input("sender", "send", "line");
+        in_scope_stale.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &in_scope_stale, &stale_policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+
+        vault.revoke_standing_outbound_grant(&grant_id, 20)?;
+        let mut in_scope_revoked = external_effect_gate_input("sender", "send", "line");
+        in_scope_revoked.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &in_scope_revoked, &stale_policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+
+        let lens =
+            vault.standing_outbound_grants_lens(StandingOutboundGrantsLensQuery::new(10, 10))?;
+        assert_eq!(lens.grants.len(), 1);
+        assert_eq!(lens.grants[0].status, "revoked");
+        assert_eq!(lens.grants[0].revoked_at, Some(20));
+        assert_eq!(lens.grants[0].scope_dial, "always_this_channel");
+        assert_eq!(
+            lens.grants[0].origin_receipt_ref.as_deref(),
+            Some("gate:ask-1")
         );
         Ok(())
     }
