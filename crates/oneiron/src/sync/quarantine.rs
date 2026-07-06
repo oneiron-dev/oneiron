@@ -189,6 +189,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidAuthorityLogBody
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidChannelIdentityBody
+        | ErrorKind::InvalidCounterpartyContactBody
         | ErrorKind::ProvenanceOnStructuralEdge
         | ErrorKind::CycleDetected
         // A remote ChildOf op violating the single-parent pin is a pure
@@ -201,6 +202,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // local storage failure. Quarantine it so remat can continue.
         | ErrorKind::CompanionRecordAlreadyExists
         | ErrorKind::ChannelIdentityAlreadyExists
+        | ErrorKind::CounterpartyContactAlreadyExists
         // ONE-1134: a remote type-120 blob failing the pinned
         // redactionAuditReceipt structural validation, or carrying divergent
         // bytes for an EXISTING receipt id (immutable audit record — keep
