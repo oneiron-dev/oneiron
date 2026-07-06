@@ -113,6 +113,15 @@ impl PolicyApprovalCeiling {
     }
 }
 
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn foreign_agent_effective_ceiling(
+    confirmed_scope: PolicyApprovalCeiling,
+    introducer_ceiling: PolicyApprovalCeiling,
+) -> PolicyApprovalCeiling {
+    confirmed_scope.restrict(introducer_ceiling)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyCriticality {
     Normal,
@@ -569,6 +578,20 @@ impl GateMetricsSnapshot {
             .iter()
             .find(|counter| counter.outcome == outcome && counter.reason_class == reason_class)
             .map_or(0, |counter| counter.count)
+    }
+}
+
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn foreign_agent_ceiling_after_widen_request(
+    current_ceiling: PolicyApprovalCeiling,
+    requested_ceiling: PolicyApprovalCeiling,
+    normal_gate_decision: &GateDecision,
+) -> PolicyApprovalCeiling {
+    if normal_gate_decision.outcome() == GateOutcome::Allow {
+        requested_ceiling
+    } else {
+        current_ceiling
     }
 }
 
@@ -4423,6 +4446,73 @@ mod tests {
             "expected metric {}/{} to advance by at least {delta}; before={before_count}, after={after_count}",
             outcome.as_str(),
             reason_class.as_str()
+        );
+    }
+
+    #[test]
+    fn min_of_two_caps() {
+        for (confirmed_scope, introducer_ceiling, expected) in [
+            (
+                PolicyApprovalCeiling::Auto,
+                PolicyApprovalCeiling::Auto,
+                PolicyApprovalCeiling::Auto,
+            ),
+            (
+                PolicyApprovalCeiling::Auto,
+                PolicyApprovalCeiling::Proposed,
+                PolicyApprovalCeiling::Proposed,
+            ),
+            (
+                PolicyApprovalCeiling::Proposed,
+                PolicyApprovalCeiling::Auto,
+                PolicyApprovalCeiling::Proposed,
+            ),
+            (
+                PolicyApprovalCeiling::Proposed,
+                PolicyApprovalCeiling::Proposed,
+                PolicyApprovalCeiling::Proposed,
+            ),
+        ] {
+            assert_eq!(
+                foreign_agent_effective_ceiling(confirmed_scope, introducer_ceiling),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn introducer_lower_wins() {
+        assert_eq!(
+            foreign_agent_effective_ceiling(
+                PolicyApprovalCeiling::Auto,
+                PolicyApprovalCeiling::Proposed,
+            ),
+            PolicyApprovalCeiling::Proposed
+        );
+    }
+
+    #[test]
+    fn widen_on_request_path() {
+        let capped = foreign_agent_effective_ceiling(
+            PolicyApprovalCeiling::Auto,
+            PolicyApprovalCeiling::Proposed,
+        );
+
+        assert_eq!(
+            foreign_agent_ceiling_after_widen_request(
+                capped,
+                PolicyApprovalCeiling::Auto,
+                &GateDecision::pending(vec![GateReasonCode::PendingActorCeiling]),
+            ),
+            PolicyApprovalCeiling::Proposed
+        );
+        assert_eq!(
+            foreign_agent_ceiling_after_widen_request(
+                capped,
+                PolicyApprovalCeiling::Auto,
+                &GateDecision::allow(),
+            ),
+            PolicyApprovalCeiling::Auto
         );
     }
 
