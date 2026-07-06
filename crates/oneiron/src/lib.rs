@@ -24,6 +24,7 @@ pub mod critic;
 pub mod deletion;
 pub(crate) mod distance;
 pub mod dreamer_runner;
+pub mod dreamer_tournament;
 pub mod embed;
 pub mod error;
 pub mod federation;
@@ -248,6 +249,15 @@ pub use crate::dreamer_runner::{
     DREAMER_JOB_PROGRESS_THROTTLE_MS, DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION,
     DreamerJobProgressProducer, DreamerJobProgressSnapshot, DreamerJobProgressSource,
     DreamerJobProgressUpdate, DreamerProgressed, dreamer_job_progress_key,
+};
+pub use crate::dreamer_tournament::{
+    DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DREAMER_TOURNAMENT_MAX_FANOUT_M,
+    DREAMER_TOURNAMENT_MAX_ROUNDS_K, DREAMER_TOURNAMENT_MIN_FANOUT_M,
+    DreamerTournamentBlindJudgeContext, DreamerTournamentBordaBallot, DreamerTournamentBranch,
+    DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict, DreamerTournamentCandidate,
+    DreamerTournamentEvidenceStore, DreamerTournamentJudgeClaim, DreamerTournamentRound,
+    DreamerTournamentRun, DreamerTournamentRunResult, DreamerTournamentStopReason,
+    DreamerTournamentWinner, run_dreamer_claim_tournament,
 };
 #[cfg(feature = "sync")]
 pub use crate::embed::{
