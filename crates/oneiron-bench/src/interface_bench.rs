@@ -1104,9 +1104,18 @@ fn fs_context(
         ));
     }
     Ok(ArmContext {
-        tool_calls: if hybrid { 2 } else { 3 },
+        tool_calls: transcript_tool_calls(&transcript),
         transcript,
     })
+}
+
+fn transcript_tool_calls(transcript: &str) -> u32 {
+    transcript
+        .lines()
+        .filter(|line| line.starts_with("$ "))
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 fn context_claims<'a>(
@@ -1337,14 +1346,24 @@ fn judge_browse_answer(
     let faithfulness = rubric_score(&parsed, "faithfulness");
     let citation_validity = rubric_score(&parsed, "citation_validity");
     let mean = (coverage + faithfulness + citation_validity) / 15.0;
+    let final_accuracy = final_browse_accuracy(mean, citation_score);
     Ok((
-        mean,
+        final_accuracy,
         json!({
             "browse_rubric": parsed,
-            "normalized_score": mean,
+            "rubric_normalized_score": mean,
+            "citation_score": citation_score,
+            "normalized_score": final_accuracy,
+            "combiner": "min(rubric_normalized_score,citation_score)",
             "citation_precheck": citation_detail
         }),
     ))
+}
+
+fn final_browse_accuracy(rubric_mean: f64, citation_score: f64) -> f64 {
+    rubric_mean
+        .clamp(0.0, 1.0)
+        .min(citation_score.clamp(0.0, 1.0))
 }
 
 fn rubric_score(value: &Value, key: &str) -> f64 {
@@ -1577,6 +1596,26 @@ mod tests {
                 assert!(claim_ids.contains(claim_id), "missing {claim_id}");
             }
         }
+    }
+
+    #[test]
+    fn browse_accuracy_is_gated_by_citation_precheck() {
+        assert_eq!(final_browse_accuracy(1.0, 0.0), 0.0);
+        assert_eq!(final_browse_accuracy(0.8, 0.5), 0.5);
+        assert_eq!(final_browse_accuracy(0.4, 0.9), 0.4);
+    }
+
+    #[test]
+    fn fs_tool_calls_match_transcript_commands() {
+        let bundle = build_task_bundle();
+        let task = &bundle.smoke_tasks[0];
+        let fs = fs_context(task, &bundle.fixture, false).expect("fs context");
+        let hybrid = fs_context(task, &bundle.fixture, true).expect("hybrid context");
+
+        assert_eq!(fs.tool_calls, 2);
+        assert_eq!(fs.tool_calls, transcript_tool_calls(&fs.transcript));
+        assert_eq!(hybrid.tool_calls, 2);
+        assert_eq!(hybrid.tool_calls, transcript_tool_calls(&hybrid.transcript));
     }
 
     #[test]
