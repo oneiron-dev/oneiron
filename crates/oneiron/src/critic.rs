@@ -12,7 +12,9 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
+};
 use crate::error::{Error, Result};
 use crate::job_queue::JobId;
 use crate::types::EntityId;
@@ -428,7 +430,7 @@ pub fn triage_critiques_with_exploration(
             out_of_scope.push(critique.artifact_id.clone());
             continue;
         }
-        if lens.hard_check && critique.hard_check_passed == Some(false) {
+        if lens.hard_check && critique.hard_check_passed != Some(true) {
             hard_vetoes.push(critique.artifact_id.clone());
             acted_on.push(critique.artifact_id.clone());
             continue;
@@ -485,6 +487,9 @@ impl<'a> CritiqueArtifactStore<'a> {
 
     pub fn put(&self, artifact: &CritiqueArtifact) -> Result<()> {
         validate_critique_artifact(artifact)?;
+        if artifact.out_of_scope {
+            return Ok(());
+        }
         let key = critique_artifact_key(artifact.branch_job, &artifact.artifact_id)?;
         let encoded = rmp_serde::to_vec_named(artifact)
             .map_err(|_| invalid_critic_config("critique artifact MessagePack encode failed"))?;
@@ -520,9 +525,13 @@ impl<'a> CritiqueArtifactStore<'a> {
 pub fn critic_reliability_predicate(domain: &str, lens_id: &str) -> Result<String> {
     validate_identifier(domain, MAX_DOMAIN_BYTES, "domain")?;
     validate_identifier(lens_id, MAX_ID_BYTES, "lens id")?;
-    Ok(format!(
-        "{CRITIC_RELIABILITY_PREDICATE_PREFIX}.{domain}.{lens_id}"
-    ))
+    let predicate = format!("{CRITIC_RELIABILITY_PREDICATE_PREFIX}.{domain}.{lens_id}");
+    if predicate.len() > MAX_PREDICATE_BYTES {
+        return Err(invalid_critic_config(
+            "critic reliability predicate exceeds claim predicate limit",
+        ));
+    }
+    Ok(predicate)
 }
 
 pub fn critic_reliability_claim_body(
@@ -562,11 +571,9 @@ fn decode_stored_critique_artifact(raw: &[u8]) -> Result<CritiqueArtifact> {
 }
 
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
-    if scores.discard > scores.accept && scores.discard >= scores.revise {
+    if scores.discard > 0.0 && scores.discard >= scores.revise && scores.discard >= scores.accept {
         CritiqueVerdict::Discard
-    } else if scores.revise > scores.accept
-        || scores.revise >= scores.discard && scores.revise > 0.0
-    {
+    } else if scores.revise > 0.0 && scores.revise >= scores.accept {
         CritiqueVerdict::Revise
     } else {
         CritiqueVerdict::Accept
@@ -834,6 +841,32 @@ mod tests {
     }
 
     #[test]
+    fn hard_check_missing_status_vetoes_to_discard() -> Result<()> {
+        let catalog = LensCatalog::of366_seed()?;
+        let groundedness = catalog.lens("groundedness", "claim_authoring").unwrap();
+        let critiques = vec![critique(
+            "groundedness_missing_status",
+            groundedness,
+            CritiqueVerdict::Accept,
+            CritiqueSeverity::Info,
+            None,
+        )];
+
+        let triage = triage_critiques(&catalog, &critiques, &[])?;
+
+        assert_eq!(triage.verdict, CritiqueVerdict::Discard);
+        assert_eq!(
+            triage.hard_veto_artifact_ids,
+            vec!["groundedness_missing_status"]
+        );
+        assert_eq!(
+            triage.acted_on_artifact_ids,
+            vec!["groundedness_missing_status"]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn beta_weighted_soft_aggregation_uses_ucb_for_cold_lens() -> Result<()> {
         let catalog = LensCatalog::of366_seed()?;
         let overreach = catalog.lens("overreach", "claim_authoring").unwrap();
@@ -867,6 +900,39 @@ mod tests {
         assert_eq!(triage.verdict, CritiqueVerdict::Revise);
         assert!(triage.scores.revise > triage.scores.accept);
         assert_eq!(triage.acted_on_artifact_ids, vec!["cold_revise"]);
+        Ok(())
+    }
+
+    #[test]
+    fn soft_triage_accept_wins_when_accept_score_is_highest() -> Result<()> {
+        let catalog = LensCatalog::of366_seed()?;
+        let overreach = catalog.lens("overreach", "claim_authoring").unwrap();
+        let temporal = catalog.lens("temporal", "claim_authoring").unwrap();
+        let critiques = vec![
+            critique(
+                "trusted_accept",
+                overreach,
+                CritiqueVerdict::Accept,
+                CritiqueSeverity::Info,
+                None,
+            ),
+            critique(
+                "weak_revise",
+                temporal,
+                CritiqueVerdict::Revise,
+                CritiqueSeverity::Info,
+                None,
+            ),
+        ];
+        let reliabilities = vec![
+            CriticReliability::new("overreach", "claim_authoring", 20.0, 1.0, 21)?,
+            CriticReliability::new("temporal", "claim_authoring", 1.0, 20.0, 21)?,
+        ];
+
+        let triage = triage_critiques_with_exploration(&catalog, &critiques, &reliabilities, 0.0)?;
+
+        assert_eq!(triage.verdict, CritiqueVerdict::Accept);
+        assert!(triage.scores.accept > triage.scores.revise);
         Ok(())
     }
 
@@ -931,6 +997,30 @@ mod tests {
     }
 
     #[test]
+    fn out_of_scope_critique_artifacts_are_not_persisted() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let catalog = LensCatalog::of366_seed()?;
+        let lens = catalog.lens("overreach", "claim_authoring").unwrap();
+        let branch_job = JobId::now();
+        let mut artifact = critique(
+            "overreach_out_of_scope",
+            lens,
+            CritiqueVerdict::Revise,
+            CritiqueSeverity::High,
+            None,
+        );
+        artifact.branch_job = branch_job;
+        artifact.out_of_scope = true;
+
+        let store = CritiqueArtifactStore::new(&vault);
+        store.put(&artifact)?;
+
+        assert_eq!(store.get(branch_job, "overreach_out_of_scope")?, None);
+        assert!(store.list_branch(branch_job)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn two_candidate_four_lens_fixture_triages_independently() -> Result<()> {
         let catalog = LensCatalog::of366_seed()?;
         let reliability = catalog
@@ -956,7 +1046,7 @@ mod tests {
             .lenses
             .iter()
             .map(|lens| {
-                let verdict = if lens.id == "overreach" {
+                let verdict = if lens.id == "overreach" || lens.id == "temporal" {
                     CritiqueVerdict::Revise
                 } else {
                     CritiqueVerdict::Accept
@@ -979,7 +1069,7 @@ mod tests {
         assert_eq!(triage_a.acted_on_artifact_ids, Vec::<String>::new());
         assert_eq!(
             triage_b.acted_on_artifact_ids,
-            vec!["candidate_b_overreach"]
+            vec!["candidate_b_overreach", "candidate_b_temporal"]
         );
         Ok(())
     }
@@ -1008,14 +1098,22 @@ mod tests {
             1,
             b"anchor",
         )?;
-        let mut writeable = body;
-        writeable.subject = ClaimSubject::Entity(anchor);
+        let mut writable = body;
+        writable.subject = ClaimSubject::Entity(anchor);
         vault.put_claim(
             &EntityId::now(),
-            &writeable,
+            &writable,
             TimeRange { start: 2, end: 2 },
             2,
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn critic_reliability_predicate_rejects_claim_predicate_overflow() {
+        let domain = "d".repeat(MAX_DOMAIN_BYTES);
+        let lens_id = "l".repeat(MAX_ID_BYTES);
+
+        assert!(critic_reliability_predicate(&domain, &lens_id).is_err());
     }
 }
