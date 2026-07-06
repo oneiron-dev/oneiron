@@ -641,6 +641,8 @@ pub struct GateDecisionRecord {
     pub content_kind: String,
     pub policy_manifest_version: String,
     pub claim_id: Option<[u8; 16]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
 }
@@ -1573,6 +1575,7 @@ impl Store {
             content_kind: original.content_kind,
             policy_manifest_version: original.policy_manifest_version,
             claim_id: Some(pending.claim_id),
+            grant_ref: None,
             diff_handle: pending.diff_handle,
             read_frontier_hash: pending.read_frontier_hash,
         };
@@ -2674,6 +2677,10 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
         || record.reason_codes.is_empty()
         || record.content_kind.is_empty()
         || record.policy_manifest_version.is_empty()
+        || record
+            .grant_ref
+            .as_deref()
+            .is_some_and(|grant_ref| grant_ref.trim().is_empty())
         || record.diff_handle.is_empty()
         || record.diff_handle.len() > GATE_DIFF_HANDLE_MAX_LEN
         || !record

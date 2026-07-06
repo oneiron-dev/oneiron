@@ -9,11 +9,11 @@ use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -6174,7 +6174,8 @@ fn all_entity_type_prefixes() {
     // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = productivity pack
     // (band 80–99); REDACTION_AUDIT/MODEL/POLICY_MANIFEST/
     // AUTHORITY_LOG/FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE/
-    // CHANNEL_IDENTITY/COUNTERPARTY_CONTACT = maintenance (band 120+).
+    // CHANNEL_IDENTITY/COUNTERPARTY_CONTACT/OUTBOUND_GRANT = maintenance
+    // (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6410,6 +6411,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "OUTBOUND_GRANT",
+            ENTITY_TYPE_OUTBOUND_GRANT,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -6518,7 +6526,7 @@ fn type_byte_band_allocation_matches_contract() {
     // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
     // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
     // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved;
-    // 131 CHANNEL_IDENTITY; 132 COUNTERPARTY_CONTACT.
+    // 131 CHANNEL_IDENTITY; 132 COUNTERPARTY_CONTACT; 133 OUTBOUND_GRANT.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6571,6 +6579,10 @@ fn type_byte_band_allocation_matches_contract() {
     assert!(
         !is_structural_kind(132),
         "COUNTERPARTY_CONTACT is NOT a StructuralKind (OF-347: engine-authored maintenance)"
+    );
+    assert!(
+        !is_structural_kind(133),
+        "OUTBOUND_GRANT is NOT a StructuralKind (OF-367: standing consent grants)"
     );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
@@ -8953,6 +8965,10 @@ fn public_put_of_maintenance_kind_rejected_with_distinct_typed_error() -> Result
             ENTITY_TYPE_COUNTERPARTY_CONTACT,
             b"forged-counterparty-contact".as_slice(),
         ),
+        (
+            ENTITY_TYPE_OUTBOUND_GRANT,
+            b"forged-outbound-grant".as_slice(),
+        ),
     ] {
         let id = EntityId::now();
 
@@ -9024,7 +9040,8 @@ fn unknown_type_bytes_still_fail_with_invalid_entity_type() -> Result<()> {
     // ONE-1324 registered AUTHORITY_LOG; 123 left it when GATE-001 registered
     // POLICY_MANIFEST; 124 left it when FED-001 registered FEDERATION_GRANT;
     // 128 left it when EIRI-004 registered ACCESS_GRANT; 132 left it when
-    // OF-347 registered COUNTERPARTY_CONTACT. Public puts now fail
+    // OF-347 registered COUNTERPARTY_CONTACT; 133 left it when OF-367
+    // registered OUTBOUND_GRANT. Public puts now fail
     // MaintenanceKindNotWritable — covered by the D5 gate test. Reserved
     // unregistered maintenance bytes stay InvalidEntityType:
     // 125 CONNECTION_RECORD; 126 DIAGNOSTIC; 127 FEDERATION_KEY_ENVELOPE;

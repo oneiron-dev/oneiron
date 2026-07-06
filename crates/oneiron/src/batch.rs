@@ -25,10 +25,10 @@ use crate::types::{
     CompanionSubject, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
     EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind, EdgeProvenanceFlags, EntityId,
-    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
-    encode_edge_value, validate_edge_weight,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -1518,7 +1518,9 @@ pub(crate) fn apply_ops_with_gate_mode(
                     && allow_reserved_predicate
                     && matches!(
                         entity_type,
-                        crate::types::ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_ACCESS_GRANT
+                        crate::types::ENTITY_TYPE_POLICY_MANIFEST
+                            | ENTITY_TYPE_ACCESS_GRANT
+                            | ENTITY_TYPE_OUTBOUND_GRANT
                     )
                 {
                     return Err(Error::MaintenanceKindNotWritable(entity_type));
@@ -2528,6 +2530,8 @@ fn apply_put(
         crate::channel_identity::validate_channel_identity_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
+        crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::types::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
