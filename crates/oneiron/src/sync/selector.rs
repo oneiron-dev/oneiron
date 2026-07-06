@@ -23,7 +23,10 @@ use crate::claim::{
     ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
 };
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{
+    FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, decode_federation_grant_body,
+    sign_guest_share_envelope,
+};
 use crate::types::{
     CompanionExportClassification, CompanionScope, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
@@ -251,6 +254,50 @@ pub fn filtered_window_doc(
 ) -> Result<LoroDoc> {
     authorize_sync_selector(vault, grant_scope, selector)?;
     Ok(filter_window_doc(source, key, grant_scope, selector))
+}
+
+/// Builds and signs a guest-share envelope from selector-filtered window bytes.
+///
+/// The signature is computed only after the selected window has been stripped
+/// of federation grant records, authority-log roster/topology records, and
+/// tombstone metadata.
+pub fn guest_share_envelope<S>(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    signer: S,
+) -> Result<GuestShareEnvelope>
+where
+    S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+{
+    let body = guest_share_envelope_body(vault, source, key, grant_scope, selector)?;
+    sign_guest_share_envelope(body, signer)
+}
+
+/// Builds the stripped, unsigned guest-share envelope body for a selector.
+pub fn guest_share_envelope_body(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<GuestShareEnvelopeBody> {
+    authorize_sync_selector(vault, grant_scope, selector)?;
+    let filtered = filter_window_doc(source, key, grant_scope, selector);
+    let stripped = strip_guest_share_metadata(&filtered, key)?;
+    let update = stripped
+        .export(ExportMode::all_updates())
+        .map_err(|e| Error::SyncProtocolError(e.to_string()))?;
+    let selector_bytes = encode_sync_selector(selector)?;
+    Ok(GuestShareEnvelopeBody::new(
+        grant_scope,
+        selector.member_ref,
+        selector_bytes,
+        key.as_str(),
+        update,
+    ))
 }
 
 /// Role carried by a member/guest federation import path.
@@ -528,6 +575,69 @@ pub fn authorize_sync_selector(
         return Err(selector_err("sync selector member not granted"));
     }
     Ok(())
+}
+
+fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
+    let out = create_window_doc("guest-share", key);
+    let source_entities = source.get_map("entities");
+    let source_edges = source.get_map("edges");
+
+    let mut stripped = BTreeSet::<EntityId>::new();
+    let out_entities = out.get_map("entities");
+    let mut result = Ok(());
+    map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+        if result.is_err() {
+            return;
+        }
+        let Some(blob) = maybe_blob else {
+            return;
+        };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key {
+            return;
+        }
+        if guest_share_metadata_blob(blob) {
+            stripped.insert(id);
+            return;
+        }
+        result = map_insert_bytes(&out_entities, raw_key, blob);
+    });
+    result?;
+
+    let out_edges = out.get_map("edges");
+    let mut result = Ok(());
+    map_for_each_value_bytes(&source_edges, |raw_key, maybe_value| {
+        if result.is_err() {
+            return;
+        }
+        let Some(value) = maybe_value else {
+            return;
+        };
+        let Some((src, _, tgt)) = parse_edge_key(raw_key) else {
+            return;
+        };
+        if stripped.contains(&src) || stripped.contains(&tgt) {
+            return;
+        }
+        result = map_insert_bytes(&out_edges, raw_key, value);
+    });
+    result?;
+
+    // Tombstone rows are entity ids without type metadata. A guest-share
+    // snapshot omits them to avoid leaking deleted membership/topology counts.
+    out.commit();
+    Ok(out)
+}
+
+fn guest_share_metadata_blob(blob: &[u8]) -> bool {
+    EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        matches!(
+            header.entity_type,
+            ENTITY_TYPE_FEDERATION_GRANT | ENTITY_TYPE_AUTHORITY_LOG
+        )
+    })
 }
 
 fn filter_window_doc(
@@ -963,7 +1073,8 @@ mod tests {
     };
     use crate::federation::{
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-        encode_federation_grant_body,
+        encode_federation_grant_body, encode_guest_share_envelope,
+        encode_guest_share_envelope_body,
     };
     use crate::provenance::{
         EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
@@ -1238,6 +1349,74 @@ mod tests {
         });
         ids.sort_unstable();
         ids
+    }
+
+    fn imported_entity_type_count(update: &[u8], entity_type: u8) -> usize {
+        let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
+        doc.import(update).unwrap();
+        let mut count = 0;
+        map_for_each_value_bytes(&doc.get_map("entities"), |_, value| {
+            let Some(blob) = value else {
+                return;
+            };
+            if EntityMetadataHeader::parse(blob)
+                .is_some_and(|header| header.entity_type == entity_type)
+            {
+                count += 1;
+            }
+        });
+        count
+    }
+
+    fn imported_tombstone_count(update: &[u8]) -> usize {
+        let doc = create_window_doc("receiver", &WindowKey::new("2026-03"));
+        doc.import(update).unwrap();
+        let mut count = 0;
+        map_for_each_tombstone_value(&doc.get_map("tombstones"), |_, _| {
+            count += 1;
+        });
+        count
+    }
+
+    fn decode_msgpack_value(bytes: &[u8]) -> Value {
+        let mut cursor = std::io::Cursor::new(bytes);
+        let value = rmpv::decode::read_value(&mut cursor).expect("decode MessagePack value");
+        assert_eq!(cursor.position(), bytes.len() as u64);
+        value
+    }
+
+    fn assert_no_forbidden_envelope_keys(value: &Value) {
+        const FORBIDDEN: &[&str] = &[
+            "membership",
+            "memberships",
+            "membership_count",
+            "roster",
+            "authority_roster",
+            "roster_count",
+            "topology",
+            "topology_count",
+            "count",
+        ];
+
+        match value {
+            Value::Array(values) => {
+                for value in values {
+                    assert_no_forbidden_envelope_keys(value);
+                }
+            }
+            Value::Map(entries) => {
+                for (key, value) in entries {
+                    if let Some(key) = key.as_str() {
+                        assert!(
+                            !FORBIDDEN.contains(&key),
+                            "guest-share envelope leaked forbidden key `{key}`"
+                        );
+                    }
+                    assert_no_forbidden_envelope_keys(value);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn test_selector_scope() -> FederationGrantScope {
@@ -1562,6 +1741,176 @@ mod tests {
             edge_count, 2,
             "only edges whose endpoints survived the selector should replicate"
         );
+    }
+
+    #[test]
+    fn envelope_strips_membership() {
+        let member = entity_id(0x31);
+        let other_member = entity_id(0x32);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("source", &window_key);
+
+        let person = entity_id(0x21);
+        let membership = entity_id(0x41);
+        let other_grant = FederationGrant::new(
+            test_selector_scope(),
+            other_member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        );
+        let grant_body = encode_federation_grant_body(&other_grant).unwrap();
+        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(&doc, membership, ENTITY_TYPE_FEDERATION_GRANT, &grant_body);
+        insert_edge(&doc, person, EdgeKind::Supports, membership);
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let envelope = guest_share_envelope(
+            &vault,
+            &doc,
+            &window_key,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(vec![0xA5]),
+        )
+        .unwrap();
+        let ids = import_ids(&envelope.body.update);
+
+        assert!(ids.contains(&person));
+        assert!(
+            !ids.contains(&membership),
+            "guest-share envelope leaked a federation membership record"
+        );
+
+        let receiver = create_window_doc("receiver", &window_key);
+        receiver.import(&envelope.body.update).unwrap();
+        let mut leaked_membership_edge = false;
+        map_for_each_value_bytes(&receiver.get_map("edges"), |key, value| {
+            if value.is_some() && key.contains(&membership.to_hex()) {
+                leaked_membership_edge = true;
+            }
+        });
+        assert!(
+            !leaked_membership_edge,
+            "guest-share envelope leaked topology adjacent to a membership record"
+        );
+    }
+
+    #[test]
+    fn no_topology_count_in_envelope() {
+        let member = entity_id(0x33);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("source", &window_key);
+
+        let person = entity_id(0x22);
+        let authority_id = entity_id(0x52);
+        let authority_body = encode_authority_log_entry_body(&authority_genesis_entry(0x52))
+            .expect("encode authority log");
+        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(
+            &doc,
+            authority_id,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            &authority_body,
+        );
+        insert_edge(&doc, person, EdgeKind::Supports, authority_id);
+        insert_tombstone(&doc, entity_id(0x62));
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let envelope = guest_share_envelope(
+            &vault,
+            &doc,
+            &window_key,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(vec![0x5A]),
+        )
+        .unwrap();
+
+        let encoded_envelope = encode_guest_share_envelope(&envelope).unwrap();
+        let encoded_body = encode_guest_share_envelope_body(&envelope.body).unwrap();
+        assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_envelope));
+        assert_no_forbidden_envelope_keys(&decode_msgpack_value(&encoded_body));
+        assert_eq!(
+            imported_entity_type_count(&envelope.body.update, ENTITY_TYPE_AUTHORITY_LOG),
+            0,
+            "guest-share envelope leaked authority-roster/topology records"
+        );
+        assert_eq!(
+            imported_tombstone_count(&envelope.body.update),
+            0,
+            "guest-share envelope leaked tombstone topology counts"
+        );
+    }
+
+    #[test]
+    fn strip_happens_before_sign() {
+        let member = entity_id(0x34);
+        let other_member = entity_id(0x35);
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        let window_key = WindowKey::new("2026-03");
+        let doc = create_window_doc("source", &window_key);
+
+        let person = entity_id(0x23);
+        let membership = entity_id(0x43);
+        let authority_id = entity_id(0x53);
+        let other_grant = FederationGrant::new(
+            test_selector_scope(),
+            other_member,
+            FederationGrantRole::Viewer,
+            FederationGrantPreset::ReadOnly,
+        );
+        let grant_body = encode_federation_grant_body(&other_grant).unwrap();
+        let authority_body = encode_authority_log_entry_body(&authority_genesis_entry(0x53))
+            .expect("encode authority log");
+        insert_entity(&doc, person, ENTITY_TYPE_PERSON, b"person");
+        insert_entity(&doc, membership, ENTITY_TYPE_FEDERATION_GRANT, &grant_body);
+        insert_entity(
+            &doc,
+            authority_id,
+            ENTITY_TYPE_AUTHORITY_LOG,
+            &authority_body,
+        );
+        insert_edge(&doc, person, EdgeKind::Supports, membership);
+        insert_edge(&doc, person, EdgeKind::Supports, authority_id);
+        insert_tombstone(&doc, entity_id(0x63));
+        doc.commit();
+
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let signed_transcript = std::cell::RefCell::new(Vec::new());
+        let envelope = guest_share_envelope(
+            &vault,
+            &doc,
+            &window_key,
+            test_selector_scope(),
+            &selector,
+            |transcript| {
+                signed_transcript.borrow_mut().extend_from_slice(transcript);
+                Ok(blake3::hash(transcript).as_bytes().to_vec())
+            },
+        )
+        .unwrap();
+
+        let signed_transcript = signed_transcript.into_inner();
+        let encoded_body = encode_guest_share_envelope_body(&envelope.body).unwrap();
+        assert_eq!(
+            signed_transcript, encoded_body,
+            "signature transcript must be the stripped guest-share body"
+        );
+        assert_eq!(
+            envelope.signature,
+            blake3::hash(&encoded_body).as_bytes().to_vec()
+        );
+        assert_no_forbidden_envelope_keys(&decode_msgpack_value(&signed_transcript));
+
+        let ids = import_ids(&envelope.body.update);
+        assert!(ids.contains(&person));
+        assert!(!ids.contains(&membership));
+        assert!(!ids.contains(&authority_id));
+        assert_eq!(imported_tombstone_count(&envelope.body.update), 0);
     }
 
     #[test]
