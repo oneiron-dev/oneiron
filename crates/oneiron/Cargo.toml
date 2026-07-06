@@ -69,6 +69,9 @@ lindera = { version = "3.0", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 heed = { workspace = true, features = ["posix-sem"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
@@ -95,7 +98,6 @@ proptest = "1"
 # engine's signer (contract-grounded test vectors, ONE-1140).
 ed25519-dalek = { workspace = true }
 yrs = { version = "0.25", features = ["sync"] }
-libc = "0.2"
 
 [[test]]
 name = "sync_bridge"

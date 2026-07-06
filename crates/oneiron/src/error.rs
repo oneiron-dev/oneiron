@@ -180,6 +180,8 @@ pub enum ErrorKind {
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
     InvalidCodeSymbolManifestBody,
+    InvalidRepoMutationRecord,
+    RepoMutationFailed,
     InvalidPredicate,
     ReservedPredicate,
     SourceNotTrustedForAuto,
@@ -469,6 +471,13 @@ pub enum Error {
     /// validation. Nothing was written.
     #[error("invalid code symbol manifest body: {0}")]
     InvalidCodeSymbolManifestBody(&'static str),
+    /// A repo mutation queue request or persisted oplog row failed pinned
+    /// structural validation. Nothing was written.
+    #[error("invalid repo mutation record: {0}")]
+    InvalidRepoMutationRecord(&'static str),
+    /// A serialized repo mutation reached the git/worktree layer and failed.
+    #[error("repo mutation failed: {0}")]
+    RepoMutationFailed(String),
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -918,6 +927,8 @@ impl Error {
             }
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
             Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
+            Self::InvalidRepoMutationRecord(_) => ErrorKind::InvalidRepoMutationRecord,
+            Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
