@@ -329,9 +329,6 @@ impl DreamerClaimAuthoringStrategy {
 }
 
 /// Batch-tier schedule admitted for tournament claim authoring.
-///
-/// There is intentionally no interactive/hot-path variant. Callers can only
-/// construct tournament requests for batch or nightly consolidation work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DreamerClaimAuthoringSchedule {
@@ -347,6 +344,46 @@ impl DreamerClaimAuthoringSchedule {
             Self::Batch => "batch",
             Self::Nightly => "nightly",
         }
+    }
+}
+
+/// Claim-time token proving tournament authoring is running on a batch tier.
+///
+/// The token has no interactive/hot-path constructor. Tournament admission
+/// requires this type at the consolidation claim site, so callers cannot run
+/// the tournament gate without selecting a batch/nightly tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DreamerClaimAuthoringBatchTier {
+    schedule: DreamerClaimAuthoringSchedule,
+}
+
+impl DreamerClaimAuthoringBatchTier {
+    /// Batch consolidation tier.
+    #[must_use]
+    pub const fn batch() -> Self {
+        Self {
+            schedule: DreamerClaimAuthoringSchedule::Batch,
+        }
+    }
+
+    /// Nightly consolidation tier.
+    #[must_use]
+    pub const fn nightly() -> Self {
+        Self {
+            schedule: DreamerClaimAuthoringSchedule::Nightly,
+        }
+    }
+
+    /// Stable schedule carried by this batch-tier token.
+    #[must_use]
+    pub const fn schedule(self) -> DreamerClaimAuthoringSchedule {
+        self.schedule
+    }
+
+    /// Stable tier string for diagnostics.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.schedule.as_str()
     }
 }
 
@@ -417,7 +454,6 @@ impl DreamerTournamentBudgetAxes {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DreamerTournamentAdmission {
     pub claim: DreamerTournamentClaim,
-    pub schedule: DreamerClaimAuthoringSchedule,
     pub uncertainty_tau: f32,
     pub budget_axes: DreamerTournamentBudgetAxes,
 }
@@ -448,19 +484,28 @@ impl DreamerClaimAuthoringAdmission {
     }
 
     /// Evaluates the OF-366 gate without mutating queue or budget state.
-    pub fn gate_decision(&self) -> Result<DreamerClaimAuthoringGateDecision> {
+    ///
+    /// The `batch_tier` argument is the claim-time OF-193 guard: there is no
+    /// zero-argument tournament gate and no hot-path tier value.
+    pub fn gate_decision(
+        &self,
+        batch_tier: DreamerClaimAuthoringBatchTier,
+    ) -> Result<DreamerClaimAuthoringGateDecision> {
         match self {
             Self::SinglePass => Ok(DreamerClaimAuthoringGateDecision::SinglePass(
                 DreamerClaimAuthoringSinglePassReason::Strategy,
             )),
-            Self::Tournament(admission) => admission.gate_decision(),
+            Self::Tournament(admission) => admission.gate_decision(batch_tier),
         }
     }
 }
 
 impl DreamerTournamentAdmission {
     /// Evaluates the OF-366 tournament gate without mutating queue or budget state.
-    pub fn gate_decision(&self) -> Result<DreamerClaimAuthoringGateDecision> {
+    pub fn gate_decision(
+        &self,
+        batch_tier: DreamerClaimAuthoringBatchTier,
+    ) -> Result<DreamerClaimAuthoringGateDecision> {
         validate_unit_interval(
             self.uncertainty_tau,
             "dreamer tournament uncertainty_tau must be finite in [0, 1]",
@@ -488,7 +533,7 @@ impl DreamerTournamentAdmission {
 
         Ok(DreamerClaimAuthoringGateDecision::Tournament(
             DreamerTournamentAdmissionGrant {
-                schedule: self.schedule,
+                schedule: batch_tier.schedule(),
                 fanout_m: self.budget_axes.fanout_m,
                 depth_k: self.budget_axes.depth_k,
                 reserve_units: self.budget_axes.reserve_units()?,
@@ -663,6 +708,7 @@ pub struct EnqueueDreamerConsolidationJob {
 pub struct AdmitDreamerConsolidationJob {
     pub scope: DreamerConsolidationScope,
     pub local_node_id: u64,
+    pub claim_authoring_tier: DreamerClaimAuthoringBatchTier,
     pub claim_authoring: DreamerClaimAuthoringAdmission,
     pub admission: AdmitDreamerJob,
 }
@@ -675,6 +721,11 @@ pub enum DreamerConsolidationAdmissionOutcome {
     NotHomeNode(DreamerHomeNodeDesignation),
     ClaimAuthoringBudgetTrap(DreamerClaimAuthoringBudgetTrap),
     Admission(DreamerAdmissionOutcome),
+}
+
+struct DreamerKindAdmissionResult {
+    outcome: DreamerAdmissionOutcome,
+    budget_exhausted_candidate: Option<JobId>,
 }
 
 /// Typed Dreamer job payload stored in the generic queue row.
@@ -1347,7 +1398,9 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         mut input: AdmitDreamerConsolidationJob,
     ) -> Result<DreamerConsolidationAdmissionOutcome> {
-        let claim_authoring_decision = input.claim_authoring.gate_decision()?;
+        let claim_authoring_decision = input
+            .claim_authoring
+            .gate_decision(input.claim_authoring_tier)?;
         let tournament_grant = match claim_authoring_decision {
             DreamerClaimAuthoringGateDecision::SinglePass(_) => None,
             DreamerClaimAuthoringGateDecision::Tournament(grant) => {
@@ -1384,22 +1437,13 @@ impl<'a> DreamerRunnerStore<'a> {
             }
         }
 
-        let budget_trap_candidate = if tournament_grant.is_some() {
-            self.jobs.ready_kind_candidate_in_txn(
-                &mut wtxn,
-                input.scope.job_kind(),
-                input.admission.now,
-            )?
-        } else {
-            None
-        };
         let budget_trap_budget_id = input.admission.budget_id.clone();
         let budget_trap_now = input.admission.now;
-        let outcome =
+        let result =
             self.admit_next_kind_in_txn(&mut wtxn, input.scope.job_kind(), input.admission)?;
-        match (tournament_grant, outcome) {
+        match (tournament_grant, result.outcome) {
             (Some(grant), DreamerAdmissionOutcome::BudgetExhausted(budget)) => {
-                let Some(job_id) = budget_trap_candidate else {
+                let Some(job_id) = result.budget_exhausted_candidate else {
                     wtxn.commit()?;
                     return Ok(DreamerConsolidationAdmissionOutcome::Admission(
                         DreamerAdmissionOutcome::BudgetExhausted(budget),
@@ -1444,9 +1488,9 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let outcome = self.admit_next_kind_in_txn(&mut wtxn, queue_kind, input)?;
+        let result = self.admit_next_kind_in_txn(&mut wtxn, queue_kind, input)?;
         wtxn.commit()?;
-        Ok(outcome)
+        Ok(result.outcome)
     }
 
     fn admit_next_kind_in_txn(
@@ -1454,12 +1498,15 @@ impl<'a> DreamerRunnerStore<'a> {
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
         input: AdmitDreamerJob,
-    ) -> Result<DreamerAdmissionOutcome> {
+    ) -> Result<DreamerKindAdmissionResult> {
         let Some(candidate_job_id) = self
             .jobs
             .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
         else {
-            return Ok(DreamerAdmissionOutcome::Empty);
+            return Ok(DreamerKindAdmissionResult {
+                outcome: DreamerAdmissionOutcome::Empty,
+                budget_exhausted_candidate: None,
+            });
         };
 
         let mut budget = read_or_initialize_budget_in_txn(
@@ -1477,8 +1524,25 @@ impl<'a> DreamerRunnerStore<'a> {
                     "dreamer budget reservation exceeds reserved units",
                 ));
             }
+            if input.reserve_units > reservation.reserved_units {
+                let additional_units = input
+                    .reserve_units
+                    .checked_sub(reservation.reserved_units)
+                    .ok_or(Error::ArithmeticOverflow(
+                        "dreamer budget reservation top-up",
+                    ))?;
+                if additional_units > budget.remaining_units {
+                    return Ok(DreamerKindAdmissionResult {
+                        outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
+                        budget_exhausted_candidate: Some(candidate_job_id),
+                    });
+                }
+            }
         } else if input.reserve_units > budget.remaining_units {
-            return Ok(DreamerAdmissionOutcome::BudgetExhausted(budget));
+            return Ok(DreamerKindAdmissionResult {
+                outcome: DreamerAdmissionOutcome::BudgetExhausted(budget),
+                budget_exhausted_candidate: Some(candidate_job_id),
+            });
         }
 
         let claim = self.jobs.claim_kind_in_txn(
@@ -1490,7 +1554,10 @@ impl<'a> DreamerRunnerStore<'a> {
             },
         )?;
         let ClaimOutcome::Claimed(job) = claim else {
-            return Ok(DreamerAdmissionOutcome::Empty);
+            return Ok(DreamerKindAdmissionResult {
+                outcome: DreamerAdmissionOutcome::Empty,
+                budget_exhausted_candidate: None,
+            });
         };
         if job.id != candidate_job_id {
             return Err(invalid_dreamer_runner(
@@ -1499,7 +1566,18 @@ impl<'a> DreamerRunnerStore<'a> {
         }
 
         let reservation = if let Some(reservation) = existing_reservation {
-            reservation
+            if input.reserve_units > reservation.reserved_units {
+                top_up_budget_reservation_in_txn(
+                    self.vault,
+                    wtxn,
+                    &mut budget,
+                    reservation,
+                    input.reserve_units,
+                    input.now,
+                )?
+            } else {
+                reservation
+            }
         } else {
             let reservation = DreamerBudgetReservation {
                 budget_id: input.budget_id,
@@ -1518,13 +1596,14 @@ impl<'a> DreamerRunnerStore<'a> {
 
         let status = decode_dreamer_job_status(job)?;
 
-        Ok(DreamerAdmissionOutcome::Admitted(Box::new(
-            DreamerAdmittedJob {
+        Ok(DreamerKindAdmissionResult {
+            outcome: DreamerAdmissionOutcome::Admitted(Box::new(DreamerAdmittedJob {
                 status,
                 budget,
                 reservation,
-            },
-        )))
+            })),
+            budget_exhausted_candidate: None,
+        })
     }
 
     /// Admits the next Dreamer job and emits its initial live progress row.
@@ -2319,6 +2398,56 @@ fn reserve_budget_for_child_in_txn(
         .vault_meta
         .put(wtxn, &reservation_key, &encoded)?;
     Ok(())
+}
+
+fn top_up_budget_reservation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    budget: &mut DreamerBudgetRecord,
+    mut reservation: DreamerBudgetReservation,
+    required_units: u64,
+    now: u64,
+) -> Result<DreamerBudgetReservation> {
+    validate_budget_reservation(&reservation)?;
+    if reservation.budget_id != budget.budget_id {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation targets a different counter",
+        ));
+    }
+    if required_units <= reservation.reserved_units {
+        return Ok(reservation);
+    }
+    let additional_units = required_units
+        .checked_sub(reservation.reserved_units)
+        .ok_or(Error::ArithmeticOverflow(
+            "dreamer budget reservation top-up",
+        ))?;
+    if additional_units > budget.remaining_units {
+        return Err(invalid_dreamer_runner(
+            "dreamer budget reservation top-up exceeds remaining units",
+        ));
+    }
+
+    budget.remaining_units -= additional_units;
+    budget.reserved_units = budget
+        .reserved_units
+        .checked_add(additional_units)
+        .ok_or(Error::ArithmeticOverflow("dreamer budget reserved units"))?;
+    budget.updated_at = now;
+
+    reservation.reserved_units = required_units;
+    reservation.updated_at = now;
+    validate_budget_reservation(&reservation)?;
+    validate_budget_record(budget)?;
+
+    put_budget_record_in_txn(vault, wtxn, budget)?;
+    let reservation_key = budget_reservation_key(&reservation.budget_id, reservation.job_id)?;
+    let encoded = encode_budget_reservation(&reservation)?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &reservation_key, &encoded)?;
+    Ok(reservation)
 }
 
 fn settle_budget_for_child(
@@ -3432,7 +3561,7 @@ mod tests {
     use std::thread;
 
     use crate::claim::{ClaimApprovalStatus, ClaimSource};
-    use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState};
+    use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState, RetryJob};
     use crate::types::{
         ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, VaultConfig, WriteActor,
         WriteProvenance,
@@ -3495,6 +3624,7 @@ mod tests {
         runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
             scope,
             local_node_id,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
             admission: AdmitDreamerJob {
                 lease_owner: lease_owner.to_owned(),
@@ -3512,7 +3642,6 @@ mod tests {
         sample_count: u32,
         incumbent_confidence: f32,
         evidence_state: DreamerClaimEvidenceState,
-        schedule: DreamerClaimAuthoringSchedule,
         uncertainty_tau: f32,
         budget_axes: DreamerTournamentBudgetAxes,
     ) -> DreamerClaimAuthoringAdmission {
@@ -3523,7 +3652,6 @@ mod tests {
                 incumbent_confidence,
                 evidence_state,
             },
-            schedule,
             uncertainty_tau,
             budget_axes,
         })
@@ -3538,6 +3666,25 @@ mod tests {
         key[..8].copy_from_slice(&ready_at.to_be_bytes());
         key[8..].copy_from_slice(id.as_bytes());
         key
+    }
+
+    fn rewrite_ready_key(
+        vault: &Vault,
+        id: JobId,
+        from_ready_at: u64,
+        to_ready_at: u64,
+    ) -> Result<()> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .job_ready
+            .delete(&mut wtxn, &test_ready_key(from_ready_at, id))?;
+        vault
+            .store
+            .job_ready
+            .put(&mut wtxn, &test_ready_key(to_ready_at, id), id.as_bytes())?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     fn job_dedupe_points_to(vault: &Vault, id: JobId) -> Result<bool> {
@@ -3698,7 +3845,7 @@ mod tests {
             DreamerClaimAuthoringStrategy::SinglePass
         );
         assert_eq!(
-            admission.gate_decision()?,
+            admission.gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
             DreamerClaimAuthoringGateDecision::SinglePass(
                 DreamerClaimAuthoringSinglePassReason::Strategy
             )
@@ -3720,7 +3867,6 @@ mod tests {
                 3,
                 0.2,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             ),
@@ -3729,13 +3875,12 @@ mod tests {
                 2,
                 0.2,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             ),
         ] {
             assert_eq!(
-                admission.gate_decision()?,
+                admission.gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
                 DreamerClaimAuthoringGateDecision::SinglePass(
                     DreamerClaimAuthoringSinglePassReason::Class
                 )
@@ -3748,11 +3893,10 @@ mod tests {
                 3,
                 0.2,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             )
-            .gate_decision()?,
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
             DreamerClaimAuthoringGateDecision::Tournament(_)
         ));
         Ok(())
@@ -3773,11 +3917,10 @@ mod tests {
                 3,
                 0.9,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             )
-            .gate_decision()?,
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
             DreamerClaimAuthoringGateDecision::SinglePass(
                 DreamerClaimAuthoringSinglePassReason::Uncertainty
             )
@@ -3788,11 +3931,10 @@ mod tests {
                 3,
                 0.4,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             )
-            .gate_decision()?,
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
             DreamerClaimAuthoringGateDecision::Tournament(_)
         ));
         assert!(matches!(
@@ -3801,11 +3943,10 @@ mod tests {
                 3,
                 0.9,
                 DreamerClaimEvidenceState::Contested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             )
-            .gate_decision()?,
+            .gate_decision(DreamerClaimAuthoringBatchTier::batch())?,
             DreamerClaimAuthoringGateDecision::Tournament(_)
         ));
         Ok(())
@@ -3818,30 +3959,29 @@ mod tests {
             depth_k: 2,
             reserve_units_per_step: 1,
         };
-        let schedules = [
-            DreamerClaimAuthoringSchedule::Batch,
-            DreamerClaimAuthoringSchedule::Nightly,
+        let tiers = [
+            DreamerClaimAuthoringBatchTier::batch(),
+            DreamerClaimAuthoringBatchTier::nightly(),
         ];
         assert_eq!(
-            schedules.map(DreamerClaimAuthoringSchedule::as_str),
+            tiers.map(DreamerClaimAuthoringBatchTier::as_str),
             ["batch", "nightly"]
         );
 
-        for schedule in schedules {
+        for tier in tiers {
             let decision = tournament_admission(
                 "pattern.sleep",
                 3,
                 0.4,
                 DreamerClaimEvidenceState::Uncontested,
-                schedule,
                 0.7,
                 axes,
             )
-            .gate_decision()?;
+            .gate_decision(tier)?;
             assert!(matches!(
                 decision,
                 DreamerClaimAuthoringGateDecision::Tournament(grant)
-                    if grant.schedule == schedule
+                    if grant.schedule == tier.schedule()
             ));
         }
         Ok(())
@@ -3863,12 +4003,12 @@ mod tests {
         let outcome = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: tournament_admission(
                 "pattern.sleep",
                 3,
                 0.4,
                 DreamerClaimEvidenceState::Uncontested,
-                DreamerClaimAuthoringSchedule::Batch,
                 0.7,
                 axes,
             ),
@@ -3917,6 +4057,277 @@ mod tests {
         assert_eq!(
             status.job.events[0].note.as_deref(),
             Some(DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queue = JobQueue::new(&vault);
+        let queued =
+            enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            first,
+        )) = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 77,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerJob {
+                lease_owner: "single-pass-worker".to_owned(),
+                now: 20,
+                budget_id: "wake:micro".to_owned(),
+                budget_total_units: 12,
+                reserve_units: 8,
+                started_milestone: None,
+            },
+        })?
+        else {
+            panic!("expected initial single-pass admission");
+        };
+        assert_eq!(first.status.job.id, queued.job.id);
+        assert_eq!(first.budget.remaining_units, 4);
+        assert_eq!(first.reservation.reserved_units, 8);
+
+        queue.retry(RetryJob {
+            id: queued.job.id,
+            lease_owner: "single-pass-worker".to_owned(),
+            attempt_count: first.status.job.attempt_count,
+            backoff_until: 25,
+            last_error: Some("lease_timeout".to_owned()),
+            now: 24,
+        })?;
+
+        let axes = DreamerTournamentBudgetAxes {
+            fanout_m: 2,
+            depth_k: 3,
+            reserve_units_per_step: 2,
+        };
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            second,
+        )) = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 77,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::nightly(),
+            claim_authoring: tournament_admission(
+                "pattern.sleep",
+                3,
+                0.4,
+                DreamerClaimEvidenceState::Uncontested,
+                0.7,
+                axes,
+            ),
+            admission: AdmitDreamerJob {
+                lease_owner: "tournament-worker".to_owned(),
+                now: 30,
+                budget_id: "wake:micro".to_owned(),
+                budget_total_units: 12,
+                reserve_units: 0,
+                started_milestone: None,
+            },
+        })?
+        else {
+            panic!("expected tournament admission after reservation top-up");
+        };
+
+        assert_eq!(second.status.job.id, queued.job.id);
+        assert_eq!(second.status.job.attempt_count, 2);
+        assert_eq!(second.budget.remaining_units, 0);
+        assert_eq!(second.budget.reserved_units, 12);
+        assert_eq!(second.reservation.reserved_units, 12);
+        assert_eq!(second.reservation.updated_at, 30);
+        assert_eq!(
+            runner.budget_reservation("wake:micro", queued.job.id)?,
+            Some(second.reservation)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queue = JobQueue::new(&vault);
+        let queued =
+            enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            first,
+        )) = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 77,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerJob {
+                lease_owner: "single-pass-worker".to_owned(),
+                now: 20,
+                budget_id: "wake:micro".to_owned(),
+                budget_total_units: 11,
+                reserve_units: 8,
+                started_milestone: None,
+            },
+        })?
+        else {
+            panic!("expected initial single-pass admission");
+        };
+        let first_budget = first.budget.clone();
+        let first_reservation = first.reservation.clone();
+        queue.retry(RetryJob {
+            id: queued.job.id,
+            lease_owner: "single-pass-worker".to_owned(),
+            attempt_count: first.status.job.attempt_count,
+            backoff_until: 25,
+            last_error: Some("lease_timeout".to_owned()),
+            now: 24,
+        })?;
+
+        let axes = DreamerTournamentBudgetAxes {
+            fanout_m: 2,
+            depth_k: 3,
+            reserve_units_per_step: 2,
+        };
+        let DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(trap) = runner
+            .admit_next_consolidation(AdmitDreamerConsolidationJob {
+                scope: DreamerConsolidationScope::Micro,
+                local_node_id: 77,
+                claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+                claim_authoring: tournament_admission(
+                    "pattern.sleep",
+                    3,
+                    0.4,
+                    DreamerClaimEvidenceState::Uncontested,
+                    0.7,
+                    axes,
+                ),
+                admission: AdmitDreamerJob {
+                    lease_owner: "tournament-worker".to_owned(),
+                    now: 30,
+                    budget_id: "wake:micro".to_owned(),
+                    budget_total_units: 11,
+                    reserve_units: 0,
+                    started_milestone: None,
+                },
+            })?
+        else {
+            panic!("expected tournament BudgetTrap on insufficient top-up");
+        };
+
+        assert_eq!(trap.job_id, queued.job.id);
+        assert_eq!(trap.required_units, 12);
+        assert_eq!(trap.budget, first_budget);
+        assert_eq!(runner.budget("wake:micro")?, Some(first_budget));
+        assert_eq!(
+            runner.budget_reservation("wake:micro", queued.job.id)?,
+            Some(first_reservation)
+        );
+        let status = runner.status(queued.job.id)?.expect("paused job");
+        assert_eq!(status.job.state, JobState::Paused);
+        assert_eq!(status.job.attempt_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let runner = DreamerRunnerStore::new(&vault);
+        let queue = JobQueue::new(&vault);
+
+        let reserved =
+            enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+        let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            first,
+        )) = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 77,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerJob {
+                lease_owner: "reserved-worker".to_owned(),
+                now: 20,
+                budget_id: "wake:micro".to_owned(),
+                budget_total_units: 10,
+                reserve_units: 10,
+                started_milestone: None,
+            },
+        })?
+        else {
+            panic!("expected reserved admission");
+        };
+        queue.retry(RetryJob {
+            id: reserved.job.id,
+            lease_owner: "reserved-worker".to_owned(),
+            attempt_count: first.status.job.attempt_count,
+            backoff_until: 2,
+            last_error: Some("lease_timeout".to_owned()),
+            now: 21,
+        })?;
+
+        let stale = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 30)?;
+        let ClaimOutcome::Claimed(stale_claim) = queue.claim_kind(
+            DreamerConsolidationScope::Micro.job_kind(),
+            ClaimJob {
+                lease_owner: "stale-prep".to_owned(),
+                now: 31,
+            },
+        )?
+        else {
+            panic!("expected to claim stale fixture job");
+        };
+        assert_eq!(stale_claim.id, stale.job.id);
+        queue.retry(RetryJob {
+            id: stale.job.id,
+            lease_owner: "stale-prep".to_owned(),
+            attempt_count: stale_claim.attempt_count,
+            backoff_until: 1,
+            last_error: Some("lease_timeout".to_owned()),
+            now: 32,
+        })?;
+        rewrite_ready_key(&vault, stale.job.id, 1, 0)?;
+
+        let axes = DreamerTournamentBudgetAxes {
+            fanout_m: 2,
+            depth_k: 3,
+            reserve_units_per_step: 2,
+        };
+        let DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(trap) = runner
+            .admit_next_consolidation(AdmitDreamerConsolidationJob {
+                scope: DreamerConsolidationScope::Micro,
+                local_node_id: 77,
+                claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+                claim_authoring: tournament_admission(
+                    "pattern.sleep",
+                    3,
+                    0.4,
+                    DreamerClaimEvidenceState::Uncontested,
+                    0.7,
+                    axes,
+                ),
+                admission: AdmitDreamerJob {
+                    lease_owner: "tournament-worker".to_owned(),
+                    now: 40,
+                    budget_id: "wake:micro".to_owned(),
+                    budget_total_units: 10,
+                    reserve_units: 0,
+                    started_milestone: None,
+                },
+            })?
+        else {
+            panic!("expected tournament BudgetTrap for stale ready candidate");
+        };
+
+        assert_eq!(trap.job_id, stale.job.id);
+        assert_eq!(trap.budget.remaining_units, 0);
+        assert_eq!(trap.budget.reserved_units, 10);
+        let stale_status = runner.status(stale.job.id)?.expect("paused stale job");
+        assert_eq!(stale_status.job.state, JobState::Paused);
+        let reserved_status = runner.status(reserved.job.id)?.expect("reserved job");
+        assert_eq!(reserved_status.job.state, JobState::Queued);
+        assert_eq!(
+            runner.budget_reservation("wake:micro", reserved.job.id)?,
+            Some(first.reservation)
         );
         Ok(())
     }
