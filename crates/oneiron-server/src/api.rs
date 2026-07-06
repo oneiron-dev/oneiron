@@ -7578,7 +7578,7 @@ fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
     get,
     path = "/v1/core/outbound/capabilities",
     responses(
-        (status = 200, description = "Outbound connector capability manifests.", body = Object, content_type = "application/json"),
+        (status = 200, description = "Outbound connector capability manifests.", body = Vec<Object>, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -7604,9 +7604,9 @@ async fn list_core_outbound_capabilities(
     ),
     responses(
         (status = 200, description = "Connector outbound capability manifest.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Connector is not supported; response uses UNSUPPORTED_CAPABILITY.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "Connector manifest was not found.", body = ApiErrorEnvelope, content_type = "application/json")
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
 async fn get_core_outbound_capability(
@@ -7614,8 +7614,10 @@ async fn get_core_outbound_capability(
     Path(connector): Path<String>,
 ) -> Result<Json<&'static oneiron::OutboundCapabilityManifest>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    let manifest = oneiron::outbound_capability_manifest(&connector)
-        .ok_or_else(|| ApiError::not_found("outbound_connector", Some(&connector)))?;
+    let manifest = oneiron::outbound_capability_manifest(&connector).ok_or_else(|| {
+        let error = oneiron::unsupported_outbound_connector(&connector);
+        outbound_capability_error(&error)
+    })?;
     Ok(Json(manifest))
 }
 
@@ -7659,7 +7661,7 @@ async fn get_core_outbound_verb_contract(
 fn outbound_capability_error(error: &oneiron::UnsupportedOutboundCapability) -> ApiError {
     ApiError::unsupported_capability(
         error.connector(),
-        error.verb(),
+        error.verb().map(str::to_owned),
         error.connector_known(),
         error.supported_connectors().to_vec(),
         error.supported_verbs().to_vec(),
@@ -11628,6 +11630,10 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(manifest["connector"], Value::from("line"));
+        assert_eq!(
+            manifest["schema_on_demand"],
+            Value::from("/v1/core/outbound/capabilities/line")
+        );
         assert!(
             manifest["verbs"]
                 .as_array()
@@ -11655,6 +11661,44 @@ mod tests {
             .map(String::as_str)
             .collect::<Vec<_>>();
         assert_eq!(fields, oneiron::OUTBOUND_VERB_FIELD_CONTRACT);
+    }
+
+    #[tokio::test]
+    async fn unknown_outbound_connector_returns_typed_recovery_error() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+
+        let (status, body) = route_json(
+            server,
+            core_request(
+                "GET",
+                "/v1/core/outbound/capabilities/not-a-connector",
+                "core:read",
+                None,
+            ),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_error_envelope(&body, "UNSUPPORTED_CAPABILITY");
+        let error = error_envelope(&body);
+        assert_eq!(
+            error["details"]["connector"],
+            Value::from("not_a_connector")
+        );
+        assert_eq!(error["details"]["connectorKnown"], Value::from(false));
+        assert!(
+            error["details"].get("verb").is_none(),
+            "connector-only discovery errors should not fabricate a verb"
+        );
+        assert!(
+            error["details"]["supportedConnectors"]
+                .as_array()
+                .expect("supported connectors")
+                .contains(&Value::from("slack"))
+        );
     }
 
     #[tokio::test]

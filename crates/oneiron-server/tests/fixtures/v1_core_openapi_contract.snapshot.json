@@ -824,12 +824,14 @@
                 "type": "array"
               },
               "verb": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
               "connector",
-              "verb",
               "connectorKnown",
               "supportedConnectors",
               "supportedVerbs",
@@ -4213,7 +4215,10 @@
           "200": {
             "description": "Outbound connector capability manifests.",
             "schema": {
-              "type": "object"
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
             }
           },
           "401": {
@@ -4260,6 +4265,12 @@
               "type": "object"
             }
           },
+          "400": {
+            "description": "Connector is not supported; response uses UNSUPPORTED_CAPABILITY.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
           "401": {
             "description": "Missing or invalid core auth.",
             "schema": {
@@ -4268,12 +4279,6 @@
           },
           "403": {
             "description": "Core token lacks core:read.",
-            "schema": {
-              "$ref": "#/components/schemas/ApiErrorEnvelope"
-            }
-          },
-          "404": {
-            "description": "Connector manifest was not found.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }

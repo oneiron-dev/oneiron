@@ -189,7 +189,8 @@ pub enum ApiErrorDetails {
     #[serde(rename = "UNSUPPORTED_CAPABILITY", rename_all = "camelCase")]
     UnsupportedCapability {
         connector: String,
-        verb: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verb: Option<String>,
         connector_known: bool,
         supported_connectors: Vec<String>,
         supported_verbs: Vec<String>,
@@ -384,18 +385,20 @@ impl ApiError {
 
     pub fn unsupported_capability(
         connector: impl Into<String>,
-        verb: impl Into<String>,
+        verb: Option<String>,
         connector_known: bool,
         supported_connectors: Vec<String>,
         supported_verbs: Vec<String>,
         recovery_suggestions: Vec<String>,
     ) -> Self {
         let connector = connector.into();
-        let verb = verb.into();
-        let message = if connector_known {
-            format!("outbound verb {verb} is not supported by connector {connector}")
-        } else {
-            format!("outbound connector {connector} is not registered")
+        let message = match (connector_known, verb.as_deref()) {
+            (true, Some(verb)) => {
+                format!("outbound verb {verb} is not supported by connector {connector}")
+            }
+            (false, Some(_)) | (_, None) => {
+                format!("outbound connector {connector} is not registered")
+            }
         };
         Self::new(
             message,

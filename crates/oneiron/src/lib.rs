@@ -261,6 +261,7 @@ pub use crate::outbound::{
     OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
     OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
     outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
+    unsupported_outbound_connector,
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
