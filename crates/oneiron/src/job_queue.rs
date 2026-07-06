@@ -1017,11 +1017,21 @@ impl<'a> JobQueue<'a> {
     /// queued or paused row terminal, and interrupt records an event without
     /// changing claimability.
     pub fn intervene(&self, input: InterveneJob) -> Result<InterveneOutcome> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let outcome = self.intervene_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    pub(crate) fn intervene_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: InterveneJob,
+    ) -> Result<InterveneOutcome> {
         validate_intervention_actor(&input.actor)?;
         validate_optional_intervention_note(input.note.as_deref())?;
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let Some(raw_record) = self.store.job_records.get(&wtxn, input.id.as_bytes())? else {
+        let Some(raw_record) = self.store.job_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition(input.kind.as_str(), "missing"));
         };
         let mut record = decode_record(raw_record, input.id)?;
@@ -1038,7 +1048,7 @@ impl<'a> JobQueue<'a> {
             JobInterventionKind::Pause => match record.state {
                 JobState::Paused => JobInterventionEffect::AlreadyPaused,
                 JobState::Queued => {
-                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
                     record.state = JobState::Paused;
                     record.lease_owner = None;
@@ -1049,7 +1059,7 @@ impl<'a> JobQueue<'a> {
             },
             JobInterventionKind::Resume => match record.state {
                 JobState::Paused => {
-                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
                     record.state = JobState::Queued;
                     record.lease_owner = None;
@@ -1057,7 +1067,7 @@ impl<'a> JobQueue<'a> {
                     let ready_key = ready_key(ready_at(&record), record.id);
                     self.store
                         .job_ready
-                        .put(&mut wtxn, &ready_key, record.id.as_bytes())?;
+                        .put(wtxn, &ready_key, record.id.as_bytes())?;
                     JobInterventionEffect::Resumed
                 }
                 JobState::Queued | JobState::Leased => JobInterventionEffect::AlreadyResumed,
@@ -1066,14 +1076,14 @@ impl<'a> JobQueue<'a> {
             JobInterventionKind::Cancel => match record.state {
                 JobState::Cancelled => JobInterventionEffect::AlreadyCancelled,
                 JobState::Queued | JobState::Paused => {
-                    self.delete_ready_entry_for_record(&mut wtxn, &record)?;
+                    self.delete_ready_entry_for_record(wtxn, &record)?;
                     append_job_event(&mut record, input.kind, input.actor, input.note, input.now)?;
                     record.state = JobState::Cancelled;
                     record.lease_owner = None;
                     record.backoff_until = None;
                     record.last_error = None;
                     record.updated_at = input.now;
-                    self.delete_dedupe_entry_for_record(&mut wtxn, &record)?;
+                    self.delete_dedupe_entry_for_record(wtxn, &record)?;
                     JobInterventionEffect::Cancelled
                 }
                 state => return Err(invalid_transition(input.kind.as_str(), state.as_str())),
@@ -1083,8 +1093,7 @@ impl<'a> JobQueue<'a> {
         let encoded = encode_record(&record)?;
         self.store
             .job_records
-            .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
-        wtxn.commit()?;
+            .put(wtxn, record.id.as_bytes(), &encoded)?;
 
         Ok(InterveneOutcome { effect, record })
     }
