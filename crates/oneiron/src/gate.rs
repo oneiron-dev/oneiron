@@ -24,7 +24,9 @@ use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::BudgetExhaustionPolicy;
 use crate::outbound_grant::{
-    StandingOutboundGrant, decode_standing_outbound_grant_body, encode_standing_outbound_grant_body,
+    StandingOutboundGrant, decode_standing_outbound_grant_body,
+    encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_entity_id,
+    standing_outbound_grant_principal_index_prefix,
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
@@ -2007,14 +2009,18 @@ fn standing_outbound_grant_for_effect(
     policy: &PolicyManifestResolution,
 ) -> Result<Option<(EntityId, StandingOutboundGrant)>> {
     let current_policy_floor = policy.read_frontier_hash()?;
-    for entry in store
-        .type_index
-        .prefix_iter(txn, &[ENTITY_TYPE_OUTBOUND_GRANT])?
-    {
-        let (key, _) = entry?;
-        let Some(id) = type_index_entity_id(key, ENTITY_TYPE_OUTBOUND_GRANT) else {
-            return Err(Error::CorruptedIndex("outbound grant type index key"));
-        };
+    let mut candidate_ids = Vec::new();
+    for principal_ref in standing_outbound_grant_candidate_principals(effect) {
+        let prefix = standing_outbound_grant_principal_index_prefix(&principal_ref)?;
+        for entry in store.vault_meta.prefix_iter(txn, &prefix)? {
+            let (key, _) = entry?;
+            let id = standing_outbound_grant_principal_index_entity_id(key, &principal_ref)?;
+            if !candidate_ids.contains(&id) {
+                candidate_ids.push(id);
+            }
+        }
+    }
+    for id in candidate_ids {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("outbound grant entity row"));
         };
@@ -2036,12 +2042,30 @@ fn standing_outbound_grant_for_effect(
             &effect.channel,
             effect.counterparty.as_deref(),
             effect.brief_ref.as_deref(),
-            effect.send_ref.as_deref(),
         ) {
             return Ok(Some((id, grant)));
         }
     }
     Ok(None)
+}
+
+fn standing_outbound_grant_candidate_principals(effect: &ExternalEffectGateInput) -> Vec<String> {
+    let mut principals = Vec::with_capacity(2);
+    if let Some(actor_ref) = effect.actor.actor_ref.as_deref()
+        && !actor_ref.trim().is_empty()
+    {
+        principals.push(actor_ref.trim().to_owned());
+    }
+    if let Some(actor_entity_ref) = effect.provenance.actor_entity_ref {
+        let actor_entity_ref = actor_entity_ref.to_hex();
+        if !principals
+            .iter()
+            .any(|principal| principal == &actor_entity_ref)
+        {
+            principals.push(actor_entity_ref);
+        }
+    }
+    principals
 }
 
 fn standing_outbound_grant_actor_matches(
@@ -2426,9 +2450,10 @@ pub(crate) fn standing_outbound_grant_binding_parts(
     hash_str(&mut hasher, intent.origin_action_id.trim());
     hash_opt_str(&mut hasher, intent.origin_receipt_ref.as_deref());
     match &intent.scope {
-        GrantMintIntentScope::JustOnce { effect_ref } => {
-            hash_str(&mut hasher, "effect");
-            hash_opt_str(&mut hasher, effect_ref.as_deref());
+        GrantMintIntentScope::JustOnce { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "non-standing grant scope is not supported",
+            ));
         }
         GrantMintIntentScope::Contact { contact_ref } => {
             hash_str(&mut hasher, "contact");
@@ -2442,12 +2467,10 @@ pub(crate) fn standing_outbound_grant_binding_parts(
             hash_str(&mut hasher, "channel");
             hash_str(&mut hasher, channel.trim());
         }
-        GrantMintIntentScope::BundleExactSends { send_refs } => {
-            hash_str(&mut hasher, "bundle_exact_sends");
-            hash_len(&mut hasher, send_refs.len());
-            for send_ref in send_refs {
-                hash_str(&mut hasher, send_ref.trim());
-            }
+        GrantMintIntentScope::BundleExactSends { .. } => {
+            return Err(Error::InvalidOutboundGrantBody(
+                "non-standing grant scope is not supported",
+            ));
         }
         GrantMintIntentScope::BriefVerbClass {
             brief_ref,
@@ -5500,6 +5523,42 @@ mod tests {
                 .iter()
                 .any(|receipt| receipt.receipt_kind == ReceiptKind::Gate)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xDD, &encode_policy_manifest(vec![]))?;
+
+        let grant_id = test_id(0xDE);
+        let intent = GrantMintIntent {
+            principal_ref: "sender".to_owned(),
+            origin_component_id: "ask-1".to_owned(),
+            origin_action_id: "escalate_always_this_verb_class".to_owned(),
+            origin_receipt_ref: Some("gate:ask-1".to_owned()),
+            scope: GrantMintIntentScope::VerbClass {
+                verb_class: "send".to_owned(),
+            },
+        };
+        vault.mint_standing_outbound_grant(&grant_id, &intent, 10)?;
+        let policy = resolve(&vault)?;
+
+        vault.with_write_txn(|wtxn| {
+            let mut type_key = Vec::with_capacity(ENTITY_ID_LEN + 1);
+            type_key.push(ENTITY_TYPE_OUTBOUND_GRANT);
+            type_key.extend_from_slice(grant_id.as_bytes());
+            vault.store.type_index.delete(wtxn, &type_key)?;
+            Ok(())
+        })?;
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
         Ok(())
     }
 

@@ -11,6 +11,7 @@ use rmpv::Value;
 
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+use crate::types::{ENTITY_ID_LEN, EntityId};
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;
@@ -55,38 +56,24 @@ const KEY_LAST_USED_AT: &str = OUTBOUND_GRANT_BODY_KEYS[9];
 const KEY_BINDING_DIFF_HANDLE: &str = OUTBOUND_GRANT_BODY_KEYS[10];
 const KEY_READ_FRONTIER_HASH: &str = OUTBOUND_GRANT_BODY_KEYS[11];
 
-const SCOPE_KEYS: [&str; 7] = [
-    "kind",
-    "effect_ref",
-    "contact_ref",
-    "verb_class",
-    "channel",
-    "brief_ref",
-    "send_refs",
-];
+const SCOPE_KEYS: [&str; 5] = ["kind", "contact_ref", "verb_class", "channel", "brief_ref"];
 
-const SCOPE_KIND_EFFECT: &str = "effect";
 const SCOPE_KIND_CONTACT: &str = "contact";
 const SCOPE_KIND_VERB_CLASS: &str = "verb_class";
 const SCOPE_KIND_CHANNEL: &str = "channel";
-const SCOPE_KIND_BUNDLE_EXACT_SENDS: &str = "bundle_exact_sends";
 const SCOPE_KIND_BRIEF_VERB_CLASS: &str = "brief_verb_class";
+const PRINCIPAL_INDEX_PREFIX: &[u8] = b"outbound_grant/principal/v1\0";
 
 /// Scope dial selected by the owner when minting a standing outbound grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StandingOutboundGrantScope {
-    /// A one-effect consent, keyed by the originating effect reference when one
-    /// is available.
-    Effect { effect_ref: Option<String> },
     /// Always allow matching sends to one contact/counterparty.
     Contact { contact_ref: String },
     /// Always allow matching sends for one outbound verb class.
     VerbClass { verb_class: String },
     /// Always allow matching sends on one channel.
     Channel { channel: String },
-    /// Bundle approval for an exact enumerated send set.
-    BundleExactSends { send_refs: Vec<String> },
     /// Bundle approval for one brief and verb class.
     BriefVerbClass {
         brief_ref: String,
@@ -98,9 +85,7 @@ impl StandingOutboundGrantScope {
     /// Builds a storage scope from the RCPT-3 grant mint intent scope.
     pub fn from_grant_mint_scope(scope: &GrantMintIntentScope) -> Result<Self> {
         match scope {
-            GrantMintIntentScope::JustOnce { effect_ref } => Ok(Self::Effect {
-                effect_ref: non_empty_optional(effect_ref.as_deref())?,
-            }),
+            GrantMintIntentScope::JustOnce { .. } => Err(invalid_grant()),
             GrantMintIntentScope::Contact { contact_ref } => Ok(Self::Contact {
                 contact_ref: non_empty_string(contact_ref)?,
             }),
@@ -110,18 +95,7 @@ impl StandingOutboundGrantScope {
             GrantMintIntentScope::Channel { channel } => Ok(Self::Channel {
                 channel: non_empty_string(channel)?,
             }),
-            GrantMintIntentScope::BundleExactSends { send_refs } => {
-                if send_refs.is_empty() {
-                    return Err(invalid_grant());
-                }
-                let mut normalized = Vec::with_capacity(send_refs.len());
-                for send_ref in send_refs {
-                    normalized.push(non_empty_string(send_ref)?);
-                }
-                Ok(Self::BundleExactSends {
-                    send_refs: normalized,
-                })
-            }
+            GrantMintIntentScope::BundleExactSends { .. } => Err(invalid_grant()),
             GrantMintIntentScope::BriefVerbClass {
                 brief_ref,
                 verb_class,
@@ -136,11 +110,9 @@ impl StandingOutboundGrantScope {
     #[must_use]
     pub const fn dial_label(&self) -> &'static str {
         match self {
-            Self::Effect { .. } => "just_once",
             Self::Contact { .. } => "always_this_contact",
             Self::VerbClass { .. } => "always_this_verb_class",
             Self::Channel { .. } => "always_this_channel",
-            Self::BundleExactSends { .. } => "bundle_exact_sends",
             Self::BriefVerbClass { .. } => "brief_verb_class",
         }
     }
@@ -153,13 +125,8 @@ impl StandingOutboundGrantScope {
         channel: &str,
         counterparty: Option<&str>,
         brief_ref: Option<&str>,
-        send_ref: Option<&str>,
     ) -> bool {
         match self {
-            Self::Effect { effect_ref } => effect_ref
-                .as_deref()
-                .zip(send_ref)
-                .is_some_and(|(grant_ref, send_ref)| refs_match(grant_ref, send_ref)),
             Self::Contact { contact_ref } => {
                 counterparty.is_some_and(|counterparty| refs_match(contact_ref, counterparty))
             }
@@ -167,11 +134,6 @@ impl StandingOutboundGrantScope {
             Self::Channel {
                 channel: grant_channel,
             } => grant_channel.trim() == channel.trim(),
-            Self::BundleExactSends { send_refs } => send_ref.is_some_and(|send_ref| {
-                send_refs
-                    .iter()
-                    .any(|grant_ref| refs_match(grant_ref, send_ref))
-            }),
             Self::BriefVerbClass {
                 brief_ref: grant_brief,
                 verb_class,
@@ -439,19 +401,11 @@ fn decode_standing_outbound_grant_value(value: &Value) -> Result<StandingOutboun
 }
 
 fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
-    let mut effect_ref = Value::Nil;
     let mut contact_ref = Value::Nil;
     let mut verb_class = Value::Nil;
     let mut channel = Value::Nil;
     let mut brief_ref = Value::Nil;
-    let mut send_refs = Value::Array(Vec::new());
     let kind = match scope {
-        StandingOutboundGrantScope::Effect {
-            effect_ref: grant_effect_ref,
-        } => {
-            effect_ref = option_string_value(grant_effect_ref.as_deref());
-            SCOPE_KIND_EFFECT
-        }
         StandingOutboundGrantScope::Contact {
             contact_ref: grant_contact_ref,
         } => {
@@ -470,12 +424,6 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             channel = Value::from(grant_channel.clone());
             SCOPE_KIND_CHANNEL
         }
-        StandingOutboundGrantScope::BundleExactSends {
-            send_refs: grant_send_refs,
-        } => {
-            send_refs = Value::Array(grant_send_refs.iter().cloned().map(Value::from).collect());
-            SCOPE_KIND_BUNDLE_EXACT_SENDS
-        }
         StandingOutboundGrantScope::BriefVerbClass {
             brief_ref: grant_brief_ref,
             verb_class: grant_verb_class,
@@ -488,12 +436,10 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
 
     Value::Map(vec![
         (Value::from(SCOPE_KEYS[0]), Value::from(kind)),
-        (Value::from(SCOPE_KEYS[1]), effect_ref),
-        (Value::from(SCOPE_KEYS[2]), contact_ref),
-        (Value::from(SCOPE_KEYS[3]), verb_class),
-        (Value::from(SCOPE_KEYS[4]), channel),
-        (Value::from(SCOPE_KEYS[5]), brief_ref),
-        (Value::from(SCOPE_KEYS[6]), send_refs),
+        (Value::from(SCOPE_KEYS[1]), contact_ref),
+        (Value::from(SCOPE_KEYS[2]), verb_class),
+        (Value::from(SCOPE_KEYS[3]), channel),
+        (Value::from(SCOPE_KEYS[4]), brief_ref),
     ])
 }
 
@@ -507,34 +453,18 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
         .as_str()
         .ok_or_else(invalid_grant)?;
     match kind {
-        SCOPE_KIND_EFFECT => Ok(StandingOutboundGrantScope::Effect {
-            effect_ref: decode_optional_string(required_value(entries, SCOPE_KEYS[1])?)?,
-        }),
         SCOPE_KIND_CONTACT => Ok(StandingOutboundGrantScope::Contact {
-            contact_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[2])?)?,
+            contact_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[1])?)?,
         }),
         SCOPE_KIND_VERB_CLASS => Ok(StandingOutboundGrantScope::VerbClass {
-            verb_class: decode_non_empty_string(required_value(entries, SCOPE_KEYS[3])?)?,
+            verb_class: decode_non_empty_string(required_value(entries, SCOPE_KEYS[2])?)?,
         }),
         SCOPE_KIND_CHANNEL => Ok(StandingOutboundGrantScope::Channel {
-            channel: decode_non_empty_string(required_value(entries, SCOPE_KEYS[4])?)?,
+            channel: decode_non_empty_string(required_value(entries, SCOPE_KEYS[3])?)?,
         }),
-        SCOPE_KIND_BUNDLE_EXACT_SENDS => {
-            let Value::Array(raw_refs) = required_value(entries, SCOPE_KEYS[6])? else {
-                return Err(invalid_grant());
-            };
-            if raw_refs.is_empty() {
-                return Err(invalid_grant());
-            }
-            let mut send_refs = Vec::with_capacity(raw_refs.len());
-            for raw_ref in raw_refs {
-                send_refs.push(decode_non_empty_string(raw_ref)?);
-            }
-            Ok(StandingOutboundGrantScope::BundleExactSends { send_refs })
-        }
         SCOPE_KIND_BRIEF_VERB_CLASS => Ok(StandingOutboundGrantScope::BriefVerbClass {
-            brief_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[5])?)?,
-            verb_class: decode_non_empty_string(required_value(entries, SCOPE_KEYS[3])?)?,
+            brief_ref: decode_non_empty_string(required_value(entries, SCOPE_KEYS[4])?)?,
+            verb_class: decode_non_empty_string(required_value(entries, SCOPE_KEYS[2])?)?,
         }),
         _ => Err(invalid_grant()),
     }
@@ -542,22 +472,9 @@ fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> {
 
 fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
     match scope {
-        StandingOutboundGrantScope::Effect { effect_ref } => {
-            if let Some(effect_ref) = effect_ref.as_deref() {
-                non_empty_str(effect_ref)?;
-            }
-        }
         StandingOutboundGrantScope::Contact { contact_ref } => non_empty_str(contact_ref)?,
         StandingOutboundGrantScope::VerbClass { verb_class } => non_empty_str(verb_class)?,
         StandingOutboundGrantScope::Channel { channel } => non_empty_str(channel)?,
-        StandingOutboundGrantScope::BundleExactSends { send_refs } => {
-            if send_refs.is_empty() {
-                return Err(invalid_grant());
-            }
-            for send_ref in send_refs {
-                non_empty_str(send_ref)?;
-            }
-        }
         StandingOutboundGrantScope::BriefVerbClass {
             brief_ref,
             verb_class,
@@ -567,6 +484,41 @@ fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn standing_outbound_grant_principal_index_prefix(
+    principal_ref: &str,
+) -> Result<Vec<u8>> {
+    let principal_ref = non_empty_string(principal_ref)?;
+    let principal_len = u16::try_from(principal_ref.len()).map_err(|_| invalid_grant())?;
+    let mut key = Vec::with_capacity(PRINCIPAL_INDEX_PREFIX.len() + 2 + principal_ref.len());
+    key.extend_from_slice(PRINCIPAL_INDEX_PREFIX);
+    key.extend_from_slice(&principal_len.to_be_bytes());
+    key.extend_from_slice(principal_ref.as_bytes());
+    Ok(key)
+}
+
+pub(crate) fn standing_outbound_grant_principal_index_key(
+    principal_ref: &str,
+    id: &EntityId,
+) -> Result<Vec<u8>> {
+    let mut key = standing_outbound_grant_principal_index_prefix(principal_ref)?;
+    key.extend_from_slice(id.as_bytes());
+    Ok(key)
+}
+
+pub(crate) fn standing_outbound_grant_principal_index_entity_id(
+    key: &[u8],
+    principal_ref: &str,
+) -> Result<EntityId> {
+    let prefix = standing_outbound_grant_principal_index_prefix(principal_ref)?;
+    if key.len() != prefix.len() + ENTITY_ID_LEN || !key.starts_with(&prefix) {
+        return Err(Error::CorruptedIndex("outbound grant principal index key"));
+    }
+    let mut raw_id = [0; ENTITY_ID_LEN];
+    raw_id.copy_from_slice(&key[prefix.len()..]);
+    EntityId::from_bytes(raw_id)
+        .map_err(|_| Error::CorruptedIndex("outbound grant principal index key"))
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
@@ -727,16 +679,44 @@ mod tests {
         let contact = StandingOutboundGrantScope::Contact {
             contact_ref: "contact:yuki".to_owned(),
         };
-        assert!(contact.matches_effect("send", "line", Some("yuki"), None, None));
-        assert!(!contact.matches_effect("send", "line", Some("ren"), None, None));
+        assert!(contact.matches_effect("send", "line", Some("yuki"), None));
+        assert!(!contact.matches_effect("send", "line", Some("ren"), None));
 
         let brief = StandingOutboundGrantScope::BriefVerbClass {
             brief_ref: "brief:party".to_owned(),
             verb_class: "send".to_owned(),
         };
-        assert!(brief.matches_effect("send", "line", None, Some("party"), None));
-        assert!(!brief.matches_effect("react", "line", None, Some("party"), None));
-        assert!(!brief.matches_effect("send", "line", None, Some("brief:other"), None));
+        assert!(brief.matches_effect("send", "line", None, Some("party")));
+        assert!(!brief.matches_effect("react", "line", None, Some("party")));
+        assert!(!brief.matches_effect("send", "line", None, Some("brief:other")));
+    }
+
+    #[test]
+    fn standing_outbound_grant_rejects_non_standing_intent_scopes() {
+        let just_once = StandingOutboundGrant::from_grant_mint_intent(
+            &intent(GrantMintIntentScope::JustOnce {
+                effect_ref: Some("effect:send-1".to_owned()),
+            }),
+            10,
+            vec![0xA5],
+            [0xB6; 32],
+        )
+        .expect_err("one-shot consent is not a standing grant scope");
+        assert_eq!(just_once.kind(), crate::ErrorKind::InvalidOutboundGrantBody);
+
+        let exact_bundle = StandingOutboundGrant::from_grant_mint_intent(
+            &intent(GrantMintIntentScope::BundleExactSends {
+                send_refs: vec!["send-1".to_owned()],
+            }),
+            10,
+            vec![0xA5],
+            [0xB6; 32],
+        )
+        .expect_err("exact send bundles are not standing grant scopes");
+        assert_eq!(
+            exact_bundle.kind(),
+            crate::ErrorKind::InvalidOutboundGrantBody
+        );
     }
 
     #[test]

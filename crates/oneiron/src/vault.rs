@@ -64,7 +64,8 @@ use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
 use crate::outbound_grant::{
-    StandingOutboundGrant, decode_standing_outbound_grant_body, encode_standing_outbound_grant_body,
+    StandingOutboundGrant, decode_standing_outbound_grant_body,
+    encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_key,
 };
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
@@ -2035,6 +2036,26 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let new_grant = decode_standing_outbound_grant_body(&data)?;
+        let new_index_key =
+            standing_outbound_grant_principal_index_key(&new_grant.principal_ref, id)?;
+        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+            let Some(header) = EntityMetadataHeader::parse(raw) else {
+                return Err(Error::CorruptedIndex("outbound grant entity header"));
+            };
+            if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+                return Err(Error::CorruptedIndex("outbound grant entity type"));
+            }
+            let old_grant = decode_standing_outbound_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            Some(standing_outbound_grant_principal_index_key(
+                &old_grant.principal_ref,
+                id,
+            )?)
+        } else {
+            None
+        };
         apply_ops(
             &self.store,
             &self.config,
@@ -2056,7 +2077,14 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        if let Some(old_index_key) = old_index_key.as_ref()
+            && old_index_key != &new_index_key
+        {
+            self.store.vault_meta.delete(wtxn, old_index_key)?;
+        }
+        self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
+        Ok(())
     }
 
     pub(crate) fn apply_channel_identity_body(

@@ -631,9 +631,11 @@ fn standing_outbound_grants_lens(
     let receipt_records = if query.receipt_limit_per_grant == 0 {
         Vec::new()
     } else {
-        vault.receipts(projection_scan_query(ReceiptQuery::new(
-            query.receipt_limit_per_grant,
-        )))?
+        vault.receipts(projection_scan_query(
+            ReceiptQuery::new(query.receipt_limit_per_grant)
+                .with_kind(ReceiptKind::Gate)
+                .with_kind(ReceiptKind::ScopedRead),
+        ))?
     };
 
     let rtxn = vault.store.env.read_txn()?;
@@ -1811,12 +1813,6 @@ fn append_outbound_grant_scope_fields(
     scope: &StandingOutboundGrantScope,
 ) {
     match scope {
-        StandingOutboundGrantScope::Effect { effect_ref } => {
-            fields.insert("scope".to_owned(), "effect".to_owned());
-            if let Some(effect_ref) = effect_ref.as_ref() {
-                fields.insert("effect_ref".to_owned(), effect_ref.clone());
-            }
-        }
         StandingOutboundGrantScope::Contact { contact_ref } => {
             fields.insert("scope".to_owned(), "contact".to_owned());
             fields.insert("contact_ref".to_owned(), contact_ref.clone());
@@ -1828,10 +1824,6 @@ fn append_outbound_grant_scope_fields(
         StandingOutboundGrantScope::Channel { channel } => {
             fields.insert("scope".to_owned(), "channel".to_owned());
             fields.insert("channel".to_owned(), channel.clone());
-        }
-        StandingOutboundGrantScope::BundleExactSends { send_refs } => {
-            fields.insert("scope".to_owned(), "bundle_exact_sends".to_owned());
-            fields.insert("send_refs".to_owned(), send_refs.join(","));
         }
         StandingOutboundGrantScope::BriefVerbClass {
             brief_ref,
