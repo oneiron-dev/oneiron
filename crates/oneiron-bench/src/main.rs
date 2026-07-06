@@ -29,6 +29,7 @@ use oneiron::analyzer::{AnalyzerContext, MultilingualAnalyzer, Token};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 mod beam;
+mod interface_bench;
 mod retrieval_trace_export;
 mod vector;
 
@@ -58,6 +59,7 @@ fn main() -> ExitCode {
             }
         },
         [cmd, rest @ ..] if cmd == "beam" => beam::run(rest),
+        [cmd, rest @ ..] if cmd == "interface-bench" => interface_bench::run(rest),
         [cmd, rest @ ..] if cmd == "vector" => vector::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
@@ -84,6 +86,8 @@ fn print_help() {
                                        explicit not-ready Agentic/Chat arms)\n\
           beam trace-export           export RetrievalTrace JSONL by fork hash\n\
                                        (ONE-1311 BEAM deterministic-arm reader)\n\
+          interface-bench             Campaign #5 SDK vs FS vs hybrid taskgen\n\
+                                       and 8-task x 3-arm smoke harness\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\
