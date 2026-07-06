@@ -260,6 +260,7 @@ impl EiriSessionRagStore {
         get_companion_register_record,
         update_companion_register_record,
         retire_companion_register_record,
+        end_companion_register_relationship,
         context_pack,
         record_usage_event,
         get_usage_rollup,
@@ -393,6 +394,9 @@ impl EiriSessionRagStore {
         CompanionRegisterCreateRecordRequest,
         CompanionRegisterUpdateRecordRequest,
         CompanionRegisterRetireRecordRequest,
+        CompanionEndRelationshipRequest,
+        CompanionGoodbyeArtifactHookPayload,
+        CompanionEndRelationshipResponse,
         CompanionRegisterRecordResponse,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
@@ -470,6 +474,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/register/records/{record_id}/retire",
             post(retire_companion_register_record),
+        )
+        .route(
+            "/register/records/{record_id}/end-relationship",
+            post(end_companion_register_relationship),
         )
         .route(
             "/access-grants/{grant_id}/revoke",
@@ -1484,6 +1492,10 @@ fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/register/records/{record_id}", "get"),
         ("/v1/companion/register/records/{record_id}", "post"),
         ("/v1/companion/register/records/{record_id}/retire", "post"),
+        (
+            "/v1/companion/register/records/{record_id}/end-relationship",
+            "post",
+        ),
     ] {
         if let Some(operation) = spec
             .get_mut("paths")
@@ -3385,6 +3397,55 @@ struct CompanionRegisterRetireRecordRequest {
     retired_at: Option<u64>,
 }
 
+/// End companion relationship request.
+#[derive(Clone, Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "ended_at": 1700000600,
+    "ended_badly": false,
+    "run_id": "eiri-goodbye-artifact-1700000600"
+}))]
+struct CompanionEndRelationshipRequest {
+    /// Ending timestamp in Unix seconds. Defaults to server time.
+    #[schema(example = 1700000600)]
+    ended_at: Option<u64>,
+    /// When true, teardown skips the goodbye-artifact generation hook.
+    #[serde(default)]
+    #[schema(example = false)]
+    ended_badly: bool,
+    /// Optional run id stamped onto the goodbye-artifact task.
+    #[schema(example = "eiri-goodbye-artifact-1700000600")]
+    run_id: Option<String>,
+}
+
+/// Goodbye-artifact hook status returned by relationship teardown.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionGoodbyeArtifactHookPayload {
+    /// Hook state: `enqueued`, `existing`, `skipped_bad_end`, or `skipped`.
+    #[schema(example = "enqueued")]
+    status: String,
+    /// Companion task kind for the goodbye-artifact hook.
+    #[schema(example = "goodbye_artifact")]
+    task: String,
+    /// Durable job id when the hook enqueued or found an existing task.
+    #[schema(example = "018f0000000000000000000000000000")]
+    job_id: Option<String>,
+    /// Optional run id stamped onto the durable job row.
+    #[schema(example = "eiri-goodbye-artifact-1700000600")]
+    run_id: Option<String>,
+}
+
+/// End companion relationship response envelope.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+struct CompanionEndRelationshipResponse {
+    /// Companion register entity id.
+    #[schema(example = "33333333333333333333333333333333")]
+    id: String,
+    /// Scrubbed and retired companion relationship record.
+    record: CompanionRegisterRecordPayload,
+    /// Goodbye-artifact hook status.
+    goodbye_artifact: CompanionGoodbyeArtifactHookPayload,
+}
+
 /// Companion register response envelope.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 struct CompanionRegisterRecordResponse {
@@ -4038,6 +4099,59 @@ async fn retire_companion_register_record(
     Ok(Json(companion_register_record_response(&id, &retired)))
 }
 
+/// End a typed companion relationship record.
+#[utoipa::path(
+    post,
+    path = "/v1/companion/register/records/{record_id}/end-relationship",
+    params(("record_id" = String, Path, description = "Companion relationship record entity id.")),
+    request_body(content = CompanionEndRelationshipRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Companion relationship ended.", body = CompanionEndRelationshipResponse, content_type = "application/json"),
+        (status = 400, description = "Malformed companion relationship end request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:register:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Companion relationship record was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Companion relationship end failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+async fn end_companion_register_relationship(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(record_id): Path<String>,
+    payload: Result<Json<CompanionEndRelationshipRequest>, JsonRejection>,
+) -> Result<Json<CompanionEndRelationshipResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::CompanionRegisterWrite)?;
+    let id = parse_entity_id_param(&record_id, "record_id")?;
+    let req = json_payload(payload)?;
+    let ended_at = req.ended_at.unwrap_or_else(unix_seconds_now);
+    let ended_badly = req.ended_badly;
+
+    let outcome = server
+        .vault
+        .end_companion_relationship(
+            &id,
+            oneiron::EndCompanionRelationship {
+                ended_at,
+                ended_badly,
+                run_id: req.run_id,
+            },
+        )
+        .map_err(|error| {
+            tracing::error!(error = %error, id = %id.to_hex(), "companion relationship end failed");
+            companion_register_engine_error("companion relationship end failed", error)
+        })?;
+
+    Ok(Json(CompanionEndRelationshipResponse {
+        id: id.to_hex(),
+        record: companion_register_record_payload(&outcome.record),
+        goodbye_artifact: companion_goodbye_artifact_hook_payload(
+            outcome.goodbye_artifact,
+            ended_badly,
+            outcome.already_ended,
+        ),
+    }))
+}
+
 fn companion_scope_entity_refs(
     scope: &CompanionAccessGrantScopePayload,
 ) -> Result<(oneiron::EntityId, oneiron::EntityId), ApiError> {
@@ -4248,6 +4362,43 @@ fn companion_register_record_response(
     CompanionRegisterRecordResponse {
         id: id.to_hex(),
         record: companion_register_record_payload(record),
+    }
+}
+
+fn companion_goodbye_artifact_hook_payload(
+    outcome: Option<oneiron::EnqueueCompanionTaskOutcome>,
+    ended_badly: bool,
+    already_ended: bool,
+) -> CompanionGoodbyeArtifactHookPayload {
+    let skipped = |status: &'static str| CompanionGoodbyeArtifactHookPayload {
+        status: status.to_owned(),
+        task: oneiron::CompanionTaskKind::GoodbyeArtifact
+            .as_str()
+            .to_owned(),
+        job_id: None,
+        run_id: None,
+    };
+
+    let Some(outcome) = outcome else {
+        return if already_ended {
+            skipped("already_ended")
+        } else if ended_badly {
+            skipped("skipped_bad_end")
+        } else {
+            skipped("skipped")
+        };
+    };
+
+    let (status, task_status) = match outcome {
+        oneiron::EnqueueCompanionTaskOutcome::Enqueued(status) => ("enqueued", status),
+        oneiron::EnqueueCompanionTaskOutcome::Existing(status) => ("existing", status),
+        _ => return skipped("unknown"),
+    };
+    CompanionGoodbyeArtifactHookPayload {
+        status: status.to_owned(),
+        task: task_status.task.kind.as_str().to_owned(),
+        job_id: Some(hex_bytes(task_status.job.id.as_bytes())),
+        run_id: task_status.job.run_id,
     }
 }
 
@@ -13247,6 +13398,7 @@ mod tests {
             "/v1/companion/register/records",
             "/v1/companion/register/records/{record_id}",
             "/v1/companion/register/records/{record_id}/retire",
+            "/v1/companion/register/records/{record_id}/end-relationship",
             "/api/context-pack",
             "/api/lease/revoke",
             "/api/health",
@@ -13392,6 +13544,10 @@ mod tests {
             ("/v1/companion/register/records/{record_id}", "get"),
             ("/v1/companion/register/records/{record_id}", "post"),
             ("/v1/companion/register/records/{record_id}/retire", "post"),
+            (
+                "/v1/companion/register/records/{record_id}/end-relationship",
+                "post",
+            ),
         ] {
             assert_eq!(
                 spec["paths"][path][method]["security"],
@@ -13546,6 +13702,9 @@ mod tests {
             "CompanionRegisterCreateRecordRequest",
             "CompanionRegisterUpdateRecordRequest",
             "CompanionRegisterRetireRecordRequest",
+            "CompanionEndRelationshipRequest",
+            "CompanionGoodbyeArtifactHookPayload",
+            "CompanionEndRelationshipResponse",
             "CompanionRegisterRecordResponse",
             "LeaseRevokeRequest",
             "LeaseRevokeResponse",
@@ -14624,7 +14783,7 @@ mod tests {
                 }
             },
             "value": { "note": "shared-vault boundary note" },
-            "provenance": provenance,
+            "provenance": provenance.clone(),
             "export": "shared_vault"
         });
 
@@ -14903,6 +15062,196 @@ mod tests {
         assert_eq!(
             error_envelope(&body)["details"]["state"],
             Value::from("companion_record_exists")
+        );
+
+        let ending_id = seeded_test_entity_id(0x1219_0011).to_hex();
+        let ending_private_note = "route-private-relationship-note-one1488";
+        let ending_record = json!({
+            "kind": "relationship",
+            "scope": { "kind": "personal", "person_ref": person_ref },
+            "subject": {
+                "kind": "relationship",
+                "relationship_ref": {
+                    "source_ref": person_ref,
+                    "target_ref": persona_ref
+                }
+            },
+            "value": { "note": ending_private_note },
+            "provenance": provenance.clone(),
+            "export": "local_only"
+        });
+        let (status, _body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": ending_id,
+                    "learned_at": 38_u64,
+                    "record": ending_record.clone()
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let general_id = seeded_test_entity_id(0x1219_0013);
+        server
+            .vault
+            .batch()
+            .put(
+                &general_id,
+                oneiron::types::ENTITY_TYPE_TURN,
+                oneiron::TimeRange { start: 38, end: 38 },
+                38,
+                b"route-general-vault-data",
+            )
+            .commit()
+            .expect("seed general vault data");
+
+        let end_path = format!("/v1/companion/register/records/{ending_id}/end-relationship");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &end_path,
+                "companion:register:write",
+                Some(&json!({
+                    "ended_at": 39_u64,
+                    "ended_badly": false,
+                    "run_id": "route-goodbye-one1488"
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["record"]["lifecycle"], Value::from("retracted"));
+        assert_eq!(
+            body["record"]["value"]["kind"],
+            Value::from("relationship_ended")
+        );
+        assert_eq!(
+            body["record"]["value"]["private_memory"],
+            Value::from("removed")
+        );
+        assert!(
+            !body["record"]["value"]
+                .to_string()
+                .contains(ending_private_note),
+            "ended relationship response must not retain private memory"
+        );
+        assert_eq!(
+            server
+                .vault
+                .get(&general_id)
+                .expect("read general data")
+                .as_deref(),
+            Some(b"route-general-vault-data".as_slice())
+        );
+        assert_eq!(body["goodbye_artifact"]["status"], Value::from("enqueued"));
+        assert_eq!(
+            body["goodbye_artifact"]["task"],
+            Value::from("goodbye_artifact")
+        );
+        assert_eq!(
+            body["goodbye_artifact"]["run_id"],
+            Value::from("route-goodbye-one1488")
+        );
+        assert_eq!(
+            body["goodbye_artifact"]["job_id"]
+                .as_str()
+                .expect("job id")
+                .len(),
+            32
+        );
+        let claimed = oneiron::CompanionQueue::new(server.vault.as_ref())
+            .claim(oneiron::ClaimCompanionTask {
+                lease_owner: "route-goodbye-worker".to_owned(),
+                now: 40,
+            })
+            .expect("claim goodbye artifact task");
+        let oneiron::ClaimCompanionTaskOutcome::Claimed(claimed) = claimed else {
+            panic!("amicable route ending must enqueue a claimable goodbye task");
+        };
+        assert_eq!(
+            claimed.task.kind,
+            oneiron::CompanionTaskKind::GoodbyeArtifact
+        );
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &end_path,
+                "companion:register:write",
+                Some(&json!({
+                    "ended_at": 41_u64,
+                    "run_id": "route-goodbye-retry-one1488"
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["goodbye_artifact"]["status"],
+            Value::from("already_ended")
+        );
+        assert!(body["goodbye_artifact"]["job_id"].is_null());
+        assert!(
+            !body["record"]["value"]
+                .to_string()
+                .contains(ending_private_note),
+            "idempotent route ending must keep private memory scrubbed"
+        );
+
+        let bad_end_id = seeded_test_entity_id(0x1219_0012).to_hex();
+        let mut bad_end_record = ending_record;
+        bad_end_record["subject"]["relationship_ref"]["source_ref"] = Value::from(source_ref);
+        bad_end_record["subject"]["relationship_ref"]["target_ref"] = Value::from(target_ref);
+        bad_end_record["value"] = json!({ "note": "route-bad-end-private-note-one1488" });
+        let (status, _body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                "/v1/companion/register/records",
+                "companion:register:write",
+                Some(&json!({
+                    "id": bad_end_id,
+                    "learned_at": 41_u64,
+                    "record": bad_end_record
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let bad_end_path = format!("/v1/companion/register/records/{bad_end_id}/end-relationship");
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &bad_end_path,
+                "companion:register:write",
+                Some(&json!({
+                    "ended_at": 42_u64,
+                    "ended_badly": true,
+                    "run_id": "route-bad-end-one1488"
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["goodbye_artifact"]["status"],
+            Value::from("skipped_bad_end")
+        );
+        assert!(body["goodbye_artifact"]["job_id"].is_null());
+        assert_eq!(
+            oneiron::CompanionQueue::new(server.vault.as_ref())
+                .claim(oneiron::ClaimCompanionTask {
+                    lease_owner: "route-goodbye-worker".to_owned(),
+                    now: 43,
+                })
+                .expect("bad end should not enqueue another task"),
+            oneiron::ClaimCompanionTaskOutcome::Empty
         );
 
         assert!(

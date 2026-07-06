@@ -20,6 +20,7 @@ const EXPECTED_REGISTERED_ROUTES: &[&str] = &[
     "/api/edges/{id}",
     "/api/context-pack",
     "/api/companion/resume",
+    "/v1/companion/register/records/{record_id}/end-relationship",
     "/api/lease/revoke",
     "/v1/core/run-tree",
     "/v1/core/run-tree/observe",
@@ -88,6 +89,10 @@ const NESTED_ROUTE_PREFIXES: &[(&str, &str)] = &[
     (
         "/register/records/{record_id}/retire",
         "/v1/companion/register/records/{record_id}/retire",
+    ),
+    (
+        "/register/records/{record_id}/end-relationship",
+        "/v1/companion/register/records/{record_id}/end-relationship",
     ),
 ];
 

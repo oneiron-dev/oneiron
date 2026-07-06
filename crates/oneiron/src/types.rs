@@ -19,11 +19,11 @@ pub use companion::{
     CompanionProvenance, CompanionQueue, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
     CompanionRegister, CompanionScope, CompanionScopeResolution, CompanionScopeResolutionSource,
     CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask,
-    CompleteCompanionTaskOutcome, ENTITY_TYPE_COMPANION_REGISTER, EnqueueCompanionTask,
-    EnqueueCompanionTaskOutcome, FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask,
-    RetryCompanionTaskOutcome, companion_value_from_json, companion_value_to_json,
-    decode_companion_record_body, decode_companion_task_payload, encode_companion_record_body,
-    encode_companion_task_payload,
+    CompleteCompanionTaskOutcome, ENTITY_TYPE_COMPANION_REGISTER, EndCompanionRelationship,
+    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome,
+    FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask, RetryCompanionTaskOutcome,
+    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
+    decode_companion_task_payload, encode_companion_record_body, encode_companion_task_payload,
 };
 
 #[path = "psych_profile.rs"]
