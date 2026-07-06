@@ -2044,7 +2044,18 @@ fn execute_mcp_propose_claim(
     args: &McpEditToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
-    let id = mcp_idempotency_entity_id("claim", args);
+    let id = mcp_idempotency_entity_id("claim", args, actor);
+    if let Some(receipt) = mcp_existing_edit_receipt(
+        server,
+        args,
+        actor,
+        id,
+        "immediate_proposed_claim",
+        "claim replayed",
+    )? {
+        return Ok(receipt);
+    }
+
     let candidate = mcp_claim_candidate_from_args(args)?;
     let envelope = mcp_write_envelope(args, actor, "immediate_proposed_claim")?;
     let learned_at = unix_seconds_now();
@@ -2074,8 +2085,14 @@ fn execute_mcp_proposed_control_record(
     args: &McpEditToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
-    let id = mcp_idempotency_entity_id("proposal", args);
     let lifecycle = mcp_edit_lifecycle(args.verb);
+    let id = mcp_idempotency_entity_id("proposal", args, actor);
+    if let Some(receipt) =
+        mcp_existing_edit_receipt(server, args, actor, id, lifecycle, "edit replayed")?
+    {
+        return Ok(receipt);
+    }
+
     let candidate = mcp_control_record_candidate(args, actor, lifecycle)?;
     let envelope = mcp_write_envelope(args, actor, lifecycle)?;
     let learned_at = unix_seconds_now();
@@ -2289,10 +2306,38 @@ fn mcp_edit_receipt(
     })
 }
 
-fn mcp_idempotency_entity_id(namespace: &'static str, args: &McpEditToolArgs) -> oneiron::EntityId {
+fn mcp_existing_edit_receipt(
+    server: &SyncServer,
+    args: &McpEditToolArgs,
+    actor: &McpResolvedActor,
+    id: oneiron::EntityId,
+    lifecycle: &'static str,
+    message: &'static str,
+) -> Result<Option<Value>, McpGatewayError> {
+    let existing = server
+        .vault
+        .get_claim(&id)
+        .map_err(|error| mcp_engine_error("mcp edit replay lookup failed", error))?;
+    Ok(existing.map(|_| mcp_edit_receipt(args, actor, Some(id), "replayed", lifecycle, message)))
+}
+
+fn mcp_idempotency_entity_id(
+    namespace: &'static str,
+    args: &McpEditToolArgs,
+    actor: &McpResolvedActor,
+) -> oneiron::EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.mcp.edit.v1");
     hasher.update(namespace.as_bytes());
+    hasher.update(actor.actor_ref.as_bytes());
+    hasher.update(actor.gate_actor_class.as_bytes());
+    hasher.update(actor.gate_actor_ref.as_bytes());
+    if let Some(world_ref) = actor.scope.world_ref {
+        hasher.update(world_ref.as_bytes());
+    }
+    if let Some(facet_ref) = actor.scope.facet_ref {
+        hasher.update(facet_ref.as_bytes());
+    }
     hasher.update(mcp_edit_verb_name(args.verb).as_bytes());
     hasher.update(args.idempotency_key.as_bytes());
     let mut bytes = [0_u8; 16];
@@ -11295,6 +11340,129 @@ mod tests {
         assert_eq!(
             decision.actor_ref.as_deref(),
             Some(actor_ref.to_hex().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_edit_idempotency_is_actor_scoped_and_replays_without_mutation() {
+        let (_dir, server) = test_server();
+        let actor_a = seeded_test_entity_id(0x1222_0601);
+        let actor_b = seeded_test_entity_id(0x1222_0602);
+        let credential_a = "one-1222-idem-a";
+        let credential_b = "one-1222-idem-b";
+        register_mcp_actor(
+            &server,
+            credential_a,
+            actor_a,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+        register_mcp_actor(
+            &server,
+            credential_b,
+            actor_b,
+            oneiron::EdgeActorClass::Human,
+        )
+        .await;
+
+        let subject_ref = seeded_test_entity_id(0x1222_0603);
+        server
+            .vault
+            .put_entity(
+                &subject_ref,
+                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange {
+                    start: 600,
+                    end: 600,
+                },
+                600,
+                b"MCP idempotency subject",
+            )
+            .expect("seed MCP idempotency subject");
+
+        let shared_key = "one-1222-shared-idempotency-key";
+        let (status, first) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential_a,
+                "mcp-write-idem-a-1",
+                "oneiron.edit",
+                mcp_propose_claim_args(actor_a, subject_ref, shared_key),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            first.get("error").is_none(),
+            "unexpected MCP error: {first:?}"
+        );
+        let first_id = oneiron::EntityId::from_hex(
+            first["result"]["structuredContent"]["id"]
+                .as_str()
+                .expect("first MCP id"),
+        )
+        .expect("first MCP id parses");
+
+        let mut replay_args = mcp_propose_claim_args(actor_a, subject_ref, shared_key);
+        replay_args["value"] = Value::from("changed replay payload");
+        let (status, replay) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential_a,
+                "mcp-write-idem-a-2",
+                "oneiron.edit",
+                replay_args,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            replay.get("error").is_none(),
+            "unexpected MCP error: {replay:?}"
+        );
+        assert_eq!(
+            replay["result"]["structuredContent"]["status"],
+            Value::from("replayed")
+        );
+        assert_eq!(
+            replay["result"]["structuredContent"]["id"],
+            Value::from(first_id.to_hex())
+        );
+
+        let (status, second_actor) = route_json(
+            server.clone(),
+            mcp_call_request(
+                credential_b,
+                "mcp-write-idem-b",
+                "oneiron.edit",
+                mcp_propose_claim_args(actor_b, subject_ref, shared_key),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            second_actor.get("error").is_none(),
+            "unexpected MCP error: {second_actor:?}"
+        );
+        let second_actor_id = oneiron::EntityId::from_hex(
+            second_actor["result"]["structuredContent"]["id"]
+                .as_str()
+                .expect("second actor MCP id"),
+        )
+        .expect("second actor MCP id parses");
+        assert_ne!(
+            first_id, second_actor_id,
+            "same idempotency key must be scoped by the resolved actor"
+        );
+
+        let decisions = server
+            .vault
+            .gate_decisions(10)
+            .expect("gate decisions after idempotency replay");
+        assert_eq!(
+            decisions.len(),
+            2,
+            "same-actor replay must not emit a second Gate decision"
         );
     }
 

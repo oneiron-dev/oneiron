@@ -1262,6 +1262,9 @@ fn edit_tool_schema() -> Value {
                     },
                     "then": {
                         "required": ["subject", "confidence"],
+                        "properties": {
+                            "subject": edit_provenance_subject_schema(),
+                        },
                         "not": edit_forbidden_except(&[
                             "subject",
                             "confidence",
@@ -1581,6 +1584,17 @@ fn edit_subject_schema() -> Value {
     })
 }
 
+fn edit_provenance_subject_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["edge"],
+        "properties": {
+            "edge": edit_provenance_edge_subject_schema(),
+        },
+    })
+}
+
 fn edit_edge_subject_schema() -> Value {
     json!({
         "type": "object",
@@ -1589,6 +1603,19 @@ fn edit_edge_subject_schema() -> Value {
         "properties": {
             "source": entity_id_schema(),
             "kind": { "type": "integer", "minimum": 0, "maximum": 19 },
+            "target": entity_id_schema(),
+        },
+    })
+}
+
+fn edit_provenance_edge_subject_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "kind", "target"],
+        "properties": {
+            "source": entity_id_schema(),
+            "kind": { "type": "integer", "minimum": 9, "maximum": 19 },
             "target": entity_id_schema(),
         },
     })
@@ -2102,6 +2129,18 @@ mod tests {
                 "report_task",
                 "channel_send"
             ]
+        );
+        let attest_branch = &edit["allOf"]
+            .as_array()
+            .expect("edit verb-specific constraints")[1];
+        assert_eq!(
+            attest_branch["then"]["properties"]["subject"]["required"],
+            json!(["edge"])
+        );
+        assert_eq!(
+            attest_branch["then"]["properties"]["subject"]["properties"]["edge"]["properties"]["kind"]
+                ["minimum"],
+            Value::from(9)
         );
     }
 
