@@ -33,6 +33,7 @@ pub mod pipeline;
 pub(crate) mod ppr;
 pub mod provenance;
 pub mod recovery;
+pub mod repo_mutation;
 pub mod run_tree;
 pub mod serialize;
 pub mod skill;
@@ -219,6 +220,11 @@ pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
+};
+pub use crate::repo_mutation::{
+    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS,
+    REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoForkHash, RepoMutationOperation,
+    RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus,
 };
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
