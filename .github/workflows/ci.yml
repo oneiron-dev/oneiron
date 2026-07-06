@@ -31,7 +31,7 @@ jobs:
         with:
           toolchain: "1.96"
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
@@ -42,7 +42,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96"
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
       - uses: taiki-e/install-action@nextest
       # Canonical runner (ONE-1144): process-per-test isolation, full tier.
       - run: cargo nextest run --workspace --all-features --profile full
@@ -63,7 +63,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.96"
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      - uses: useblacksmith/rust-cache@v3
       - run: rm -rf target/package/oneiron-server-*
       - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
       - run: cargo package -p oneiron-server --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
