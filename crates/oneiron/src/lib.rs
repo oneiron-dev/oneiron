@@ -24,6 +24,7 @@ pub mod error;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
+pub mod genui;
 pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
@@ -202,6 +203,14 @@ pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
     FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
     encode_federation_grant_body,
+};
+pub use crate::genui::{
+    BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentActionDecision,
+    ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity,
+    ConsentAskCard, ConsentScopeEscalator, ConsentSurface, GrantMintIntent, GrantMintIntentScope,
+    OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
+    Of336Component, Of336ComponentKind, Of336RenderedComponent, Of336SurfaceAdapter,
+    ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
 };
 pub use crate::graph_fs::{
     GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP, GRAPH_FS_COREUTILS_MAX_RESULT_CAP,
