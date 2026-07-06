@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::store::Store;
 use crate::sync::transport::MAX_WINDOW_KEY_LEN;
 use crate::sync::types::parse_window_key_str;
 use crate::sync::window::DeleteBearingUpdate;
@@ -67,7 +68,7 @@ pub struct QueuedUpdate {
 pub struct QueuedEmbedJob {
     /// Entity requiring embedding.
     pub entity_id: EntityId,
-    /// Priority (1 = from server, 2 = from device).
+    /// Priority (`0` surfaced-hot, `1` server, `2` device, `3` backfill).
     pub priority: u8,
     /// When the job was queued (Unix ms).
     pub queued_at: u64,
@@ -131,21 +132,8 @@ impl SyncQueue {
 
     /// Pushes an embed job for background processing.
     pub fn push_embed_job(&self, entity_id: &EntityId, priority: u8) -> Result<()> {
-        let key = encode_embed_key(entity_id);
-        // Saturate to 0 if the wall clock is pre-epoch (NTP regression,
-        // suspended VM, embedded device with reset RTC). Panicking here would
-        // break enqueue on perfectly recoverable system state.
-        let queued_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-
-        let mut value = Vec::with_capacity(9);
-        value.push(priority);
-        value.extend_from_slice(&queued_at.to_be_bytes());
-
         let mut wtxn = self.vault.store.env.write_txn()?;
-        self.vault.store.sync_queue.put(&mut wtxn, &key, &value)?;
+        push_embed_job_in_txn(&self.vault.store, &mut wtxn, entity_id, priority)?;
         wtxn.commit()?;
 
         Ok(())
@@ -207,6 +195,12 @@ impl SyncQueue {
         drop(rtxn);
 
         self.prune_malformed_rows(&malformed_keys, decode_embed_job_row)?;
+        jobs.sort_by(|left, right| {
+            left.priority
+                .cmp(&right.priority)
+                .then_with(|| left.queued_at.cmp(&right.queued_at))
+                .then_with(|| left.entity_id.as_bytes().cmp(right.entity_id.as_bytes()))
+        });
 
         Ok(jobs)
     }
@@ -495,6 +489,36 @@ impl SyncQueue {
         wtxn.commit()?;
         Ok(())
     }
+}
+
+pub(crate) fn push_embed_job_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_id: &EntityId,
+    priority: u8,
+) -> Result<()> {
+    let key = encode_embed_key(entity_id);
+    let (priority, queued_at) = match store.sync_queue.get(wtxn, &key)? {
+        Some(existing) => match decode_embed_job_value(existing) {
+            Ok((existing_priority, existing_queued_at)) if existing_priority <= priority => {
+                (existing_priority, existing_queued_at)
+            }
+            _ => (priority, unix_millis_now()),
+        },
+        None => (priority, unix_millis_now()),
+    };
+    let value = encode_embed_job_value(priority, queued_at);
+    store.sync_queue.put(wtxn, &key, &value)?;
+    Ok(())
+}
+
+pub(crate) fn delete_embed_job_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_id: &EntityId,
+) -> Result<bool> {
+    let key = encode_embed_key(entity_id);
+    Ok(store.sync_queue.delete(wtxn, &key)?)
 }
 
 // ─── Delete-path transaction helpers (ONE-1135) ─────────────────────────────
@@ -828,6 +852,22 @@ fn decode_embed_key(key: &[u8]) -> Result<EntityId> {
 
 fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
     let entity_id = decode_embed_key(key)?;
+    let (priority, queued_at) = decode_embed_job_value(value)?;
+    Ok(QueuedEmbedJob {
+        entity_id,
+        priority,
+        queued_at,
+    })
+}
+
+fn encode_embed_job_value(priority: u8, queued_at: u64) -> [u8; 9] {
+    let mut value = [0_u8; 9];
+    value[0] = priority;
+    value[1..].copy_from_slice(&queued_at.to_be_bytes());
+    value
+}
+
+fn decode_embed_job_value(value: &[u8]) -> Result<(u8, u64)> {
     let Some((&priority, queued_at_bytes)) = value.split_first() else {
         return Err(Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW));
     };
@@ -836,11 +876,14 @@ fn decode_embed_job_row(key: &[u8], value: &[u8]) -> Result<QueuedEmbedJob> {
             .try_into()
             .map_err(|_| Error::CorruptedIndex(ERR_SYNC_QUEUE_EMBED_ROW))?,
     );
-    Ok(QueuedEmbedJob {
-        entity_id,
-        priority,
-        queued_at,
-    })
+    Ok((priority, queued_at))
+}
+
+fn unix_millis_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 fn decode_last_update_seq_metadata(raw: &[u8]) -> Result<u64> {
