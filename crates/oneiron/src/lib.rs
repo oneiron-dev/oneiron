@@ -17,6 +17,7 @@ pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
+pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
 pub(crate) mod distance;
@@ -171,6 +172,17 @@ pub use crate::codebase::{
     encode_codebase_snapshot,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
+pub use crate::counterparty_contact::{
+    COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
+    COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,
+    CounterpartyFirstTouch, CounterpartyOptOut, CounterpartyOptOutReason,
+    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY, PREDICATE_COUNTERPARTY_CONTACT_CREATED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH, PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+    PREDICATE_COUNTERPARTY_CONTACT_NOTES, PREDICATE_COUNTERPARTY_CONTACT_OPT_OUT,
+    PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT, PREDICATE_COUNTERPARTY_CONTACT_REVOKED_AT,
+    PREDICATE_COUNTERPARTY_CONTACT_STATUS, PREDICATE_COUNTERPARTY_CONTACT_UPDATED_AT,
+    decode_counterparty_contact_body, encode_counterparty_contact_body,
+};
 pub use crate::critic::{
     CRITIC_LENS_CATALOG_SCHEMA_VERSION, CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION,
     CRITIC_RELIABILITY_PREDICATE_PREFIX, CRITIQUE_ARTIFACT_SCHEMA_VERSION, CriticLens,
@@ -376,13 +388,13 @@ pub use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, DecodedEdgeValue,
     EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PSYCH_PROFILE,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
-    EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
-    EmptyContext, EmptyReason, EndCompanionRelationship, EndCompanionRelationshipOutcome,
-    EnqueueCompanionTask, EnqueueCompanionTaskOutcome, EntityId, FailCompanionTask,
-    FailCompanionTaskOutcome, FieldProfile, HnswConfig, HydratedShortIdDeletion,
+    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
+    EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
+    EiriSessionRagState, EmptyContext, EmptyReason, EndCompanionRelationship,
+    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome, EntityId,
+    FailCompanionTask, FailCompanionTaskOutcome, FieldProfile, HnswConfig, HydratedShortIdDeletion,
     HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
     MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
     NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,

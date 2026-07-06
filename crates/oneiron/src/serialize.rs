@@ -6,13 +6,13 @@ use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 use crate::types::{
     ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP,
-    ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat,
-    PackItemTokenStats, PackSectionTokenStats, PackStats, PackTokenStats, ResumeBundle, Signal,
-    TokenAllocation,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats,
+    PackStats, PackTokenStats, ResumeBundle, Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -2320,6 +2320,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "ACCESS_GRANTS",
             title: "Access Grants",
         }),
+        ENTITY_TYPE_COUNTERPARTY_CONTACT => Some(GroupLabels {
+            key: "counterparty_contacts",
+            name: "COUNTERPARTY_CONTACTS",
+            title: "Counterparty Contacts",
+        }),
         ENTITY_TYPE_COMPANION_REGISTER => Some(GroupLabels {
             key: "companion_records",
             name: "COMPANION_RECORDS",
@@ -2426,6 +2431,15 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         }
         (ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Full) => {
             crate::access_grant::ACCESS_GRANT_FIELDS_FULL
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal) => {
+            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Standard) => {
+            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Full) => {
+            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_FULL
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal) => {
             crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
@@ -5352,6 +5366,15 @@ mod tests {
         assert_eq!(
             fields_for_profile(ENTITY_TYPE_ACCESS_GRANT, FieldProfile::Minimal),
             crate::access_grant::ACCESS_GRANT_FIELDS_MINIMAL
+        );
+
+        let counterparty_contact = group_labels(ENTITY_TYPE_COUNTERPARTY_CONTACT);
+        assert_eq!(counterparty_contact.key, "counterparty_contacts");
+        assert_eq!(counterparty_contact.name, "COUNTERPARTY_CONTACTS");
+        assert_eq!(counterparty_contact.title, "Counterparty Contacts");
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_COUNTERPARTY_CONTACT, FieldProfile::Minimal),
+            crate::counterparty_contact::COUNTERPARTY_CONTACT_FIELDS_MINIMAL
         );
 
         let companion = group_labels(ENTITY_TYPE_COMPANION_REGISTER);
