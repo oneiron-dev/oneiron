@@ -38,6 +38,7 @@ pub mod recovery;
 pub mod repo_mutation;
 pub mod run_tree;
 pub mod serialize;
+pub mod settings;
 pub mod skill;
 pub mod store;
 pub(crate) mod sweep;
@@ -246,6 +247,12 @@ pub use crate::repo_mutation::{
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,
+};
+pub use crate::settings::{
+    AccentLayer, CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND, CUSTOMIZATION_SETTINGS_LAYER_COUNT,
+    CUSTOMIZATION_SETTINGS_SCHEMA_VERSION, CustomizationLayer, CustomizationLayerValue,
+    CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate,
+    ModeLayer, TypeLayer, WorldLayer,
 };
 pub use crate::skill::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
