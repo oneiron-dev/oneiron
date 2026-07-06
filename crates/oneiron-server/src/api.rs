@@ -5,6 +5,7 @@
 //!
 //! Auth: shared secret header for Phase 1.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -126,6 +127,11 @@ const RESUME_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 const CORE_MAX_BATCH_ENTITIES: usize = 256;
 const CORE_MAX_LIST_LIMIT: usize = 1000;
 const CORE_RUN_TREE_RUN_ID_MAX_BYTES: usize = 128;
+const PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE: &str = "platform_announcement";
+const PLATFORM_ANNOUNCEMENT_VOICE: &str = "platform";
+const ANNOUNCEMENT_STATUS_ACTIVE: &str = "active";
+const ANNOUNCEMENT_STATUS_CORRECTED: &str = "corrected";
+const ANNOUNCEMENT_STATUS_RETRACTED: &str = "retracted";
 const EIRI_SESSION_RAG_STATE_MAX_ENTRIES: usize = 1024;
 const EIRI_SESSION_RAG_SESSION_ID_MAX_BYTES: usize = 256;
 const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
@@ -8033,11 +8039,12 @@ async fn create_core_conversation_turn(
         core_engine_error("core turn create failed", error)
     })?;
 
+    let body = core_body_for_write(ENTITY_TYPE_TURN, &req.body);
     let item = projection::project_entity_parts(
         &id,
         ENTITY_TYPE_TURN,
         timestamps.learned_at,
-        &encode_core_body(&req.body)?,
+        &encode_core_body(&body)?,
         View::Full,
     );
     Ok(Json(CoreEntityWriteResponse {
@@ -8152,6 +8159,136 @@ fn encode_core_body(body: &Value) -> Result<Vec<u8>, ApiError> {
         .map_err(|_| ApiError::bad_request("body must be msgpack-encodable JSON", Some("body")))
 }
 
+fn core_body_for_write<'a>(entity_type: u8, body: &'a Value) -> Cow<'a, Value> {
+    if entity_type != ENTITY_TYPE_TURN {
+        return Cow::Borrowed(body);
+    }
+    normalize_platform_announcement_body(body)
+}
+
+fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
+    let Value::Object(object) = body else {
+        return Cow::Borrowed(body);
+    };
+    if !is_platform_announcement_body(object) {
+        return Cow::Borrowed(body);
+    }
+
+    let mut normalized = object.clone();
+    normalized.remove("messageType");
+    normalized.remove("originalText");
+    normalized.remove("showOriginal");
+    normalized.insert(
+        "message_type".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE.to_owned()),
+    );
+    normalized.insert(
+        "spkr".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
+    );
+    normalized.insert(
+        "speaker".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
+    );
+    normalized.insert(
+        "voice".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
+    );
+    normalized.insert(
+        "attribution".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
+    );
+    normalized.insert(
+        "render_voice".to_owned(),
+        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
+    );
+    normalized.insert("platform_voice".to_owned(), Value::Bool(true));
+    normalized.insert("is_eiri".to_owned(), Value::Bool(false));
+
+    let status = announcement_status(object);
+    normalized.insert(
+        "announcement_status".to_owned(),
+        Value::String(status.to_owned()),
+    );
+    normalized.insert(
+        "retracted".to_owned(),
+        Value::Bool(status == ANNOUNCEMENT_STATUS_RETRACTED),
+    );
+    normalized.insert(
+        "corrected".to_owned(),
+        Value::Bool(status == ANNOUNCEMENT_STATUS_CORRECTED),
+    );
+
+    let original = announcement_original_text(object);
+    if let Some(original) = original {
+        normalized.insert(
+            "original_txt".to_owned(),
+            Value::String(original.to_owned()),
+        );
+    }
+    let localized = object_bool_field(object, &["localized"]).unwrap_or(false)
+        || object_string_field(object, &["locale", "localized_locale", "localizedLocale"])
+            .is_some()
+        || original.is_some();
+    if localized {
+        normalized.insert("localized".to_owned(), Value::Bool(true));
+    }
+    if let Some(show_original) = object_bool_field(object, &["show_original", "showOriginal"]) {
+        normalized.insert("show_original".to_owned(), Value::Bool(show_original));
+    } else if original.is_some() {
+        normalized.insert("show_original".to_owned(), Value::Bool(true));
+    }
+
+    Cow::Owned(Value::Object(normalized))
+}
+
+fn is_platform_announcement_body(object: &serde_json::Map<String, Value>) -> bool {
+    object_string_field(object, &["message_type", "messageType"]).is_some_and(|message_type| {
+        message_type.eq_ignore_ascii_case(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
+    })
+}
+
+fn announcement_status(object: &serde_json::Map<String, Value>) -> &'static str {
+    match object_string_field(object, &["announcement_status", "announcementStatus"]) {
+        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_RETRACTED) => {
+            ANNOUNCEMENT_STATUS_RETRACTED
+        }
+        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_CORRECTED) => {
+            ANNOUNCEMENT_STATUS_CORRECTED
+        }
+        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_ACTIVE) => {
+            ANNOUNCEMENT_STATUS_ACTIVE
+        }
+        _ if object_bool_field(object, &["retracted"]).unwrap_or(false) => {
+            ANNOUNCEMENT_STATUS_RETRACTED
+        }
+        _ if object_bool_field(object, &["corrected"]).unwrap_or(false) => {
+            ANNOUNCEMENT_STATUS_CORRECTED
+        }
+        _ => ANNOUNCEMENT_STATUS_ACTIVE,
+    }
+}
+
+fn announcement_original_text(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    object_string_field(object, &["original_txt", "originalText", "original_text"]).or_else(|| {
+        let original = object.get("original")?.as_object()?;
+        object_string_field(original, &["txt", "text", "body"])
+    })
+}
+
+fn object_string_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+}
+
+fn object_bool_field(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_bool))
+}
+
 fn stage_core_entity_put<'a>(
     batch: oneiron::BatchBuilder<'a>,
     id: &oneiron::EntityId,
@@ -8160,7 +8297,8 @@ fn stage_core_entity_put<'a>(
     body: &Value,
     text: Option<&[CoreTextField]>,
 ) -> Result<oneiron::BatchBuilder<'a>, ApiError> {
-    let data = encode_core_body(body)?;
+    let body = core_body_for_write(entity_type, body);
+    let data = encode_core_body(&body)?;
     let mut batch = batch.put(
         id,
         entity_type,
@@ -8168,7 +8306,7 @@ fn stage_core_entity_put<'a>(
         timestamps.learned_at,
         &data,
     );
-    let text_fields = core_text_fields(text, body);
+    let text_fields = core_text_fields(text, &body);
     if !text_fields.is_empty() {
         let refs: Vec<(&str, &str)> = text_fields
             .iter()
@@ -9461,11 +9599,12 @@ fn write_core_entity(
         tracing::error!(error = %error, entity_type = input.entity_type, "core entity create failed");
         core_engine_error("core entity create failed", error)
     })?;
+    let body = core_body_for_write(input.entity_type, input.body);
     let item = projection::project_entity_parts(
         &id,
         input.entity_type,
         timestamps.learned_at,
-        &encode_core_body(input.body)?,
+        &encode_core_body(&body)?,
         View::Full,
     );
     Ok(Json(CoreEntityWriteResponse {
@@ -15391,6 +15530,259 @@ mod tests {
         .await;
         assert_eq!(conflict_status, StatusCode::CONFLICT);
         assert_error_envelope(&conflict_body, "INVALID_STATE");
+    }
+
+    #[tokio::test]
+    async fn platform_announcement_turn_never_projects_as_eiri_voice() {
+        let (_dir, server) = test_server();
+        let (conversation_status, conversation_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({ "body": { "name": "Announcement stream" } }),
+            ),
+        )
+        .await;
+        assert_eq!(conversation_status, StatusCode::OK);
+        let conversation_id = conversation_body["id"].as_str().expect("conversation id");
+        let turn_id = seeded_test_entity_id(0x1479_0001).to_hex();
+
+        let (turn_status, turn_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{conversation_id}/turns"),
+                json!({
+                    "id": turn_id,
+                    "learned_at": 1_782_400_001_u64,
+                    "occurred_start": 1_782_400_001_u64,
+                    "occurred_end": 1_782_400_001_u64,
+                    "body": {
+                        "message_type": PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE,
+                        "txt": "Maintenance begins at 22:00 UTC.",
+                        "spkr": "Eiri",
+                        "speaker": "Eiri",
+                        "voice": "eiri",
+                        "attribution": "Eiri",
+                        "render_voice": "eiri",
+                        "at": 1_782_400_001_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(turn_status, StatusCode::OK, "{turn_body:#}");
+        let item = &turn_body["item"];
+        assert_eq!(
+            item["message_type"],
+            Value::from(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
+        );
+        assert_eq!(item["spkr"], Value::from(PLATFORM_ANNOUNCEMENT_VOICE));
+        assert_eq!(item["speaker"], Value::from(PLATFORM_ANNOUNCEMENT_VOICE));
+        assert_eq!(item["voice"], Value::from(PLATFORM_ANNOUNCEMENT_VOICE));
+        assert_eq!(
+            item["attribution"],
+            Value::from(PLATFORM_ANNOUNCEMENT_VOICE)
+        );
+        assert_eq!(
+            item["render_voice"],
+            Value::from(PLATFORM_ANNOUNCEMENT_VOICE)
+        );
+        assert_eq!(item["platform_voice"], Value::from(true));
+        assert_eq!(item["is_eiri"], Value::from(false));
+
+        let (read_status, read_body) = route_json(
+            server,
+            Request::builder()
+                .uri(format!("/v1/core/turns/{turn_id}?view=standard"))
+                .body(Body::empty())
+                .expect("read request"),
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::OK, "{read_body:#}");
+        assert_eq!(
+            read_body["message_type"],
+            Value::from(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
+        );
+        assert_eq!(read_body["voice"], Value::from(PLATFORM_ANNOUNCEMENT_VOICE));
+        assert_ne!(read_body["voice"], Value::from("eiri"));
+    }
+
+    #[tokio::test]
+    async fn platform_announcement_correction_and_retraction_update_delivered_turn() {
+        let (_dir, server) = test_server();
+        let (conversation_status, conversation_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({ "body": { "name": "Ops notices" } }),
+            ),
+        )
+        .await;
+        assert_eq!(conversation_status, StatusCode::OK);
+        let conversation_id = conversation_body["id"].as_str().expect("conversation id");
+        let turn_id = seeded_test_entity_id(0x1479_0002).to_hex();
+        let turns_path = format!("/v1/core/conversations/{conversation_id}/turns");
+
+        let (create_status, create_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &turns_path,
+                json!({
+                    "id": turn_id,
+                    "learned_at": 1_782_400_010_u64,
+                    "occurred_start": 1_782_400_010_u64,
+                    "occurred_end": 1_782_400_010_u64,
+                    "body": {
+                        "message_type": PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE,
+                        "txt": "Storage maintenance starts at 20:00 UTC.",
+                        "announcement_status": "active",
+                        "at": 1_782_400_010_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(create_status, StatusCode::OK, "{create_body:#}");
+
+        let (correct_status, correct_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &turns_path,
+                json!({
+                    "id": turn_id,
+                    "learned_at": 1_782_400_020_u64,
+                    "occurred_start": 1_782_400_010_u64,
+                    "occurred_end": 1_782_400_020_u64,
+                    "body": {
+                        "message_type": PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE,
+                        "txt": "Storage maintenance starts at 21:00 UTC.",
+                        "announcement_status": "corrected",
+                        "at": 1_782_400_020_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(correct_status, StatusCode::OK, "{correct_body:#}");
+        assert_eq!(
+            correct_body["item"]["announcement_status"],
+            Value::from(ANNOUNCEMENT_STATUS_CORRECTED)
+        );
+        assert_eq!(correct_body["item"]["corrected"], Value::from(true));
+
+        let (retract_status, retract_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &turns_path,
+                json!({
+                    "id": turn_id,
+                    "learned_at": 1_782_400_030_u64,
+                    "occurred_start": 1_782_400_010_u64,
+                    "occurred_end": 1_782_400_030_u64,
+                    "body": {
+                        "message_type": PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE,
+                        "txt": "Storage maintenance announcement retracted.",
+                        "retracted": true,
+                        "at": 1_782_400_030_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(retract_status, StatusCode::OK, "{retract_body:#}");
+        assert_eq!(
+            retract_body["item"]["announcement_status"],
+            Value::from(ANNOUNCEMENT_STATUS_RETRACTED)
+        );
+        assert_eq!(retract_body["item"]["retracted"], Value::from(true));
+
+        let (read_status, read_body) = route_json(
+            server,
+            Request::builder()
+                .uri(format!("/v1/core/turns/{turn_id}?view=full"))
+                .body(Body::empty())
+                .expect("read request"),
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::OK, "{read_body:#}");
+        assert_eq!(
+            read_body["txt"],
+            Value::from("Storage maintenance announcement retracted.")
+        );
+        assert_eq!(
+            read_body["announcement_status"],
+            Value::from(ANNOUNCEMENT_STATUS_RETRACTED)
+        );
+        assert_eq!(read_body["voice"], Value::from(PLATFORM_ANNOUNCEMENT_VOICE));
+    }
+
+    #[tokio::test]
+    async fn localized_platform_announcement_exposes_original_text_toggle() {
+        let (_dir, server) = test_server();
+        let (conversation_status, conversation_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                "/v1/core/conversations",
+                json!({ "body": { "name": "Localized notices" } }),
+            ),
+        )
+        .await;
+        assert_eq!(conversation_status, StatusCode::OK);
+        let conversation_id = conversation_body["id"].as_str().expect("conversation id");
+        let turn_id = seeded_test_entity_id(0x1479_0003).to_hex();
+
+        let (turn_status, turn_body) = route_json(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/conversations/{conversation_id}/turns"),
+                json!({
+                    "id": turn_id,
+                    "learned_at": 1_782_400_040_u64,
+                    "occurred_start": 1_782_400_040_u64,
+                    "occurred_end": 1_782_400_040_u64,
+                    "body": {
+                        "messageType": PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE,
+                        "txt": "メンテナンスは22:00 UTCに開始します。",
+                        "locale": "ja-JP",
+                        "originalText": "Maintenance begins at 22:00 UTC.",
+                        "showOriginal": false,
+                        "at": 1_782_400_040_u64
+                    }
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(turn_status, StatusCode::OK, "{turn_body:#}");
+        assert_eq!(turn_body["item"]["localized"], Value::from(true));
+        assert_eq!(turn_body["item"]["locale"], Value::from("ja-JP"));
+        assert_eq!(
+            turn_body["item"]["original_txt"],
+            Value::from("Maintenance begins at 22:00 UTC.")
+        );
+        assert_eq!(turn_body["item"]["show_original"], Value::from(false));
+
+        let (read_status, read_body) = route_json(
+            server,
+            Request::builder()
+                .uri(format!("/v1/core/turns/{turn_id}?view=standard"))
+                .body(Body::empty())
+                .expect("read request"),
+        )
+        .await;
+        assert_eq!(read_status, StatusCode::OK, "{read_body:#}");
+        assert_eq!(
+            read_body["message_type"],
+            Value::from(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
+        );
+        assert_eq!(read_body["show_original"], Value::from(false));
     }
 
     #[tokio::test]
