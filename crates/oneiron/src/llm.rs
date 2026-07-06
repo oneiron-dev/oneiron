@@ -503,6 +503,82 @@ pub enum CallPurpose {
     Other { name: String },
 }
 
+const ORCHESTRATOR_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1@2026-07-02";
+const SUBAGENT_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-mini@2026-07-02";
+const SUMMARIZER_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-nano@2026-07-02";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmRole {
+    Orchestrator,
+    Subagent,
+    Summarizer,
+}
+
+impl LlmRole {
+    #[must_use]
+    pub const fn default_model_id_str(self) -> &'static str {
+        match self {
+            Self::Orchestrator => ORCHESTRATOR_DEFAULT_MODEL_ID,
+            Self::Subagent => SUBAGENT_DEFAULT_MODEL_ID,
+            Self::Summarizer => SUMMARIZER_DEFAULT_MODEL_ID,
+        }
+    }
+
+    #[must_use]
+    pub fn default_model_id(self) -> ModelId {
+        validated_static_model_id(self.default_model_id_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleModelDefaults {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<LlmRole, ModelId>,
+}
+
+impl Default for RoleModelDefaults {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RoleModelDefaults {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            overrides: BTreeMap::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_override(mut self, role: LlmRole, model: ModelId) -> Self {
+        let _ = self.set_override(role, model);
+        self
+    }
+
+    pub fn set_override(&mut self, role: LlmRole, model: ModelId) -> Option<ModelId> {
+        self.overrides.insert(role, model)
+    }
+
+    #[must_use]
+    pub fn override_for(&self, role: LlmRole) -> Option<&ModelId> {
+        self.overrides.get(&role)
+    }
+
+    #[must_use]
+    pub fn resolve(&self, role: LlmRole) -> ModelId {
+        self.override_for(role)
+            .cloned()
+            .unwrap_or_else(|| role.default_model_id())
+    }
+}
+
+fn validated_static_model_id(value: &'static str) -> ModelId {
+    ModelId::new(value)
+        .unwrap_or_else(|error| unreachable!("hard-coded model id {value:?} is invalid: {error}"))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CallClass {
@@ -836,6 +912,68 @@ mod tests {
         assert!("gpt-4.1@2026-07-02".parse::<ModelId>().is_err());
         assert!("openai/gpt-4.1".parse::<ModelId>().is_err());
         assert!("openai/@2026-07-02".parse::<ModelId>().is_err());
+    }
+
+    #[test]
+    fn role_model_defaults_resolve_default_model_for_each_role() {
+        let defaults = RoleModelDefaults::default();
+        let resolved: Vec<_> = [
+            LlmRole::Orchestrator,
+            LlmRole::Subagent,
+            LlmRole::Summarizer,
+        ]
+        .into_iter()
+        .map(|role| defaults.resolve(role).as_str().to_owned())
+        .collect();
+
+        assert_eq!(
+            resolved,
+            [
+                "openai/gpt-4.1@2026-07-02",
+                "openai/gpt-4.1-mini@2026-07-02",
+                "openai/gpt-4.1-nano@2026-07-02",
+            ]
+        );
+    }
+
+    #[test]
+    fn role_model_defaults_prefer_user_override_for_each_role() {
+        let mut defaults = RoleModelDefaults::default();
+        let overrides = [
+            (
+                LlmRole::Orchestrator,
+                ModelId::new("anthropic/claude-opus@2026-07-02").unwrap(),
+            ),
+            (
+                LlmRole::Subagent,
+                ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap(),
+            ),
+            (
+                LlmRole::Summarizer,
+                ModelId::new("local/fixture@2026-07-06").unwrap(),
+            ),
+        ];
+
+        for (role, model) in &overrides {
+            let _ = defaults.set_override(*role, model.clone());
+        }
+
+        let resolved: Vec<_> = [
+            LlmRole::Orchestrator,
+            LlmRole::Subagent,
+            LlmRole::Summarizer,
+        ]
+        .into_iter()
+        .map(|role| defaults.resolve(role).as_str().to_owned())
+        .collect();
+
+        assert_eq!(
+            resolved,
+            overrides
+                .iter()
+                .map(|(_, model)| model.as_str().to_owned())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
