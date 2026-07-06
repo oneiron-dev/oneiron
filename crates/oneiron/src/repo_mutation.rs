@@ -77,6 +77,8 @@ const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const REPO_MUTATION_LOCK_FILE_NAME: &str = "oneiron-repo-mutation.lock";
 const REPO_PROVENANCE_TRAILER_PREFIX: &str = "Oneiron-Claim:";
+const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
+const REPO_PROVENANCE_GIT_AUTHOR_EMAIL: &str = "oneiron@example.invalid";
 
 static REPO_MUTATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -1425,6 +1427,10 @@ pub fn export_repo_provenance_git_note(
     run_git(
         repo_root,
         &[
+            "-c".to_owned(),
+            format!("user.name={REPO_PROVENANCE_GIT_AUTHOR_NAME}"),
+            "-c".to_owned(),
+            format!("user.email={REPO_PROVENANCE_GIT_AUTHOR_EMAIL}"),
             "notes".to_owned(),
             "--ref".to_owned(),
             REPO_PROVENANCE_NOTES_REF.to_owned(),
