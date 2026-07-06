@@ -1,4 +1,6 @@
-use crate::error::{Error, Result};
+#[cfg(feature = "sync")]
+use crate::error::Error;
+use crate::error::Result;
 use crate::types::EntityId;
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.

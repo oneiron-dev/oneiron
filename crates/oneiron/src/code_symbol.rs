@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
@@ -7,8 +9,14 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan
 use crate::code_artifact::decode_code_artifact_body;
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
+use crate::ppr::{
+    SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_deferred_cache,
+};
 use crate::store::Store;
-use crate::types::{ENTITY_TYPE_CODE_ARTIFACT, EntityId};
+use crate::types::{
+    ENTITY_ID_LEN, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, EdgeKind, EntityId,
+    ScoredEntity, TimeRange,
+};
 
 pub const CODE_SYMBOL_TEXT_HASH_LEN: usize = 32;
 pub const CODE_SYMBOL_FINGERPRINT_LEN: usize = 32;
@@ -29,6 +37,16 @@ pub const CODE_SYMBOL_REVISION_KEYS: [&str; 7] = [
     "provenance_claim_id",
     "source_session",
 ];
+pub const CODE_SYMBOL_ENTITY_BODY_KEYS: [&str; 8] = [
+    "schema_version",
+    "repo_key",
+    "path",
+    "name",
+    "kind",
+    "fingerprint",
+    "start_line",
+    "end_line",
+];
 
 const KEY_REPO_REF: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[0];
 const KEY_COMMIT_HASH: &str = CODE_SYMBOL_MANIFEST_BODY_KEYS[1];
@@ -44,9 +62,14 @@ const KEY_FINGERPRINT: &str = CODE_SYMBOL_REVISION_KEYS[3];
 const KEY_CHUNK_INDEXES: &str = CODE_SYMBOL_REVISION_KEYS[4];
 const KEY_PROVENANCE_CLAIM_ID: &str = CODE_SYMBOL_REVISION_KEYS[5];
 const KEY_SOURCE_SESSION: &str = CODE_SYMBOL_REVISION_KEYS[6];
+const KEY_SCHEMA_VERSION: &str = CODE_SYMBOL_ENTITY_BODY_KEYS[0];
+const KEY_REPO_KEY: &str = CODE_SYMBOL_ENTITY_BODY_KEYS[1];
 
 const CODE_SYMBOL_MANIFEST_KEY_PREFIX: &[u8] = b"code_symbol:manifest:v1:";
 const CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX: &[u8] = b"code_symbol:revision:v1:";
+const CODE_SYMBOL_ENTITY_ID_DOMAIN: &[u8] = b"oneiron:code-symbol-entity:v1";
+const CODE_SYMBOL_ENTITY_SCHEMA_VERSION: u64 = 1;
+const TREE_SITTER_RUST_SOURCE_KIND: &str = "rust";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -175,6 +198,77 @@ pub struct CodeSymbolBlame {
     pub code_artifact_id: EntityId,
     pub provenance_claim_id: Option<EntityId>,
     pub source_session: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeSymbolSource<'a> {
+    pub path: &'a str,
+    pub text: &'a str,
+}
+
+impl<'a> CodeSymbolSource<'a> {
+    #[must_use]
+    pub const fn new(path: &'a str, text: &'a str) -> Self {
+        Self { path, text }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct CodeSymbolGraphEdge {
+    pub source: EntityId,
+    pub kind: EdgeKind,
+    pub target: EntityId,
+    pub weight: f32,
+}
+
+impl CodeSymbolGraphEdge {
+    #[must_use]
+    pub const fn new(source: EntityId, kind: EdgeKind, target: EntityId, weight: f32) -> Self {
+        Self {
+            source,
+            kind,
+            target,
+            weight,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct CodeSymbolGraph {
+    pub manifest: CodeSymbolManifest,
+    pub edges: Vec<CodeSymbolGraphEdge>,
+}
+
+impl CodeSymbolGraph {
+    pub fn new(manifest: CodeSymbolManifest, mut edges: Vec<CodeSymbolGraphEdge>) -> Result<Self> {
+        validate_code_symbol_manifest(&manifest)?;
+        for edge in &edges {
+            validate_code_symbol_graph_edge(edge)?;
+        }
+        edges.sort_by(compare_code_symbol_graph_edges);
+        edges.dedup_by(|left, right| {
+            left.source == right.source
+                && left.kind == right.kind
+                && left.target == right.target
+                && left.weight.to_bits() == right.weight.to_bits()
+        });
+        Ok(Self { manifest, edges })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CodeSymbolDefinition {
+    pub entity_id: EntityId,
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub fingerprint: [u8; CODE_SYMBOL_FINGERPRINT_LEN],
+    pub start_line: u32,
+    pub end_line: u32,
 }
 
 pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<u8>> {
@@ -343,6 +437,145 @@ pub fn derive_symbol_fingerprint(
     Ok(hasher.finalize().into())
 }
 
+pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
+    validate_symbol_shape(symbol)?;
+    deterministic_entity_id(
+        CODE_SYMBOL_ENTITY_ID_DOMAIN,
+        &[
+            repo_identity_key(repo_ref).as_bytes(),
+            symbol.path.as_bytes(),
+            symbol.name.as_bytes(),
+            symbol.kind.as_bytes(),
+            &symbol.fingerprint,
+        ],
+    )
+}
+
+pub fn derive_code_symbol_graph_from_sources<'a>(
+    repo_ref: RepoRef,
+    commit_hash: Option<String>,
+    sources: impl IntoIterator<Item = CodeSymbolSource<'a>>,
+) -> Result<CodeSymbolGraph> {
+    let mut sources = sources.into_iter().collect::<Vec<_>>();
+    sources.sort_by(|left, right| left.path.cmp(right.path));
+
+    let mut parser = tree_sitter::Parser::new();
+    let language = tree_sitter_rust::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter Rust language rejected"))?;
+
+    let mut chunks = Vec::new();
+    let mut extracted = Vec::<ExtractedCodeSymbol>::new();
+    let mut parsed_sources = Vec::<ParsedRustSource<'a>>::new();
+
+    for source in sources {
+        validate_manifest_path(source.path)?;
+        if !is_tree_sitter_rust_source(source.path) {
+            continue;
+        }
+        let tree = parser
+            .parse(source.text, None)
+            .ok_or(Error::InvalidCodeSymbolManifestBody(
+                "tree-sitter Rust parse failed",
+            ))?;
+        let mut source_symbol_indexes = Vec::new();
+        collect_rust_definitions(
+            tree.root_node(),
+            source.path,
+            source.text,
+            &mut chunks,
+            &mut extracted,
+            &mut source_symbol_indexes,
+        )?;
+        parsed_sources.push(ParsedRustSource {
+            text: source.text,
+            tree,
+            symbol_indexes: source_symbol_indexes,
+        });
+    }
+
+    if extracted.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
+        return Err(Error::InvalidCodeSymbolManifestBody(
+            "tree-sitter symbol extraction exceeded manifest symbol cap",
+        ));
+    }
+
+    let mut symbols_by_name = HashMap::<String, Vec<usize>>::new();
+    for (index, symbol) in extracted.iter().enumerate() {
+        symbols_by_name
+            .entry(symbol.revision.name.clone())
+            .or_default()
+            .push(index);
+    }
+
+    let repo_key = repo_identity_key(&repo_ref);
+    let symbol_ids = extracted
+        .iter()
+        .map(|symbol| code_symbol_entity_id(&repo_ref, &symbol.revision))
+        .collect::<Result<Vec<_>>>()?;
+    let mut edges = Vec::new();
+    let mut mention_pairs = BTreeSet::<(EntityId, EntityId)>::new();
+
+    for source in &parsed_sources {
+        let root = source.tree.root_node();
+        for &source_index in &source.symbol_indexes {
+            let symbol = &extracted[source_index];
+            let mut refs = Vec::new();
+            collect_identifier_refs_in_range(
+                root,
+                symbol.start_byte,
+                symbol.end_byte,
+                Some((symbol.name_start_byte, symbol.name_end_byte)),
+                source.text.as_bytes(),
+                &mut refs,
+            )?;
+            let mut seen_names = HashSet::new();
+            for name in refs {
+                if !seen_names.insert(name.clone()) {
+                    continue;
+                }
+                let Some(target_indexes) = symbols_by_name.get(&name) else {
+                    continue;
+                };
+                for &target_index in target_indexes {
+                    if target_index == source_index {
+                        continue;
+                    }
+                    let source_id = symbol_ids[source_index];
+                    let target_id = symbol_ids[target_index];
+                    if mention_pairs.insert((source_id, target_id)) {
+                        edges.push(CodeSymbolGraphEdge::new(
+                            source_id,
+                            EdgeKind::Mentions,
+                            target_id,
+                            EdgeKind::Mentions.default_weight().unwrap_or(0.6),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    add_same_file_contiguity_edges(&extracted, &symbol_ids, &mut edges);
+
+    let manifest = CodeSymbolManifest::new(
+        repo_ref,
+        commit_hash,
+        chunks,
+        extracted
+            .into_iter()
+            .map(|symbol| {
+                let mut revision = symbol.revision;
+                revision.source_session =
+                    Some(format!("{TREE_SITTER_RUST_SOURCE_KIND}:{}", repo_key));
+                revision
+            })
+            .collect(),
+    )?;
+    CodeSymbolGraph::new(manifest, edges)
+}
+
 impl Vault {
     pub fn put_code_symbol_manifest(
         &self,
@@ -376,6 +609,57 @@ impl Vault {
         }
         wtxn.commit()?;
         Ok(())
+    }
+
+    pub fn put_code_symbol_graph(
+        &self,
+        code_artifact_id: &EntityId,
+        graph: &CodeSymbolGraph,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        validate_code_symbol_manifest(&graph.manifest)?;
+        scan_code_symbol_manifest_metadata(&graph.manifest)?;
+        {
+            let rtxn = self.store.env.read_txn()?;
+            validate_code_artifact_target(
+                &self.store,
+                &rtxn,
+                code_artifact_id,
+                &graph.manifest.repo_ref,
+            )?;
+        }
+
+        let mut batch = self.batch();
+        let mut symbol_ids = BTreeSet::new();
+        for symbol in &graph.manifest.symbols {
+            let symbol_id = code_symbol_entity_id(&graph.manifest.repo_ref, symbol)?;
+            symbol_ids.insert(symbol_id);
+            let (start_line, end_line) = symbol_line_range(symbol, &graph.manifest.chunks)?;
+            let body = encode_code_symbol_entity_body(
+                &graph.manifest.repo_ref,
+                symbol,
+                start_line,
+                end_line,
+            )?;
+            batch = batch
+                .put(
+                    &symbol_id,
+                    ENTITY_TYPE_CODE_SYMBOL,
+                    occurred,
+                    learned_at,
+                    &body,
+                )
+                .edge(&symbol_id, EdgeKind::PartOf, code_artifact_id, 1.0);
+        }
+        for edge in &graph.edges {
+            validate_code_symbol_graph_edge(edge)?;
+            if symbol_ids.contains(&edge.source) && symbol_ids.contains(&edge.target) {
+                batch = batch.edge(&edge.source, edge.kind, &edge.target, edge.weight);
+            }
+        }
+        batch.commit()?;
+        self.put_code_symbol_manifest(code_artifact_id, &graph.manifest)
     }
 
     pub fn get_code_symbol_manifest(
@@ -465,6 +749,452 @@ impl Vault {
         }
         Ok(result)
     }
+
+    pub fn code_symbol_definitions(
+        &self,
+        code_artifact_id: &EntityId,
+        name: &str,
+    ) -> Result<Vec<CodeSymbolDefinition>> {
+        validate_text(name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+        let Some(manifest) = self.get_code_symbol_manifest(code_artifact_id)? else {
+            return Ok(Vec::new());
+        };
+        manifest
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name == name)
+            .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+            .collect()
+    }
+
+    pub fn code_symbol_references(
+        &self,
+        code_artifact_id: &EntityId,
+        path: &str,
+        name: &str,
+        fingerprint: &[u8; CODE_SYMBOL_FINGERPRINT_LEN],
+    ) -> Result<Vec<EntityId>> {
+        let Some(definition) =
+            self.code_symbol_definition_by_identity(code_artifact_id, path, name, fingerprint)?
+        else {
+            return Ok(Vec::new());
+        };
+        self.sources(&definition.entity_id, EdgeKind::Mentions, None)
+    }
+
+    pub fn code_symbol_callers(
+        &self,
+        code_artifact_id: &EntityId,
+        path: &str,
+        name: &str,
+        fingerprint: &[u8; CODE_SYMBOL_FINGERPRINT_LEN],
+    ) -> Result<Vec<EntityId>> {
+        let Some(definition) =
+            self.code_symbol_definition_by_identity(code_artifact_id, path, name, fingerprint)?
+        else {
+            return Ok(Vec::new());
+        };
+        self.sources(
+            &definition.entity_id,
+            EdgeKind::Mentions,
+            Some(ENTITY_TYPE_CODE_SYMBOL),
+        )
+    }
+
+    pub fn code_symbol_ppr_neighbors(
+        &self,
+        code_artifact_id: &EntityId,
+        seed_name: &str,
+        depth: u32,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        let definitions = self.code_symbol_definitions(code_artifact_id, seed_name)?;
+        if definitions.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let seeds = definitions
+            .iter()
+            .map(|definition| definition.entity_id)
+            .collect::<Vec<_>>();
+        let rtxn = self.store.env.read_txn()?;
+        let (scores, deferred) = ppr_query_in_txn_with_deferred_cache(
+            &self.store,
+            &rtxn,
+            &seeds,
+            depth,
+            0.15,
+            SeedWeighting::Specificity,
+        )?;
+        let mut filtered = Vec::new();
+        for score in scores {
+            if entity_type_in_txn(&self.store, &rtxn, &score.id)? == Some(ENTITY_TYPE_CODE_SYMBOL) {
+                filtered.push(score);
+                if filtered.len() == limit {
+                    break;
+                }
+            }
+        }
+        drop(rtxn);
+        if let Some(write) = deferred {
+            flush_deferred_ppr_cache_writes(&self.store, &[write])?;
+        }
+        Ok(filtered)
+    }
+
+    fn code_symbol_definition_by_identity(
+        &self,
+        code_artifact_id: &EntityId,
+        path: &str,
+        name: &str,
+        fingerprint: &[u8; CODE_SYMBOL_FINGERPRINT_LEN],
+    ) -> Result<Option<CodeSymbolDefinition>> {
+        validate_manifest_path(path)?;
+        validate_text(name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+        let Some(manifest) = self.get_code_symbol_manifest(code_artifact_id)? else {
+            return Ok(None);
+        };
+        manifest
+            .symbols
+            .iter()
+            .find(|symbol| {
+                symbol.path == path && symbol.name == name && &symbol.fingerprint == fingerprint
+            })
+            .map(|symbol| code_symbol_definition(&manifest.repo_ref, symbol, &manifest.chunks))
+            .transpose()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExtractedCodeSymbol {
+    revision: CodeSymbolRevision,
+    start_byte: usize,
+    end_byte: usize,
+    name_start_byte: usize,
+    name_end_byte: usize,
+    start_line: u32,
+    end_line: u32,
+}
+
+struct ParsedRustSource<'a> {
+    text: &'a str,
+    tree: tree_sitter::Tree,
+    symbol_indexes: Vec<usize>,
+}
+
+fn is_tree_sitter_rust_source(path: &str) -> bool {
+    path.ends_with(".rs")
+}
+
+fn collect_rust_definitions(
+    node: tree_sitter::Node<'_>,
+    path: &str,
+    source: &str,
+    chunks: &mut Vec<CodeChunk>,
+    symbols: &mut Vec<ExtractedCodeSymbol>,
+    source_symbol_indexes: &mut Vec<usize>,
+) -> Result<()> {
+    if let Some(kind) = rust_definition_kind(node.kind())
+        && let Some(name_node) = node.child_by_field_name("name")
+    {
+        let name = node_text(name_node, source)?.to_owned();
+        validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+        let text = node_text(node, source)?;
+        let start_line = tree_sitter_line_number(node.start_position().row)?;
+        let end_line = tree_sitter_line_number(node.end_position().row)?;
+        let chunk = CodeChunk::from_text(path, start_line, end_line, text)?;
+        let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
+            Error::InvalidCodeSymbolManifestBody("tree-sitter chunk index exceeds u32")
+        })?;
+        let fingerprint =
+            derive_symbol_fingerprint(path, &name, kind, std::slice::from_ref(&chunk))?;
+        chunks.push(chunk);
+        let byte_range = node.byte_range();
+        let name_range = name_node.byte_range();
+        let symbol_index = symbols.len();
+        symbols.push(ExtractedCodeSymbol {
+            revision: CodeSymbolRevision::new(
+                path,
+                name,
+                kind,
+                fingerprint,
+                vec![chunk_index],
+                None,
+                None,
+            ),
+            start_byte: byte_range.start,
+            end_byte: byte_range.end,
+            name_start_byte: name_range.start,
+            name_end_byte: name_range.end,
+            start_line,
+            end_line,
+        });
+        source_symbol_indexes.push(symbol_index);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_rust_definitions(child, path, source, chunks, symbols, source_symbol_indexes)?;
+    }
+    Ok(())
+}
+
+fn rust_definition_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "function_item" => Some("function"),
+        "struct_item" => Some("struct"),
+        "enum_item" => Some("enum"),
+        "trait_item" => Some("trait"),
+        "mod_item" => Some("module"),
+        "const_item" => Some("const"),
+        "static_item" => Some("static"),
+        "type_item" => Some("type"),
+        "macro_definition" => Some("macro"),
+        _ => None,
+    }
+}
+
+fn collect_identifier_refs_in_range(
+    node: tree_sitter::Node<'_>,
+    start_byte: usize,
+    end_byte: usize,
+    skip_range: Option<(usize, usize)>,
+    source: &[u8],
+    refs: &mut Vec<String>,
+) -> Result<()> {
+    let range = node.byte_range();
+    if range.end <= start_byte || range.start >= end_byte {
+        return Ok(());
+    }
+    if let Some((skip_start, skip_end)) = skip_range
+        && range.start == skip_start
+        && range.end == skip_end
+    {
+        return Ok(());
+    }
+    if node.child_count() == 0 && is_reference_identifier_kind(node.kind()) {
+        let bytes = source
+            .get(range)
+            .ok_or(Error::InvalidCodeSymbolManifestBody(
+                "tree-sitter identifier byte range is invalid",
+            ))?;
+        let text = std::str::from_utf8(bytes).map_err(|_| {
+            Error::InvalidCodeSymbolManifestBody("tree-sitter identifier is not UTF-8")
+        })?;
+        if !text.is_empty() {
+            refs.push(text.to_owned());
+        }
+        return Ok(());
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifier_refs_in_range(child, start_byte, end_byte, skip_range, source, refs)?;
+    }
+    Ok(())
+}
+
+fn is_reference_identifier_kind(kind: &str) -> bool {
+    matches!(kind, "identifier" | "type_identifier" | "field_identifier")
+}
+
+fn add_same_file_contiguity_edges(
+    symbols: &[ExtractedCodeSymbol],
+    symbol_ids: &[EntityId],
+    edges: &mut Vec<CodeSymbolGraphEdge>,
+) {
+    let mut by_path = BTreeMap::<&str, Vec<usize>>::new();
+    for (index, symbol) in symbols.iter().enumerate() {
+        by_path
+            .entry(symbol.revision.path.as_str())
+            .or_default()
+            .push(index);
+    }
+    for indexes in by_path.values_mut() {
+        indexes.sort_by(|left, right| {
+            let left_symbol = &symbols[*left];
+            let right_symbol = &symbols[*right];
+            left_symbol
+                .start_line
+                .cmp(&right_symbol.start_line)
+                .then_with(|| left_symbol.end_line.cmp(&right_symbol.end_line))
+                .then_with(|| left_symbol.revision.name.cmp(&right_symbol.revision.name))
+                .then_with(|| left_symbol.revision.kind.cmp(&right_symbol.revision.kind))
+        });
+        for pair in indexes.windows(2) {
+            let left = symbol_ids[pair[0]];
+            let right = symbol_ids[pair[1]];
+            edges.push(CodeSymbolGraphEdge::new(
+                left,
+                EdgeKind::Attached,
+                right,
+                0.2,
+            ));
+            edges.push(CodeSymbolGraphEdge::new(
+                right,
+                EdgeKind::Attached,
+                left,
+                0.2,
+            ));
+        }
+    }
+}
+
+fn code_symbol_definition(
+    repo_ref: &RepoRef,
+    symbol: &CodeSymbolRevision,
+    chunks: &[CodeChunk],
+) -> Result<CodeSymbolDefinition> {
+    let (start_line, end_line) = symbol_line_range(symbol, chunks)?;
+    Ok(CodeSymbolDefinition {
+        entity_id: code_symbol_entity_id(repo_ref, symbol)?,
+        path: symbol.path.clone(),
+        name: symbol.name.clone(),
+        kind: symbol.kind.clone(),
+        fingerprint: symbol.fingerprint,
+        start_line,
+        end_line,
+    })
+}
+
+fn symbol_line_range(symbol: &CodeSymbolRevision, chunks: &[CodeChunk]) -> Result<(u32, u32)> {
+    validate_symbol_indexes(symbol, chunks)?;
+    let mut start_line = u32::MAX;
+    let mut end_line = 0_u32;
+    for index in &symbol.chunk_indexes {
+        let index = usize::try_from(*index).map_err(|_| {
+            Error::InvalidCodeSymbolManifestBody("symbol chunk index exceeds usize")
+        })?;
+        let chunk = chunks
+            .get(index)
+            .ok_or(Error::InvalidCodeSymbolManifestBody(
+                "symbol chunk index is out of bounds",
+            ))?;
+        start_line = start_line.min(chunk.start_line);
+        end_line = end_line.max(chunk.end_line);
+    }
+    Ok((start_line, end_line))
+}
+
+fn encode_code_symbol_entity_body(
+    repo_ref: &RepoRef,
+    symbol: &CodeSymbolRevision,
+    start_line: u32,
+    end_line: u32,
+) -> Result<Vec<u8>> {
+    let value = Value::Map(vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::Integer(CODE_SYMBOL_ENTITY_SCHEMA_VERSION.into()),
+        ),
+        (
+            Value::from(KEY_REPO_KEY),
+            Value::from(repo_identity_key(repo_ref)),
+        ),
+        (Value::from(KEY_PATH), Value::from(symbol.path.as_str())),
+        (Value::from(KEY_NAME), Value::from(symbol.name.as_str())),
+        (Value::from(KEY_KIND), Value::from(symbol.kind.as_str())),
+        (
+            Value::from(KEY_FINGERPRINT),
+            Value::Binary(symbol.fingerprint.to_vec()),
+        ),
+        (
+            Value::from(KEY_START_LINE),
+            Value::Integer(u64::from(start_line).into()),
+        ),
+        (
+            Value::from(KEY_END_LINE),
+            Value::Integer(u64::from(end_line).into()),
+        ),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &value)
+        .map_err(|_| Error::InvariantViolation("code symbol entity MessagePack encode failed"))?;
+    Ok(out)
+}
+
+fn validate_code_symbol_graph_edge(edge: &CodeSymbolGraphEdge) -> Result<()> {
+    if edge.source == edge.target {
+        return Err(Error::InvalidCodeSymbolManifestBody(
+            "code symbol graph edge cannot be a self-edge",
+        ));
+    }
+    if !edge.weight.is_finite() || !(0.0..=1.0).contains(&edge.weight) || edge.weight == 0.0 {
+        return Err(Error::InvalidCodeSymbolManifestBody(
+            "code symbol graph edge weight must be finite and in (0, 1]",
+        ));
+    }
+    match edge.kind {
+        EdgeKind::Mentions | EdgeKind::Attached => Ok(()),
+        _ => Err(Error::InvalidCodeSymbolManifestBody(
+            "code symbol graph edge kind must be Mentions or Attached",
+        )),
+    }
+}
+
+fn compare_code_symbol_graph_edges(
+    left: &CodeSymbolGraphEdge,
+    right: &CodeSymbolGraphEdge,
+) -> std::cmp::Ordering {
+    left.source
+        .cmp(&right.source)
+        .then_with(|| (left.kind as u8).cmp(&(right.kind as u8)))
+        .then_with(|| left.target.cmp(&right.target))
+        .then_with(|| left.weight.to_bits().cmp(&right.weight.to_bits()))
+}
+
+fn repo_identity_key(repo_ref: &RepoRef) -> String {
+    match repo_ref {
+        RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
+        RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
+    }
+}
+
+fn deterministic_entity_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
+    for salt in 0_u64..=u64::MAX {
+        let mut hasher = Sha256::new();
+        hasher.update(domain);
+        hasher.update(salt.to_le_bytes());
+        for part in parts {
+            hash_len(&mut hasher, part.len())?;
+            hasher.update(part);
+        }
+        let hash = hasher.finalize();
+        let mut id = [0_u8; ENTITY_ID_LEN];
+        id.copy_from_slice(&hash[..ENTITY_ID_LEN]);
+        if let Ok(id) = EntityId::from_bytes(id) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "code symbol deterministic entity id exhausted salt space",
+    ))
+}
+
+fn hash_len(hasher: &mut Sha256, len: usize) -> Result<()> {
+    let len = u64::try_from(len)
+        .map_err(|_| Error::ArithmeticOverflow("code symbol hash material length overflow"))?;
+    hasher.update(len.to_le_bytes());
+    Ok(())
+}
+
+fn tree_sitter_line_number(row: usize) -> Result<u32> {
+    u32::try_from(row + 1)
+        .map_err(|_| Error::InvalidCodeSymbolManifestBody("tree-sitter row exceeds u32"))
+}
+
+fn node_text<'a>(node: tree_sitter::Node<'_>, source: &'a str) -> Result<&'a str> {
+    source
+        .get(node.byte_range())
+        .ok_or(Error::InvalidCodeSymbolManifestBody(
+            "tree-sitter node byte range is invalid",
+        ))
+}
+
+fn entity_type_in_txn(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    Ok(Some(header.entity_type))
 }
 
 pub(crate) fn delete_code_symbol_manifest_in_txn(
@@ -1223,7 +1953,9 @@ mod tests {
         CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
     };
     use crate::error::{Error, ErrorKind};
-    use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+    use crate::types::{
+        ENTITY_TYPE_CODE_SYMBOL, EdgeKind, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig,
+    };
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -1409,6 +2141,110 @@ mod tests {
             derive_symbol_fingerprint("src/lib.rs", "answer", "function", &[second, first])?;
 
         assert_eq!(ordered, reversed);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_tree_sitter_symbol_graph_extracts_refs_and_contiguity_edges() -> Result<()> {
+        let graph = derive_code_symbol_graph_from_sources(
+            repo_ref(),
+            Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            [CodeSymbolSource::new(
+                "src/lib.rs",
+                "pub struct Runner;\n\
+                 pub fn answer() -> u8 { 42 }\n\
+                 pub fn caller() -> u8 { answer() }\n",
+            )],
+        )?;
+
+        let names = graph
+            .manifest
+            .symbols
+            .iter()
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["Runner", "answer", "caller"]);
+        assert!(graph.manifest.symbols.iter().all(|symbol| {
+            symbol
+                .source_session
+                .as_deref()
+                .is_some_and(|source| source.starts_with("rust:github:oneiron-dev/oneiron"))
+        }));
+
+        let answer = graph
+            .manifest
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "answer")
+            .expect("answer symbol");
+        let caller = graph
+            .manifest
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "caller")
+            .expect("caller symbol");
+        let answer_id = code_symbol_entity_id(&graph.manifest.repo_ref, answer)?;
+        let caller_id = code_symbol_entity_id(&graph.manifest.repo_ref, caller)?;
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == caller_id && edge.kind == EdgeKind::Mentions && edge.target == answer_id
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == answer_id && edge.kind == EdgeKind::Attached && edge.target == caller_id
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source == caller_id && edge.kind == EdgeKind::Attached && edge.target == answer_id
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let id = entity(0xD1);
+        let repo_ref = repo_ref();
+        let graph = derive_code_symbol_graph_from_sources(
+            repo_ref.clone(),
+            Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            [CodeSymbolSource::new(
+                "src/lib.rs",
+                "pub fn answer() -> u8 { 42 }\n\
+                 pub fn caller() -> u8 { answer() }\n",
+            )],
+        )?;
+
+        vault.put_code_artifact(
+            &id,
+            &code_body(&repo_ref),
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        vault.put_code_symbol_graph(&id, &graph, TimeRange { start: 10, end: 10 }, 11)?;
+
+        let answer = vault.code_symbol_definitions(&id, "answer")?;
+        assert_eq!(answer.len(), 1);
+        let answer = &answer[0];
+        assert_eq!(
+            vault.get_entity_type(&answer.entity_id)?,
+            Some(ENTITY_TYPE_CODE_SYMBOL)
+        );
+        assert!(vault.edge_exists(&answer.entity_id, EdgeKind::PartOf, &id)?);
+
+        let references =
+            vault.code_symbol_references(&id, &answer.path, &answer.name, &answer.fingerprint)?;
+        let callers =
+            vault.code_symbol_callers(&id, &answer.path, &answer.name, &answer.fingerprint)?;
+        assert_eq!(references, callers);
+        assert_eq!(callers.len(), 1);
+        let caller = vault.code_symbol_definitions(&id, "caller")?;
+        assert_eq!(caller.len(), 1);
+        assert_eq!(callers[0], caller[0].entity_id);
+
+        let neighbors = vault.code_symbol_ppr_neighbors(&id, "answer", 2, 8)?;
+        assert!(
+            neighbors
+                .iter()
+                .any(|neighbor| neighbor.id == caller[0].entity_id)
+        );
         Ok(())
     }
 

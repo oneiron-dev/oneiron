@@ -62,6 +62,7 @@ pub const ENTITY_TYPE_TASK_LIST: u8 = 80;
 pub const ENTITY_TYPE_TASK: u8 = 81;
 pub const ENTITY_TYPE_MACHINE: u8 = 82;
 pub const ENTITY_TYPE_CODE_ARTIFACT: u8 = 83;
+pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 84;
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// MODEL substrate entity (ONE-1138, ratified): engine-authored maintenance
 /// kind — "written when a substrate first appears in a write path". Public
@@ -385,6 +386,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CODE_ARTIFACT",
         type_byte: ENTITY_TYPE_CODE_ARTIFACT,
         short_id_prefix: Some("cd"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
+    },
+    EntityTypeRegistryEntry {
+        kind: "CODE_SYMBOL",
+        type_byte: ENTITY_TYPE_CODE_SYMBOL,
+        short_id_prefix: Some("cs"),
         classification: EntityClassification::Pack,
         band: TypeByteBand::Productivity,
     },
