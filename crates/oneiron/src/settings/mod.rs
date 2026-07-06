@@ -7,4 +7,5 @@ pub use model_versioning::{
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,
     ModelStackIdError, ModelStackModel, ModelStackPreference, ModelStackRegistry,
     ModelStackRegistryError, ModelStackResolution, default_model_stack_registry,
+    try_default_model_stack_registry,
 };

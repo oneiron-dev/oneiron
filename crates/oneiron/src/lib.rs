@@ -258,6 +258,7 @@ pub use crate::settings::{
     ModelStack, ModelStackDeprecation, ModelStackDeprecationStage, ModelStackDeprecationStatus,
     ModelStackDisclosure, ModelStackId, ModelStackIdError, ModelStackModel, ModelStackPreference,
     ModelStackRegistry, ModelStackRegistryError, ModelStackResolution, default_model_stack_registry,
+    try_default_model_stack_registry,
 };
 pub use crate::skill::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,

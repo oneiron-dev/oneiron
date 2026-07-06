@@ -8,11 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::llm::ModelId;
+use crate::llm::{ModelId, ModelIdError};
 
-pub const DEFAULT_MODEL_STACK_CURRENT_ID: &str = "default";
+pub const DEFAULT_MODEL_STACK_CURRENT_ID: &str = "default-v2";
 pub const DEFAULT_MODEL_STACK_V1_ID: &str = "default-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -79,7 +79,7 @@ impl ModelStackModel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ModelStack {
     pub id: ModelStackId,
     pub display_name: String,
@@ -107,7 +107,6 @@ impl ModelStack {
         Ok(stack)
     }
 
-    #[must_use]
     pub fn with_deprecation(mut self, deprecation: ModelStackDeprecation) -> Self {
         self.deprecation = Some(deprecation);
         self
@@ -159,6 +158,12 @@ impl ModelStack {
                     stack: self.id.clone(),
                 });
             }
+            if role != entry.role.as_str() {
+                return Err(ModelStackRegistryError::UnnormalizedModelRole {
+                    stack: self.id.clone(),
+                    role: entry.role.clone(),
+                });
+            }
             if !roles.insert(role.to_owned()) {
                 return Err(ModelStackRegistryError::DuplicateModelRole {
                     stack: self.id.clone(),
@@ -166,12 +171,43 @@ impl ModelStack {
                 });
             }
         }
+        if let Some(deprecation) = self.deprecation {
+            deprecation.validate()?;
+        }
 
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for ModelStack {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawModelStack {
+            id: ModelStackId,
+            display_name: String,
+            generation: u32,
+            models: Vec<ModelStackModel>,
+            #[serde(default)]
+            deprecation: Option<ModelStackDeprecation>,
+        }
+
+        let raw = RawModelStack::deserialize(deserializer)?;
+        let stack = Self {
+            id: raw.id,
+            display_name: raw.display_name,
+            generation: raw.generation,
+            models: raw.models,
+            deprecation: raw.deprecation,
+        };
+        stack.validate().map_err(serde::de::Error::custom)?;
+        Ok(stack)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ModelStackDeprecation {
     pub notice_starts_epoch_day: u32,
     pub retires_epoch_day: u32,
@@ -194,14 +230,24 @@ impl ModelStackDeprecation {
         })
     }
 
+    fn validate(self) -> std::result::Result<(), ModelStackRegistryError> {
+        if self.notice_starts_epoch_day >= self.retires_epoch_day {
+            return Err(ModelStackRegistryError::InvalidDeprecationWindow {
+                notice_starts_epoch_day: self.notice_starts_epoch_day,
+                retires_epoch_day: self.retires_epoch_day,
+            });
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn status(self, as_of_epoch_day: u32) -> ModelStackDeprecationStatus {
-        let stage = if as_of_epoch_day < self.notice_starts_epoch_day {
-            ModelStackDeprecationStage::Scheduled
-        } else if as_of_epoch_day < self.retires_epoch_day {
+        let stage = if as_of_epoch_day >= self.retires_epoch_day {
+            ModelStackDeprecationStage::Retired
+        } else if as_of_epoch_day >= self.notice_starts_epoch_day {
             ModelStackDeprecationStage::Countdown
         } else {
-            ModelStackDeprecationStage::Retired
+            ModelStackDeprecationStage::Scheduled
         };
 
         ModelStackDeprecationStatus {
@@ -209,12 +255,12 @@ impl ModelStackDeprecation {
             notice_starts_epoch_day: self.notice_starts_epoch_day,
             retires_epoch_day: self.retires_epoch_day,
             days_until_notice: if stage == ModelStackDeprecationStage::Scheduled {
-                Some(self.notice_starts_epoch_day - as_of_epoch_day)
+                self.notice_starts_epoch_day.checked_sub(as_of_epoch_day)
             } else {
                 None
             },
             days_until_retirement: if stage != ModelStackDeprecationStage::Retired {
-                Some(self.retires_epoch_day - as_of_epoch_day)
+                self.retires_epoch_day.checked_sub(as_of_epoch_day)
             } else {
                 None
             },
@@ -224,6 +270,23 @@ impl ModelStackDeprecation {
     #[must_use]
     pub fn is_retired(self, as_of_epoch_day: u32) -> bool {
         as_of_epoch_day >= self.retires_epoch_day
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelStackDeprecation {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawModelStackDeprecation {
+            notice_starts_epoch_day: u32,
+            retires_epoch_day: u32,
+        }
+
+        let raw = RawModelStackDeprecation::deserialize(deserializer)?;
+        Self::new(raw.notice_starts_epoch_day, raw.retires_epoch_day)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -263,7 +326,7 @@ impl ModelStackPreference {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ModelStackRegistry {
     pub current_default: ModelStackId,
     pub stacks: BTreeMap<ModelStackId, ModelStack>,
@@ -355,6 +418,32 @@ impl ModelStackRegistry {
     }
 }
 
+impl<'de> Deserialize<'de> for ModelStackRegistry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawModelStackRegistry {
+            current_default: ModelStackId,
+            stacks: BTreeMap<ModelStackId, ModelStack>,
+        }
+
+        let raw = RawModelStackRegistry::deserialize(deserializer)?;
+        let mut stacks = Vec::with_capacity(raw.stacks.len());
+        for (key, stack) in raw.stacks {
+            if key != stack.id {
+                return Err(serde::de::Error::custom(format_args!(
+                    "model stack registry key {key} does not match stack id {}",
+                    stack.id
+                )));
+            }
+            stacks.push(stack);
+        }
+        Self::new(raw.current_default, stacks).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelStackResolution {
     pub preference: ModelStackPreference,
@@ -387,6 +476,8 @@ pub enum ModelStackRegistryError {
     EmptyModelList { stack: ModelStackId },
     #[error("model stack {stack} has an empty model role")]
     EmptyModelRole { stack: ModelStackId },
+    #[error("model stack {stack} has unnormalized model role {role:?}")]
+    UnnormalizedModelRole { stack: ModelStackId, role: String },
     #[error("model stack {stack} repeats model role {role}")]
     DuplicateModelRole { stack: ModelStackId, role: String },
     #[error(
@@ -404,24 +495,40 @@ pub enum ModelStackRegistryError {
         as_of_epoch_day: u32,
         retires_epoch_day: u32,
     },
+    #[error("compiled model stack id {id} is invalid: {source}")]
+    InvalidCompiledStackId {
+        id: String,
+        source: ModelStackIdError,
+    },
+    #[error("compiled model id {model} is invalid: {source}")]
+    InvalidCompiledModelId { model: String, source: ModelIdError },
 }
 
 #[must_use]
 pub fn default_model_stack_registry() -> ModelStackRegistry {
-    let current = default_stack(DEFAULT_MODEL_STACK_CURRENT_ID, "Default", 2, "2026-07-06");
-    let v1 = default_stack(DEFAULT_MODEL_STACK_V1_ID, "Default v1", 1, "2026-06-01")
-        .with_deprecation(ModelStackDeprecation::new(20_640, 20_730).unwrap());
-
-    ModelStackRegistry::new(
-        ModelStackId::new(DEFAULT_MODEL_STACK_CURRENT_ID).unwrap(),
-        [current, v1],
-    )
-    .expect("compiled default model stack registry is valid")
+    try_default_model_stack_registry().expect("compiled default model stack registry is valid")
 }
 
-fn default_stack(id: &str, display_name: &str, generation: u32, revision: &str) -> ModelStack {
+pub fn try_default_model_stack_registry()
+-> std::result::Result<ModelStackRegistry, ModelStackRegistryError> {
+    let current = default_stack(DEFAULT_MODEL_STACK_CURRENT_ID, "Default", 2, "2026-07-06")?;
+    let v1 = default_stack(DEFAULT_MODEL_STACK_V1_ID, "Default v1", 1, "2026-06-01")?
+        .with_deprecation(ModelStackDeprecation::new(20_640, 20_730)?);
+
+    ModelStackRegistry::new(
+        compiled_stack_id(DEFAULT_MODEL_STACK_CURRENT_ID)?,
+        [current, v1],
+    )
+}
+
+fn default_stack(
+    id: &str,
+    display_name: &str,
+    generation: u32,
+    revision: &str,
+) -> std::result::Result<ModelStack, ModelStackRegistryError> {
     ModelStack::new(
-        ModelStackId::new(id).unwrap(),
+        compiled_stack_id(id)?,
         display_name,
         generation,
         [
@@ -431,14 +538,23 @@ fn default_stack(id: &str, display_name: &str, generation: u32, revision: &str) 
         ]
         .into_iter()
         .map(|(role, name)| {
-            ModelStackModel::new(
+            let model = format!("oneiron/{name}@{revision}");
+            Ok(ModelStackModel::new(
                 role,
-                ModelId::new(format!("oneiron/{name}@{revision}")).unwrap(),
-            )
+                ModelId::new(model.clone()).map_err(|source| {
+                    ModelStackRegistryError::InvalidCompiledModelId { model, source }
+                })?,
+            ))
         })
-        .collect(),
+        .collect::<std::result::Result<Vec<_>, ModelStackRegistryError>>()?,
     )
-    .expect("compiled default model stack is valid")
+}
+
+fn compiled_stack_id(id: &str) -> std::result::Result<ModelStackId, ModelStackRegistryError> {
+    ModelStackId::new(id).map_err(|source| ModelStackRegistryError::InvalidCompiledStackId {
+        id: id.to_owned(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -448,10 +564,11 @@ mod tests {
     #[test]
     fn pinned_stack_holds_across_auto_upgrade() {
         let v1 = stack("default-v1", "Default v1", 1, "2026-06-01");
-        let v2 = stack("default", "Default", 2, "2026-07-06");
+        let v2 = stack(DEFAULT_MODEL_STACK_CURRENT_ID, "Default", 2, "2026-07-06");
         let before_upgrade =
             ModelStackRegistry::new(id("default-v1"), [v1.clone(), v2.clone()]).unwrap();
-        let after_upgrade = ModelStackRegistry::new(id("default"), [v1, v2]).unwrap();
+        let after_upgrade =
+            ModelStackRegistry::new(id(DEFAULT_MODEL_STACK_CURRENT_ID), [v1, v2]).unwrap();
         let pinned = ModelStackPreference::pinned(id("default-v1"));
 
         let pinned_before = before_upgrade.resolve(&pinned, 120).unwrap();
@@ -462,7 +579,18 @@ mod tests {
 
         assert_eq!(pinned_before.stack.id.as_str(), "default-v1");
         assert_eq!(pinned_after.stack.id.as_str(), "default-v1");
-        assert_eq!(auto_after.stack.id.as_str(), "default");
+        assert_eq!(auto_after.stack.id.as_str(), DEFAULT_MODEL_STACK_CURRENT_ID);
+    }
+
+    #[test]
+    fn compiled_default_registry_uses_versioned_current_id() {
+        let registry = try_default_model_stack_registry().unwrap();
+
+        assert_eq!(
+            registry.current_default.as_str(),
+            DEFAULT_MODEL_STACK_CURRENT_ID
+        );
+        assert!(registry.get(&id("default")).is_none());
     }
 
     #[test]
@@ -524,6 +652,89 @@ mod tests {
         assert!(matches!(err, ModelStackRegistryError::StackRetired { .. }));
     }
 
+    #[test]
+    fn stack_rejects_unnormalized_roles() {
+        let err = ModelStack::new(
+            id("custom"),
+            "Custom",
+            1,
+            vec![ModelStackModel::new(
+                "orchestrator ",
+                model("oneiron/orchestrator@2026-07-06"),
+            )],
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ModelStackRegistryError::UnnormalizedModelRole { .. }
+        ));
+    }
+
+    #[test]
+    fn registry_deserialization_validates_shape() {
+        let malformed = serde_json::json!({
+            "current_default": "missing",
+            "stacks": {
+                "default-v2": {
+                    "id": "default-v2",
+                    "display_name": "Default",
+                    "generation": 2,
+                    "models": [
+                        {
+                            "role": "orchestrator",
+                            "model": "oneiron/orchestrator@2026-07-06"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let err = serde_json::from_value::<ModelStackRegistry>(malformed).unwrap_err();
+
+        assert!(err.to_string().contains("current default model stack"));
+    }
+
+    #[test]
+    fn model_stack_deserialization_rejects_empty_models() {
+        let malformed = serde_json::json!({
+            "id": "default-v2",
+            "display_name": "Default",
+            "generation": 2,
+            "models": []
+        });
+
+        let err = serde_json::from_value::<ModelStack>(malformed).unwrap_err();
+
+        assert!(err.to_string().contains("has no constituent models"));
+    }
+
+    #[test]
+    fn deprecation_deserialization_rejects_invalid_window() {
+        let malformed = serde_json::json!({
+            "notice_starts_epoch_day": 200,
+            "retires_epoch_day": 100
+        });
+
+        let err = serde_json::from_value::<ModelStackDeprecation>(malformed).unwrap_err();
+
+        assert!(err.to_string().contains("must start before retirement"));
+    }
+
+    #[test]
+    fn invalid_public_deprecation_window_does_not_underflow_status() {
+        let invalid = ModelStackDeprecation {
+            notice_starts_epoch_day: 200,
+            retires_epoch_day: 100,
+        };
+
+        let status = invalid.status(150);
+
+        assert_eq!(status.stage, ModelStackDeprecationStage::Retired);
+        assert_eq!(status.days_until_notice, None);
+        assert_eq!(status.days_until_retirement, None);
+    }
+
     fn stack(id_value: &str, display_name: &str, generation: u32, revision: &str) -> ModelStack {
         ModelStack::new(
             id(id_value),
@@ -545,5 +756,9 @@ mod tests {
 
     fn id(value: &str) -> ModelStackId {
         ModelStackId::new(value).unwrap()
+    }
+
+    fn model(value: &str) -> ModelId {
+        ModelId::new(value).unwrap()
     }
 }
