@@ -7,12 +7,12 @@ use std::time::Instant;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -6172,8 +6172,8 @@ fn all_entity_type_prefixes() {
     // = core (band 1–63); COMPANION_REGISTER = companion pack (band
     // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT = productivity pack
     // (band 80–99); REDACTION_AUDIT/MODEL/POLICY_MANIFEST/
-    // AUTHORITY_LOG/FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE =
-    // maintenance (band 120+).
+    // AUTHORITY_LOG/FEDERATION_GRANT/ACCESS_GRANT/PSYCH_PROFILE/
+    // CHANNEL_IDENTITY = maintenance (band 120+).
     type RegistryRow = (
         &'static str,
         u8,
@@ -6388,6 +6388,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,
         ),
+        (
+            "CHANNEL_IDENTITY",
+            ENTITY_TYPE_CHANNEL_IDENTITY,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
     ];
 
     let actual: Vec<RegistryRow> = ENTITY_TYPE_REGISTRY
@@ -6495,7 +6502,8 @@ fn type_byte_band_allocation_matches_contract() {
     // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG;
     // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
     // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
-    // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved.
+    // 128 ACCESS_GRANT; 129 PSYCH_PROFILE; 130 SUSPICIOUS_WAKE reserved;
+    // 131 CHANNEL_IDENTITY.
     assert!(!is_structural_kind(0), "CLAIM is NOT a StructuralKind");
     assert!(
         !is_structural_kind(120),
@@ -6540,6 +6548,10 @@ fn type_byte_band_allocation_matches_contract() {
     assert!(
         !is_structural_kind(130),
         "SUSPICIOUS_WAKE byte 130 is reserved but not a StructuralKind"
+    );
+    assert!(
+        !is_structural_kind(131),
+        "CHANNEL_IDENTITY is NOT a StructuralKind (OF-347: engine-authored maintenance)"
     );
     for byte in 1..=16_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");

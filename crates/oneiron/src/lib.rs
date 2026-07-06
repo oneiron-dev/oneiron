@@ -6,6 +6,7 @@ pub mod analyzer;
 pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
+pub mod channel_identity;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
@@ -83,6 +84,18 @@ pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
+};
+pub use crate::channel_identity::{
+    CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
+    CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, CHANNEL_IDENTITY_SCHEMA_VERSION, ChannelIdentity,
+    ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityShape, ChannelIdentityState,
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET, PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+    PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF, PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT,
+    PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL, PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF,
+    PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
+    PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT, decode_channel_identity_body,
+    encode_channel_identity_body,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
@@ -287,23 +300,24 @@ pub use crate::types::{
     CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask, CompleteCompanionTaskOutcome,
     ContextEntity, ContextPack, ContextPackRetrievalBudget, DecodedEdgeValue,
     EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
-    EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
-    EiriSessionRagState, EmptyContext, EmptyReason, EndCompanionRelationship,
-    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome, EntityId,
-    FailCompanionTask, FailCompanionTaskOutcome, FieldProfile, HnswConfig, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
-    NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
-    PackTokenStats, ResumeBudget, ResumeBundle, RetryCompanionTask, RetryCompanionTaskOutcome,
-    ScoredEntity, SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode,
-    TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation,
-    TypeByteBand, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent,
-    VaultConfig, WriteActor, WriteEnvelope, WriteProvenance, companion_value_from_json,
-    companion_value_to_json, decode_companion_record_body, decode_companion_task_payload,
-    encode_companion_record_body, encode_companion_task_payload,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
+    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
+    EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
+    EndCompanionRelationship, EndCompanionRelationshipOutcome, EnqueueCompanionTask,
+    EnqueueCompanionTaskOutcome, EntityId, FailCompanionTask, FailCompanionTaskOutcome,
+    FieldProfile, HnswConfig, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
+    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle,
+    RetryCompanionTask, RetryCompanionTaskOutcome, ScoredEntity, SessionContext, Signal,
+    StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig,
+    TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand, UnprocessedItem, Vad,
+    VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, companion_value_from_json, companion_value_to_json,
+    decode_companion_record_body, decode_companion_task_payload, encode_companion_record_body,
+    encode_companion_task_payload,
 };
 pub use crate::types::{
     PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,

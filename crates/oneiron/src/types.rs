@@ -94,6 +94,9 @@ pub const ENTITY_TYPE_PSYCH_PROFILE: u8 = 129;
 // Byte 130 is reserved for future SUSPICIOUS_WAKE maintenance records.
 // It is intentionally unregistered until that substrate lands, so it remains
 // rejected with `InvalidEntityType` on write paths.
+/// OF-347 ChannelIdentity entity. Engine-authored maintenance kind for
+/// vault-resident agent/channel addressability records.
+pub const ENTITY_TYPE_CHANNEL_IDENTITY: u8 = 131;
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.
@@ -105,7 +108,8 @@ pub const ENTITY_TYPE_PSYCH_PROFILE: u8 = 129;
 /// DIAGNOSTIC=126 reserved, FEDERATION_KEY_ENVELOPE=127 reserved,
 /// ACCESS_GRANT=128, PSYCH_PROFILE=129, SUSPICIOUS_WAKE=130 reserved) are
 /// engine-authored records or reserved maintenance substrates, also not
-/// StructuralKinds.
+/// StructuralKinds. CHANNEL_IDENTITY=131 is an engine-authored maintenance
+/// kind for OF-347.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityClassification {
     /// `"semantic"` — CLAIM, the single subject·predicate·value type.
@@ -436,6 +440,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         band: TypeByteBand::InducedDynamicMaintenance,
     },
     // Byte 130 SUSPICIOUS_WAKE is reserved and intentionally unregistered.
+    EntityTypeRegistryEntry {
+        kind: "CHANNEL_IDENTITY",
+        type_byte: ENTITY_TYPE_CHANNEL_IDENTITY,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
 ];
 
 /// A time-ordered entity identifier backed by UUIDv7 bytes.
@@ -955,8 +966,8 @@ pub(crate) fn validate_entity_type(entity_type: u8) -> crate::error::Result<()> 
 /// POLICY_MANIFEST = 123, FEDERATION_GRANT = 124, CONNECTION_RECORD = 125
 /// reserved, DIAGNOSTIC = 126 reserved, FEDERATION_KEY_ENVELOPE = 127
 /// reserved, ACCESS_GRANT = 128, PSYCH_PROFILE = 129, SUSPICIOUS_WAKE = 130
-/// reserved) are engine-authored maintenance records or reserved maintenance
-/// substrates. Reserved bytes are not registered yet.
+/// reserved, CHANNEL_IDENTITY = 131) are engine-authored maintenance records
+/// or reserved maintenance substrates. Reserved bytes are not registered yet.
 pub(crate) const MAINTENANCE_TYPE_BYTE_BAND_START: u8 = 120;
 
 /// Validates an entity type byte for PUBLIC write paths (D5).
