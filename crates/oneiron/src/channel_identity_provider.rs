@@ -33,7 +33,11 @@ pub const DEFAULT_EMAIL_LOCAL_PART_PREFIX: &str = "agent";
 
 const SIGNATURE_HEX_BYTES: usize = 6;
 const SIGNATURE_HEX_LEN: usize = SIGNATURE_HEX_BYTES * 2;
+const MAX_EMAIL_ADDRESS_BYTES: usize = 254;
 const MAX_EMAIL_LOCAL_PART_BYTES: usize = 64;
+const MAX_EMAIL_DOMAIN_BYTES: usize = 253;
+const MAX_EMAIL_PROVIDER_EVENT_ID_BYTES: usize = 128;
+const MAX_EMAIL_PAYLOAD_REF_BYTES: usize = 512;
 const IDENTITY_HEX_LEN: usize = 32;
 const LOCAL_PART_SEPARATOR_BYTES: usize = 2;
 const MAX_LOCAL_PART_PREFIX_BYTES: usize =
@@ -204,14 +208,9 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
         inbound: ChannelIdentityProviderInbound,
     ) -> Result<InboundSurfaceEventInput> {
         let ChannelIdentityProviderInbound::Email(email) = inbound;
-        validate_non_blank(
-            &email.provider_event_id,
-            "provider event id must be non-empty",
-        )?;
-        validate_non_blank(
-            &email.envelope_from,
-            "email envelope_from must be non-empty",
-        )?;
+        validate_email_inbound_metadata(&email)?;
+        let (_, sender_domain) = split_email_address(&email.envelope_from)?;
+        let normalized_from = normalize_email_address(&email.envelope_from, &sender_domain)?;
         if email.envelope_to != self.allowed_address_or_handle {
             return Err(Error::InvalidConfig(
                 "mock adapter rejects unknown receiving identity".to_owned(),
@@ -221,7 +220,7 @@ impl ChannelIdentityProviderAdapter for MockChannelIdentityProviderAdapter {
             email.provider_event_id,
             self.channel.clone(),
             email.envelope_to,
-            SurfaceCounterpartyStamp::unknown(format!("email:{}", email.envelope_from)),
+            SurfaceCounterpartyStamp::unknown(format!("email:{normalized_from}")),
             email.received_at,
             true,
         );
@@ -420,10 +419,7 @@ impl ChannelIdentityProviderAdapter for DevEmailIdentityAdapter {
         inbound: ChannelIdentityProviderInbound,
     ) -> Result<InboundSurfaceEventInput> {
         let ChannelIdentityProviderInbound::Email(email) = inbound;
-        validate_non_blank(
-            &email.provider_event_id,
-            "provider event id must be non-empty",
-        )?;
+        validate_email_inbound_metadata(&email)?;
         let (local_part, domain) = split_email_address(&email.envelope_to)?;
         if domain != self.config.domain {
             return Err(Error::InvalidConfig(
@@ -486,8 +482,14 @@ fn validate_provision_intent(
 }
 
 fn normalize_domain(domain: &str) -> Result<String> {
-    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    validate_non_blank(&domain, "email adapter domain must be non-empty")?;
+    let domain = domain.trim().trim_end_matches('.');
+    validate_non_blank(domain, "email adapter domain must be non-empty")?;
+    validate_max_bytes(
+        domain,
+        MAX_EMAIL_DOMAIN_BYTES,
+        "email adapter domain exceeds maximum length",
+    )?;
+    let domain = domain.to_ascii_lowercase();
     if domain.contains('@') || domain.contains('*') || domain.contains("..") {
         return Err(Error::InvalidConfig(
             "email adapter domain must be an exact non-wildcard domain".to_owned(),
@@ -543,6 +545,11 @@ fn normalize_local_part_prefix(prefix: &str) -> Result<String> {
 fn split_email_address(address: &str) -> Result<(String, String)> {
     let address = address.trim();
     validate_non_blank(address, "email address must be non-empty")?;
+    validate_max_bytes(
+        address,
+        MAX_EMAIL_ADDRESS_BYTES,
+        "email address exceeds maximum length",
+    )?;
     if address.contains('*') {
         return Err(Error::InvalidConfig(
             "email adapter rejects wildcard or catch-all addresses".to_owned(),
@@ -556,6 +563,11 @@ fn split_email_address(address: &str) -> Result<(String, String)> {
             "email address must contain one non-empty local-part and domain".to_owned(),
         ));
     }
+    validate_max_bytes(
+        local_part,
+        MAX_EMAIL_LOCAL_PART_BYTES,
+        "email local-part exceeds maximum length",
+    )?;
     let domain = normalize_domain(domain)?;
     if !local_part.bytes().all(|byte| {
         matches!(
@@ -568,6 +580,27 @@ fn split_email_address(address: &str) -> Result<(String, String)> {
         ));
     }
     Ok((local_part.to_ascii_lowercase(), domain))
+}
+
+fn validate_email_inbound_metadata(email: &EmailProviderInbound) -> Result<()> {
+    validate_non_blank(
+        &email.provider_event_id,
+        "provider event id must be non-empty",
+    )?;
+    validate_max_bytes(
+        &email.provider_event_id,
+        MAX_EMAIL_PROVIDER_EVENT_ID_BYTES,
+        "provider event id exceeds maximum length",
+    )?;
+    if let Some(payload_ref) = &email.payload_ref {
+        validate_non_blank(payload_ref, "email payload_ref must be non-empty")?;
+        validate_max_bytes(
+            payload_ref,
+            MAX_EMAIL_PAYLOAD_REF_BYTES,
+            "email payload_ref exceeds maximum length",
+        )?;
+    }
+    Ok(())
 }
 
 fn normalize_email_address(address: &str, normalized_domain: &str) -> Result<String> {
@@ -583,6 +616,13 @@ fn normalize_email_address(address: &str, normalized_domain: &str) -> Result<Str
 fn validate_non_blank(value: &str, reason: &'static str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(Error::InvalidConfig(reason.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_max_bytes(value: &str, max: usize, reason: &'static str) -> Result<()> {
+    if value.len() > max {
+        return Err(Error::InvalidConfig(format!("{reason}: {max} bytes")));
     }
     Ok(())
 }
@@ -713,6 +753,74 @@ mod tests {
                 "{address} should be rejected"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn email_adapters_reject_oversized_inbound_fields_before_routing() -> Result<()> {
+        let adapter = DevEmailIdentityAdapter::new(DevEmailIdentityAdapterConfig::new(
+            "agents.example.test",
+            "dev-secret",
+        )?);
+        let address = adapter.address_for_identity(entity(0x29));
+
+        for inbound in [
+            EmailProviderInbound::new(
+                "e".repeat(MAX_EMAIL_PROVIDER_EVENT_ID_BYTES + 1),
+                address.clone(),
+                "sender@example.test",
+                2_004,
+            ),
+            EmailProviderInbound::new(
+                "evt-long-payload",
+                address.clone(),
+                "sender@example.test",
+                2_004,
+            )
+            .with_payload_ref("p".repeat(MAX_EMAIL_PAYLOAD_REF_BYTES + 1)),
+            EmailProviderInbound::new(
+                "evt-long-from",
+                address,
+                format!(
+                    "{}@example.test",
+                    "s".repeat(MAX_EMAIL_LOCAL_PART_BYTES + 1)
+                ),
+                2_004,
+            ),
+            EmailProviderInbound::new(
+                "evt-long-to",
+                format!(
+                    "{}@agents.example.test",
+                    "r".repeat(MAX_EMAIL_LOCAL_PART_BYTES + 1)
+                ),
+                "sender@example.test",
+                2_004,
+            ),
+        ] {
+            assert!(
+                adapter
+                    .parse_inbound(ChannelIdentityProviderInbound::Email(inbound))
+                    .is_err(),
+                "oversized inbound field should be rejected"
+            );
+        }
+
+        let mock = MockChannelIdentityProviderAdapter::email("agent@example.test");
+        assert!(
+            mock.parse_inbound(ChannelIdentityProviderInbound::Email(
+                EmailProviderInbound::new(
+                    "evt-mock-long-from",
+                    "agent@example.test",
+                    format!(
+                        "{}@example.test",
+                        "s".repeat(MAX_EMAIL_LOCAL_PART_BYTES + 1)
+                    ),
+                    2_004,
+                )
+            ))
+            .is_err(),
+            "mock adapter must also bound persisted counterparty addresses"
+        );
         Ok(())
     }
 
