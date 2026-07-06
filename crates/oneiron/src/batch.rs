@@ -1462,6 +1462,8 @@ pub(crate) fn apply_ops_with_gate_mode(
     // `vectors` DB) and the rebuild runs after the op loop (ONE-324 AC11).
     let mut pending_hnsw_rebuild = false;
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
+    #[cfg(feature = "sync")]
+    let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
     let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
 
     for (op_index, op) in ops.into_iter().enumerate() {
@@ -1520,11 +1522,25 @@ pub(crate) fn apply_ops_with_gate_mode(
                     include_source_in_gate_input,
                     Some(&companion_retired_histories),
                 )?;
+                let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
+                    crate::embed::EMBED_PRIORITY_SERVER
+                } else {
+                    crate::embed::EMBED_PRIORITY_DEVICE
+                };
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities
+                        .entry(id)
+                        .and_modify(|priority| {
+                            *priority = (*priority).min(pending_embedding_priority);
+                        })
+                        .or_insert(pending_embedding_priority);
                 }
                 if applied.cleared_pending_embedding {
                     pending_embedding_tokens_written.remove(&id);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities.remove(&id);
                 }
                 had_vector_mutation |= applied.had_vector_mutation;
                 if entity_type == crate::types::ENTITY_TYPE_CLAIM
@@ -1539,6 +1555,8 @@ pub(crate) fn apply_ops_with_gate_mode(
                     )?;
                     for (deleted_id, neighbors) in &deleted.deleted {
                         pending_embedding_tokens_written.remove(deleted_id);
+                        #[cfg(feature = "sync")]
+                        pending_embedding_enqueue_priorities.remove(deleted_id);
                         ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
                     }
                     had_graph_mutation |= deleted.had_graph_mutation;
@@ -1612,9 +1630,18 @@ pub(crate) fn apply_ops_with_gate_mode(
                 }
                 if let Some(token) = applied.pending_embedding_token {
                     pending_embedding_tokens_written.insert(id, token);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities
+                        .entry(id)
+                        .and_modify(|priority| {
+                            *priority = (*priority).min(crate::embed::EMBED_PRIORITY_DEVICE);
+                        })
+                        .or_insert(crate::embed::EMBED_PRIORITY_DEVICE);
                 }
                 if applied.cleared_pending_embedding {
                     pending_embedding_tokens_written.remove(&id);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities.remove(&id);
                 }
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
@@ -1623,6 +1650,8 @@ pub(crate) fn apply_ops_with_gate_mode(
                     delete_lexical_query_hint_claims_for_target(store, wtxn, &source, &keep)?;
                 for (deleted_id, neighbors) in &deleted.deleted {
                     pending_embedding_tokens_written.remove(deleted_id);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities.remove(deleted_id);
                     ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
                 }
                 had_graph_mutation |= deleted.had_graph_mutation;
@@ -1650,6 +1679,8 @@ pub(crate) fn apply_ops_with_gate_mode(
                 }
                 if applied.cleared_pending_embedding {
                     pending_embedding_tokens_written.remove(&id);
+                    #[cfg(feature = "sync")]
+                    pending_embedding_enqueue_priorities.remove(&id);
                 }
             }
             BatchOp::Edge {
@@ -1745,6 +1776,8 @@ pub(crate) fn apply_ops_with_gate_mode(
                     store.delete_pending_gate_consent_in_txn(wtxn, &id)?;
                 }
                 pending_embedding_tokens_written.remove(&id);
+                #[cfg(feature = "sync")]
+                pending_embedding_enqueue_priorities.remove(&id);
                 ppr::invalidate_ppr_for_delete(store, wtxn, &id, &neighbors)?;
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
@@ -1755,6 +1788,17 @@ pub(crate) fn apply_ops_with_gate_mode(
                     had_graph_mutation = true;
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    for (id, token) in &pending_embedding_tokens_written {
+        if store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice()) {
+            let priority = pending_embedding_enqueue_priorities
+                .get(id)
+                .copied()
+                .unwrap_or(crate::embed::EMBED_PRIORITY_DEVICE);
+            crate::sync::queue::push_embed_job_in_txn(store, wtxn, id, priority)?;
         }
     }
 

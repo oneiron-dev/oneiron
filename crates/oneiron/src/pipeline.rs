@@ -776,8 +776,15 @@ impl<'a> PipelineBuilder<'a> {
     pub fn run_with_pending_vectors(
         self,
     ) -> Result<RetrievalWithPendingVectors<Vec<ScoredEntity>>> {
+        let vault = self.vault;
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
+        #[cfg(feature = "sync")]
+        crate::embed::enqueue_pending_embedding_jobs(
+            vault,
+            &pending_vector_ids,
+            crate::embed::EMBED_PRIORITY_SURFACED_HOT,
+        )?;
         Ok(RetrievalWithPendingVectors {
             value: output.scores,
             pending_vector_ids,
