@@ -14,6 +14,7 @@ pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod context_pack;
+pub mod critic;
 pub mod deletion;
 pub(crate) mod distance;
 pub mod dreamer_runner;
@@ -133,6 +134,15 @@ pub use crate::codebase::{
     encode_codebase_snapshot,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
+pub use crate::critic::{
+    CRITIC_LENS_CATALOG_SCHEMA_VERSION, CRITIC_RELIABILITY_CLAIM_SCHEMA_VERSION,
+    CRITIC_RELIABILITY_PREDICATE_PREFIX, CRITIQUE_ARTIFACT_SCHEMA_VERSION, CriticLens,
+    CriticReliability, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance,
+    CritiqueSeverity, CritiqueTriage, CritiqueTriageScores, CritiqueVerdict, LensCatalog,
+    OF366_SEED_LENS_CATALOG_JSON, ReliabilityOutcomeEvent, ReliabilityOutcomeSource,
+    critic_reliability_claim_body, critic_reliability_predicate, triage_critiques,
+    triage_critiques_with_exploration,
+};
 pub use crate::deletion::{
     DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
