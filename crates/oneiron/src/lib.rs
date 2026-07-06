@@ -9,6 +9,7 @@ pub(crate) mod bm25;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
+pub mod channel_identity_provider;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
@@ -120,6 +121,13 @@ pub use crate::channel_identity_manifest::{
     ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities,
     ChannelIdentityReputationSignal, channel_identity_capability_matrix, channel_identity_manifest,
     channel_identity_manifests, parse_channel_identity_capability_matrix,
+};
+pub use crate::channel_identity_provider::{
+    CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, ChannelIdentityProviderAdapter,
+    ChannelIdentityProviderInbound, ChannelIdentityProviderProvision,
+    DEFAULT_EMAIL_LOCAL_PART_PREFIX, DEV_EMAIL_PROVIDER_KEY, DevEmailIdentityAdapter,
+    DevEmailIdentityAdapterConfig, EMAIL_CHANNEL, EmailProviderInbound,
+    MockChannelIdentityProviderAdapter,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
