@@ -959,6 +959,8 @@ pub enum CompanionTaskKind {
     Profile,
     /// Consolidate companion memory material for a companion record.
     Memory,
+    /// Generate a goodbye artifact after an amicable relationship ending.
+    GoodbyeArtifact,
 }
 
 impl CompanionTaskKind {
@@ -969,6 +971,7 @@ impl CompanionTaskKind {
             Self::Context => "context",
             Self::Profile => "profile",
             Self::Memory => "memory",
+            Self::GoodbyeArtifact => "goodbye_artifact",
         }
     }
 
@@ -979,9 +982,26 @@ impl CompanionTaskKind {
             "context" => Some(Self::Context),
             "profile" => Some(Self::Profile),
             "memory" => Some(Self::Memory),
+            "goodbye_artifact" => Some(Self::GoodbyeArtifact),
             _ => None,
         }
     }
+}
+
+/// Inputs controlling relationship-ending teardown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndCompanionRelationship {
+    pub ended_at: u64,
+    pub ended_badly: bool,
+    pub run_id: Option<String>,
+}
+
+/// Result of relationship-ending teardown.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndCompanionRelationshipOutcome {
+    pub record: CompanionRecord,
+    pub goodbye_artifact: Option<EnqueueCompanionTaskOutcome>,
+    pub already_ended: bool,
 }
 
 /// Typed payload stored on durable companion task job rows.
@@ -1330,7 +1350,9 @@ fn decode_companion_task_payload_value(value: &Value) -> Result<CompanionTask> {
             }
             KEY_TASK => {
                 task_kind = Some(value.as_str().and_then(CompanionTaskKind::parse).ok_or(
-                    invalid_companion_task("companion task must be context|profile|memory"),
+                    invalid_companion_task(
+                        "companion task must be context|profile|memory|goodbye_artifact",
+                    ),
                 )?);
             }
             KEY_TASK_SCOPE => scope = Some(decode_scope(value)?),
@@ -2014,7 +2036,7 @@ mod tests {
     use super::*;
     use crate::batch::export::companion_export_layer;
     use crate::claim::ClaimSource;
-    use crate::types::{TimeRange, WriteActor, WriteProvenance};
+    use crate::types::{ENTITY_TYPE_TURN, TimeRange, WriteActor, WriteProvenance};
     use crate::{EnqueueJob, EnqueueOutcome, JobQueue, JobState, Vault, VaultConfig};
 
     fn entity(seed: u8) -> EntityId {
@@ -2072,7 +2094,7 @@ mod tests {
     }
 
     #[test]
-    fn companion_task_payload_round_trips_context_profile_and_memory() -> Result<()> {
+    fn companion_task_payload_round_trips_all_task_kinds() -> Result<()> {
         let personal = CompanionScope::personal(entity(0x21));
         let fixtures = [
             companion_task(
@@ -2081,11 +2103,15 @@ mod tests {
             )?,
             companion_task(
                 CompanionTaskKind::Profile,
-                CompanionRecordKey::persona(personal, entity(0x24)),
+                CompanionRecordKey::persona(personal.clone(), entity(0x24)),
             )?,
             companion_task(
                 CompanionTaskKind::Memory,
                 CompanionRecordKey::persona(CompanionScope::neutral(), entity(0x25)),
+            )?,
+            companion_task(
+                CompanionTaskKind::GoodbyeArtifact,
+                CompanionRecordKey::relationship(personal, entity(0x26), entity(0x27)),
             )?,
         ];
 
@@ -3378,6 +3404,214 @@ mod tests {
         assert_eq!(
             register.lookup_persona(&neutral_scope, neutral_persona),
             Some(&revived)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_relationship_end_scrubs_private_memory_preserves_data_and_enqueues_goodbye()
+    -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let relationship_id = entity(0xA1);
+        let general_id = entity(0xA2);
+        let person_ref = entity(0xA3);
+        let persona_ref = entity(0xA4);
+        let scope = CompanionScope::personal(person_ref);
+        let private_note = "private-relationship-note-one1488";
+        let record = CompanionRecord::relationship(
+            scope.clone(),
+            person_ref,
+            persona_ref,
+            Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
+            provenance(0xA6),
+            CompanionExportClassification::LocalOnly,
+        );
+        vault.create_companion_record(&relationship_id, &record, 10)?;
+        vault
+            .batch()
+            .put(
+                &general_id,
+                ENTITY_TYPE_TURN,
+                TimeRange { start: 11, end: 11 },
+                11,
+                b"general-vault-data",
+            )
+            .commit()?;
+
+        let outcome = vault.end_companion_relationship(
+            &relationship_id,
+            EndCompanionRelationship {
+                ended_at: 20,
+                ended_badly: false,
+                run_id: Some("run-goodbye-one1488".to_owned()),
+            },
+        )?;
+
+        assert_eq!(outcome.record.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(!outcome.already_ended);
+        assert_eq!(
+            outcome.record.lifecycle_events,
+            vec![
+                CompanionLifecycleEvent::created(10),
+                CompanionLifecycleEvent::retired(20)
+            ]
+        );
+        let stored = vault
+            .get_companion_record(&relationship_id)?
+            .expect("ended relationship record remains auditable");
+        assert_eq!(stored, outcome.record);
+        let stored_json = companion_value_to_json(&stored.value);
+        assert_eq!(stored_json["kind"], "relationship_ended");
+        assert_eq!(stored_json["private_memory"], "removed");
+        assert_eq!(stored_json["ended_at"], 20);
+        assert!(
+            !stored_json.to_string().contains(private_note),
+            "ended relationship record must not retain private memory"
+        );
+        assert_eq!(
+            vault.get(&general_id)?.as_deref(),
+            Some(b"general-vault-data".as_slice()),
+            "relationship teardown must not delete general vault data"
+        );
+        assert_eq!(vault.companion_record_id_for_key(&record.key())?, None);
+        assert_eq!(
+            vault
+                .companion_register()?
+                .lookup_relationship(&scope, person_ref, persona_ref),
+            None,
+            "ended relationship must not remain an active binding"
+        );
+
+        let task_status = match outcome.goodbye_artifact {
+            Some(EnqueueCompanionTaskOutcome::Enqueued(status))
+            | Some(EnqueueCompanionTaskOutcome::Existing(status)) => status,
+            None => panic!("amicable ending must enqueue goodbye artifact task"),
+        };
+        assert_eq!(task_status.task.kind, CompanionTaskKind::GoodbyeArtifact);
+        assert_eq!(task_status.task.key, record.key());
+        assert_eq!(
+            task_status.job.run_id.as_deref(),
+            Some("run-goodbye-one1488")
+        );
+        let claimed = CompanionQueue::new(&vault).claim(ClaimCompanionTask {
+            lease_owner: "goodbye-worker".to_owned(),
+            now: 21,
+        })?;
+        let ClaimCompanionTaskOutcome::Claimed(claimed_status) = claimed else {
+            panic!("goodbye artifact task must be claimable");
+        };
+        assert_eq!(claimed_status.task.kind, CompanionTaskKind::GoodbyeArtifact);
+        assert_eq!(claimed_status.task.key, record.key());
+        Ok(())
+    }
+
+    #[test]
+    fn companion_relationship_end_skips_goodbye_artifact_for_bad_end() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let relationship_id = entity(0xB1);
+        let person_ref = entity(0xB2);
+        let persona_ref = entity(0xB3);
+        let scope = CompanionScope::personal(person_ref);
+        let record = CompanionRecord::relationship(
+            scope.clone(),
+            person_ref,
+            persona_ref,
+            Value::Map(vec![(
+                Value::from("note"),
+                Value::from("bad-end-private-note-one1488"),
+            )]),
+            provenance(0xB4),
+            CompanionExportClassification::LocalOnly,
+        );
+        vault.create_companion_record(&relationship_id, &record, 30)?;
+
+        let outcome = vault.end_companion_relationship(
+            &relationship_id,
+            EndCompanionRelationship {
+                ended_at: 40,
+                ended_badly: true,
+                run_id: Some("run-skipped-one1488".to_owned()),
+            },
+        )?;
+
+        assert_eq!(outcome.record.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(!outcome.already_ended);
+        assert!(outcome.goodbye_artifact.is_none());
+        assert_eq!(
+            vault
+                .companion_register()?
+                .lookup_relationship(&scope, person_ref, persona_ref),
+            None
+        );
+        assert_eq!(
+            CompanionQueue::new(&vault).claim(ClaimCompanionTask {
+                lease_owner: "goodbye-worker".to_owned(),
+                now: 41,
+            })?,
+            ClaimCompanionTaskOutcome::Empty
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_relationship_end_scrubs_already_retracted_record() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let relationship_id = entity(0xC1);
+        let person_ref = entity(0xC2);
+        let persona_ref = entity(0xC3);
+        let scope = CompanionScope::personal(person_ref);
+        let private_note = "already-retracted-private-note-one1488";
+        let record = CompanionRecord::relationship(
+            scope,
+            person_ref,
+            persona_ref,
+            Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
+            provenance(0xC4),
+            CompanionExportClassification::LocalOnly,
+        );
+        vault.create_companion_record(&relationship_id, &record, 50)?;
+        vault.retire_companion_record(&relationship_id, 60)?;
+
+        let outcome = vault.end_companion_relationship(
+            &relationship_id,
+            EndCompanionRelationship {
+                ended_at: 70,
+                ended_badly: false,
+                run_id: Some("run-already-ended-one1488".to_owned()),
+            },
+        )?;
+
+        assert!(outcome.already_ended);
+        assert!(outcome.goodbye_artifact.is_none());
+        assert_eq!(
+            outcome.record.lifecycle_events,
+            vec![
+                CompanionLifecycleEvent::created(50),
+                CompanionLifecycleEvent::retired(60)
+            ],
+            "idempotent end must preserve the original retire audit event"
+        );
+        let stored = vault
+            .get_companion_record(&relationship_id)?
+            .expect("scrubbed retracted relationship remains auditable");
+        let stored_json = companion_value_to_json(&stored.value);
+        assert_eq!(stored_json["kind"], "relationship_ended");
+        assert_eq!(stored_json["private_memory"], "removed");
+        assert_eq!(stored_json["ended_at"], 70);
+        assert!(
+            !stored_json.to_string().contains(private_note),
+            "already retracted relationship must not retain private memory"
+        );
+        assert_eq!(
+            CompanionQueue::new(&vault).claim(ClaimCompanionTask {
+                lease_owner: "goodbye-worker".to_owned(),
+                now: 71,
+            })?,
+            ClaimCompanionTaskOutcome::Empty,
+            "idempotent end must not enqueue another goodbye task"
         );
         Ok(())
     }
