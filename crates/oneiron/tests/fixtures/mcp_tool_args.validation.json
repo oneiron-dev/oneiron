@@ -57,7 +57,7 @@
       }
     },
     {
-      "name": "edit_valid_remember",
+      "name": "edit_valid_propose_claim",
       "tool": "oneiron.edit",
       "valid": true,
       "args": {
@@ -79,23 +79,15 @@
           "consent_receipt_ref": "consent:one-1215",
           "require_human_approval": true
         },
-        "verb": "remember",
-        "idempotency_key": "mcp-fixture-remember-1",
+        "verb": "propose_claim",
+        "idempotency_key": "mcp-fixture-propose-claim-1",
         "dry_run": true,
-        "entity": {
-          "id": "55555555555555555555555555555555",
-          "entity_type": 1,
-          "body": {
-            "txt": "Fixture memory for MCP schema validation",
-            "spkr": "agent"
-          },
-          "text": [
-            {
-              "field": "body",
-              "value": "Fixture memory for MCP schema validation"
-            }
-          ]
-        }
+        "subject": {
+          "entity": "55555555555555555555555555555555"
+        },
+        "predicate": "profile.fixture",
+        "value": "Fixture memory for MCP schema validation",
+        "confidence": 0.8
       }
     },
     {
@@ -182,7 +174,7 @@
       }
     },
     {
-      "name": "edit_invalid_unknown_field",
+      "name": "edit_invalid_legacy_remember_verb",
       "tool": "oneiron.edit",
       "valid": false,
       "args": {
@@ -199,18 +191,17 @@
           "purpose": "write_memory"
         },
         "verb": "remember",
-        "idempotency_key": "mcp-fixture-invalid-extra",
-        "entity": {
-          "entity_type": 1,
-          "body": {
-            "txt": "This should not execute"
-          }
+        "idempotency_key": "mcp-fixture-invalid-legacy-remember",
+        "subject": {
+          "entity": "44444444444444444444444444444444"
         },
-        "extra": true
+        "predicate": "profile.legacy",
+        "value": true,
+        "confidence": 0.8
       }
     },
     {
-      "name": "edit_invalid_remember_occurrence_range",
+      "name": "edit_invalid_propose_entity_occurrence_range",
       "tool": "oneiron.edit",
       "valid": false,
       "args": {
@@ -226,15 +217,15 @@
           "policy_ref": "policy:foreign-mcp",
           "purpose": "write_memory"
         },
-        "verb": "remember",
+        "verb": "propose_entity",
         "idempotency_key": "mcp-fixture-invalid-occurrence-range",
-        "entity": {
-          "entity_type": 1,
-          "occurred_start": 20,
-          "occurred_end": 10,
-          "body": {
-            "txt": "This impossible range should not execute"
-          }
+        "entity_type": 1,
+        "occurred": {
+          "start": 20,
+          "end": 10
+        },
+        "data": {
+          "txt": "This impossible range should not execute"
         }
       }
     },
@@ -331,7 +322,7 @@
       }
     },
     {
-      "name": "edit_invalid_delete_reason",
+      "name": "edit_invalid_legacy_delete_verb",
       "tool": "oneiron.edit",
       "valid": false,
       "args": {
@@ -348,13 +339,13 @@
           "purpose": "write_memory"
         },
         "verb": "delete",
-        "idempotency_key": "mcp-fixture-invalid-delete-reason",
-        "id": "44444444444444444444444444444444",
+        "idempotency_key": "mcp-fixture-invalid-legacy-delete",
+        "claim_id": "44444444444444444444444444444444",
         "reason": "gdpr_delete"
       }
     },
     {
-      "name": "edit_invalid_delete_missing_reason",
+      "name": "edit_invalid_retract_claim_missing_reason",
       "tool": "oneiron.edit",
       "valid": false,
       "args": {
@@ -370,13 +361,13 @@
           "policy_ref": "policy:foreign-mcp",
           "purpose": "write_memory"
         },
-        "verb": "delete",
-        "idempotency_key": "mcp-fixture-missing-delete-reason",
-        "id": "44444444444444444444444444444444"
+        "verb": "retract_claim",
+        "idempotency_key": "mcp-fixture-missing-retract-reason",
+        "claim_id": "44444444444444444444444444444444"
       }
     },
     {
-      "name": "edit_invalid_hard_delete_missing_reason",
+      "name": "edit_invalid_supersede_claim_missing_value",
       "tool": "oneiron.edit",
       "valid": false,
       "args": {
@@ -392,9 +383,11 @@
           "policy_ref": "policy:foreign-mcp",
           "purpose": "write_memory"
         },
-        "verb": "hard_delete",
-        "idempotency_key": "mcp-fixture-missing-hard-delete-reason",
-        "id": "44444444444444444444444444444444"
+        "verb": "supersede_claim",
+        "idempotency_key": "mcp-fixture-missing-supersede-value",
+        "old_claim_id": "44444444444444444444444444444444",
+        "predicate": "profile.fixture",
+        "confidence": 0.8
       }
     },
     {
