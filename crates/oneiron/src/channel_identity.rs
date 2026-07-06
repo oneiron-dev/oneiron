@@ -353,6 +353,9 @@ impl ChannelIdentity {
         if !self.state.can_transition_to(next) {
             return Err(invalid_identity());
         }
+        if state_changed_at < self.state_changed_at {
+            return Err(invalid_identity());
+        }
         let next_identity = Self {
             state: next,
             pending_fulfillment,
@@ -529,15 +532,7 @@ pub(crate) fn validate_channel_identity_claim_structure(body: &ClaimBody) -> Res
                 "channel_identity.binding_scope value must be agent|vault",
             )),
         },
-        PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET => {
-            if body.value.as_u64().is_some() || decode_entity_ref(&body.value).is_ok() {
-                Ok(())
-            } else {
-                Err(Error::InvalidClaimBody(
-                    "channel_identity.binding_target value must be entity hex or vault id",
-                ))
-            }
-        }
+        PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET => validate_claim_binding_target(&body.value),
         PREDICATE_CHANNEL_IDENTITY_STATE => body
             .value
             .as_str()
@@ -669,6 +664,21 @@ fn decode_binding(scope: &str, target: &Value) -> Result<ChannelIdentityBinding>
             .map(ChannelIdentityBinding::vault)
             .ok_or_else(invalid_identity),
         _ => Err(invalid_identity()),
+    }
+}
+
+fn validate_claim_binding_target(value: &Value) -> Result<()> {
+    if decode_entity_ref(value).is_ok() {
+        return Ok(());
+    }
+    match value.as_u64() {
+        Some(0) => Err(Error::InvalidClaimBody(
+            "channel_identity.binding_target vault id must be non-zero",
+        )),
+        Some(_) => Ok(()),
+        None => Err(Error::InvalidClaimBody(
+            "channel_identity.binding_target value must be entity hex or non-zero vault id",
+        )),
     }
 }
 
@@ -848,6 +858,16 @@ mod tests {
                 .transition(
                     ChannelIdentityState::Quarantine,
                     None,
+                    1_800_000_020,
+                    Some(1_800_000_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
+                )
+                .is_err()
+        );
+        assert!(
+            released
+                .transition(
+                    ChannelIdentityState::Quarantine,
+                    None,
                     1_800_000_040,
                     Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS - 1),
                 )
@@ -861,6 +881,34 @@ mod tests {
         )?;
         quarantine.transition(ChannelIdentityState::Tombstone, None, 1_900_000_000, None)?;
         Ok(())
+    }
+
+    #[test]
+    fn channel_identity_claim_binding_target_rejects_invalid_values() {
+        let subject = ClaimSubject::Entity(entity(0xD2));
+        let claim = |value| {
+            ClaimBody::new(
+                PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+                subject,
+                value,
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )
+        };
+
+        validate_channel_identity_claim_structure(&claim(Value::from(entity(0xA1).to_hex())))
+            .expect("agent entity target accepted");
+        validate_channel_identity_claim_structure(&claim(Value::from(7_u64)))
+            .expect("non-zero vault target accepted");
+
+        let zero_err = validate_channel_identity_claim_structure(&claim(Value::from(0_u64)))
+            .expect_err("zero vault id must be rejected");
+        assert_eq!(zero_err.kind(), ErrorKind::InvalidClaimBody);
+
+        let bogus_err = validate_channel_identity_claim_structure(&claim(Value::from("not-hex")))
+            .expect_err("malformed target must be rejected");
+        assert_eq!(bogus_err.kind(), ErrorKind::InvalidClaimBody);
     }
 
     #[test]
