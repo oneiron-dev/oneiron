@@ -49,6 +49,7 @@ use crate::deletion::{
     local_hard_delete_key, pending_tombstone_key, window_label_from_timestamp,
 };
 use crate::error::{Error, Result};
+use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
@@ -72,18 +73,20 @@ use crate::store::{
 };
 use crate::types::companion::CompanionLifecycleEvent;
 use crate::types::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ClaimCandidate,
-    CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionRegister,
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_JOB_KIND,
+    ClaimCandidate, CompanionExportClassification, CompanionRecord, CompanionRecordKey,
+    CompanionRegister, CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus,
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
     ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
+    EndCompanionRelationship, EndCompanionRelationshipOutcome, EnqueueCompanionTaskOutcome,
     EntityClassification, EntityId, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
     ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
     VadAnnotationSource, VaultConfig, WriteEnvelope, bytes_to_hex_lower,
     decode_companion_record_body, decode_edge_value_for_kind, edge_value_layout_for_kind,
-    encode_companion_record_body, entity_type_registry_entry,
+    encode_companion_record_body, encode_companion_task_payload, entity_type_registry_entry,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -1349,6 +1352,72 @@ impl Vault {
         self.apply_companion_record_body(&mut wtxn, id, retired_at, data)?;
         wtxn.commit()?;
         Ok(retired)
+    }
+
+    /// Ends an active companion relationship by breaking the active binding,
+    /// scrubbing the private relationship payload, and optionally enqueueing a
+    /// goodbye-artifact generation task. General vault entities are not
+    /// deleted by this teardown path.
+    pub fn end_companion_relationship(
+        &self,
+        id: &EntityId,
+        input: EndCompanionRelationship,
+    ) -> Result<EndCompanionRelationshipOutcome> {
+        self.ensure_companion_register_kind()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let existing = self.read_companion_record_in_txn(&wtxn, id)?;
+        if existing.lifecycle == ClaimLifecycleStatus::Retracted {
+            return Ok(EndCompanionRelationshipOutcome {
+                record: existing,
+                goodbye_artifact: None,
+            });
+        }
+        if !matches!(existing.subject, CompanionSubject::Relationship { .. }) {
+            return Err(Error::InvalidClaimBody(
+                "companion relationship end requires relationship record",
+            ));
+        }
+
+        let mut scrubbed = existing.clone();
+        scrubbed.value = Value::Map(vec![
+            (Value::from("kind"), Value::from("relationship_ended")),
+            (Value::from("private_memory"), Value::from("removed")),
+            (Value::from("ended_at"), Value::from(input.ended_at)),
+        ]);
+        let ended = scrubbed.retired_at(input.ended_at)?;
+        let data = encode_companion_record_body(&ended)?;
+        self.apply_companion_record_body(&mut wtxn, id, input.ended_at, data)?;
+
+        let goodbye_artifact = if input.ended_badly {
+            None
+        } else {
+            let task = CompanionTask::new(CompanionTaskKind::GoodbyeArtifact, ended.key())?;
+            let payload = encode_companion_task_payload(&task)?;
+            let outcome = JobQueue::new(self).enqueue_in_txn(
+                &mut wtxn,
+                EnqueueJob {
+                    kind: COMPANION_TASK_JOB_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(task.dedupe_key()),
+                    run_id: input.run_id,
+                    now: input.ended_at,
+                },
+            )?;
+            let status = |job| CompanionTaskStatus {
+                job,
+                task: task.clone(),
+            };
+            Some(match outcome {
+                EnqueueOutcome::Enqueued(job) => EnqueueCompanionTaskOutcome::Enqueued(status(job)),
+                EnqueueOutcome::Existing(job) => EnqueueCompanionTaskOutcome::Existing(status(job)),
+            })
+        };
+
+        wtxn.commit()?;
+        Ok(EndCompanionRelationshipOutcome {
+            record: ended,
+            goodbye_artifact,
+        })
     }
 
     /// Revives a retired companion register record as a new active row.
