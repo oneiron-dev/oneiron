@@ -21,6 +21,7 @@
               "UNSUPPORTED_FORMAT",
               "NOT_ACCEPTABLE",
               "INVALID_HEADER",
+              "UNSUPPORTED_CAPABILITY",
               "4001",
               "4002",
               "4003",
@@ -307,6 +308,51 @@
                 "required": [
                   "code",
                   "header"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "const": "UNSUPPORTED_CAPABILITY"
+                  },
+                  "connector": {
+                    "type": "string"
+                  },
+                  "connectorKnown": {
+                    "type": "boolean"
+                  },
+                  "recovery_suggestions": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "supportedConnectors": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "supportedVerbs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "verb": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "connector",
+                  "verb",
+                  "connectorKnown",
+                  "supportedConnectors",
+                  "supportedVerbs",
+                  "recovery_suggestions"
                 ],
                 "type": "object"
               },
@@ -749,6 +795,53 @@
             "properties": {
               "code": {
                 "enum": [
+                  "UNSUPPORTED_CAPABILITY"
+                ],
+                "type": "string"
+              },
+              "connector": {
+                "type": "string"
+              },
+              "connectorKnown": {
+                "type": "boolean"
+              },
+              "recovery_suggestions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "supportedConnectors": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "supportedVerbs": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "verb": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "connector",
+              "verb",
+              "connectorKnown",
+              "supportedConnectors",
+              "supportedVerbs",
+              "recovery_suggestions",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "enum": [
                   "4001"
                 ],
                 "type": "string"
@@ -887,6 +980,7 @@
                   "UNSUPPORTED_FORMAT",
                   "NOT_ACCEPTABLE",
                   "INVALID_HEADER",
+                  "UNSUPPORTED_CAPABILITY",
                   "4001",
                   "4002",
                   "4003",
@@ -1173,6 +1267,51 @@
                     "required": [
                       "code",
                       "header"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {
+                        "const": "UNSUPPORTED_CAPABILITY"
+                      },
+                      "connector": {
+                        "type": "string"
+                      },
+                      "connectorKnown": {
+                        "type": "boolean"
+                      },
+                      "recovery_suggestions": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "supportedConnectors": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "supportedVerbs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "verb": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "connector",
+                      "verb",
+                      "connectorKnown",
+                      "supportedConnectors",
+                      "supportedVerbs",
+                      "recovery_suggestions"
                     ],
                     "type": "object"
                   },
@@ -3414,6 +3553,7 @@
           "UNSUPPORTED_FORMAT",
           "NOT_ACCEPTABLE",
           "INVALID_HEADER",
+          "UNSUPPORTED_CAPABILITY",
           "4001",
           "4002",
           "4003",
@@ -4049,6 +4189,149 @@
           },
           "500": {
             "description": "Hydrate lookup failed.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/outbound/capabilities": {
+      "get": {
+        "operationId": "list_core_outbound_capabilities",
+        "parameters": [],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Outbound connector capability manifests.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/outbound/capabilities/{connector}": {
+      "get": {
+        "operationId": "get_core_outbound_capability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Connector outbound capability manifest.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Connector manifest was not found.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        },
+        "security": [
+          {
+            "CoreBearer": []
+          },
+          {
+            "OneironSecret": []
+          }
+        ]
+      }
+    },
+    "/v1/core/outbound/capabilities/{connector}/verbs/{verb}": {
+      "get": {
+        "operationId": "get_core_outbound_verb_contract",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "verb",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Outbound verb field contract.",
+            "schema": {
+              "type": "object"
+            }
+          },
+          "400": {
+            "description": "Connector or verb is not supported; response uses UNSUPPORTED_CAPABILITY.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Core token lacks core:read.",
             "schema": {
               "$ref": "#/components/schemas/ApiErrorEnvelope"
             }
