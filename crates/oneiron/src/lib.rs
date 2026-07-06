@@ -136,11 +136,12 @@ pub use crate::code_symbol::{
     CODE_SYMBOL_CHUNK_KEYS, CODE_SYMBOL_ENTITY_BODY_KEYS, CODE_SYMBOL_FINGERPRINT_LEN,
     CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_MANIFEST_BODY_KEYS, CODE_SYMBOL_MANIFEST_MAX_CHUNKS,
     CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CODE_SYMBOL_REVISION_KEYS,
-    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeSymbolBlame,
-    CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest,
-    CodeSymbolRevision, CodeSymbolSource, code_symbol_entity_id, decode_code_symbol_manifest,
-    derive_code_chunks_from_text_diff, derive_code_symbol_graph_from_sources,
-    derive_symbol_fingerprint, encode_code_symbol_manifest,
+    CODE_SYMBOL_SOURCE_SESSION_MAX_BYTES, CODE_SYMBOL_TEXT_HASH_LEN, CodeChunk, CodeEmbeddingInput,
+    CodeEmbeddingVector, CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph,
+    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
+    code_symbol_entity_id, decode_code_symbol_manifest, derive_code_chunks_from_text_diff,
+    derive_code_embedding_inputs_from_text_diff, derive_code_symbol_graph_from_sources,
+    derive_symbol_fingerprint, embed_code_chunks, encode_code_symbol_manifest,
 };
 pub use crate::codebase::{
     CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_CONTENT_HASH_LEN, CODEBASE_FILE_ENTRY_KEYS,
