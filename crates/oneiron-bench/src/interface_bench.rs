@@ -235,21 +235,28 @@ struct BenchTask {
 #[serde(tag = "kind")]
 enum GoldLabel {
     #[serde(rename = "retrieval-QA")]
-    RetrievalQa { relevant_claim_ids: Vec<String> },
+    RetrievalQa {
+        #[serde(rename = "relevantClaimIds")]
+        relevant_claim_ids: Vec<String>,
+    },
     #[serde(rename = "multi-hop")]
     MultiHop {
+        #[serde(rename = "exactAnswer")]
         exact_answer: String,
+        #[serde(rename = "supportingIds")]
         supporting_ids: Vec<String>,
     },
     #[serde(rename = "provenance")]
     Provenance {
         field: String,
         value: String,
+        #[serde(rename = "supportingIds")]
         supporting_ids: Vec<String>,
     },
     #[serde(rename = "browse-then-answer")]
     BrowseThenAnswer {
         topic: String,
+        #[serde(rename = "requiredClaimIds")]
         required_claim_ids: Vec<String>,
         rubric: BrowseRubric,
     },
@@ -981,18 +988,25 @@ fn run_smoke(out_dir: &Path) -> Result<PathBuf, String> {
                 900,
             )?;
             let wall_clock_s = started.elapsed().as_secs_f64();
-            let (accuracy, detail) = score_task(task, &response.content);
-            let (accuracy, detail) = if task.class == TaskClass::BrowseThenAnswer {
-                judge_browse_answer(&api_key, task, &response.content, accuracy, detail)?
+            let (base_accuracy, base_detail) = score_task(task, &response.content);
+            let (accuracy, detail, judge_tokens) = if task.class == TaskClass::BrowseThenAnswer {
+                judge_browse_answer(
+                    &api_key,
+                    task,
+                    &bundle.fixture,
+                    &response.content,
+                    base_accuracy,
+                    base_detail,
+                )?
             } else {
-                (accuracy, detail)
+                (base_accuracy, base_detail, 0)
             };
             rows.push(SmokeRunRow {
                 task_id: task.task_id.clone(),
                 class: task.class,
                 arm,
                 accuracy,
-                tokens_total: response.tokens_total,
+                tokens_total: response.tokens_total.saturating_add(judge_tokens),
                 tool_calls: context.tool_calls,
                 wall_clock_s,
                 answer: response.content,
@@ -1123,25 +1137,30 @@ fn context_claims<'a>(
     fixture: &'a FixtureVault,
 ) -> Result<Vec<&'a FixtureClaim>, String> {
     let ids = match &task.gold {
-        GoldLabel::RetrievalQa { relevant_claim_ids } => relevant_claim_ids.iter().take(8),
+        GoldLabel::RetrievalQa { relevant_claim_ids } => {
+            relevant_claim_ids.iter().collect::<Vec<_>>()
+        }
         GoldLabel::MultiHop { supporting_ids, .. }
-        | GoldLabel::Provenance { supporting_ids, .. } => supporting_ids.iter().take(8),
+        | GoldLabel::Provenance { supporting_ids, .. } => {
+            supporting_ids.iter().take(8).collect::<Vec<_>>()
+        }
         GoldLabel::BrowseThenAnswer {
             required_claim_ids, ..
-        } => required_claim_ids.iter().take(8),
+        } => required_claim_ids.iter().take(8).collect::<Vec<_>>(),
     };
     let by_id = fixture
         .claims
         .iter()
         .map(|claim| (claim.claim_id.as_str(), claim))
         .collect::<BTreeMap<_, _>>();
-    ids.map(|id| {
-        by_id
-            .get(id.as_str())
-            .copied()
-            .ok_or_else(|| format!("missing fixture claim `{id}`"))
-    })
-    .collect()
+    ids.into_iter()
+        .map(|id| {
+            by_id
+                .get(id.as_str())
+                .copied()
+                .ok_or_else(|| format!("missing fixture claim `{id}`"))
+        })
+        .collect()
 }
 
 fn call_openrouter(
@@ -1306,16 +1325,24 @@ fn score_task(task: &BenchTask, answer: &str) -> (f64, Value) {
 fn judge_browse_answer(
     api_key: &str,
     task: &BenchTask,
+    fixture: &FixtureVault,
     answer: &str,
     citation_score: f64,
     citation_detail: Value,
-) -> Result<(f64, Value), String> {
-    let GoldLabel::BrowseThenAnswer { topic, rubric, .. } = &task.gold else {
-        return Ok((citation_score, citation_detail));
+) -> Result<(f64, Value, u32), String> {
+    let GoldLabel::BrowseThenAnswer {
+        topic,
+        rubric,
+        required_claim_ids,
+    } = &task.gold
+    else {
+        return Ok((citation_score, citation_detail, 0));
     };
+    let evidence = claim_evidence_block(fixture, required_claim_ids)?;
     let judge_prompt = format!(
         "Grade this answer on a blind 1-5 rubric. The arm identity is hidden.\n\
          Task topic: {topic}\n\
+         Required claim evidence:\n{evidence}\n\
          Rubric coverage: {}\n\
          Rubric faithfulness: {}\n\
          Rubric citation validity: {}\n\
@@ -1355,9 +1382,27 @@ fn judge_browse_answer(
             "citation_score": citation_score,
             "normalized_score": final_accuracy,
             "combiner": "min(rubric_normalized_score,citation_score)",
+            "judge_tokens_total": response.tokens_total,
             "citation_precheck": citation_detail
         }),
+        response.tokens_total,
     ))
+}
+
+fn claim_evidence_block(fixture: &FixtureVault, claim_ids: &[String]) -> Result<String, String> {
+    let by_id = fixture
+        .claims
+        .iter()
+        .map(|claim| (claim.claim_id.as_str(), claim))
+        .collect::<BTreeMap<_, _>>();
+    let mut evidence = String::new();
+    for claim_id in claim_ids {
+        let claim = by_id
+            .get(claim_id.as_str())
+            .ok_or_else(|| format!("missing fixture claim `{claim_id}`"))?;
+        evidence.push_str(&format!("- {}: {}\n", claim.claim_id, claim.text));
+    }
+    Ok(evidence)
 }
 
 fn final_browse_accuracy(rubric_mean: f64, citation_score: f64) -> f64 {
@@ -1616,6 +1661,59 @@ mod tests {
         assert_eq!(fs.tool_calls, transcript_tool_calls(&fs.transcript));
         assert_eq!(hybrid.tool_calls, 2);
         assert_eq!(hybrid.tool_calls, transcript_tool_calls(&hybrid.transcript));
+    }
+
+    #[test]
+    fn retrieval_context_exposes_full_generated_gold_set() {
+        let bundle = build_task_bundle();
+        let task = bundle
+            .smoke_tasks
+            .iter()
+            .find(|task| task.class == TaskClass::RetrievalQa)
+            .expect("retrieval smoke task");
+        let GoldLabel::RetrievalQa { relevant_claim_ids } = &task.gold else {
+            unreachable!("retrieval task has retrieval gold");
+        };
+        let claims = context_claims(task, &bundle.fixture).expect("context claims");
+        let transcript = fs_context(task, &bundle.fixture, false)
+            .expect("fs context")
+            .transcript;
+
+        assert_eq!(claims.len(), relevant_claim_ids.len());
+        assert!(relevant_claim_ids.iter().all(|id| transcript.contains(id)));
+    }
+
+    #[test]
+    fn generated_task_gold_payload_uses_camel_case_fields() {
+        let bundle = build_task_bundle();
+        let task = &bundle.full_tasks[0];
+        let value = serde_json::to_value(task).expect("serialize task");
+        let gold = value
+            .get("gold")
+            .and_then(Value::as_object)
+            .expect("gold object");
+
+        assert!(gold.contains_key("relevantClaimIds"));
+        assert!(!gold.contains_key("relevant_claim_ids"));
+    }
+
+    #[test]
+    fn token_extrapolation_targets_owner_authorized_480_run_full_campaign() {
+        let rows = vec![SmokeRunRow {
+            task_id: "task".to_owned(),
+            class: TaskClass::RetrievalQa,
+            arm: ArmId::Sdk,
+            accuracy: 1.0,
+            tokens_total: 10,
+            tool_calls: 1,
+            wall_clock_s: 1.0,
+            answer: String::new(),
+            score_detail: json!({}),
+        }];
+        let extrapolation = token_burn_extrapolation(&rows);
+
+        assert_eq!(extrapolation.full_run_equivalent_runs, 480);
+        assert_eq!(extrapolation.extrapolated_full_tokens, 4_800);
     }
 
     #[test]
