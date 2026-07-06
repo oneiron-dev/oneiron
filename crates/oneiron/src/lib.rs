@@ -28,6 +28,7 @@ pub(crate) mod gate;
 pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_reputation;
 pub mod ingest;
 pub mod job_queue;
 pub mod lens;
@@ -219,6 +220,17 @@ pub use crate::graph_fs::{
     GRAPH_FS_MORE_ENTRY, GRAPH_FS_PROJECTION_VERSION, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
+};
+pub use crate::identity_reputation::{
+    CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
+    IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,
+    IdentityAttestationTier, IdentityReputation, IdentityReputationSignal,
+    IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage,
+    PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER, PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
+    PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE, PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
+    PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
+    PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
+    WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
 };
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
