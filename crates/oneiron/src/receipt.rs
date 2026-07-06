@@ -588,8 +588,8 @@ mod tests {
     };
     use crate::store::{GateDecisionId, Store};
     use crate::types::{
-        ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, HnswConfig, TimeRange, VaultConfig,
-        WriteActor, WriteEnvelope, WriteProvenance,
+        ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
+        WriteEnvelope, WriteProvenance,
         companion::{
             CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
         },
@@ -675,19 +675,25 @@ mod tests {
             FederationGrantPreset::ReadOnly,
         );
         let body = encode_federation_grant_body(&grant)?;
-        vault
-            .batch()
-            .put(
-                &id,
-                ENTITY_TYPE_FEDERATION_GRANT,
-                TimeRange {
-                    start: learned_at,
-                    end: learned_at,
-                },
-                learned_at,
-                &body,
-            )
-            .commit()
+        vault.with_write_txn(|wtxn| {
+            let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+            payload.push(ENTITY_TYPE_FEDERATION_GRANT);
+            payload.extend_from_slice(&learned_at.to_be_bytes());
+            payload.extend_from_slice(&learned_at.to_be_bytes());
+            payload.extend_from_slice(&learned_at.to_be_bytes());
+            payload.extend_from_slice(&body);
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+
+            let type_key = Store::encode_type_key(ENTITY_TYPE_FEDERATION_GRANT, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            let temporal_key = Store::encode_temporal_key(learned_at, &id);
+            vault
+                .store
+                .temporal_occurred_start
+                .put(wtxn, &temporal_key, &[])?;
+            vault.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
+            Ok(())
+        })
     }
 
     fn put_redaction_floor_receipt(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
