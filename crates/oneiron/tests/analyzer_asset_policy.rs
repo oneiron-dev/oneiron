@@ -11,8 +11,8 @@
 //!    at runtime only.
 //! 3. Any `AnalyzerAssetManifest` emitted by the default analyzer carries
 //!    an allowed license (per the Apache-2.0 / MIT / BSD / Unicode-3.0 /
-//!    ISC / BSL-1.0 / MPL-2.0 allowlist in deny.toml), a non-zero sha256,
-//!    and a `source` URL.
+//!    ISC / BSL-1.0 / MPL-2.0 / Zlib allowlist in deny.toml), a non-zero
+//!    sha256, and a `source` URL.
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -33,6 +33,7 @@ fn allowed_licenses() -> BTreeSet<&'static str> {
         "ISC",
         "MPL-2.0",
         "Unicode-3.0",
+        "Zlib",
     ]
     .into_iter()
     .collect()

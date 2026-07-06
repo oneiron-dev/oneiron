@@ -16,7 +16,7 @@ use crate::batch::{
 };
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::claim::{ClaimBody, claim_surfaceable};
-use crate::codebase::RepoRef;
+use crate::codebase::{CodebaseScopeKey, RepoRef, codebase_candidate_matches_scope_key};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::store::{
@@ -290,9 +290,9 @@ pub enum FacetMode {
 ///
 /// A claim's world is the `world` key in its body — an absent key is base
 /// reality (the elide-the-default pattern). Non-claim entities have no world
-/// and are treated as base, so they pass every scope untouched. This is a
-/// pure post-fusion filter in the same stage as the facet filter; scoring and
-/// fusion are never touched.
+/// and are treated as base for the `Base` / `World` scopes. `WorldSet` is the
+/// repo-world scope key: it keeps only entities explicitly indexed as members
+/// of that codebase scope.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum WorldScope {
@@ -306,6 +306,10 @@ pub enum WorldScope {
     /// Claims scoped to this world id PLUS base-reality claims. Claims scoped
     /// to any OTHER world are removed.
     World(EntityId),
+    /// Entities explicitly indexed under this codebase scope key. This is the
+    /// repository-backed world-set clamp and does not include base reality by
+    /// default.
+    WorldSet(CodebaseScopeKey),
 }
 
 /// Opaque Dreamer working-set cursor.
@@ -2104,6 +2108,10 @@ fn fork_hash_world_scope(hasher: &mut Sha256, scope: WorldScope) {
             fork_hash_str(hasher, "world");
             fork_hash_raw_bytes(hasher, id.as_bytes());
         }
+        WorldScope::WorldSet(scope_key) => {
+            fork_hash_str(hasher, "world_set");
+            fork_hash_raw_bytes(hasher, &scope_key);
+        }
     }
 }
 
@@ -2685,6 +2693,16 @@ fn apply_world_filter(
         WorldScope::All => return Ok(()),
         WorldScope::Base => None,
         WorldScope::World(id) => Some(id),
+        WorldScope::WorldSet(scope_key) => {
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in scores.iter().copied() {
+                if codebase_candidate_matches_scope_key(store, rtxn, &scored.id, &scope_key)? {
+                    kept.push(scored);
+                }
+            }
+            *scores = kept;
+            return Ok(());
+        }
     };
 
     let mut kept = Vec::with_capacity(scores.len());
@@ -3492,6 +3510,9 @@ fn pipeline_candidate_matches_world_filter(
         WorldScope::All => return Ok(true),
         WorldScope::Base => None,
         WorldScope::World(id) => Some(id),
+        WorldScope::WorldSet(scope_key) => {
+            return codebase_candidate_matches_scope_key(store, rtxn, id, &scope_key);
+        }
     };
 
     Ok(match claim_world(store, rtxn, id)? {
