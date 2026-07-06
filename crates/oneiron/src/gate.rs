@@ -60,6 +60,15 @@ const GRANT_BUDGET_KEY: &str = "budget";
 const GRANT_RECEIPT_REQUIRED_KEY: &str = "receipt_required";
 pub(crate) const SCOPED_READ_EFFECTOR_CORE_READ: &str = "core:read";
 const SCOPED_READ_EFFECTOR_ONEIRON_READ: &str = "oneiron.read";
+const EXTERNAL_EFFECT_EFFECTOR_PREFIX: &str = "external:";
+const EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX: &str = "external_effect:";
+const EXTERNAL_EFFECT_SCOPE_VERB_KEY: &str = "verb";
+const EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY: &str = "channel";
+const EXTERNAL_EFFECT_SCOPE_CHANNEL_REF_KEY: &str = "channel_ref";
+const EXTERNAL_EFFECT_SCOPE_CHANNEL_REF_CAMEL_KEY: &str = "channelRef";
+const EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY: &str = "policy_risk";
+const EXTERNAL_EFFECT_SCOPE_POLICY_RISK_CAMEL_KEY: &str = "policyRisk";
+const EXTERNAL_EFFECT_WILDCARD: &str = "*";
 const SIGNATURE_ALG_KEY: &str = "alg";
 const SIGNATURE_KEY_ID_KEY: &str = "key_id";
 const SIGNATURE_SIG_KEY: &str = "sig";
@@ -261,6 +270,70 @@ pub(crate) struct GateEvaluatorInput {
     pub(crate) criticality: PolicyCriticality,
     pub(crate) policy_manifest_version: String,
     pub(crate) provenance: GateProvenanceHandles,
+    pub(crate) external_effect: Option<ExternalEffectGateContext>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ExternalEffectPolicyRisk {
+    #[default]
+    Normal,
+    HoldToProposal,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl ExternalEffectPolicyRisk {
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::HoldToProposal => "hold_to_proposal",
+        }
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExternalEffectGateContext {
+    pub(crate) verb: String,
+    pub(crate) channel: String,
+    pub(crate) has_opted_in: bool,
+    pub(crate) has_permission: bool,
+    pub(crate) policy_risk: ExternalEffectPolicyRisk,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExternalEffectGateInput {
+    pub(crate) actor: GateActor,
+    pub(crate) provenance: GateProvenanceHandles,
+    pub(crate) verb: String,
+    pub(crate) channel: String,
+    pub(crate) has_opted_in: bool,
+    pub(crate) has_permission: bool,
+    pub(crate) policy_risk: ExternalEffectPolicyRisk,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl ExternalEffectGateInput {
+    fn gate_input(&self) -> GateEvaluatorInput {
+        GateEvaluatorInput {
+            actor: self.actor.clone(),
+            source: None,
+            content_kind: GateContentKind::ExternalEffect,
+            sensitivity_band: None,
+            criticality: PolicyCriticality::Normal,
+            policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
+            provenance: self.provenance.clone(),
+            external_effect: Some(ExternalEffectGateContext {
+                verb: self.verb.clone(),
+                channel: self.channel.clone(),
+                has_opted_in: self.has_opted_in,
+                has_permission: self.has_permission,
+                policy_risk: self.policy_risk,
+            }),
+        }
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -824,6 +897,9 @@ impl PolicyManifestResolution {
             return GateDecision::deny(GateReasonCode::DenyMissingPolicyManifestVersion);
         }
         if self.is_fail_closed() {
+            if input.content_kind == GateContentKind::ExternalEffect {
+                return GateDecision::pending(vec![GateReasonCode::PendingExternalEffectAuthority]);
+            }
             return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
         }
 
@@ -855,7 +931,9 @@ impl PolicyManifestResolution {
                 pending.push(GateReasonCode::PendingPolicyManifestAuthority);
             }
             GateContentKind::ExternalEffect => {
-                pending.push(GateReasonCode::PendingExternalEffectAuthority);
+                if !self.external_effect_allows_auto(input) {
+                    pending.push(GateReasonCode::PendingExternalEffectAuthority);
+                }
             }
         }
 
@@ -893,6 +971,23 @@ impl PolicyManifestResolution {
 
         sensitivity <= max_auto_sensitivity
             && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
+    }
+
+    fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
+        let Some(effect) = input.external_effect.as_ref() else {
+            return false;
+        };
+        if effect.verb.trim().is_empty()
+            || effect.channel.trim().is_empty()
+            || !effect.has_opted_in
+            || !effect.has_permission
+        {
+            return false;
+        }
+
+        self.scoped_grants().iter().any(|grant| {
+            grant.budget.is_none() && external_effect_grant_matches(grant, &input.actor, effect)
+        })
     }
 
     fn axes_for_predicate(&self, predicate: &str) -> PolicyAxes {
@@ -1061,6 +1156,104 @@ fn scoped_read_entity_id_from_value(value: &Value) -> Option<EntityId> {
             EntityId::from_bytes(bytes).ok()
         }
         _ => EntityId::from_hex(value.as_str()?).ok(),
+    }
+}
+
+fn external_effect_grant_matches(
+    grant: &PolicyScopedGrant,
+    actor: &GateActor,
+    effect: &ExternalEffectGateContext,
+) -> bool {
+    external_effect_actor_matches(grant, actor)
+        && external_effect_effector_matches(grant.effector.trim(), effect.verb.trim())
+        && external_effect_scope_matches(grant.scope.as_ref(), effect)
+}
+
+fn external_effect_actor_matches(grant: &PolicyScopedGrant, actor: &GateActor) -> bool {
+    if let Some(actor_class) = grant.actor_class.as_deref()
+        && actor_class != actor.actor_class.trim()
+    {
+        return false;
+    }
+    if let Some(actor_ref) = grant.actor_ref.as_deref()
+        && Some(actor_ref) != actor.actor_ref.as_deref()
+    {
+        return false;
+    }
+    true
+}
+
+fn external_effect_effector_matches(effector: &str, verb: &str) -> bool {
+    if effector == EXTERNAL_EFFECT_WILDCARD {
+        return true;
+    }
+    if let Some(candidate) = effector.strip_prefix(EXTERNAL_EFFECT_EFFECTOR_PREFIX) {
+        return candidate == EXTERNAL_EFFECT_WILDCARD || candidate == verb;
+    }
+    if let Some(candidate) = effector.strip_prefix(EXTERNAL_EFFECT_EFFECTOR_LONG_PREFIX) {
+        return candidate == EXTERNAL_EFFECT_WILDCARD || candidate == verb;
+    }
+    effector == verb
+}
+
+fn external_effect_scope_matches(
+    scope: Option<&Value>,
+    effect: &ExternalEffectGateContext,
+) -> bool {
+    let Some(scope) = scope else {
+        return true;
+    };
+    match scope {
+        Value::Nil => true,
+        Value::Map(entries) if entries.is_empty() => true,
+        Value::Map(entries) => entries.iter().all(|(key, value)| {
+            let Some(key) = key.as_str() else {
+                return false;
+            };
+            match key {
+                EXTERNAL_EFFECT_SCOPE_VERB_KEY => {
+                    external_effect_scope_text_matches(value, effect.verb.trim())
+                }
+                EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY
+                | EXTERNAL_EFFECT_SCOPE_CHANNEL_REF_KEY
+                | EXTERNAL_EFFECT_SCOPE_CHANNEL_REF_CAMEL_KEY => {
+                    external_effect_scope_text_matches(value, effect.channel.trim())
+                }
+                EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY
+                | EXTERNAL_EFFECT_SCOPE_POLICY_RISK_CAMEL_KEY => {
+                    external_effect_scope_policy_risk_matches(value, effect.policy_risk)
+                }
+                _ => false,
+            }
+        }),
+        _ => false,
+    }
+}
+
+fn external_effect_scope_text_matches(value: &Value, expected: &str) -> bool {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| external_effect_scope_text_matches(value, expected)),
+        _ => value
+            .as_str()
+            .is_some_and(|value| value == EXTERNAL_EFFECT_WILDCARD || value == expected),
+    }
+}
+
+fn external_effect_scope_policy_risk_matches(
+    value: &Value,
+    policy_risk: ExternalEffectPolicyRisk,
+) -> bool {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .any(|value| external_effect_scope_policy_risk_matches(value, policy_risk)),
+        Value::Boolean(true) => policy_risk == ExternalEffectPolicyRisk::HoldToProposal,
+        Value::Boolean(false) => policy_risk == ExternalEffectPolicyRisk::Normal,
+        _ => value.as_str().is_some_and(|value| {
+            value == EXTERNAL_EFFECT_WILDCARD || value == policy_risk.as_str()
+        }),
     }
 }
 
@@ -1619,6 +1812,44 @@ pub(crate) fn check_claim_policy_for_write(
     check_claim_source_trust(body, policy)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn check_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<(GateDecisionId, GateDecision)> {
+    let input = effect.gate_input();
+    let decision = policy.evaluate_gate(&input);
+    let binding = GateConsentBinding::for_external_effect(&input, policy)?;
+    let decision_id = GateDecisionId::now();
+
+    store.append_gate_decision_in_txn(
+        wtxn,
+        &GateDecisionRecord {
+            version: 0,
+            decision_id,
+            created_at: crate::unix_seconds_now(),
+            outcome: decision.outcome().as_str().to_owned(),
+            reason_codes: decision
+                .reason_codes()
+                .iter()
+                .map(|code| code.as_str().to_owned())
+                .collect(),
+            actor_class: input.actor.actor_class.clone(),
+            actor_ref: input.actor.actor_ref.clone(),
+            content_kind: input.content_kind.as_str().to_owned(),
+            policy_manifest_version: input.policy_manifest_version,
+            claim_id: None,
+            diff_handle: binding.diff_handle,
+            read_frontier_hash: binding.read_frontier_hash,
+        },
+    )?;
+    record_gate_decision_metrics(&decision);
+
+    Ok((decision_id, decision))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GateWriteMode {
     pub(crate) record_decision: bool,
@@ -1780,6 +2011,7 @@ fn claim_gate_input(
         criticality: policy.criticality_for_predicate(&body.predicate),
         policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
         provenance,
+        external_effect: None,
     }
 }
 
@@ -1805,6 +2037,39 @@ impl GateConsentBinding {
         let mut hasher = Sha256::new();
         hasher.update(b"oneiron.gate.claim_diff.v0");
         hasher.update(&encoded);
+        Ok(Self {
+            diff_handle: hasher.finalize().to_vec(),
+            read_frontier_hash: policy.read_frontier_hash()?,
+        })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn for_external_effect(
+        input: &GateEvaluatorInput,
+        policy: &PolicyManifestResolution,
+    ) -> Result<Self> {
+        let mut hasher = Sha256::new();
+        hash_bytes(&mut hasher, b"oneiron.gate.external_effect.v0");
+        hash_str(&mut hasher, &input.actor.actor_class);
+        hash_opt_str(&mut hasher, input.actor.actor_ref.as_deref());
+        match input.provenance.actor_entity_ref {
+            Some(actor_entity_ref) => {
+                hash_bool(&mut hasher, true);
+                hash_bytes(&mut hasher, actor_entity_ref.as_bytes());
+            }
+            None => hash_bool(&mut hasher, false),
+        }
+        match input.external_effect.as_ref() {
+            Some(effect) => {
+                hash_bool(&mut hasher, true);
+                hash_str(&mut hasher, effect.verb.trim());
+                hash_str(&mut hasher, effect.channel.trim());
+                hash_bool(&mut hasher, effect.has_opted_in);
+                hash_bool(&mut hasher, effect.has_permission);
+                hash_str(&mut hasher, effect.policy_risk.as_str());
+            }
+            None => hash_bool(&mut hasher, false),
+        }
         Ok(Self {
             diff_handle: hasher.finalize().to_vec(),
             read_frontier_hash: policy.read_frontier_hash()?,
@@ -2686,6 +2951,26 @@ mod tests {
                     Value::Boolean(true),
                 ),
             ])]),
+        )
+    }
+
+    fn external_effect_scoped_grant_entry(
+        actor_ref: &str,
+        effector: &str,
+        scope: Value,
+        budget: Option<Value>,
+    ) -> (Value, Value) {
+        let mut row = vec![
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (Value::from(GRANT_EFFECTOR_KEY), Value::from(effector)),
+            (Value::from(GRANT_SCOPE_KEY), scope),
+        ];
+        if let Some(budget) = budget {
+            row.push((Value::from(GRANT_BUDGET_KEY), budget));
+        }
+        (
+            Value::from(POLICY_SCOPED_GRANTS_KEY),
+            Value::Array(vec![Value::Map(row)]),
         )
     }
 
@@ -4024,6 +4309,29 @@ mod tests {
                 body_snapshot_ref: Some([0xA3; ENTITY_ID_LEN]),
                 ..GateProvenanceHandles::default()
             },
+            external_effect: None,
+        }
+    }
+
+    fn external_effect_gate_input(
+        actor_ref: &str,
+        verb: &str,
+        channel: &str,
+    ) -> ExternalEffectGateInput {
+        ExternalEffectGateInput {
+            actor: GateActor {
+                actor_class: "first_party".to_owned(),
+                actor_ref: Some(actor_ref.to_owned()),
+            },
+            provenance: GateProvenanceHandles {
+                actor_entity_ref: Some(test_id(0xE0)),
+                ..GateProvenanceHandles::default()
+            },
+            verb: verb.to_owned(),
+            channel: channel.to_owned(),
+            has_opted_in: true,
+            has_permission: true,
+            policy_risk: ExternalEffectPolicyRisk::Normal,
         }
     }
 
@@ -4638,6 +4946,171 @@ mod tests {
         );
         assert_eq!(decision.outcome().as_str(), "pending");
 
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "external:send",
+            Value::Map(vec![(
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            )]),
+            None,
+        )]);
+        put_policy_manifest_bytes(&vault, 0xD0, &data)?;
+        let policy = resolve(&vault)?;
+        let effect = external_effect_gate_input("sender", "send", "line");
+
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].outcome, "allow");
+        assert_eq!(decisions[0].reason_codes, vec!["gate.allow"]);
+        assert_eq!(decisions[0].actor_class, "first_party");
+        assert_eq!(decisions[0].actor_ref.as_deref(), Some("sender"));
+        assert_eq!(decisions[0].content_kind, "external_effect");
+        assert_eq!(decisions[0].claim_id, None);
+        assert!(!decisions[0].diff_handle.is_empty());
+        assert_eq!(
+            decisions[0].read_frontier_hash,
+            policy.read_frontier_hash()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_requires_opt_in_and_permission() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "send",
+            Value::Map(vec![(
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            )]),
+            None,
+        )]);
+        put_policy_manifest_bytes(&vault, 0xD1, &data)?;
+        let policy = resolve(&vault)?;
+
+        let mut missing_opt_in = external_effect_gate_input("sender", "send", "line");
+        missing_opt_in.has_opted_in = false;
+        let decision = policy.evaluate_gate(&missing_opt_in.gate_input());
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        let mut missing_permission = external_effect_gate_input("sender", "send", "line");
+        missing_permission.has_permission = false;
+        let decision = policy.evaluate_gate(&missing_permission.gate_input());
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Result<()> {
+        let (_pending_tmp, pending_vault) = temp_vault();
+        put_policy_manifest_bytes(&pending_vault, 0xD2, &encode_policy_manifest(vec![]))?;
+        let pending_policy = resolve(&pending_vault)?;
+        let mut risky = external_effect_gate_input("sender", "send", "line");
+        risky.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
+
+        let decision = pending_policy.evaluate_gate(&risky.gate_input());
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        let (_allowed_tmp, allowed_vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "external:*",
+            Value::Map(vec![
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                    Value::from("line"),
+                ),
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                    Value::from(EXTERNAL_EFFECT_WILDCARD),
+                ),
+            ]),
+            None,
+        )]);
+        put_policy_manifest_bytes(&allowed_vault, 0xD3, &data)?;
+        let allowed_policy = resolve(&allowed_vault)?;
+        let decision = allowed_policy.evaluate_gate(&risky.gate_input());
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_budgeted_grants_hold_without_budget_enforcer() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "send",
+            Value::Map(vec![(
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("line"),
+            )]),
+            Some(Value::Map(vec![(Value::from("limit"), Value::from(1_u64))])),
+        )]);
+        put_policy_manifest_bytes(&vault, 0xD4, &data)?;
+        let policy = resolve(&vault)?;
+        let effect = external_effect_gate_input("sender", "send", "line");
+        let decision = policy.evaluate_gate(&effect.gate_input());
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_fail_closed_policy_holds_instead_of_denies() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let policy = resolve(&vault)?;
+        assert!(policy.is_fail_closed());
+        let effect = external_effect_gate_input("sender", "send", "line");
+
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].outcome, "pending");
+        assert_eq!(
+            decisions[0].reason_codes,
+            vec!["gate.pending.external_effect_authority"]
+        );
+        assert_eq!(decisions[0].content_kind, "external_effect");
+        assert_eq!(decisions[0].claim_id, None);
         Ok(())
     }
 
