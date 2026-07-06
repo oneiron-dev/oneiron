@@ -376,6 +376,7 @@ struct FullRunReport {
     aggregates: Vec<ArmAggregate>,
     class_arm_table: Vec<ClassArmSummary>,
     pareto_frontier: Vec<ParetoPoint>,
+    arm_verdict_claims: Vec<ArmVerdictClaim>,
     falsification_verdict: FalsificationVerdict,
     budget: BudgetSummary,
 }
@@ -449,6 +450,19 @@ struct ParetoPoint {
     mean_accuracy: f64,
     tokens_total: u32,
     dominated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmVerdictClaim {
+    band: String,
+    arm: ArmId,
+    claim_id: String,
+    claim: String,
+    mean_accuracy: f64,
+    tokens_total: u32,
+    pareto_dominated: bool,
+    evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1139,6 +1153,7 @@ fn validate_loaded_row(
     request_nonce: &str,
 ) -> Result<(), String> {
     if row.task_id != task.task_id
+        || row.class != task.class
         || row.arm != arm
         || row.rep_index != rep_index
         || row.memo_key != memo_key
@@ -1349,7 +1364,15 @@ fn run_or_load_eval_row(
     let request_nonce = request_nonce(task, arm, rep_index);
     let request = openrouter_request_body(&messages, 900, &request_nonce);
     let request_hash = blake3_hex(request.to_string().as_bytes());
-    let memo_key = eval_memo_key(task, arm, rep_index, &request_nonce, &request_hash);
+    let judge_cache_key = judge_cache_key(task);
+    let memo_key = eval_memo_key(
+        task,
+        arm,
+        rep_index,
+        &request_nonce,
+        &request_hash,
+        judge_cache_key.as_deref(),
+    );
     let row_path = row_dir.join(format!("{memo_key}.json"));
     if row_path.exists() {
         let row = read_json::<SmokeRunRow>(&row_path)?;
@@ -1367,6 +1390,7 @@ fn run_or_load_eval_row(
 
     let started = Instant::now();
     let response = call_openrouter(api_key, &messages, 900, &request_nonce)?;
+    let candidate_wall_clock_s = started.elapsed().as_secs_f64();
     let (base_accuracy, base_detail) = score_task(task, &response.content);
     let (accuracy, detail, judge_tokens, judge_generation_id) =
         if task.class == TaskClass::BrowseThenAnswer {
@@ -1395,12 +1419,12 @@ fn run_or_load_eval_row(
         accuracy,
         tokens_total: response.tokens_total.saturating_add(judge_tokens),
         tool_calls: context.tool_calls,
-        wall_clock_s: started.elapsed().as_secs_f64(),
+        wall_clock_s: candidate_wall_clock_s,
         answer: response.content,
         score_detail: detail,
     };
-    write_json_atomic(&row_path, &row)?;
     enforce_row_budget(&row)?;
+    write_json_atomic(&row_path, &row)?;
     Ok(row)
 }
 
@@ -1584,8 +1608,9 @@ fn eval_memo_key(
     rep_index: u32,
     request_nonce: &str,
     request_hash: &str,
+    judge_cache_key: Option<&str>,
 ) -> String {
-    let input = json!({
+    let mut input = json!({
         "campaign": CAMPAIGN_ID,
         "callPurpose": "Eval",
         "scorerVersion": SCORER_VERSION,
@@ -1596,7 +1621,18 @@ fn eval_memo_key(
         "requestNonce": request_nonce,
         "requestHash": request_hash,
     });
+    if let Some(judge_cache_key) = judge_cache_key {
+        input["judgeCacheKey"] = json!(judge_cache_key);
+    }
     blake3_hex(input.to_string().as_bytes())
+}
+
+fn judge_cache_key(task: &BenchTask) -> Option<String> {
+    if task.class == TaskClass::BrowseThenAnswer {
+        Some(BROWSE_JUDGE_PROMPT_VERSION.to_owned())
+    } else {
+        None
+    }
 }
 
 fn blake3_hex(bytes: &[u8]) -> String {
@@ -1835,22 +1871,32 @@ fn judge_browse_answer(
 }
 
 fn blind_judge_answer(answer: &str) -> String {
-    answer
-        .split_whitespace()
-        .map(|token| {
-            let trimmed =
-                token.trim_matches(|ch: char| ch == '"' || ch == '\'' || ch == '(' || ch == ')');
-            if let Some(claim_id) = trimmed
-                .strip_prefix("/claims/")
-                .and_then(|value| value.strip_suffix(".txt"))
-            {
-                token.replace(trimmed, claim_id)
-            } else {
-                token.to_owned()
+    let mut output = String::with_capacity(answer.len());
+    let mut rest = answer;
+    while let Some(start) = rest.find("/claims/") {
+        output.push_str(&rest[..start]);
+        let path_start = start + "/claims/".len();
+        let after_prefix = &rest[path_start..];
+        if let Some(suffix_start) = after_prefix.find(".txt") {
+            let claim_id = &after_prefix[..suffix_start];
+            if is_claim_path_id(claim_id) {
+                output.push_str(claim_id);
+                rest = &after_prefix[suffix_start + ".txt".len()..];
+                continue;
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        }
+        output.push_str("/claims/");
+        rest = &rest[path_start..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn is_claim_path_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 fn claim_evidence_block(fixture: &FixtureVault, claim_ids: &[String]) -> Result<String, String> {
@@ -1952,6 +1998,7 @@ fn full_run_report(bundle: &TaskBundle, rows: Vec<SmokeRunRow>) -> FullRunReport
     let aggregates = aggregate_rows(&rows);
     let class_arm_table = class_arm_table(&rows);
     let pareto_frontier = pareto_frontier(&aggregates);
+    let arm_verdict_claims = arm_verdict_claims(&aggregates, &pareto_frontier);
     let falsification_verdict = falsification_verdict(&rows);
     let budget = budget_summary(&rows, FULL_TOKEN_CEILING);
     FullRunReport {
@@ -1969,6 +2016,7 @@ fn full_run_report(bundle: &TaskBundle, rows: Vec<SmokeRunRow>) -> FullRunReport
         aggregates,
         class_arm_table,
         pareto_frontier,
+        arm_verdict_claims,
         falsification_verdict,
         budget,
     }
@@ -1985,9 +2033,10 @@ fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
             let accuracy_by_rep = rep_values(&class_arm_rows, |rep_rows| {
                 mean(rep_rows.iter().map(|row| row.accuracy))
             });
-            let tokens_by_rep = rep_values(&class_arm_rows, |rep_rows| {
-                rep_rows.iter().map(|row| row.tokens_total).sum::<u32>() as f64
-            });
+            let tokens_by_row = class_arm_rows
+                .iter()
+                .map(|row| f64::from(row.tokens_total))
+                .collect::<Vec<_>>();
             table.push(ClassArmSummary {
                 class: class.as_str().to_owned(),
                 arm,
@@ -1995,8 +2044,8 @@ fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
                 reps: FULL_REP_COUNT,
                 accuracy_mean: mean(accuracy_by_rep.iter().copied()),
                 accuracy_range: numeric_range(&accuracy_by_rep),
-                tokens_mean: mean(tokens_by_rep.iter().copied()),
-                tokens_range: numeric_range(&tokens_by_rep).round() as u32,
+                tokens_mean: mean(tokens_by_row.iter().copied()),
+                tokens_range: numeric_range(&tokens_by_row).round() as u32,
                 tool_calls_mean: mean(class_arm_rows.iter().map(|row| f64::from(row.tool_calls))),
                 wall_clock_mean_s: mean(class_arm_rows.iter().map(|row| row.wall_clock_s)),
             });
@@ -2044,6 +2093,50 @@ fn pareto_frontier(aggregates: &[ArmAggregate]) -> Vec<ParetoPoint> {
                 tokens_total: candidate.tokens_total,
                 dominated,
             }
+        })
+        .collect()
+}
+
+fn arm_verdict_claims(
+    aggregates: &[ArmAggregate],
+    pareto_points: &[ParetoPoint],
+) -> Vec<ArmVerdictClaim> {
+    ArmId::ALL
+        .into_iter()
+        .filter_map(|arm| {
+            let aggregate = aggregates.iter().find(|aggregate| aggregate.arm == arm)?;
+            let pareto_dominated = pareto_points
+                .iter()
+                .find(|point| point.arm == arm)
+                .map(|point| point.dominated)
+                .unwrap_or(false);
+            let claim_id = format!("{}-{}-verdict", CAMPAIGN_ID, arm.as_str());
+            let claim = format!(
+                "{} achieved mean accuracy {:.4} with {} total tokens and is {} on the accuracy/token Pareto frontier.",
+                arm.as_str(),
+                aggregate.mean_accuracy,
+                aggregate.tokens_total,
+                if pareto_dominated { "dominated" } else { "not dominated" }
+            );
+            let mut evidence = Vec::with_capacity(2 + aggregate.accuracy_per_class.len());
+            evidence.push(format!("runs={}", aggregate.runs));
+            evidence.push(format!(
+                "meanToolCalls={:.4}",
+                aggregate.mean_tool_calls
+            ));
+            for (class, accuracy) in &aggregate.accuracy_per_class {
+                evidence.push(format!("{class}.accuracy={accuracy:.4}"));
+            }
+            Some(ArmVerdictClaim {
+                band: "Proposed".to_owned(),
+                arm,
+                claim_id,
+                claim,
+                mean_accuracy: aggregate.mean_accuracy,
+                tokens_total: aggregate.tokens_total,
+                pareto_dominated,
+                evidence,
+            })
         })
         .collect()
 }
@@ -2192,6 +2285,33 @@ fn unix_now() -> u64 {
 mod tests {
     use super::*;
 
+    fn test_row(
+        task_id: &str,
+        class: TaskClass,
+        arm: ArmId,
+        rep_index: u32,
+        tokens_total: u32,
+        accuracy: f64,
+    ) -> SmokeRunRow {
+        SmokeRunRow {
+            task_id: task_id.to_owned(),
+            class,
+            arm,
+            rep_index,
+            memo_key: "memo".to_owned(),
+            request_hash: "request".to_owned(),
+            request_nonce: "nonce".to_owned(),
+            generation_id: Some("gen-1".to_owned()),
+            judge_generation_id: None,
+            accuracy,
+            tokens_total,
+            tool_calls: 1,
+            wall_clock_s: 1.0,
+            answer: String::new(),
+            score_detail: json!({}),
+        }
+    }
+
     #[test]
     fn task_generation_matches_campaign_shape() {
         let bundle = build_task_bundle();
@@ -2322,12 +2442,99 @@ mod tests {
                 .to_string()
                 .as_bytes(),
         );
-        let memo_key_0 = eval_memo_key(task, arm, 0, &nonce_0, &request_hash_0);
-        let memo_key_1 = eval_memo_key(task, arm, 1, &nonce_1, &request_hash_1);
+        let memo_key_0 = eval_memo_key(
+            task,
+            arm,
+            0,
+            &nonce_0,
+            &request_hash_0,
+            judge_cache_key(task).as_deref(),
+        );
+        let memo_key_1 = eval_memo_key(
+            task,
+            arm,
+            1,
+            &nonce_1,
+            &request_hash_1,
+            judge_cache_key(task).as_deref(),
+        );
 
         assert_ne!(nonce_0, nonce_1);
         assert_ne!(request_hash_0, request_hash_1);
         assert_ne!(memo_key_0, memo_key_1);
+    }
+
+    #[test]
+    fn browse_memo_key_includes_judge_prompt_version() {
+        let bundle = build_task_bundle();
+        let task = bundle
+            .full_tasks
+            .iter()
+            .find(|task| task.class == TaskClass::BrowseThenAnswer)
+            .expect("browse task");
+        let arm = ArmId::Fs;
+        let context = arm_context(arm, task, &bundle.fixture).expect("context");
+        let messages = vec![
+            chat_message("system", shared_system_prompt(arm)),
+            chat_message("user", eval_user_prompt(task, &context)),
+        ];
+        let nonce = request_nonce(task, arm, 0);
+        let request_hash = blake3_hex(
+            openrouter_request_body(&messages, 900, &nonce)
+                .to_string()
+                .as_bytes(),
+        );
+
+        assert_eq!(
+            judge_cache_key(task).as_deref(),
+            Some(BROWSE_JUDGE_PROMPT_VERSION)
+        );
+        assert_ne!(
+            eval_memo_key(task, arm, 0, &nonce, &request_hash, None),
+            eval_memo_key(
+                task,
+                arm,
+                0,
+                &nonce,
+                &request_hash,
+                judge_cache_key(task).as_deref(),
+            )
+        );
+    }
+
+    #[test]
+    fn non_browse_memo_key_omits_judge_prompt_version() {
+        let bundle = build_task_bundle();
+        let task = bundle
+            .full_tasks
+            .iter()
+            .find(|task| task.class == TaskClass::RetrievalQa)
+            .expect("retrieval task");
+        let arm = ArmId::Sdk;
+        let context = arm_context(arm, task, &bundle.fixture).expect("context");
+        let messages = vec![
+            chat_message("system", shared_system_prompt(arm)),
+            chat_message("user", eval_user_prompt(task, &context)),
+        ];
+        let nonce = request_nonce(task, arm, 0);
+        let request_hash = blake3_hex(
+            openrouter_request_body(&messages, 900, &nonce)
+                .to_string()
+                .as_bytes(),
+        );
+
+        assert_eq!(judge_cache_key(task), None);
+        assert_eq!(
+            eval_memo_key(task, arm, 0, &nonce, &request_hash, None),
+            eval_memo_key(
+                task,
+                arm,
+                0,
+                &nonce,
+                &request_hash,
+                judge_cache_key(task).as_deref(),
+            )
+        );
     }
 
     #[test]
@@ -2394,6 +2601,77 @@ mod tests {
     }
 
     #[test]
+    fn blind_judge_answer_normalizes_punctuated_claim_paths() {
+        let answer =
+            "See (/claims/claim-0001.txt), /claims/claim_0002.txt. and [/claims/claim-0003.txt];";
+        let normalized = blind_judge_answer(answer);
+
+        assert_eq!(
+            normalized,
+            "See (claim-0001), claim_0002. and [claim-0003];"
+        );
+        assert!(!normalized.contains("/claims/"));
+    }
+
+    #[test]
+    fn validate_loaded_row_rejects_class_mismatch() {
+        let bundle = build_task_bundle();
+        let task = bundle
+            .full_tasks
+            .iter()
+            .find(|task| task.class == TaskClass::RetrievalQa)
+            .expect("retrieval task");
+        let row = test_row(&task.task_id, TaskClass::MultiHop, ArmId::Sdk, 0, 10, 1.0);
+
+        let error = validate_loaded_row(&row, task, ArmId::Sdk, 0, "memo", "request", "nonce")
+            .expect_err("class mismatch should reject cached row");
+        assert!(error.contains("memo row mismatch"));
+    }
+
+    #[test]
+    fn class_arm_table_reports_row_level_token_mean() {
+        let rows = vec![
+            test_row("a", TaskClass::RetrievalQa, ArmId::Sdk, 0, 10, 1.0),
+            test_row("b", TaskClass::RetrievalQa, ArmId::Sdk, 0, 30, 0.8),
+            test_row("c", TaskClass::RetrievalQa, ArmId::Sdk, 1, 50, 0.6),
+            test_row("d", TaskClass::RetrievalQa, ArmId::Sdk, 1, 70, 0.4),
+        ];
+        let table = class_arm_table(&rows);
+        let summary = table
+            .iter()
+            .find(|row| row.class == TaskClass::RetrievalQa.as_str() && row.arm == ArmId::Sdk)
+            .expect("retrieval sdk summary");
+
+        assert_eq!(summary.runs, 4);
+        assert_eq!(summary.tokens_mean, 40.0);
+        assert_eq!(summary.tokens_range, 60);
+    }
+
+    #[test]
+    fn full_report_emits_proposed_verdict_claim_for_each_arm() {
+        let bundle = build_task_bundle();
+        let rows = vec![
+            test_row("sdk", TaskClass::RetrievalQa, ArmId::Sdk, 0, 100, 0.8),
+            test_row("fs", TaskClass::RetrievalQa, ArmId::Fs, 0, 120, 0.8),
+            test_row("hybrid", TaskClass::RetrievalQa, ArmId::Hybrid, 0, 110, 0.9),
+        ];
+        let report = full_run_report(&bundle, rows);
+        let arms = report
+            .arm_verdict_claims
+            .iter()
+            .map(|claim| claim.arm)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(report.arm_verdict_claims.len(), 3);
+        assert_eq!(arms, ArmId::ALL.into_iter().collect::<BTreeSet<_>>());
+        assert!(
+            report.arm_verdict_claims.iter().all(
+                |claim| claim.band == "Proposed" && claim.claim_id.contains(claim.arm.as_str())
+            )
+        );
+    }
+
+    #[test]
     fn generated_task_gold_payload_uses_camel_case_fields() {
         let bundle = build_task_bundle();
         let task = &bundle.full_tasks[0];
@@ -2409,23 +2687,14 @@ mod tests {
 
     #[test]
     fn token_extrapolation_targets_owner_authorized_480_run_full_campaign() {
-        let rows = vec![SmokeRunRow {
-            task_id: "task".to_owned(),
-            class: TaskClass::RetrievalQa,
-            arm: ArmId::Sdk,
-            rep_index: 0,
-            memo_key: "memo".to_owned(),
-            request_hash: "request".to_owned(),
-            request_nonce: "nonce".to_owned(),
-            generation_id: Some("gen-1".to_owned()),
-            judge_generation_id: None,
-            accuracy: 1.0,
-            tokens_total: 10,
-            tool_calls: 1,
-            wall_clock_s: 1.0,
-            answer: String::new(),
-            score_detail: json!({}),
-        }];
+        let rows = vec![test_row(
+            "task",
+            TaskClass::RetrievalQa,
+            ArmId::Sdk,
+            0,
+            10,
+            1.0,
+        )];
         let extrapolation = token_burn_extrapolation(&rows);
 
         assert_eq!(extrapolation.full_run_equivalent_runs, 480);
