@@ -1001,6 +1001,7 @@ pub struct EndCompanionRelationship {
 pub struct EndCompanionRelationshipOutcome {
     pub record: CompanionRecord,
     pub goodbye_artifact: Option<EnqueueCompanionTaskOutcome>,
+    pub already_ended: bool,
 }
 
 /// Typed payload stored on durable companion task job rows.
@@ -3448,6 +3449,7 @@ mod tests {
         )?;
 
         assert_eq!(outcome.record.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(!outcome.already_ended);
         assert_eq!(
             outcome.record.lifecycle_events,
             vec![
@@ -3535,6 +3537,7 @@ mod tests {
         )?;
 
         assert_eq!(outcome.record.lifecycle, ClaimLifecycleStatus::Retracted);
+        assert!(!outcome.already_ended);
         assert!(outcome.goodbye_artifact.is_none());
         assert_eq!(
             vault
@@ -3548,6 +3551,67 @@ mod tests {
                 now: 41,
             })?,
             ClaimCompanionTaskOutcome::Empty
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn companion_relationship_end_scrubs_already_retracted_record() -> Result<()> {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let relationship_id = entity(0xC1);
+        let person_ref = entity(0xC2);
+        let persona_ref = entity(0xC3);
+        let scope = CompanionScope::personal(person_ref);
+        let private_note = "already-retracted-private-note-one1488";
+        let record = CompanionRecord::relationship(
+            scope,
+            person_ref,
+            persona_ref,
+            Value::Map(vec![(Value::from("note"), Value::from(private_note))]),
+            provenance(0xC4),
+            CompanionExportClassification::LocalOnly,
+        );
+        vault.create_companion_record(&relationship_id, &record, 50)?;
+        vault.retire_companion_record(&relationship_id, 60)?;
+
+        let outcome = vault.end_companion_relationship(
+            &relationship_id,
+            EndCompanionRelationship {
+                ended_at: 70,
+                ended_badly: false,
+                run_id: Some("run-already-ended-one1488".to_owned()),
+            },
+        )?;
+
+        assert!(outcome.already_ended);
+        assert!(outcome.goodbye_artifact.is_none());
+        assert_eq!(
+            outcome.record.lifecycle_events,
+            vec![
+                CompanionLifecycleEvent::created(50),
+                CompanionLifecycleEvent::retired(60)
+            ],
+            "idempotent end must preserve the original retire audit event"
+        );
+        let stored = vault
+            .get_companion_record(&relationship_id)?
+            .expect("scrubbed retracted relationship remains auditable");
+        let stored_json = companion_value_to_json(&stored.value);
+        assert_eq!(stored_json["kind"], "relationship_ended");
+        assert_eq!(stored_json["private_memory"], "removed");
+        assert_eq!(stored_json["ended_at"], 70);
+        assert!(
+            !stored_json.to_string().contains(private_note),
+            "already retracted relationship must not retain private memory"
+        );
+        assert_eq!(
+            CompanionQueue::new(&vault).claim(ClaimCompanionTask {
+                lease_owner: "goodbye-worker".to_owned(),
+                now: 71,
+            })?,
+            ClaimCompanionTaskOutcome::Empty,
+            "idempotent end must not enqueue another goodbye task"
         );
         Ok(())
     }

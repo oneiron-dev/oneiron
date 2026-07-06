@@ -4147,6 +4147,7 @@ async fn end_companion_register_relationship(
         goodbye_artifact: companion_goodbye_artifact_hook_payload(
             outcome.goodbye_artifact,
             ended_badly,
+            outcome.already_ended,
         ),
     }))
 }
@@ -4367,6 +4368,7 @@ fn companion_register_record_response(
 fn companion_goodbye_artifact_hook_payload(
     outcome: Option<oneiron::EnqueueCompanionTaskOutcome>,
     ended_badly: bool,
+    already_ended: bool,
 ) -> CompanionGoodbyeArtifactHookPayload {
     let skipped = |status: &'static str| CompanionGoodbyeArtifactHookPayload {
         status: status.to_owned(),
@@ -4378,7 +4380,9 @@ fn companion_goodbye_artifact_hook_payload(
     };
 
     let Some(outcome) = outcome else {
-        return if ended_badly {
+        return if already_ended {
+            skipped("already_ended")
+        } else if ended_badly {
             skipped("skipped_bad_end")
         } else {
             skipped("skipped")
@@ -4388,7 +4392,7 @@ fn companion_goodbye_artifact_hook_payload(
     let (status, task_status) = match outcome {
         oneiron::EnqueueCompanionTaskOutcome::Enqueued(status) => ("enqueued", status),
         oneiron::EnqueueCompanionTaskOutcome::Existing(status) => ("existing", status),
-        _ => return skipped("skipped"),
+        _ => return skipped("unknown"),
     };
     CompanionGoodbyeArtifactHookPayload {
         status: status.to_owned(),
@@ -15172,6 +15176,31 @@ mod tests {
         assert_eq!(
             claimed.task.kind,
             oneiron::CompanionTaskKind::GoodbyeArtifact
+        );
+        let (status, body) = route_json(
+            server.clone(),
+            core_request(
+                "POST",
+                &end_path,
+                "companion:register:write",
+                Some(&json!({
+                    "ended_at": 41_u64,
+                    "run_id": "route-goodbye-retry-one1488"
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["goodbye_artifact"]["status"],
+            Value::from("already_ended")
+        );
+        assert!(body["goodbye_artifact"]["job_id"].is_null());
+        assert!(
+            !body["record"]["value"]
+                .to_string()
+                .contains(ending_private_note),
+            "idempotent route ending must keep private memory scrubbed"
         );
 
         let bad_end_id = seeded_test_entity_id(0x1219_0012).to_hex();

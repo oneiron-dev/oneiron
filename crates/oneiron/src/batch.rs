@@ -21,13 +21,13 @@ use crate::ppr;
 use crate::store::Store;
 use crate::types::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
 use crate::types::{
-    ClaimCandidate, CompanionExportClassification, CompanionRecordKey, DecodedEdgeValue,
-    EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
-    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
-    decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
-    validate_edge_weight,
+    ClaimCandidate, CompanionExportClassification, CompanionRecord, CompanionRecordKey,
+    CompanionSubject, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
+    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_COMPANION_REGISTER,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -40,6 +40,37 @@ pub(crate) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 type CompanionRetiredHistoryOverlay = HashSet<(CompanionRecordKey, Vec<CompanionLifecycleEvent>)>;
+
+fn is_relationship_end_scrub_value(value: &Value) -> bool {
+    let Value::Map(entries) = value else {
+        return false;
+    };
+    let mut has_kind = false;
+    let mut has_private_memory_marker = false;
+    let mut has_ended_at = false;
+    for (key, value) in entries {
+        match key.as_str() {
+            Some("kind") => has_kind = value.as_str() == Some("relationship_ended"),
+            Some("private_memory") => has_private_memory_marker = value.as_str() == Some("removed"),
+            Some("ended_at") => has_ended_at = value.as_u64().is_some(),
+            _ => {}
+        }
+    }
+    has_kind && has_private_memory_marker && has_ended_at
+}
+
+fn is_retired_relationship_end_rescrub(
+    existing: &CompanionRecord,
+    record: &CompanionRecord,
+) -> bool {
+    existing.lifecycle == ClaimLifecycleStatus::Retracted
+        && record.lifecycle == ClaimLifecycleStatus::Retracted
+        && matches!(&existing.subject, CompanionSubject::Relationship { .. })
+        && record.key() == existing.key()
+        && record.lifecycle_events == existing.lifecycle_events
+        && record.export_classification == existing.export_classification
+        && is_relationship_end_scrub_value(&record.value)
+}
 
 fn conflict_claim_candidate(
     predicate: &'static str,
@@ -2802,6 +2833,7 @@ fn validate_companion_register_put(
             }
             if existing.lifecycle != ClaimLifecycleStatus::Active
                 && &existing_raw[ENTITY_METADATA_HEADER_LEN..] != data
+                && !is_retired_relationship_end_rescrub(&existing, &record)
             {
                 return Err(Error::InvalidClaimBody("companion record is retired"));
             }

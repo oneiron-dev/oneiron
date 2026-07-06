@@ -1366,17 +1366,12 @@ impl Vault {
         self.ensure_companion_register_kind()?;
         let mut wtxn = self.store.env.write_txn()?;
         let existing = self.read_companion_record_in_txn(&wtxn, id)?;
-        if existing.lifecycle == ClaimLifecycleStatus::Retracted {
-            return Ok(EndCompanionRelationshipOutcome {
-                record: existing,
-                goodbye_artifact: None,
-            });
-        }
         if !matches!(&existing.subject, CompanionSubject::Relationship { .. }) {
             return Err(Error::InvalidClaimBody(
                 "companion relationship end requires relationship record",
             ));
         }
+        let already_ended = existing.lifecycle == ClaimLifecycleStatus::Retracted;
 
         let mut scrubbed = existing;
         scrubbed.value = Value::Map(vec![
@@ -1384,11 +1379,16 @@ impl Vault {
             (Value::from("private_memory"), Value::from("removed")),
             (Value::from("ended_at"), Value::from(input.ended_at)),
         ]);
-        let ended = scrubbed.retired_at(input.ended_at)?;
+        let ended = if already_ended {
+            scrubbed.validate_current_schema_lifecycle_events()?;
+            scrubbed
+        } else {
+            scrubbed.retired_at(input.ended_at)?
+        };
         let data = encode_companion_record_body(&ended)?;
         self.apply_companion_record_body(&mut wtxn, id, input.ended_at, data)?;
 
-        let goodbye_artifact = if input.ended_badly {
+        let goodbye_artifact = if input.ended_badly || already_ended {
             None
         } else {
             let task = CompanionTask::new(CompanionTaskKind::GoodbyeArtifact, ended.key())?;
@@ -1417,6 +1417,7 @@ impl Vault {
         Ok(EndCompanionRelationshipOutcome {
             record: ended,
             goodbye_artifact,
+            already_ended,
         })
     }
 

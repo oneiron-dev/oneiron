@@ -653,7 +653,7 @@ Example response:
   "id": "0123456789abcdef0123456789abcdef",
   "record": {
     "kind": "relationship",
-    "lifecycle": "retired",
+    "lifecycle": "retracted",
     "value": {
       "kind": "relationship_ended",
       "private_memory": "removed",
