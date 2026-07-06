@@ -8,12 +8,13 @@
 use std::io::Cursor;
 
 use rmpv::Value;
+use sha2::{Digest, Sha256};
 
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
 use crate::error::{Error, Result};
-use crate::types::EntityId;
+use crate::types::{ENTITY_ID_LEN, EntityId};
 
 /// Current CounterpartyContactRecord body schema version.
 pub const COUNTERPARTY_CONTACT_SCHEMA_VERSION: u64 = 1;
@@ -71,6 +72,7 @@ const KEY_OPT_OUT_RECEIPT_REASON: &str = OPT_OUT_KEYS[2];
 const MAX_COUNTERPARTY_BYTES: usize = 512;
 const MAX_NOTES: usize = 32;
 const MAX_NOTE_BYTES: usize = 2_048;
+const COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX: &[u8] = b"counterparty_contact.index.v1:";
 
 /// Pinned `counterparty_contact.*` claim predicates for owner-visible fields.
 pub const COUNTERPARTY_CONTACT_CLAIM_PREDICATES: [&str; 10] = [
@@ -113,6 +115,15 @@ impl CounterpartyFirstTouch {
             Self::UserIntroduction => "user_introduction",
             Self::InboundFirst => "inbound_first",
             Self::Public => "public",
+        }
+    }
+
+    #[must_use]
+    pub const fn receipt_reason(self) -> &'static str {
+        match self {
+            Self::UserIntroduction => "counterparty_first_touch_user_introduction",
+            Self::InboundFirst => "counterparty_first_touch_inbound_first",
+            Self::Public => "counterparty_first_touch_public",
         }
     }
 
@@ -472,6 +483,44 @@ pub fn decode_counterparty_contact_body(bytes: &[u8]) -> Result<CounterpartyCont
     }
 
     decode_counterparty_contact_value(&value)
+}
+
+pub(crate) fn counterparty_contact_index_key(
+    identity_ref: &EntityId,
+    counterparty: &str,
+) -> Result<Vec<u8>> {
+    let counterparty = normalize_counterparty(counterparty.to_owned())?;
+    let counterparty_hash = Sha256::digest(counterparty.as_bytes());
+    let mut key = Vec::with_capacity(
+        COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX.len() + ENTITY_ID_LEN + counterparty_hash.len(),
+    );
+    key.extend_from_slice(COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX);
+    key.extend_from_slice(identity_ref.as_bytes());
+    key.extend_from_slice(&counterparty_hash);
+    Ok(key)
+}
+
+pub(crate) fn counterparty_contact_index_key_for_record(
+    record: &CounterpartyContactRecord,
+) -> Result<Vec<u8>> {
+    counterparty_contact_index_key(&record.identity_ref, &record.counterparty)
+}
+
+pub(crate) fn encode_counterparty_contact_index_value(id: &EntityId) -> [u8; ENTITY_ID_LEN] {
+    *id.as_bytes()
+}
+
+pub(crate) fn decode_counterparty_contact_index_value(raw: &[u8]) -> Result<EntityId> {
+    if raw.len() != ENTITY_ID_LEN {
+        return Err(Error::CorruptedIndex(
+            "counterparty contact lookup index value",
+        ));
+    }
+    EntityId::from_bytes(
+        raw.try_into()
+            .map_err(|_| Error::CorruptedIndex("counterparty contact lookup index value"))?,
+    )
+    .map_err(|_| Error::CorruptedIndex("counterparty contact lookup index value"))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

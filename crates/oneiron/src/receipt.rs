@@ -931,6 +931,18 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
         "read_frontier_hash".to_owned(),
         hex_lower(&record.read_frontier_hash),
     );
+    if let Some(receipt_reason) = record.receipt_reasons.first() {
+        fields.insert("receipt_reason".to_owned(), receipt_reason.clone());
+    }
+    if record.receipt_reasons.len() > 1 {
+        fields.insert(
+            "receipt_reasons".to_owned(),
+            record.receipt_reasons.join(","),
+        );
+    }
+
+    let mut policy_trace = record.reason_codes.clone();
+    policy_trace.extend(record.receipt_reasons.clone());
 
     ReceiptRecord {
         receipt_id: format!("gate:{}", record.decision_id.to_hex()),
@@ -946,7 +958,7 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
         trigger_ref: record
             .claim_id
             .map(|id| format!("claim:{}", hex_lower(&id))),
-        policy_trace: record.reason_codes.clone(),
+        policy_trace,
         fields,
     }
 }
@@ -1464,6 +1476,7 @@ mod tests {
                     created_at,
                     outcome: outcome.to_owned(),
                     reason_codes: vec![reason.to_owned()],
+                    receipt_reasons: Vec::new(),
                     actor_class: "agent".to_owned(),
                     actor_ref: Some(actor.to_owned()),
                     content_kind: "external_effect".to_owned(),

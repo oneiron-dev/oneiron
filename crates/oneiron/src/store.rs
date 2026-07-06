@@ -237,6 +237,7 @@ const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
+const GATE_RECEIPT_REASON_MAX_LEN: usize = 128;
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
 
 thread_local! {
@@ -633,6 +634,8 @@ pub struct GateDecisionRecord {
     pub created_at: u64,
     pub outcome: String,
     pub reason_codes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub receipt_reasons: Vec<String>,
     pub actor_class: String,
     pub actor_ref: Option<String>,
     pub content_kind: String,
@@ -1564,6 +1567,7 @@ impl Store {
             created_at,
             outcome: "let_go".to_owned(),
             reason_codes: vec!["gate.pending.gap_decayed".to_owned()],
+            receipt_reasons: Vec::new(),
             actor_class: original.actor_class,
             actor_ref: original.actor_ref,
             content_kind: original.content_kind,
@@ -2676,10 +2680,23 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
             .reason_codes
             .iter()
             .all(|reason| reason.starts_with("gate."))
+        || !record
+            .receipt_reasons
+            .iter()
+            .all(|reason| valid_gate_receipt_reason(reason))
     {
         return Err(Error::CorruptedIndex("gate decision ledger"));
     }
     Ok(())
+}
+
+fn valid_gate_receipt_reason(reason: &str) -> bool {
+    !reason.is_empty()
+        && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
+        && reason.starts_with("counterparty_")
+        && reason
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn vet_pending_gate_consent_record(record: &PendingGateConsentRecord) -> Result<()> {
