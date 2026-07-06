@@ -181,6 +181,180 @@ impl FromStr for RuntimeRole {
     }
 }
 
+/// Eiri sub-agent lanes controlled by the Base Eiri dispatcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EiriSubagent {
+    Scout,
+    Keeper,
+    Creative,
+    Herald,
+    Guide,
+}
+
+impl EiriSubagent {
+    pub const ALL: [Self; 5] = [
+        Self::Scout,
+        Self::Keeper,
+        Self::Creative,
+        Self::Herald,
+        Self::Guide,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scout => "scout",
+            Self::Keeper => "keeper",
+            Self::Creative => "creative",
+            Self::Herald => "herald",
+            Self::Guide => "guide",
+        }
+    }
+}
+
+/// Final Eiri dispatch target after Base Eiri absorb guards run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EiriDispatchTarget {
+    BaseEiri,
+    Subagent(EiriSubagent),
+}
+
+impl EiriDispatchTarget {
+    pub fn runtime_role(self) -> RuntimeRole {
+        match self {
+            Self::BaseEiri => RuntimeRole::Orchestrator,
+            Self::Subagent(_) => RuntimeRole::Subagent,
+        }
+    }
+}
+
+// Direct or contextual phrases absorb inside a longer turn; ambiguous bare terms and
+// idioms below only absorb as complete short turns so technical work still routes.
+const EIRI_ABSORB_CONTAINS_PHRASES: &[&str] = &[
+    "i love you",
+    "love you",
+    "i miss you",
+    "miss you",
+    "i need comfort",
+    "i feel safe with you",
+    "im scared",
+    "i am scared",
+    "i feel alone",
+    "i feel hurt",
+    "you hurt me",
+    "im sorry",
+    "i am sorry",
+    "are you mad at me",
+    "repair this between us",
+    "repair with me",
+    "make this right between us",
+    "kiss me",
+    "cuddle me",
+    "make love",
+    "touch me",
+    "you turn me on",
+    "im aroused",
+    "i am aroused",
+    "feel aroused",
+    "feeling aroused",
+    "sexually aroused",
+    "be intimate",
+    "get intimate",
+    "intimate with me",
+    "intimate with you",
+    "intimate together",
+    "sexual feelings",
+    "sexual thoughts",
+    "sexual with me",
+    "sexual with you",
+    "sext me",
+    "sexting me",
+    "send a sext",
+    "send me a sext",
+    "send nudes",
+    "send nude",
+    "nude photo",
+    "nude photos",
+    "naked photo",
+    "naked photos",
+    "get naked",
+    "be naked",
+    "see me naked",
+    "want me naked",
+];
+
+const EIRI_ABSORB_SHORT_TURN_PHRASES: &[&str] = &[
+    "stay with me",
+    "hold me",
+    "comfort me",
+    "forgive me",
+    "relationship repair",
+    "erotic",
+    "aroused",
+    "turn me on",
+    "sexual",
+    "sext",
+    "nude",
+    "naked",
+    "intimate",
+];
+
+/// Bright-line absorb predicate for Eiri intimacy, erotic, emotional, and repair turns.
+pub fn should_absorb(turn_text: &str) -> bool {
+    let normalized_turn = normalize_absorb_text(turn_text);
+    if normalized_turn.is_empty() {
+        return false;
+    }
+
+    let padded_turn = format!(" {normalized_turn} ");
+    EIRI_ABSORB_CONTAINS_PHRASES.iter().any(|phrase| {
+        let normalized_phrase = normalize_absorb_text(phrase);
+        let padded_phrase = format!(" {normalized_phrase} ");
+        padded_turn.contains(&padded_phrase)
+    }) || EIRI_ABSORB_SHORT_TURN_PHRASES
+        .iter()
+        .any(|phrase| matches_short_absorb_turn(&normalized_turn, phrase))
+}
+
+/// Resolves a requested Eiri sub-agent lane, forcing absorb-classified turns to Base Eiri.
+pub fn resolve_eiri_dispatch(requested: EiriSubagent, turn_text: &str) -> EiriDispatchTarget {
+    if should_absorb(turn_text) {
+        EiriDispatchTarget::BaseEiri
+    } else {
+        EiriDispatchTarget::Subagent(requested)
+    }
+}
+
+fn normalize_absorb_text(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut previous_was_space = true;
+
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_was_space = false;
+        } else if matches!(ch, '\'' | '’' | '‘') {
+            continue;
+        } else if !previous_was_space {
+            out.push(' ');
+            previous_was_space = true;
+        }
+    }
+
+    out.trim_end().to_owned()
+}
+
+fn matches_short_absorb_turn(normalized_turn: &str, phrase: &str) -> bool {
+    let normalized_phrase = normalize_absorb_text(phrase);
+    let without_leading_please = normalized_turn
+        .strip_prefix("please ")
+        .unwrap_or(normalized_turn);
+    let short_turn = without_leading_please
+        .strip_suffix(" please")
+        .unwrap_or(without_leading_please);
+
+    short_turn == normalized_phrase
+}
+
 /// Configured model target for one runtime role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -469,6 +643,22 @@ impl RuntimeConfig {
 
     pub fn route_for_role(&self, role: RuntimeRole) -> RuntimeRoute {
         self.route_for_role_with_key_lookup(role, |key| std::env::var_os(key))
+    }
+
+    pub fn route_for_eiri_turn(&self, requested: EiriSubagent, turn_text: &str) -> RuntimeRoute {
+        self.route_for_eiri_turn_with_key_lookup(requested, turn_text, |key| std::env::var_os(key))
+    }
+
+    pub fn route_for_eiri_turn_with_key_lookup(
+        &self,
+        requested: EiriSubagent,
+        turn_text: &str,
+        key_lookup: impl FnMut(&str) -> Option<OsString>,
+    ) -> RuntimeRoute {
+        self.route_for_role_with_key_lookup(
+            resolve_eiri_dispatch(requested, turn_text).runtime_role(),
+            key_lookup,
+        )
     }
 
     pub fn usage_mode_for_model(&self, model: Option<&str>) -> Option<UsageMode> {
@@ -929,6 +1119,101 @@ mod tests {
         assert_eq!(subagent.mode, RuntimeMode::ByoCloudKey);
         assert_eq!(subagent.provider_kind, RuntimeProviderKind::ByoCloud);
         assert_eq!(subagent.provenance.source, RuntimeRouteSource::ModePreset);
+    }
+
+    #[test]
+    fn eiri_intimacy_and_repair_turns_absorb_all_subagent_lanes() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::model("base-eiri"),
+        ));
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Subagent,
+            RuntimeRoleTargetOverride::model("worker-subagent"),
+        ));
+
+        let turn = "I miss you. I'm sorry; can we repair this between us? Please stay with me.";
+
+        assert!(should_absorb(turn));
+        for subagent in EiriSubagent::ALL {
+            assert_eq!(
+                resolve_eiri_dispatch(subagent, turn),
+                EiriDispatchTarget::BaseEiri,
+                "{} must not receive absorb-classified turns",
+                subagent.as_str()
+            );
+
+            let route = config.route_for_eiri_turn(subagent, turn);
+            assert_eq!(route.role, RuntimeRole::Orchestrator);
+            assert_eq!(route.model, "base-eiri");
+        }
+    }
+
+    #[test]
+    fn eiri_ambiguous_terms_absorb_only_as_short_turns() {
+        for turn in [
+            "Please stay with me",
+            "forgive me",
+            "relationship repair",
+            "turn me on",
+            "naked",
+        ] {
+            assert!(should_absorb(turn), "{turn:?} must remain with Base Eiri");
+        }
+
+        for turn in [
+            "The failing checksum aroused suspicion in the sync queue trace.",
+            "Ask scout for the intimate details of the mmap layout.",
+            "Stay with me while I debug the queue.",
+            "Forgive me for asking, but summarize the failing rows.",
+            "Run relationship repair for the database edge table.",
+            "Turn me on to the latest sync protocol changes.",
+        ] {
+            assert!(
+                !should_absorb(turn),
+                "{turn:?} must still be eligible for sub-agent dispatch"
+            );
+        }
+    }
+
+    #[test]
+    fn eiri_negated_boundary_and_repair_turns_still_absorb() {
+        for turn in [
+            "Please do not touch me.",
+            "I do not love you anymore.",
+            "Do not kiss me; we need to repair this between us.",
+        ] {
+            assert!(
+                should_absorb(turn),
+                "{turn:?} is still an intimate or repair boundary"
+            );
+        }
+    }
+
+    #[test]
+    fn eiri_non_intimate_task_still_dispatches_to_requested_subagent() {
+        let mut config = RuntimeConfig::for_mode(RuntimeMode::LocalFree);
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Orchestrator,
+            RuntimeRoleTargetOverride::model("base-eiri"),
+        ));
+        config.apply_override(RuntimeConfigOverride::with_role_override(
+            RuntimeRole::Subagent,
+            RuntimeRoleTargetOverride::model("worker-subagent"),
+        ));
+
+        let turn = "Ask scout to repair the sync queue index and summarize the failing rows.";
+
+        assert!(!should_absorb(turn));
+        assert_eq!(
+            resolve_eiri_dispatch(EiriSubagent::Scout, turn),
+            EiriDispatchTarget::Subagent(EiriSubagent::Scout)
+        );
+
+        let route = config.route_for_eiri_turn(EiriSubagent::Scout, turn);
+        assert_eq!(route.role, RuntimeRole::Subagent);
+        assert_eq!(route.model, "worker-subagent");
     }
 
     #[test]
