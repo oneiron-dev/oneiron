@@ -273,7 +273,9 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
-pub use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+pub use crate::receipt::{
+    PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptView,
+};
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
