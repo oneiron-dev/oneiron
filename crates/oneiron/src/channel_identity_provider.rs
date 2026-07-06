@@ -785,8 +785,62 @@ impl SlackSharedPresenceAdapter {
         persona_handle: impl Into<String>,
         requested_at: u64,
     ) -> Result<ChannelIdentity> {
+        let workspace_id = workspace_id.into();
+        let persona_handle = persona_handle.into();
+        self.requested_identity_from_parts(
+            agent_ref,
+            &workspace_id,
+            None,
+            &persona_handle,
+            requested_at,
+        )
+    }
+
+    /// Builds the requested ChannelIdentity row for one Enterprise Grid workspace persona.
+    pub fn requested_enterprise_identity(
+        &self,
+        agent_ref: EntityId,
+        enterprise_id: impl Into<String>,
+        workspace_id: impl Into<String>,
+        persona_handle: impl Into<String>,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let enterprise_id = enterprise_id.into();
+        let workspace_id = workspace_id.into();
+        let persona_handle = persona_handle.into();
+        self.requested_identity_from_parts(
+            agent_ref,
+            &workspace_id,
+            Some(&enterprise_id),
+            &persona_handle,
+            requested_at,
+        )
+    }
+
+    /// Returns the canonical Slack workspace stamp used by requested, inbound, and outbound paths.
+    pub fn workspace_ref(workspace_id: &str, enterprise_id: Option<&str>) -> Result<String> {
+        slack_workspace_ref(workspace_id, enterprise_id)
+    }
+
+    /// Returns the canonical Slack persona ChannelIdentity key.
+    pub fn persona_identity_key(
+        workspace_id: &str,
+        enterprise_id: Option<&str>,
+        persona_handle: &str,
+    ) -> Result<String> {
+        slack_identity_key(workspace_id, enterprise_id, persona_handle)
+    }
+
+    fn requested_identity_from_parts(
+        &self,
+        agent_ref: EntityId,
+        workspace_id: &str,
+        enterprise_id: Option<&str>,
+        persona_handle: &str,
+        requested_at: u64,
+    ) -> Result<ChannelIdentity> {
         let address_or_handle =
-            slack_identity_key(&workspace_id.into(), None, &persona_handle.into())?;
+            Self::persona_identity_key(workspace_id, enterprise_id, persona_handle)?;
         Ok(ChannelIdentity::requested(
             SLACK_CHANNEL,
             address_or_handle,
@@ -1665,6 +1719,64 @@ mod tests {
             provision
                 .provider_identity_ref
                 .contains("slack:workspace:T123ABC:persona:eiri")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn slack_enterprise_identity_matches_inbound_and_outbound_keys() -> Result<()> {
+        let adapter = slack_adapter()?;
+        let expected_workspace_ref = "slack:enterprise:E123ABC:workspace:T123ABC";
+        let expected_identity_key = "slack:enterprise:E123ABC:workspace:T123ABC:persona:eiri";
+        let identity = adapter.requested_enterprise_identity(
+            entity(0xB3),
+            "E123ABC",
+            "T123ABC",
+            "@Eiri",
+            1_000,
+        )?;
+
+        assert_eq!(identity.channel, SLACK_CHANNEL);
+        assert_eq!(identity.shape, ChannelIdentityShape::SharedPresence);
+        assert_eq!(identity.address_or_handle, expected_identity_key);
+        assert_eq!(
+            SlackSharedPresenceAdapter::workspace_ref("T123ABC", Some("E123ABC"))?,
+            expected_workspace_ref
+        );
+        assert_eq!(
+            SlackSharedPresenceAdapter::persona_identity_key("T123ABC", Some("E123ABC"), "@Eiri")?,
+            expected_identity_key
+        );
+
+        let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Slack(
+            SlackProviderInbound::new("EvGrid", "T123ABC", "C123ABC", "U123ABC", "eiri", 2_001)
+                .with_enterprise_id("E123ABC"),
+        ))?;
+        assert_eq!(
+            parsed.workspace_ref.as_deref(),
+            Some(expected_workspace_ref)
+        );
+        assert_eq!(parsed.receiving_address_or_handle, expected_identity_key);
+        assert_eq!(
+            parsed.counterparty,
+            SurfaceCounterpartyStamp::unknown(
+                "slack:enterprise:E123ABC:workspace:T123ABC:user:U123ABC"
+            )
+        );
+
+        let attribution = SlackPersonaAttribution::new("eiri", "Eiri")?;
+        let message = SlackOutboundMessage::new("T123ABC", "C123ABC", "Grid hello")?
+            .with_enterprise_id("E123ABC")?;
+        let outbound = adapter.persona_outbound(&attribution, &message)?;
+        assert_eq!(outbound.workspace_ref, expected_workspace_ref);
+        assert_eq!(outbound.identity_key, expected_identity_key);
+        assert_eq!(
+            outbound.body["metadata"]["event_payload"]["workspace_ref"],
+            expected_workspace_ref
+        );
+        assert_eq!(
+            outbound.body["metadata"]["event_payload"]["identity_key"],
+            expected_identity_key
         );
         Ok(())
     }
