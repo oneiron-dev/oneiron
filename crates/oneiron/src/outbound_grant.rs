@@ -63,6 +63,7 @@ const SCOPE_KIND_VERB_CLASS: &str = "verb_class";
 const SCOPE_KIND_CHANNEL: &str = "channel";
 const SCOPE_KIND_BRIEF_VERB_CLASS: &str = "brief_verb_class";
 const PRINCIPAL_INDEX_PREFIX: &[u8] = b"outbound_grant/principal/v1\0";
+const SEND_VERB_CLASS: &str = "send";
 
 /// Scope dial selected by the owner when minting a standing outbound grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -133,7 +134,7 @@ impl StandingOutboundGrantScope {
             Self::VerbClass { verb_class } => verb_class.trim() == verb.trim(),
             Self::Channel {
                 channel: grant_channel,
-            } => grant_channel.trim() == channel.trim(),
+            } => grant_channel.trim() == channel.trim() && is_send_class_verb(verb),
             Self::BriefVerbClass {
                 brief_ref: grant_brief,
                 verb_class,
@@ -604,13 +605,11 @@ fn non_empty_str(value: &str) -> Result<()> {
 }
 
 fn refs_match(candidate: &str, target: &str) -> bool {
-    candidate == target || strip_ref_prefix(candidate) == strip_ref_prefix(target)
+    candidate.trim() == target.trim()
 }
 
-fn strip_ref_prefix(value: &str) -> &str {
-    value
-        .split_once(':')
-        .map_or(value, |(_prefix, suffix)| suffix)
+fn is_send_class_verb(verb: &str) -> bool {
+    verb.trim() == SEND_VERB_CLASS
 }
 
 fn invalid_grant() -> Error {
@@ -679,15 +678,24 @@ mod tests {
         let contact = StandingOutboundGrantScope::Contact {
             contact_ref: "contact:yuki".to_owned(),
         };
-        assert!(contact.matches_effect("send", "line", Some("yuki"), None));
+        assert!(contact.matches_effect("send", "line", Some("contact:yuki"), None));
         assert!(!contact.matches_effect("send", "line", Some("ren"), None));
+        assert!(!contact.matches_effect("send", "line", Some("slack:yuki"), None));
+
+        let channel = StandingOutboundGrantScope::Channel {
+            channel: "line".to_owned(),
+        };
+        assert!(channel.matches_effect("send", "line", None, None));
+        assert!(!channel.matches_effect("provision", "line", None, None));
+        assert!(!channel.matches_effect("send", "email", None, None));
 
         let brief = StandingOutboundGrantScope::BriefVerbClass {
             brief_ref: "brief:party".to_owned(),
             verb_class: "send".to_owned(),
         };
-        assert!(brief.matches_effect("send", "line", None, Some("party")));
-        assert!(!brief.matches_effect("react", "line", None, Some("party")));
+        assert!(brief.matches_effect("send", "line", None, Some("brief:party")));
+        assert!(!brief.matches_effect("react", "line", None, Some("brief:party")));
+        assert!(!brief.matches_effect("send", "line", None, Some("party")));
         assert!(!brief.matches_effect("send", "line", None, Some("brief:other")));
     }
 

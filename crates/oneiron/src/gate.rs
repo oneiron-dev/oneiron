@@ -1951,6 +1951,7 @@ pub(crate) fn check_external_effect_policy(
     policy: &PolicyManifestResolution,
 ) -> Result<(GateDecisionId, GateDecision)> {
     let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
+    hydrated_effect.standing_grant_ref = None;
     let matched_grant = standing_outbound_grant_for_effect(store, wtxn, &hydrated_effect, policy)?;
     if let Some((grant_id, _grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
@@ -5563,6 +5564,30 @@ mod tests {
     }
 
     #[test]
+    fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, 0xD7, &encode_policy_manifest(vec![]))?;
+        let policy = resolve(&vault)?;
+
+        let mut effect = external_effect_gate_input("sender", "send", "line");
+        effect.has_opted_in = false;
+        effect.standing_grant_ref = Some(format!("grant:{}", test_id(0xD7).to_hex()));
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        })?;
+
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        let decisions = vault.store.gate_decisions(10)?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].grant_ref, None);
+        Ok(())
+    }
+
+    #[test]
     fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         put_policy_manifest_bytes(&vault, 0xDA, &encode_policy_manifest(vec![]))?;
@@ -5584,6 +5609,17 @@ mod tests {
         out_of_scope.has_opted_in = false;
         let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
             check_external_effect_policy(&vault.store, wtxn, &out_of_scope, &policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        let mut lifecycle_effect = external_effect_gate_input("sender", "provision", "line");
+        lifecycle_effect.has_opted_in = false;
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &lifecycle_effect, &policy)
         })?;
         assert_eq!(decision.outcome(), GateOutcome::Pending);
         assert_eq!(

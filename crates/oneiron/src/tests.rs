@@ -3455,8 +3455,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 8,
-        "ONE-1213 pins the current storage ABI at 8",
+        STORAGE_ABI_VERSION, 9,
+        "ONE-1530 pins the current storage ABI at 9",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3490,8 +3490,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 8,
-        "ONE-1213 pins the current storage ABI at 8",
+        STORAGE_ABI_VERSION, 9,
+        "ONE-1530 pins the current storage ABI at 9",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3525,8 +3525,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 8,
-        "ONE-1213 pins the current storage ABI at 8",
+        STORAGE_ABI_VERSION, 9,
+        "ONE-1530 pins the current storage ABI at 9",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3560,8 +3560,8 @@ fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
 #[test]
 fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 8,
-        "ONE-1213 pins the current storage ABI at 8",
+        STORAGE_ABI_VERSION, 9,
+        "ONE-1530 pins the current storage ABI at 9",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3585,6 +3585,41 @@ fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
             }
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(7), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1530 fail-closed gate over registering persistent maintenance type
+/// OUTBOUND_GRANT at byte 133: v8 code does not know this persistent entity
+/// kind, so v8 vaults must not open under ABI v9 without rebuild.
+#[test]
+fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 9,
+        "ONE-1530 pins the current storage ABI at 9",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(8))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1530 ABI v8 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(8),
+                current: STORAGE_ABI_VERSION,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(8), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
     Ok(())
 }
