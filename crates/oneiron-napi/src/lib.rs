@@ -5,8 +5,8 @@ use std::sync::Arc;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{
-    CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseSnapshot, EdgeKind, EntityId, RepoRef,
-    TimeRange, Vault, VaultConfig,
+    CODEBASE_CONTENT_HASH_LEN, CODEBASE_FORK_HASH_LEN, CODEBASE_SCOPE_KEY_LEN, CodebaseFileEntry,
+    CodebaseSnapshot, EdgeKind, EntityId, RepoRef, TimeRange, Vault, VaultConfig,
 };
 
 use types::{
@@ -116,6 +116,12 @@ fn parse_content_hash(buf: &Buffer) -> BoundaryResult<[u8; CODEBASE_CONTENT_HASH
     })
 }
 
+fn parse_fixed_hash<const N: usize>(buf: &Buffer, label: &str) -> BoundaryResult<[u8; N]> {
+    buf.as_ref()
+        .try_into()
+        .map_err(|_| format!("{label} must be exactly {N} bytes, got {}", buf.len()))
+}
+
 /// Validate a JS file size before narrowing to u64.
 fn parse_file_size(size: i64) -> BoundaryResult<u64> {
     u64::try_from(size).map_err(|_| format!("size_bytes must be >= 0, got {size}"))
@@ -162,8 +168,29 @@ fn core_codebase_snapshot(input: NapiCodebaseSnapshot) -> BoundaryResult<Codebas
             ))
         })
         .collect::<BoundaryResult<Vec<_>>>()?;
-    CodebaseSnapshot::new(input.project_id, repo_ref, input.commit_hash, files)
-        .map_err(|e| e.to_string())
+    let fork_hash = input
+        .fork_hash
+        .as_ref()
+        .map(|buf| parse_fixed_hash::<CODEBASE_FORK_HASH_LEN>(buf, "fork_hash"))
+        .transpose()?;
+    let scope_key = input
+        .scope_key
+        .as_ref()
+        .map(|buf| parse_fixed_hash::<CODEBASE_SCOPE_KEY_LEN>(buf, "scope_key"))
+        .transpose()?;
+    let snapshot = CodebaseSnapshot::new(input.project_id, repo_ref, input.commit_hash, files)
+        .map_err(|e| e.to_string())?;
+    if let Some(fork_hash) = fork_hash
+        && snapshot.fork_hash != fork_hash
+    {
+        return Err("fork_hash must match the file manifest".to_owned());
+    }
+    if let Some(scope_key) = scope_key
+        && snapshot.scope_key != scope_key
+    {
+        return Err("scope_key must match project_id and repo_ref".to_owned());
+    }
+    Ok(snapshot)
 }
 
 fn napi_codebase_snapshot(snapshot: CodebaseSnapshot) -> BoundaryResult<NapiCodebaseSnapshot> {
@@ -188,6 +215,8 @@ fn napi_codebase_snapshot(snapshot: CodebaseSnapshot) -> BoundaryResult<NapiCode
         project_id: snapshot.project_id,
         repo_ref: snapshot.repo_ref.canonical(),
         commit_hash: snapshot.commit_hash,
+        fork_hash: Some(Buffer::from(snapshot.fork_hash.as_slice())),
+        scope_key: Some(Buffer::from(snapshot.scope_key.as_slice())),
         files,
     })
 }

@@ -77,6 +77,10 @@ pub struct NapiCodebaseSnapshot {
     pub repo_ref: String,
     /// 40-hex commit hash, required for GitHub-at-commit repo_refs.
     pub commit_hash: Option<String>,
+    /// Deterministic manifest hash computed by core. Optional on input.
+    pub fork_hash: Option<Buffer>,
+    /// Deterministic repository scope key computed by core. Optional on input.
+    pub scope_key: Option<Buffer>,
     /// Deterministic file manifest.
     pub files: Vec<NapiCodebaseFileEntry>,
 }

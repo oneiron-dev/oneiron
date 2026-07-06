@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
-use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
+use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
 use crate::types::EntityId;
 
@@ -334,7 +334,7 @@ impl Vault {
         &self,
         repo_ref: &RepoRef,
     ) -> Result<Vec<RepoMutationOplogEntry>> {
-        let repo_key_hash = repo_key_hash(&repo_ref.canonical());
+        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
         let prefix = repo_mutation_oplog_prefix(&repo_key_hash);
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
@@ -377,7 +377,7 @@ impl Vault {
                     )?;
                     self.finish_repo_mutation(
                         &PreparedRepoMutation {
-                            repo_key_hash: repo_key_hash(&repo_ref.canonical()),
+                            repo_key_hash: repo_mutation_repo_key_hash(repo_ref),
                             seq: stale.seq,
                         },
                         RepoMutationStatus::Failed,
@@ -408,7 +408,7 @@ impl Vault {
         repo_root: &Path,
     ) -> Result<PreparedRepoMutation> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
-        let repo_key_hash = repo_key_hash(&repo_ref.canonical());
+        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
         let started_at_ms = now_millis();
         let mut wtxn = self.store.env.write_txn()?;
         store_snapshot_if_absent(self, &mut wtxn, fork_hash, &snapshot_bytes)?;
@@ -1142,7 +1142,7 @@ fn git_common_dir(repo_root: &Path) -> Result<PathBuf> {
 }
 
 fn resolve_mutable_repo_root(repo_ref: &RepoRef) -> Result<PathBuf> {
-    let RepoRef::LocalFolder { path } = repo_ref else {
+    let RepoRef::LocalFolder { path, .. } = repo_ref else {
         return Err(Error::InvalidRepoMutationRecord(
             "only local repo_refs can be mutated",
         ));
@@ -1162,7 +1162,16 @@ fn canonical_repo_ref_for_root(repo_root: &Path) -> Result<RepoRef> {
             "local repo path must be UTF-8",
         ))?
         .to_owned();
-    Ok(RepoRef::LocalFolder { path })
+    let output = run_git(repo_root, &["rev-parse".to_owned(), "HEAD".to_owned()])?;
+    let commit = utf8_trimmed(output, "git HEAD commit must be UTF-8")?.to_ascii_lowercase();
+    if commit.len() != CODEBASE_COMMIT_HASH_HEX_LEN
+        || !commit.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "git HEAD commit must be a 40-character hexadecimal hash",
+        ));
+    }
+    Ok(RepoRef::LocalFolder { path, commit })
 }
 
 fn validate_relative_repo_path(path: &str) -> Result<()> {
@@ -1342,6 +1351,13 @@ fn repo_key_hash(repo_key: &str) -> String {
     hex_bytes(&sha256_bytes(repo_key.as_bytes()))
 }
 
+fn repo_mutation_repo_key_hash(repo_ref: &RepoRef) -> String {
+    match repo_ref {
+        RepoRef::LocalFolder { path, .. } => repo_key_hash(&format!("local:{path}")),
+        RepoRef::GitHubAtCommit { .. } => repo_key_hash(&repo_ref.canonical()),
+    }
+}
+
 fn sha256_bytes(bytes: &[u8]) -> RepoForkHash {
     let digest = Sha256::digest(bytes);
     let mut out = [0_u8; 32];
@@ -1477,8 +1493,14 @@ mod tests {
     }
 
     fn repo_ref(repo: &TempDir) -> RepoRef {
+        let output = run_git_at_path(repo.path(), &["rev-parse".to_owned(), "HEAD".to_owned()])
+            .expect("git rev-parse HEAD");
+        let commit = utf8_trimmed(output, "git HEAD commit must be UTF-8")
+            .expect("UTF-8 HEAD commit")
+            .to_ascii_lowercase();
         RepoRef::LocalFolder {
             path: repo.path().to_string_lossy().into_owned(),
+            commit,
         }
     }
 

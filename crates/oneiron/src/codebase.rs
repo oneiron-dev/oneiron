@@ -1,27 +1,43 @@
+use std::path::PathBuf;
+
+use gix::bstr::ByteSlice;
+use gix::object::tree::EntryKind;
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
-use crate::code_artifact::decode_code_artifact_body;
+use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
 use crate::error::{Error, Result};
 use crate::store::Store;
-use crate::types::{ENTITY_TYPE_CODE_ARTIFACT, EntityId};
+use crate::types::{
+    ENTITY_ID_LEN, ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, EntityId, TimeRange,
+};
 
 pub const CODEBASE_REPO_REF_MAX_BYTES: usize = 1024;
 pub const CODEBASE_PROJECT_ID_MAX_BYTES: usize = 256;
 pub const CODEBASE_FILE_PATH_MAX_BYTES: usize = 4096;
 pub const CODEBASE_CONTENT_HASH_LEN: usize = 32;
+pub const CODEBASE_FORK_HASH_LEN: usize = 32;
+pub const CODEBASE_SCOPE_KEY_LEN: usize = 32;
 pub const CODEBASE_COMMIT_HASH_HEX_LEN: usize = 40;
 pub const CODEBASE_SNAPSHOT_MAX_FILES: usize = 100_000;
-pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 4] =
-    ["project_id", "repo_ref", "commit_hash", "files"];
+pub const CODEBASE_SNAPSHOT_BODY_KEYS: [&str; 6] = [
+    "project_id",
+    "repo_ref",
+    "commit_hash",
+    "fork_hash",
+    "scope_key",
+    "files",
+];
 pub const CODEBASE_FILE_ENTRY_KEYS: [&str; 3] = ["path", "content_hash", "size_bytes"];
 
 const KEY_PROJECT_ID: &str = CODEBASE_SNAPSHOT_BODY_KEYS[0];
 const KEY_REPO_REF: &str = CODEBASE_SNAPSHOT_BODY_KEYS[1];
 const KEY_COMMIT_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[2];
-const KEY_FILES: &str = CODEBASE_SNAPSHOT_BODY_KEYS[3];
+const KEY_FORK_HASH: &str = CODEBASE_SNAPSHOT_BODY_KEYS[3];
+const KEY_SCOPE_KEY: &str = CODEBASE_SNAPSHOT_BODY_KEYS[4];
+const KEY_FILES: &str = CODEBASE_SNAPSHOT_BODY_KEYS[5];
 const KEY_FILE_PATH: &str = CODEBASE_FILE_ENTRY_KEYS[0];
 const KEY_FILE_CONTENT_HASH: &str = CODEBASE_FILE_ENTRY_KEYS[1];
 const KEY_FILE_SIZE_BYTES: &str = CODEBASE_FILE_ENTRY_KEYS[2];
@@ -29,6 +45,16 @@ const KEY_FILE_SIZE_BYTES: &str = CODEBASE_FILE_ENTRY_KEYS[2];
 const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
 const CODEBASE_REPO_INDEX_KEY_PREFIX: &[u8] = b"codebase:repo:v1:";
 const CODEBASE_PROJECT_INDEX_KEY_PREFIX: &[u8] = b"codebase:project:v1:";
+const CODEBASE_FORK_INDEX_KEY_PREFIX: &[u8] = b"codebase:fork:v1:";
+const CODEBASE_SCOPE_INDEX_KEY_PREFIX: &[u8] = b"codebase:scope:v1:";
+
+const CODEBASE_FORK_HASH_DOMAIN: &[u8] = b"oneiron:codebase-forkhash:v1";
+const CODEBASE_SCOPE_KEY_DOMAIN: &[u8] = b"oneiron:codebase-scope:v1";
+const CODEBASE_ASSET_ID_DOMAIN: &[u8] = b"oneiron:codebase-asset-entity:v1";
+const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v1";
+
+pub type CodebaseForkHash = [u8; CODEBASE_FORK_HASH_LEN];
+pub type CodebaseScopeKey = [u8; CODEBASE_SCOPE_KEY_LEN];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -145,6 +171,8 @@ pub struct CodebaseSnapshot {
     pub project_id: String,
     pub repo_ref: RepoRef,
     pub commit_hash: Option<String>,
+    pub fork_hash: CodebaseForkHash,
+    pub scope_key: CodebaseScopeKey,
     pub files: Vec<CodebaseFileEntry>,
 }
 
@@ -155,15 +183,96 @@ impl CodebaseSnapshot {
         commit_hash: Option<String>,
         files: Vec<CodebaseFileEntry>,
     ) -> Result<Self> {
+        let project_id = project_id.into();
         let mut snapshot = Self {
-            project_id: project_id.into(),
+            fork_hash: [0; CODEBASE_FORK_HASH_LEN],
+            scope_key: codebase_scope_key(&project_id, &repo_ref)?,
+            project_id,
             repo_ref,
             commit_hash: commit_hash.map(normalize_commit_hash).transpose()?,
             files,
         };
         snapshot.files.sort_by(|a, b| a.path.cmp(&b.path));
+        snapshot.fork_hash = codebase_fork_hash(&snapshot.files)?;
         validate_codebase_snapshot(&snapshot)?;
         Ok(snapshot)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepoIngestConfig {
+    pub repo_path: PathBuf,
+    pub editable_whitelist: Vec<String>,
+}
+
+impl RepoIngestConfig {
+    pub fn new(
+        repo_path: impl Into<PathBuf>,
+        editable_whitelist: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self> {
+        let editable_whitelist = editable_whitelist
+            .into_iter()
+            .map(Into::into)
+            .map(|path| {
+                validate_manifest_path(&path)?;
+                Ok(path)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            repo_path: repo_path.into(),
+            editable_whitelist,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepoIngestResult {
+    pub code_artifact_id: EntityId,
+    pub snapshot: CodebaseSnapshot,
+}
+
+pub struct CodebaseSnapshotMount<'a> {
+    vault: &'a Vault,
+    code_artifact_id: EntityId,
+    snapshot: CodebaseSnapshot,
+}
+
+impl CodebaseSnapshotMount<'_> {
+    #[must_use]
+    pub fn code_artifact_id(&self) -> EntityId {
+        self.code_artifact_id
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> &CodebaseSnapshot {
+        &self.snapshot
+    }
+
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        true
+    }
+
+    pub fn list_files(&self) -> Vec<&str> {
+        self.snapshot
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect()
+    }
+
+    pub fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        validate_manifest_path(path)?;
+        let Ok(index) = self
+            .snapshot
+            .files
+            .binary_search_by(|entry| entry.path.as_str().cmp(path))
+        else {
+            return Ok(None);
+        };
+        read_asset_blob(self.vault, &self.snapshot.files[index].content_hash).map(Some)
     }
 }
 
@@ -201,6 +310,14 @@ pub fn encode_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<Vec<u8>> 
                 .commit_hash
                 .as_deref()
                 .map_or(Value::Nil, Value::from),
+        ),
+        (
+            Value::from(KEY_FORK_HASH),
+            Value::Binary(snapshot.fork_hash.to_vec()),
+        ),
+        (
+            Value::from(KEY_SCOPE_KEY),
+            Value::Binary(snapshot.scope_key.to_vec()),
         ),
         (Value::from(KEY_FILES), Value::Array(files)),
     ]);
@@ -245,6 +362,18 @@ pub(crate) fn codebase_candidate_matches_filters(
     Ok(true)
 }
 
+pub(crate) fn codebase_candidate_matches_scope_key(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    scope_key: &CodebaseScopeKey,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(rtxn, &codebase_scope_index_key(scope_key, id))?
+        .is_some())
+}
+
 pub(crate) fn delete_codebase_snapshot_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -252,6 +381,7 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
 ) -> Result<bool> {
     let key = codebase_snapshot_key(id);
     let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+        delete_index_rows_for_id(store, wtxn, CODEBASE_SCOPE_INDEX_KEY_PREFIX, id)?;
         return Ok(false);
     };
 
@@ -264,6 +394,8 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
             store.vault_meta.delete(wtxn, &key)?;
             delete_index_rows_for_id(store, wtxn, CODEBASE_REPO_INDEX_KEY_PREFIX, id)?;
             delete_index_rows_for_id(store, wtxn, CODEBASE_PROJECT_INDEX_KEY_PREFIX, id)?;
+            delete_index_rows_for_id(store, wtxn, CODEBASE_FORK_INDEX_KEY_PREFIX, id)?;
+            delete_index_rows_for_id(store, wtxn, CODEBASE_SCOPE_INDEX_KEY_PREFIX, id)?;
         }
     }
     Ok(true)
@@ -298,6 +430,100 @@ pub(crate) fn reconcile_codebase_snapshot_after_code_artifact_put(
 }
 
 impl Vault {
+    pub fn ingest_local_repo_at_commit(
+        &self,
+        project_id: impl Into<String>,
+        config: &RepoIngestConfig,
+        commit_ref: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<RepoIngestResult> {
+        let project_id = project_id.into();
+        validate_project_id(&project_id)?;
+        if commit_ref.trim().is_empty() || commit_ref.chars().any(char::is_control) {
+            return Err(Error::InvalidCodebaseSnapshotBody(
+                "commit_ref must be non-empty and cannot contain control characters",
+            ));
+        }
+
+        let repo = gix::discover(&config.repo_path).map_err(|_| {
+            Error::InvalidCodebaseSnapshotBody("repo_path must point inside a local Git repository")
+        })?;
+        let commit_id = repo
+            .rev_parse_single(commit_ref)
+            .map_err(|_| Error::InvalidCodebaseSnapshotBody("commit_ref did not resolve"))?;
+        let commit_object = commit_id.object().map_err(|_| {
+            Error::InvalidCodebaseSnapshotBody("commit_ref object could not be read")
+        })?;
+        let commit = commit_object.try_into_commit().map_err(|_| {
+            Error::InvalidCodebaseSnapshotBody("commit_ref must resolve to a commit")
+        })?;
+        let commit_hash = commit.id().to_string();
+        let tree = commit
+            .tree()
+            .map_err(|_| Error::InvalidCodebaseSnapshotBody("commit tree could not be read"))?;
+        let repo_path = std::fs::canonicalize(&config.repo_path).map_err(|_| {
+            Error::InvalidCodebaseSnapshotBody("repo_path must be a canonicalizable local path")
+        })?;
+        let repo_ref = RepoRef::LocalFolder {
+            path: repo_path.to_string_lossy().into_owned(),
+            commit: commit_hash.clone(),
+        };
+
+        let mut blobs = Vec::<RepoIngestBlob>::new();
+        collect_repo_blobs(&tree, "", &mut blobs)?;
+        blobs.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let files = blobs
+            .iter()
+            .map(|blob| {
+                Ok(CodebaseFileEntry::new(
+                    blob.path.clone(),
+                    *blake3::hash(&blob.data).as_bytes(),
+                    u64::try_from(blob.data.len())
+                        .map_err(|_| Error::ArithmeticOverflow("codebase blob length overflow"))?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let snapshot =
+            CodebaseSnapshot::new(project_id, repo_ref.clone(), Some(commit_hash), files)?;
+        let code_artifact_id = codebase_snapshot_entity_id(&snapshot)?;
+        let code_body = CodeArtifactBody::new(
+            "Summarize the repository snapshot.",
+            snapshot.fork_hash,
+            repo_ref.canonical(),
+        );
+        let code_body = crate::code_artifact::encode_code_artifact_body(&code_body)?;
+
+        let mut batch = self.batch();
+        for blob in &blobs {
+            let content_hash = *blake3::hash(&blob.data).as_bytes();
+            let asset_id = codebase_asset_entity_id(&content_hash)?;
+            batch = batch.put(
+                &asset_id,
+                ENTITY_TYPE_ASSET,
+                occurred,
+                learned_at,
+                &blob.data,
+            );
+        }
+        batch
+            .put(
+                &code_artifact_id,
+                ENTITY_TYPE_CODE_ARTIFACT,
+                occurred,
+                learned_at,
+                &code_body,
+            )
+            .commit()?;
+        self.put_codebase_snapshot(&code_artifact_id, &snapshot)?;
+
+        Ok(RepoIngestResult {
+            code_artifact_id,
+            snapshot,
+        })
+    }
+
     pub fn put_codebase_snapshot(
         &self,
         code_artifact_id: &EntityId,
@@ -345,6 +571,12 @@ impl Vault {
             &codebase_project_index_key(&snapshot.project_id, code_artifact_id),
             &[],
         )?;
+        self.store.vault_meta.put(
+            &mut wtxn,
+            &codebase_fork_index_key(&snapshot.fork_hash, code_artifact_id),
+            &[],
+        )?;
+        put_scope_index_rows_for_snapshot(&self.store, &mut wtxn, code_artifact_id, snapshot)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -376,6 +608,29 @@ impl Vault {
         let prefix = codebase_project_index_prefix(project_id);
         codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
     }
+
+    pub fn codebase_snapshots_by_fork_hash(
+        &self,
+        fork_hash: &CodebaseForkHash,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let prefix = codebase_fork_index_prefix(fork_hash);
+        codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
+    }
+
+    pub fn mount_codebase_snapshot(
+        &self,
+        code_artifact_id: &EntityId,
+    ) -> Result<Option<CodebaseSnapshotMount<'_>>> {
+        let Some(snapshot) = self.get_codebase_snapshot(code_artifact_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(CodebaseSnapshotMount {
+            vault: self,
+            code_artifact_id: *code_artifact_id,
+            snapshot,
+        }))
+    }
 }
 
 fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
@@ -388,6 +643,8 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
     let mut project_id: Option<String> = None;
     let mut repo_ref: Option<RepoRef> = None;
     let mut commit_hash: Option<Option<String>> = None;
+    let mut fork_hash: Option<CodebaseForkHash> = None;
+    let mut scope_key: Option<CodebaseScopeKey> = None;
     let mut files: Option<Vec<CodebaseFileEntry>> = None;
     let mut seen = [false; CODEBASE_SNAPSHOT_BODY_KEYS.len()];
 
@@ -434,6 +691,18 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
                     )?)?),
                 });
             }
+            KEY_FORK_HASH => {
+                fork_hash = Some(hash_from_value::<CODEBASE_FORK_HASH_LEN>(
+                    value,
+                    "fork_hash must be 32-byte binary",
+                )?);
+            }
+            KEY_SCOPE_KEY => {
+                scope_key = Some(hash_from_value::<CODEBASE_SCOPE_KEY_LEN>(
+                    value,
+                    "scope_key must be 32-byte binary",
+                )?);
+            }
             KEY_FILES => {
                 let Value::Array(values) = value else {
                     return Err(Error::InvalidCodebaseSnapshotBody(
@@ -451,7 +720,7 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
         }
     }
 
-    let snapshot = CodebaseSnapshot {
+    let mut snapshot = CodebaseSnapshot {
         project_id: project_id.ok_or(Error::InvalidCodebaseSnapshotBody(
             "missing required snapshot key project_id",
         ))?,
@@ -461,10 +730,26 @@ fn decode_codebase_snapshot_value(value: &Value) -> Result<CodebaseSnapshot> {
         commit_hash: commit_hash.ok_or(Error::InvalidCodebaseSnapshotBody(
             "missing required snapshot key commit_hash",
         ))?,
+        fork_hash: [0; CODEBASE_FORK_HASH_LEN],
+        scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
         files: files.ok_or(Error::InvalidCodebaseSnapshotBody(
             "missing required snapshot key files",
         ))?,
     };
+    let expected_fork_hash = codebase_fork_hash(&snapshot.files)?;
+    let expected_scope_key = codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)?;
+    snapshot.fork_hash = fork_hash.unwrap_or(expected_fork_hash);
+    snapshot.scope_key = scope_key.unwrap_or(expected_scope_key);
+    if snapshot.fork_hash != expected_fork_hash {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "fork_hash must match the file manifest",
+        ));
+    }
+    if snapshot.scope_key != expected_scope_key {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "scope_key must match project_id and repo_ref",
+        ));
+    }
     validate_codebase_snapshot(&snapshot)?;
     Ok(snapshot)
 }
@@ -560,6 +845,16 @@ fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
             "repo_ref commit must match snapshot commit_hash",
         ));
     }
+    if snapshot.fork_hash != codebase_fork_hash(&snapshot.files)? {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "fork_hash must match the file manifest",
+        ));
+    }
+    if snapshot.scope_key != codebase_scope_key(&snapshot.project_id, &snapshot.repo_ref)? {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "scope_key must match project_id and repo_ref",
+        ));
+    }
     if snapshot.files.len() > CODEBASE_SNAPSHOT_MAX_FILES {
         return Err(Error::InvalidCodebaseSnapshotBody(
             "file manifest exceeds 100000 entries",
@@ -579,6 +874,158 @@ fn validate_codebase_snapshot(snapshot: &CodebaseSnapshot) -> Result<()> {
         previous = Some(entry.path.as_str());
     }
     Ok(())
+}
+
+fn hash_from_value<const N: usize>(value: &Value, context: &'static str) -> Result<[u8; N]> {
+    let Value::Binary(bytes) = value else {
+        return Err(Error::InvalidCodebaseSnapshotBody(context));
+    };
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| Error::InvalidCodebaseSnapshotBody(context))
+}
+
+fn codebase_fork_hash(files: &[CodebaseFileEntry]) -> Result<CodebaseForkHash> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(CODEBASE_FORK_HASH_DOMAIN);
+    write_hash_len(&mut hasher, files.len())?;
+    for entry in files {
+        validate_manifest_path(&entry.path)?;
+        write_hash_str(&mut hasher, &entry.path)?;
+        hasher.update(&entry.content_hash);
+        hasher.update(&entry.size_bytes.to_le_bytes());
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn codebase_scope_key(project_id: &str, repo_ref: &RepoRef) -> Result<CodebaseScopeKey> {
+    validate_project_id(project_id)?;
+    let repo_ref = repo_ref.canonical();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(CODEBASE_SCOPE_KEY_DOMAIN);
+    write_hash_str(&mut hasher, project_id)?;
+    write_hash_str(&mut hasher, &repo_ref)?;
+    Ok(hasher.finalize().into())
+}
+
+fn write_hash_str(hasher: &mut blake3::Hasher, value: &str) -> Result<()> {
+    write_hash_len(hasher, value.len())?;
+    hasher.update(value.as_bytes());
+    Ok(())
+}
+
+fn write_hash_len(hasher: &mut blake3::Hasher, value: usize) -> Result<()> {
+    let value = u64::try_from(value)
+        .map_err(|_| Error::ArithmeticOverflow("codebase hash length overflow"))?;
+    hasher.update(&value.to_le_bytes());
+    Ok(())
+}
+
+struct RepoIngestBlob {
+    path: String,
+    data: Vec<u8>,
+}
+
+fn collect_repo_blobs(
+    tree: &gix::Tree<'_>,
+    prefix: &str,
+    out: &mut Vec<RepoIngestBlob>,
+) -> Result<()> {
+    for entry in tree.iter() {
+        let entry = entry.map_err(|_| {
+            Error::InvalidCodebaseSnapshotBody("Git tree entry could not be decoded")
+        })?;
+        let filename = entry
+            .filename()
+            .to_str()
+            .map_err(|_| Error::InvalidCodebaseSnapshotBody("Git tree path must be UTF-8"))?;
+        let path = if prefix.is_empty() {
+            filename.to_owned()
+        } else {
+            format!("{prefix}/{filename}")
+        };
+        match entry.kind() {
+            EntryKind::Tree => {
+                validate_manifest_path(&path)?;
+                let subtree_object = entry.object().map_err(|_| {
+                    Error::InvalidCodebaseSnapshotBody("Git subtree object could not be read")
+                })?;
+                let subtree = subtree_object.try_into_tree().map_err(|_| {
+                    Error::InvalidCodebaseSnapshotBody("Git subtree object could not be read")
+                })?;
+                collect_repo_blobs(&subtree, &path, out)?;
+            }
+            EntryKind::Blob | EntryKind::BlobExecutable | EntryKind::Link => {
+                validate_manifest_path(&path)?;
+                let blob_object = entry.object().map_err(|_| {
+                    Error::InvalidCodebaseSnapshotBody("Git blob object could not be read")
+                })?;
+                let mut blob = blob_object.try_into_blob().map_err(|_| {
+                    Error::InvalidCodebaseSnapshotBody("Git blob object could not be read")
+                })?;
+                out.push(RepoIngestBlob {
+                    path,
+                    data: blob.take_data(),
+                });
+            }
+            EntryKind::Commit => {}
+        }
+    }
+    Ok(())
+}
+
+fn read_asset_blob(
+    vault: &Vault,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+) -> Result<Vec<u8>> {
+    let asset_id = codebase_asset_entity_id(content_hash)?;
+    let Some(raw) = vault.get_raw(&asset_id)? else {
+        return Err(Error::EntityNotFound);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_ASSET {
+        return Err(Error::InvalidCodebaseSnapshotBody(
+            "manifest content hash did not resolve to an ASSET",
+        ));
+    }
+    let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+    if blake3::hash(&body).as_bytes() != content_hash {
+        return Err(Error::CorruptedIndex("codebase asset content hash"));
+    }
+    Ok(body)
+}
+
+fn codebase_asset_entity_id(content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN]) -> Result<EntityId> {
+    entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])
+}
+
+fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> {
+    entity_id_from_hash_material(
+        CODEBASE_SNAPSHOT_ID_DOMAIN,
+        &[&snapshot.scope_key, &snapshot.fork_hash],
+    )
+}
+
+fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
+    for salt in 0_u64..=u64::MAX {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(domain);
+        hasher.update(&salt.to_le_bytes());
+        for part in parts {
+            write_hash_len(&mut hasher, part.len())?;
+            hasher.update(part);
+        }
+        let hash = hasher.finalize();
+        let mut id = [0_u8; ENTITY_ID_LEN];
+        id.copy_from_slice(&hash.as_bytes()[..ENTITY_ID_LEN]);
+        if let Ok(id) = EntityId::from_bytes(id) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "codebase deterministic entity id exhausted salt space",
+    ))
 }
 
 fn scan_codebase_snapshot_metadata(snapshot: &CodebaseSnapshot) -> Result<()> {
@@ -745,6 +1192,10 @@ fn codebase_project_index_prefix(project_id: &str) -> Vec<u8> {
     scoped_index_prefix(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes())
 }
 
+fn codebase_fork_index_prefix(fork_hash: &CodebaseForkHash) -> Vec<u8> {
+    scoped_index_prefix(CODEBASE_FORK_INDEX_KEY_PREFIX, fork_hash)
+}
+
 fn codebase_repo_index_key(repo_ref: &RepoRef, id: &EntityId) -> Vec<u8> {
     scoped_index_key(
         CODEBASE_REPO_INDEX_KEY_PREFIX,
@@ -755,6 +1206,14 @@ fn codebase_repo_index_key(repo_ref: &RepoRef, id: &EntityId) -> Vec<u8> {
 
 fn codebase_project_index_key(project_id: &str, id: &EntityId) -> Vec<u8> {
     scoped_index_key(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes(), id)
+}
+
+fn codebase_fork_index_key(fork_hash: &CodebaseForkHash, id: &EntityId) -> Vec<u8> {
+    scoped_index_key(CODEBASE_FORK_INDEX_KEY_PREFIX, fork_hash, id)
+}
+
+fn codebase_scope_index_key(scope_key: &CodebaseScopeKey, id: &EntityId) -> Vec<u8> {
+    scoped_index_key(CODEBASE_SCOPE_INDEX_KEY_PREFIX, scope_key, id)
 }
 
 fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
@@ -775,6 +1234,41 @@ fn delete_exact_index_rows_for_snapshot(
     store
         .vault_meta
         .delete(wtxn, &codebase_project_index_key(&snapshot.project_id, id))?;
+    store
+        .vault_meta
+        .delete(wtxn, &codebase_fork_index_key(&snapshot.fork_hash, id))?;
+    store
+        .vault_meta
+        .delete(wtxn, &codebase_scope_index_key(&snapshot.scope_key, id))?;
+    for entry in &snapshot.files {
+        let asset_id = codebase_asset_entity_id(&entry.content_hash)?;
+        store.vault_meta.delete(
+            wtxn,
+            &codebase_scope_index_key(&snapshot.scope_key, &asset_id),
+        )?;
+    }
+    Ok(())
+}
+
+fn put_scope_index_rows_for_snapshot(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    code_artifact_id: &EntityId,
+    snapshot: &CodebaseSnapshot,
+) -> Result<()> {
+    store.vault_meta.put(
+        wtxn,
+        &codebase_scope_index_key(&snapshot.scope_key, code_artifact_id),
+        &[],
+    )?;
+    for entry in &snapshot.files {
+        let asset_id = codebase_asset_entity_id(&entry.content_hash)?;
+        store.vault_meta.put(
+            wtxn,
+            &codebase_scope_index_key(&snapshot.scope_key, &asset_id),
+            &[],
+        )?;
+    }
     Ok(())
 }
 
@@ -853,11 +1347,15 @@ mod tests {
     use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
     use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
     use crate::error::{Error, ErrorKind};
+    use crate::pipeline::WorldScope;
     use crate::types::{
         ClaimCandidate, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EdgeActorClass, EdgeKind,
         HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig, WriteActor,
         WriteEnvelope, WriteProvenance,
     };
+    use std::fs;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();
@@ -995,6 +1493,42 @@ mod tests {
         vault.put_edge(&id, EdgeKind::ClaimOf, &subject, 1.0)
     }
 
+    fn run_git(repo_dir: &Path, args: &[&str]) -> Result<()> {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(repo_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| Error::InvariantViolation("git test command failed to start"))?;
+        if !status.success() {
+            return Err(Error::InvariantViolation("git test command failed"));
+        }
+        Ok(())
+    }
+
+    fn create_test_repo() -> Result<tempfile::TempDir> {
+        let repo_dir = tempfile::tempdir()?;
+        fs::create_dir_all(repo_dir.path().join("src"))?;
+        fs::write(
+            repo_dir.path().join("Cargo.toml"),
+            b"[package]\nname = \"tiny\"\n",
+        )?;
+        fs::write(
+            repo_dir.path().join("src/lib.rs"),
+            b"pub fn answer() -> u8 { 42 }\n",
+        )?;
+        run_git(repo_dir.path(), &["init"])?;
+        run_git(
+            repo_dir.path(),
+            &["config", "user.email", "oneiron@example.test"],
+        )?;
+        run_git(repo_dir.path(), &["config", "user.name", "Oneiron Test"])?;
+        run_git(repo_dir.path(), &["add", "."])?;
+        run_git(repo_dir.path(), &["commit", "-m", "initial"])?;
+        Ok(repo_dir)
+    }
+
     #[test]
     fn codebase_repo_ref_parse_validates_local_and_github_at_commit() -> Result<()> {
         let local = local_repo_ref();
@@ -1063,6 +1597,8 @@ mod tests {
             project_id: "project.alpha".to_owned(),
             repo_ref: repo_ref(),
             commit_hash: Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            fork_hash: [0; CODEBASE_FORK_HASH_LEN],
+            scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
             files: vec![file("src/lib.rs", 1), file("src/lib.rs", 2)],
         };
         let err = encode_codebase_snapshot(&raw).expect_err("duplicate paths fail closed");
@@ -1075,6 +1611,8 @@ mod tests {
             project_id: "project.alpha".to_owned(),
             repo_ref: repo_ref(),
             commit_hash: Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
+            fork_hash: [0; CODEBASE_FORK_HASH_LEN],
+            scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
             files: vec![file("src\\..\\secret", 1)],
         };
 
@@ -1094,6 +1632,8 @@ mod tests {
                 commit: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
             },
             commit_hash: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+            fork_hash: [0; CODEBASE_FORK_HASH_LEN],
+            scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
             files: vec![file("src/main.rs", 1)],
         };
 
@@ -1379,6 +1919,104 @@ mod tests {
             .run()?;
         assert_eq!(pack.results.len(), 1);
         assert_eq!(pack.results[0].id, id_a);
+        Ok(())
+    }
+
+    #[test]
+    fn local_repo_ingest_is_idempotent_and_mounts_files() -> Result<()> {
+        let repo_dir = create_test_repo()?;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+
+        let first = vault.ingest_local_repo_at_commit(
+            "project.alpha",
+            &config,
+            "HEAD",
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        let second = vault.ingest_local_repo_at_commit(
+            "project.alpha",
+            &config,
+            "HEAD",
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+
+        assert_eq!(second.code_artifact_id, first.code_artifact_id);
+        assert_eq!(second.snapshot.fork_hash, first.snapshot.fork_hash);
+        assert_eq!(second.snapshot.scope_key, first.snapshot.scope_key);
+        assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_CODE_ARTIFACT)?, 1);
+        assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 2);
+        assert_eq!(
+            vault.codebase_snapshots_by_fork_hash(&first.snapshot.fork_hash)?,
+            vec![first.code_artifact_id]
+        );
+
+        let mount = vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("snapshot mount");
+        assert!(mount.is_read_only());
+        assert_eq!(mount.list_files(), vec!["Cargo.toml", "src/lib.rs"]);
+        assert_eq!(
+            mount.read_file("src/lib.rs")?,
+            Some(b"pub fn answer() -> u8 { 42 }\n".to_vec())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codebase_scope_key_clamps_world_set_retrieval() -> Result<()> {
+        let repo_dir = create_test_repo()?;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+        let ingest = vault.ingest_local_repo_at_commit(
+            "project.alpha",
+            &config,
+            "HEAD",
+            TimeRange { start: 10, end: 10 },
+            11,
+        )?;
+        let outside = entity_id(0x58);
+
+        vault.put_entity(
+            &outside,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: 20, end: 20 },
+            21,
+            b"outside asset",
+        )?;
+        vault
+            .batch()
+            .text(&ingest.code_artifact_id, &[("body", "scopeneedle repo")])
+            .text(&outside, &[("body", "scopeneedle outside")])
+            .commit()?;
+
+        let all = vault.query().search_text("scopeneedle", 10).run()?;
+        assert_eq!(all.len(), 2);
+
+        let scoped = vault
+            .query()
+            .search_text("scopeneedle", 10)
+            .world(WorldScope::WorldSet(ingest.snapshot.scope_key))
+            .run()?;
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, ingest.code_artifact_id);
+
+        let asset_id = codebase_asset_entity_id(&ingest.snapshot.files[0].content_hash)?;
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(codebase_candidate_matches_scope_key(
+            &vault.store,
+            &rtxn,
+            &asset_id,
+            &ingest.snapshot.scope_key
+        )?);
+        assert!(!codebase_candidate_matches_scope_key(
+            &vault.store,
+            &rtxn,
+            &outside,
+            &ingest.snapshot.scope_key
+        )?);
         Ok(())
     }
 
