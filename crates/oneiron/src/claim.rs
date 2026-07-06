@@ -22,10 +22,12 @@
 //! (`TxnBatchBuilder::put_reserved_claim`) and, under the `sync` feature,
 //! the replicated-put door (`put_replicated`) used by CRDT replay so remote
 //! provenance Claims rematerialize — both still run this full structural
-//! validation. Well-formed UNKNOWN predicates
-//! are accepted — the crate is predicate-agnostic for semantics (ARCH-0003
-//! §G.1); no predicate registry, consent matrix, or conflict-set logic lives
-//! here.
+//! validation. Well-formed UNKNOWN predicates are accepted — the crate is
+//! predicate-agnostic for semantics (ARCH-0003 §G.1). Crate-owned
+//! well-known predicates are listed in [`CLAIM_PREDICATE_REGISTRY`] and carry
+//! the first-segment layer prefix `core`, `companion`, or `eiri`; that is a
+//! schema/code-review convention, not a package split, plugin runtime,
+//! consent matrix, or semantic dispatch registry.
 
 use std::{collections::HashSet, io::Cursor, sync::Mutex};
 
@@ -94,17 +96,44 @@ pub(crate) const KEY_APPR: &str = CLAIM_BODY_KEYS[11];
 pub(crate) const KEY_LIFE: &str = CLAIM_BODY_KEYS[12];
 pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[13];
 
+/// Predicate namespace for productizable memory-API records.
+pub const PREDICATE_NAMESPACE_CORE: &str = "core";
+
+/// Predicate namespace for relationship-aware companion extensions.
+pub const PREDICATE_NAMESPACE_COMPANION: &str = "companion";
+
+/// Predicate namespace for Eiri persona-specific extensions.
+pub const PREDICATE_NAMESPACE_EIRI: &str = "eiri";
+
+/// Layer namespace prefixes allowed for crate-owned predicate ids.
+pub const PREDICATE_LAYER_NAMESPACES: [&str; 3] = [
+    PREDICATE_NAMESPACE_CORE,
+    PREDICATE_NAMESPACE_COMPANION,
+    PREDICATE_NAMESPACE_EIRI,
+];
+
 /// Predicate used for synthetic prospective-query hint side records.
-pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "lexical.query_hint";
+pub const PREDICATE_LEXICAL_QUERY_HINT: &str = "core.lexical.query_hint";
 
 /// Pinned companion-expression predicate for the relationship/persona layer.
 pub const PREDICATE_COMPANION_EXPRESSION: &str = "companion.expression";
 
 /// Claim predicate for an unresolved conflict state.
-pub const PREDICATE_CONFLICT_OPEN: &str = "conflict.open";
+pub const PREDICATE_CONFLICT_OPEN: &str = "core.conflict.open";
 
 /// Claim predicate for a resolved conflict state.
-pub const PREDICATE_CONFLICT_RESOLVED: &str = "conflict.resolved";
+pub const PREDICATE_CONFLICT_RESOLVED: &str = "core.conflict.resolved";
+
+/// Claim-module well-known predicate registry.
+///
+/// This is only the crate-owned schema list used by structural validators and
+/// namespace-convention tests. Unknown well-formed predicates remain accepted.
+pub const CLAIM_PREDICATE_REGISTRY: [&str; 4] = [
+    PREDICATE_LEXICAL_QUERY_HINT,
+    PREDICATE_COMPANION_EXPRESSION,
+    PREDICATE_CONFLICT_OPEN,
+    PREDICATE_CONFLICT_RESOLVED,
+];
 
 /// Maximum number of lexical query hints one claim-candidate write may emit.
 pub(crate) const MAX_LEXICAL_QUERY_HINTS_PER_CLAIM: usize = 8;
@@ -888,7 +917,9 @@ fn entity_id_from(bytes: &[u8], context: &'static str) -> Result<EntityId> {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct ClaimBody {
-    /// `pred` — predicate string, validated against the D17 grammar.
+    /// `pred` — predicate string, validated against the D17 grammar. Crate
+    /// well-known predicates use the first-segment layer convention
+    /// documented by [`PREDICATE_LAYER_NAMESPACES`].
     pub predicate: String,
     /// `subj` — subject reference (entity UUID or EdgeRef).
     pub subject: ClaimSubject,
@@ -1750,6 +1781,30 @@ mod tests {
             "a.b.c",
         ] {
             validate_predicate(predicate, false).expect("well-formed predicate must pass");
+        }
+    }
+
+    #[test]
+    fn registered_predicates_carry_layer_prefix() {
+        assert_eq!(
+            PREDICATE_LAYER_NAMESPACES,
+            [
+                PREDICATE_NAMESPACE_CORE,
+                PREDICATE_NAMESPACE_COMPANION,
+                PREDICATE_NAMESPACE_EIRI
+            ]
+        );
+
+        for predicate in CLAIM_PREDICATE_REGISTRY {
+            validate_predicate(predicate, false).expect("registered predicate must be valid");
+            let layer = predicate
+                .split('.')
+                .next()
+                .expect("valid predicate must have a first segment");
+            assert!(
+                PREDICATE_LAYER_NAMESPACES.contains(&layer),
+                "{predicate} must start with core.*, companion.*, or eiri.*"
+            );
         }
     }
 
