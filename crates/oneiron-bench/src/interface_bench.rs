@@ -1323,7 +1323,7 @@ fn judge_browse_answer(
             ),
             chat_message("user", judge_prompt),
         ],
-        300,
+        1_200,
     )?;
     let parsed = serde_json::from_str::<Value>(&response.content).unwrap_or_else(|_| {
         json!({
