@@ -158,6 +158,7 @@ pub enum ErrorKind {
     InvalidTemporalExpression,
     EntityNotFound,
     AccessGrantAlreadyExists,
+    OutboundGrantAlreadyExists,
     ChannelIdentityAlreadyExists,
     CounterpartyContactAlreadyExists,
     CompanionRecordAlreadyExists,
@@ -168,6 +169,7 @@ pub enum ErrorKind {
     InvalidFederationGrantBody,
     InvalidAuthorityLogBody,
     InvalidAccessGrantBody,
+    InvalidOutboundGrantBody,
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
     CorruptedIndex,
@@ -389,6 +391,9 @@ pub enum Error {
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
+    /// StandingOutboundGrant creation attempted to reuse an existing entity id.
+    #[error("outbound grant already exists")]
+    OutboundGrantAlreadyExists,
     /// ChannelIdentity creation attempted to reuse an existing id or assignment key.
     #[error("channel identity already exists")]
     ChannelIdentityAlreadyExists,
@@ -463,6 +468,10 @@ pub enum Error {
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
     InvalidAccessGrantBody(&'static str),
+    /// A StandingOutboundGrant record failed pinned structural validation.
+    /// Nothing was written.
+    #[error("invalid outbound grant body: {0}")]
+    InvalidOutboundGrantBody(&'static str),
     /// A ChannelIdentity record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid channel identity body: {0}")]
@@ -922,6 +931,7 @@ impl Error {
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
+            Self::OutboundGrantAlreadyExists => ErrorKind::OutboundGrantAlreadyExists,
             Self::ChannelIdentityAlreadyExists => ErrorKind::ChannelIdentityAlreadyExists,
             Self::CounterpartyContactAlreadyExists => ErrorKind::CounterpartyContactAlreadyExists,
             Self::CompanionRecordAlreadyExists => ErrorKind::CompanionRecordAlreadyExists,
@@ -932,6 +942,7 @@ impl Error {
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
+            Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
