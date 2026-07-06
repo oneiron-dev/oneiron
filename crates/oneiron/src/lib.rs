@@ -21,6 +21,7 @@ pub mod error;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
+pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod ingest;
@@ -160,6 +161,12 @@ pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
     FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
     encode_federation_grant_body,
+};
+pub use crate::graph_fs::{
+    GRAPH_FS_DEFAULT_MAX_ENTRIES, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP, GRAPH_FS_HOST_IMPORTS,
+    GRAPH_FS_MAX_PAGE_BYTE_CAP, GRAPH_FS_MAX_PAGE_ENTRIES, GRAPH_FS_MIN_PAGE_BYTE_CAP,
+    GRAPH_FS_MORE_ENTRY, GRAPH_FS_PROJECTION_VERSION, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
+    GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
