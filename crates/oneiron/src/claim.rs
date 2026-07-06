@@ -412,7 +412,7 @@ impl<'a> ScopedRead<'a> {
         self.is_entity_readable_with_policy_in(rtxn, &policy, id)
     }
 
-    fn is_entity_readable_with_policy_in(
+    pub(crate) fn is_entity_readable_with_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -607,7 +607,10 @@ impl<'a> ScopedRead<'a> {
         Ok(kept)
     }
 
-    fn policy_manifest_in(&self, rtxn: &heed::RoTxn<'_>) -> Result<PolicyManifestResolution> {
+    pub(crate) fn policy_manifest_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<PolicyManifestResolution> {
         let cached_policy = self
             .policy
             .lock()
