@@ -15,7 +15,8 @@ use crate::claim::{
     sensitivity_band_from_value,
 };
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyFirstTouch, decode_counterparty_contact_body,
+    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
+    decode_counterparty_contact_body, decode_counterparty_contact_index_value,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
 use crate::error::{Error, Result};
@@ -313,6 +314,7 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) counterparty: Option<String>,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
+    pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -329,6 +331,7 @@ pub(crate) struct ExternalEffectGateInput {
     pub(crate) counterparty: Option<String>,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
+    pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
@@ -352,6 +355,7 @@ impl ExternalEffectGateInput {
                 counterparty: self.counterparty.clone(),
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,
+                counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,
                 has_opted_in: self.has_opted_in,
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,
@@ -519,6 +523,7 @@ impl GateReasonCode {
 pub(crate) struct GateDecision {
     outcome: GateOutcome,
     reason_codes: Vec<GateReasonCode>,
+    receipt_reasons: Vec<&'static str>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -527,6 +532,7 @@ impl GateDecision {
         Self {
             outcome: GateOutcome::Allow,
             reason_codes: vec![GateReasonCode::Allow],
+            receipt_reasons: Vec::new(),
         }
     }
 
@@ -534,6 +540,7 @@ impl GateDecision {
         Self {
             outcome: GateOutcome::Deny,
             reason_codes: vec![reason_code],
+            receipt_reasons: Vec::new(),
         }
     }
 
@@ -541,7 +548,17 @@ impl GateDecision {
         Self {
             outcome: GateOutcome::Pending,
             reason_codes,
+            receipt_reasons: Vec::new(),
         }
+    }
+
+    fn with_receipt_reasons(mut self, reasons: impl IntoIterator<Item = &'static str>) -> Self {
+        for reason in reasons {
+            if !self.receipt_reasons.contains(&reason) {
+                self.receipt_reasons.push(reason);
+            }
+        }
+        self
     }
 
     #[must_use]
@@ -553,6 +570,24 @@ impl GateDecision {
     pub(crate) fn reason_codes(&self) -> &[GateReasonCode] {
         &self.reason_codes
     }
+
+    #[must_use]
+    pub(crate) fn receipt_reasons(&self) -> &[&'static str] {
+        &self.receipt_reasons
+    }
+}
+
+fn external_effect_receipt_reasons(
+    effect: &ExternalEffectGateContext,
+) -> impl Iterator<Item = &'static str> {
+    effect
+        .counterparty_opt_out_receipt_reason
+        .into_iter()
+        .chain(
+            effect
+                .counterparty_first_touch
+                .map(CounterpartyFirstTouch::receipt_reason),
+        )
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -941,17 +976,26 @@ impl PolicyManifestResolution {
         if input.policy_manifest_version.trim().is_empty() {
             return GateDecision::deny(GateReasonCode::DenyMissingPolicyManifestVersion);
         }
-        if input.content_kind == GateContentKind::ExternalEffect
-            && input
-                .external_effect
-                .as_ref()
-                .is_some_and(|effect| effect.counterparty_opted_out)
+        let external_effect = if input.content_kind == GateContentKind::ExternalEffect {
+            input.external_effect.as_ref()
+        } else {
+            None
+        };
+        if let Some(effect) = external_effect
+            && effect.counterparty_opted_out
         {
-            return GateDecision::deny(GateReasonCode::DenyCounterpartyOptOut);
+            return GateDecision::deny(GateReasonCode::DenyCounterpartyOptOut)
+                .with_receipt_reasons(external_effect_receipt_reasons(effect));
         }
         if self.is_fail_closed() {
             if input.content_kind == GateContentKind::ExternalEffect {
-                return GateDecision::pending(vec![GateReasonCode::PendingExternalEffectAuthority]);
+                let decision =
+                    GateDecision::pending(vec![GateReasonCode::PendingExternalEffectAuthority]);
+                return if let Some(effect) = external_effect {
+                    decision.with_receipt_reasons(external_effect_receipt_reasons(effect))
+                } else {
+                    decision
+                };
             }
             return GateDecision::deny(GateReasonCode::DenyPolicyFailClosed);
         }
@@ -990,10 +1034,16 @@ impl PolicyManifestResolution {
             }
         }
 
-        if pending.is_empty() {
+        let decision = if pending.is_empty() {
             GateDecision::allow()
         } else {
             GateDecision::pending(pending)
+        };
+
+        if let Some(effect) = external_effect {
+            decision.with_receipt_reasons(external_effect_receipt_reasons(effect))
+        } else {
+            decision
         }
     }
 
@@ -1816,6 +1866,11 @@ pub(crate) fn check_claim_policy_for_write(
                         .iter()
                         .map(|code| code.as_str().to_owned())
                         .collect(),
+                    receipt_reasons: decision
+                        .receipt_reasons()
+                        .iter()
+                        .map(|reason| (*reason).to_owned())
+                        .collect(),
                     actor_class: input.actor.actor_class.clone(),
                     actor_ref: input.actor.actor_ref.clone(),
                     content_kind: input.content_kind.as_str().to_owned(),
@@ -1890,6 +1945,11 @@ pub(crate) fn check_external_effect_policy(
                 .iter()
                 .map(|code| code.as_str().to_owned())
                 .collect(),
+            receipt_reasons: decision
+                .receipt_reasons()
+                .iter()
+                .map(|reason| (*reason).to_owned())
+                .collect(),
             actor_class: input.actor.actor_class.clone(),
             actor_ref: input.actor.actor_ref.clone(),
             content_kind: input.content_kind.as_str().to_owned(),
@@ -1917,7 +1977,14 @@ fn hydrate_external_effect_contact(
     };
     if let Some(record) = counterparty_contact_for_send(store, txn, &identity_ref, counterparty)? {
         hydrated.counterparty_first_touch = Some(record.first_touch);
+        if record.first_touch == CounterpartyFirstTouch::Public
+            && hydrated.policy_risk == ExternalEffectPolicyRisk::Normal
+        {
+            hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
+        }
         hydrated.counterparty_opted_out = record.is_opted_out();
+        hydrated.counterparty_opt_out_receipt_reason =
+            record.opt_out.map(|opt_out| opt_out.receipt_reason());
     }
     Ok(hydrated)
 }
@@ -1928,6 +1995,12 @@ fn counterparty_contact_for_send(
     identity_ref: &EntityId,
     counterparty: &str,
 ) -> Result<Option<CounterpartyContactRecord>> {
+    if let Some(record) =
+        counterparty_contact_for_send_by_index(store, txn, identity_ref, counterparty)?
+    {
+        return Ok(Some(record));
+    }
+
     for entry in store
         .type_index
         .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
@@ -1952,6 +2025,42 @@ fn counterparty_contact_for_send(
         }
     }
     Ok(None)
+}
+
+fn counterparty_contact_for_send_by_index(
+    store: &Store,
+    txn: &heed::RwTxn<'_>,
+    identity_ref: &EntityId,
+    counterparty: &str,
+) -> Result<Option<CounterpartyContactRecord>> {
+    let key = counterparty_contact_index_key(identity_ref, counterparty)?;
+    let Some(raw_id) = store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let id = decode_counterparty_contact_index_value(raw_id)?;
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Err(Error::CorruptedIndex(
+            "counterparty contact lookup index entity row",
+        ));
+    };
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex(
+            "counterparty contact lookup index entity header",
+        ));
+    };
+    if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+        return Err(Error::CorruptedIndex(
+            "counterparty contact lookup index entity type",
+        ));
+    }
+    let record =
+        decode_counterparty_contact_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
+    if !record.matches_counterparty(identity_ref, counterparty) {
+        return Err(Error::CorruptedIndex(
+            "counterparty contact lookup index assignment",
+        ));
+    }
+    Ok(Some(record))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2779,8 +2888,9 @@ mod tests {
         CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
         CounterpartyOptOutReason,
     };
-    use crate::error::{GateDenialOutcome, GateDenialReason};
+    use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
     use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
     use crate::types::{
         ClaimCandidate, ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE,
         ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
@@ -4441,6 +4551,7 @@ mod tests {
             counterparty: None,
             counterparty_first_touch: None,
             counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
             has_opted_in: true,
             has_permission: true,
             policy_risk: ExternalEffectPolicyRisk::Normal,
@@ -5206,6 +5317,37 @@ mod tests {
     }
 
     #[test]
+    fn counterparty_contact_lookup_uses_dedicated_index_before_scan() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let identity = test_id(0xC7);
+        let contact_id = test_id(0xC8);
+        let contact =
+            CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
+        vault.create_counterparty_contact(&contact_id, &contact)?;
+
+        vault.with_write_txn(|wtxn| {
+            let type_key = Store::encode_type_key(ENTITY_TYPE_COUNTERPARTY_CONTACT, &contact_id);
+            vault.store.type_index.delete(wtxn, &type_key)?;
+            Ok(())
+        })?;
+
+        let found = vault
+            .find_counterparty_contact(&identity, "kenji@example.com")?
+            .expect("lookup index finds contact without type-index scan row");
+        assert_eq!(found.0, contact_id);
+        assert_eq!(found.1.counterparty, "kenji@example.com");
+
+        let duplicate_id = test_id(0xC9);
+        let duplicate =
+            CounterpartyContactRecord::inbound_first(identity, " kenji@example.com ", 20)?;
+        let err = vault
+            .create_counterparty_contact(&duplicate_id, &duplicate)
+            .expect_err("lookup index rejects duplicate counterparty assignment");
+        assert_eq!(err.kind(), ErrorKind::CounterpartyContactAlreadyExists);
+        Ok(())
+    }
+
+    #[test]
     fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
@@ -5245,6 +5387,13 @@ mod tests {
             gate_reason_strs(&decision),
             vec!["gate.deny.counterparty_opt_out"]
         );
+        assert_eq!(
+            decision.receipt_reasons(),
+            &[
+                "counterparty_opt_out_unsubscribe",
+                "counterparty_first_touch_user_introduction"
+            ]
+        );
 
         let decisions = vault.store.gate_decisions(10)?;
         assert_eq!(decisions.len(), 1);
@@ -5252,6 +5401,125 @@ mod tests {
         assert_eq!(
             decisions[0].reason_codes,
             vec!["gate.deny.counterparty_opt_out"]
+        );
+        assert_eq!(
+            decisions[0].receipt_reasons,
+            vec![
+                "counterparty_opt_out_unsubscribe",
+                "counterparty_first_touch_user_introduction"
+            ]
+        );
+
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(
+            receipts[0].policy_trace,
+            vec![
+                "gate.deny.counterparty_opt_out",
+                "counterparty_opt_out_unsubscribe",
+                "counterparty_first_touch_user_introduction"
+            ]
+        );
+        assert_eq!(
+            receipts[0].fields.get("receipt_reason").map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe")
+        );
+        assert_eq!(
+            receipts[0]
+                .fields
+                .get("receipt_reasons")
+                .map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+            "sender",
+            "send",
+            Value::Map(vec![
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                    Value::from("line"),
+                ),
+                (
+                    Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                    Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
+                ),
+            ]),
+            None,
+        )]);
+        put_policy_manifest_bytes(&vault, 0xD6, &data)?;
+        let policy = resolve(&vault)?;
+        let identity = test_id(0xCE);
+
+        let mut normal_effect = external_effect_gate_input("sender", "send", "line");
+        normal_effect.channel_identity_ref = Some(identity);
+        normal_effect.counterparty = Some("unknown@example.com".to_owned());
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &normal_effect, &policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Allow);
+        assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
+        assert!(decision.receipt_reasons().is_empty());
+
+        let contact_id = test_id(0xCF);
+        let public_contact = CounterpartyContactRecord::public(identity, "public@example.com", 10)?;
+        vault.create_counterparty_contact(&contact_id, &public_contact)?;
+
+        let mut public_effect = external_effect_gate_input("sender", "send", "line");
+        public_effect.channel_identity_ref = Some(identity);
+        public_effect.counterparty = Some("public@example.com".to_owned());
+        let (_decision_id, decision) = vault.with_write_txn(|wtxn| {
+            check_external_effect_policy(&vault.store, wtxn, &public_effect, &policy)
+        })?;
+        assert_eq!(decision.outcome(), GateOutcome::Pending);
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.pending.external_effect_authority"]
+        );
+        assert_eq!(
+            decision.receipt_reasons(),
+            &["counterparty_first_touch_public"]
+        );
+
+        let decisions = vault.store.gate_decisions(10)?;
+        let shaped = decisions
+            .iter()
+            .find(|record| record.receipt_reasons == vec!["counterparty_first_touch_public"])
+            .expect("public first-touch gate decision is persisted with receipt reason");
+        assert_eq!(shaped.outcome, "pending");
+        assert_eq!(
+            shaped.reason_codes,
+            vec!["gate.pending.external_effect_authority"]
+        );
+
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        let shaped_receipt = receipts
+            .iter()
+            .find(|receipt| {
+                receipt
+                    .policy_trace
+                    .iter()
+                    .any(|reason| reason == "counterparty_first_touch_public")
+            })
+            .expect("public first-touch gate receipt is projected");
+        assert_eq!(
+            shaped_receipt.policy_trace,
+            vec![
+                "gate.pending.external_effect_authority",
+                "counterparty_first_touch_public"
+            ]
+        );
+        assert_eq!(
+            shaped_receipt
+                .fields
+                .get("receipt_reason")
+                .map(String::as_str),
+            Some("counterparty_first_touch_public")
         );
         Ok(())
     }

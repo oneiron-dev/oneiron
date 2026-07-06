@@ -266,6 +266,7 @@ impl Vault {
             counterparty: None,
             counterparty_first_touch: None,
             counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
             has_opted_in: request.gate.has_opted_in,
             has_permission: request.gate.has_permission,
             policy_risk: request.gate.policy_risk.to_gate(),

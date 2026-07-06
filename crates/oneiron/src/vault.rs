@@ -46,8 +46,10 @@ use crate::claim::{
     validate_claim_body_bytes,
 };
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyOptOutReason, decode_counterparty_contact_body,
-    encode_counterparty_contact_body,
+    CounterpartyContactRecord, CounterpartyOptOutReason, counterparty_contact_index_key,
+    counterparty_contact_index_key_for_record, decode_counterparty_contact_body,
+    decode_counterparty_contact_index_value, encode_counterparty_contact_body,
+    encode_counterparty_contact_index_value,
 };
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
@@ -1445,6 +1447,31 @@ impl Vault {
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
+        let index_key = counterparty_contact_index_key(identity_ref, counterparty)?;
+        if let Some(raw_id) = self.store.vault_meta.get(&rtxn, &index_key)? {
+            let id = decode_counterparty_contact_index_value(raw_id)?;
+            let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+                return Err(Error::CorruptedIndex(
+                    "counterparty contact lookup index entity row",
+                ));
+            };
+            let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex(
+                "counterparty contact lookup index entity header",
+            ))?;
+            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+                return Err(Error::CorruptedIndex(
+                    "counterparty contact lookup index entity type",
+                ));
+            }
+            let record = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if !record.matches_counterparty(identity_ref, counterparty) {
+                return Err(Error::CorruptedIndex(
+                    "counterparty contact lookup index assignment",
+                ));
+            }
+            return Ok(Some((id, record)));
+        }
+
         for entry in self
             .store
             .type_index
@@ -1538,6 +1565,14 @@ impl Vault {
         id: &EntityId,
         record: &CounterpartyContactRecord,
     ) -> Result<bool> {
+        let index_key = counterparty_contact_index_key_for_record(record)?;
+        if let Some(raw_id) = self.store.vault_meta.get(txn, &index_key)? {
+            let existing_id = decode_counterparty_contact_index_value(raw_id)?;
+            if existing_id != *id {
+                return Ok(true);
+            }
+        }
+
         for entry in self
             .store
             .type_index
@@ -1956,6 +1991,33 @@ impl Vault {
         learned_at: u64,
         data: Vec<u8>,
     ) -> Result<()> {
+        let record = decode_counterparty_contact_body(&data)?;
+        let new_index_key = counterparty_contact_index_key_for_record(&record)?;
+        if let Some(raw_id) = self.store.vault_meta.get(&*wtxn, &new_index_key)? {
+            let existing_id = decode_counterparty_contact_index_value(raw_id)?;
+            if existing_id != *id {
+                return Err(Error::CounterpartyContactAlreadyExists);
+            }
+        }
+
+        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
+                return Err(Error::InvalidEntityType(header.entity_type));
+            }
+            let old_record = decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            Some(counterparty_contact_index_key_for_record(&old_record)?)
+        } else {
+            None
+        };
+
+        if let Some(old_index_key) = old_index_key.as_ref()
+            && old_index_key != &new_index_key
+        {
+            self.store.vault_meta.delete(wtxn, old_index_key)?;
+        }
+
         apply_ops(
             &self.store,
             &self.config,
@@ -1977,7 +2039,12 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        let index_value = encode_counterparty_contact_index_value(id);
+        self.store
+            .vault_meta
+            .put(wtxn, &new_index_key, &index_value)?;
+        Ok(())
     }
 
     pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
