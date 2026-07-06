@@ -25,6 +25,10 @@ use crate::types::{
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
 const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
 
+const fn default_receipt_query_limit() -> usize {
+    DEFAULT_RECEIPT_QUERY_LIMIT
+}
+
 /// Receipt family discriminator pinned by OF-367 RS1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -85,6 +89,7 @@ pub struct ReceiptQuery {
     pub start_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_at: Option<u64>,
+    #[serde(default = "default_receipt_query_limit")]
     pub limit: usize,
 }
 
@@ -704,6 +709,15 @@ mod tests {
             vault.store.temporal_learned.put(wtxn, &temporal_key, &[])?;
             Ok(())
         })
+    }
+
+    #[test]
+    fn receipt_query_deserializes_missing_limit_with_default() -> Result<()> {
+        let query: ReceiptQuery = serde_json::from_str(r#"{"outcome":"held"}"#)
+            .map_err(|_| Error::InvariantViolation("receipt query json fixture"))?;
+        assert_eq!(query.limit, DEFAULT_RECEIPT_QUERY_LIMIT);
+        assert_eq!(query.outcome.as_deref(), Some("held"));
+        Ok(())
     }
 
     #[test]
