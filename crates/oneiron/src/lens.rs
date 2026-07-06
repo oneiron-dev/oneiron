@@ -4,7 +4,11 @@
 //! intentionally contains no raw script, URL/network, browser-storage, or eval
 //! leaf types.
 
-use std::{collections::HashSet, fmt, marker::PhantomData};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    marker::PhantomData,
+};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de, de::DeserializeSeed, ser::SerializeMap,
@@ -622,6 +626,7 @@ impl GeneratedUiRender {
         }
 
         let mut ids = HashSet::with_capacity(self.nodes.len());
+        let mut id_to_index = HashMap::with_capacity(self.nodes.len());
         for node in &self.nodes {
             validate_required_lens_text("generated-ui node fallbackText", &node.fallback_text)?;
             if !ids.insert(node.id.as_str()) {
@@ -629,32 +634,114 @@ impl GeneratedUiRender {
                     "generated-ui flat nodes must not contain duplicate ids".to_string(),
                 ));
             }
+            id_to_index.insert(node.id.as_str(), id_to_index.len());
         }
-        if !ids.contains(self.root.as_str()) {
-            return Err(Error::InvalidConfig(
-                "generated-ui root must reference a declared node".to_string(),
-            ));
-        }
+        let root_index = *id_to_index.get(self.root.as_str()).ok_or_else(|| {
+            Error::InvalidConfig("generated-ui root must reference a declared node".to_string())
+        })?;
+
+        let mut rootless_count = 0usize;
+        let mut claimed_parents = HashMap::with_capacity(self.nodes.len().saturating_sub(1));
+        let mut budget = LensBudget::default();
         for node in &self.nodes {
-            if let Some(parent) = node.parent.as_ref()
-                && !ids.contains(parent.as_str())
-            {
-                return Err(Error::InvalidConfig(
-                    "generated-ui parent refs must reference declared nodes".to_string(),
-                ));
+            match node.parent.as_ref() {
+                Some(parent) => {
+                    if !ids.contains(parent.as_str()) {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui parent refs must reference declared nodes".to_string(),
+                        ));
+                    }
+                }
+                None => {
+                    rootless_count += 1;
+                    if node.id != self.root {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui flat tree must have exactly one root".to_string(),
+                        ));
+                    }
+                }
             }
+
+            let mut local_children = HashSet::with_capacity(node.child_refs.len());
             for child_ref in &node.child_refs {
-                if !ids.contains(child_ref.as_str()) {
+                let Some(child_index) = id_to_index.get(child_ref.as_str()) else {
                     return Err(Error::InvalidConfig(
                         "generated-ui child refs must reference declared nodes".to_string(),
+                    ));
+                };
+                if child_ref == &node.id {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must not reference their own node".to_string(),
+                    ));
+                }
+                if !local_children.insert(child_ref.as_str()) {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must not contain duplicates".to_string(),
+                    ));
+                }
+                let child = &self.nodes[*child_index];
+                if child.parent.as_ref().map(LensAtomId::as_str) != Some(node.id.as_str()) {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must agree with child parent refs".to_string(),
+                    ));
+                }
+                if claimed_parents
+                    .insert(child_ref.as_str(), node.id.as_str())
+                    .is_some()
+                {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui flat nodes must have at most one parent".to_string(),
                     ));
                 }
             }
             node.atom.validate()?;
-            let mut budget = LensBudget::default();
             node.atom.count_collection_items(&mut budget)?;
             budget.add_collection("generated-ui node bindings", node.bindings.len())?;
             budget.add_collection("generated-ui child refs", node.child_refs.len())?;
+        }
+        if rootless_count != 1 || self.nodes[root_index].parent.is_some() {
+            return Err(Error::InvalidConfig(
+                "generated-ui flat tree must have exactly one root".to_string(),
+            ));
+        }
+        for node in &self.nodes {
+            if let Some(parent) = node.parent.as_ref() {
+                let parent_index = id_to_index[parent.as_str()];
+                let parent_node = &self.nodes[parent_index];
+                if !parent_node
+                    .child_refs
+                    .iter()
+                    .any(|child_ref| child_ref == &node.id)
+                {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui parent refs must agree with parent child refs".to_string(),
+                    ));
+                }
+            }
+        }
+
+        let mut visited = HashSet::with_capacity(self.nodes.len());
+        let mut stack = vec![(root_index, 1usize)];
+        while let Some((node_index, depth)) = stack.pop() {
+            let node = &self.nodes[node_index];
+            if !visited.insert(node.id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "generated-ui flat tree must not contain cycles".to_string(),
+                ));
+            }
+            if depth > MAX_LENS_TREE_DEPTH {
+                return Err(Error::InvalidConfig(format!(
+                    "generated-ui flat tree depth must be at most {MAX_LENS_TREE_DEPTH}"
+                )));
+            }
+            for child_ref in node.child_refs.iter().rev() {
+                stack.push((id_to_index[child_ref.as_str()], depth + 1));
+            }
+        }
+        if visited.len() != self.nodes.len() {
+            return Err(Error::InvalidConfig(
+                "generated-ui flat tree must not contain orphan nodes".to_string(),
+            ));
         }
         Ok(())
     }
@@ -3101,6 +3188,21 @@ mod tests {
         LensText::new(value).expect("valid text")
     }
 
+    fn generated_ui_node(
+        value: &str,
+        parent: Option<&str>,
+        child_refs: &[&str],
+    ) -> GeneratedUiNode {
+        GeneratedUiNode {
+            id: id(value),
+            parent: parent.map(id),
+            atom: LensAtom::StatusDot(status()),
+            fallback_text: text(value),
+            bindings: Vec::new(),
+            child_refs: child_refs.iter().map(|child| id(child)).collect(),
+        }
+    }
+
     fn action(command: &str) -> SelfUiAction {
         SelfUiAction {
             command: action_id(command),
@@ -3740,6 +3842,114 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn generated_ui_flat_tree_rejects_non_tree_topologies() {
+        assert!(
+            GeneratedUiRender::new(
+                render_id("self-ref"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![generated_ui_node("root", None, &["root"])],
+            )
+            .is_err(),
+            "flat tree must reject self-referencing child refs"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("multi-parent"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &["left", "right"]),
+                    generated_ui_node("left", Some("root"), &["leaf"]),
+                    generated_ui_node("right", Some("root"), &["leaf"]),
+                    generated_ui_node("leaf", Some("left"), &[]),
+                ],
+            )
+            .is_err(),
+            "flat tree must reject multiple parents for a node"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("parent-mismatch"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &[]),
+                    generated_ui_node("child", Some("root"), &[]),
+                ],
+            )
+            .is_err(),
+            "flat tree parent refs must be reciprocal with child refs"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("orphan-cycle"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &[]),
+                    generated_ui_node("orphan-a", Some("orphan-b"), &["orphan-b"]),
+                    generated_ui_node("orphan-b", Some("orphan-a"), &["orphan-a"]),
+                ],
+            )
+            .is_err(),
+            "flat tree must reject disconnected orphan islands"
+        );
+    }
+
+    #[test]
+    fn generated_ui_flat_tree_enforces_depth_and_aggregate_budget() {
+        let mut deep_nodes = Vec::with_capacity(MAX_LENS_TREE_DEPTH + 1);
+        for index in 0..=MAX_LENS_TREE_DEPTH {
+            let name = format!("node-{index}");
+            let parent = (index > 0).then(|| format!("node-{}", index - 1));
+            let child = (index < MAX_LENS_TREE_DEPTH).then(|| format!("node-{}", index + 1));
+            deep_nodes.push(GeneratedUiNode {
+                id: id(&name),
+                parent: parent.as_deref().map(id),
+                atom: LensAtom::StatusDot(status()),
+                fallback_text: text(&name),
+                bindings: Vec::new(),
+                child_refs: child.iter().map(|child| id(child)).collect(),
+            });
+        }
+        assert!(
+            GeneratedUiRender::new(
+                render_id("too-deep"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("node-0"),
+                deep_nodes,
+            )
+            .is_err(),
+            "flat tree depth must share the nested tree cap"
+        );
+
+        let mut over_budget = generated_ui_node("root", None, &[]);
+        over_budget.atom = LensAtom::TextBlock(TextBlockAtom {
+            spans: vec![LensTextSpan::Literal(text("x"))],
+        });
+        over_budget.bindings = (0..MAX_LENS_COLLECTION_ITEMS)
+            .map(|index| LensHandleRef {
+                name: handle(&format!("binding-{index}")),
+                role: LensHandleRole::ClaimSet,
+            })
+            .collect();
+        assert!(
+            GeneratedUiRender::new(
+                render_id("over-budget"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![over_budget],
+            )
+            .is_err(),
+            "flat tree must enforce one aggregate lens collection budget"
+        );
     }
 
     #[test]
