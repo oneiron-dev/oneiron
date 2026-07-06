@@ -5,8 +5,9 @@
 //! walk is a lazy query through [`crate::claim::ScopedRead`], bounded by a
 //! cumulative byte cap and stable cursor order.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::ops::Bound;
+use std::time::Instant;
 
 use rmpv::Value;
 
@@ -17,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::gate::{
     PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ, resolve_policy_manifest,
 };
-use crate::store::Store;
+use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 use crate::types::{
     EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, EdgeKind, EntityId,
     bytes_to_hex_lower,
@@ -30,6 +31,8 @@ pub const GRAPH_FS_MAX_PAGE_BYTE_CAP: usize = 256 * 1024;
 pub const GRAPH_FS_DEFAULT_MAX_ENTRIES: usize = 512;
 pub const GRAPH_FS_MAX_PAGE_ENTRIES: usize = 4096;
 pub const GRAPH_FS_MORE_ENTRY: &str = "_more";
+pub const GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP: usize = 512;
+pub const GRAPH_FS_COREUTILS_MAX_RESULT_CAP: usize = 4096;
 
 const GRAPH_FS_MAX_SCAN_ROWS: usize = 100_000;
 const GRAPH_FS_READDIR_IMPORT: SandboxLinkedImport =
@@ -38,12 +41,30 @@ const GRAPH_FS_READ_FILE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("graph_fs.read_file", SandboxImportClass::ReadOnly);
 const GRAPH_FS_READ_LINK_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("graph_fs.read_link", SandboxImportClass::ReadOnly);
+const GRAPH_FS_GREP_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.grep", SandboxImportClass::ReadOnly);
+const GRAPH_FS_LS_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.ls", SandboxImportClass::ReadOnly);
+const GRAPH_FS_FIND_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.find", SandboxImportClass::ReadOnly);
+const GRAPH_FS_CAT_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.cat", SandboxImportClass::ReadOnly);
+const GRAPH_FS_HEAD_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.head", SandboxImportClass::ReadOnly);
+const GRAPH_FS_WC_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("graph_fs.wc", SandboxImportClass::ReadOnly);
 const GRAPH_FS_MORE_RESERVE_BYTES: usize = 96;
 
 pub const GRAPH_FS_HOST_IMPORTS: &[SandboxLinkedImport] = &[
     GRAPH_FS_READDIR_IMPORT,
     GRAPH_FS_READ_FILE_IMPORT,
     GRAPH_FS_READ_LINK_IMPORT,
+    GRAPH_FS_GREP_IMPORT,
+    GRAPH_FS_LS_IMPORT,
+    GRAPH_FS_FIND_IMPORT,
+    GRAPH_FS_CAT_IMPORT,
+    GRAPH_FS_HEAD_IMPORT,
+    GRAPH_FS_WC_IMPORT,
 ];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -321,6 +342,85 @@ impl GraphFsFile {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphFsCoreutilsVerb {
+    Grep,
+    Ls,
+    Find,
+    Cat,
+    Head,
+    Wc,
+}
+
+impl GraphFsCoreutilsVerb {
+    fn stable_label(self) -> &'static str {
+        match self {
+            Self::Grep => "grep",
+            Self::Ls => "ls",
+            Self::Find => "find",
+            Self::Cat => "cat",
+            Self::Head => "head",
+            Self::Wc => "wc",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphFsCoreutilsDecision {
+    Pushdown,
+    Walk,
+}
+
+impl GraphFsCoreutilsDecision {
+    fn stable_label(self) -> &'static str {
+        match self {
+            Self::Pushdown => "pushdown",
+            Self::Walk => "walk",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphFsCommandOutput {
+    bytes: Vec<u8>,
+    next_cursor: Option<String>,
+    decision: GraphFsCoreutilsDecision,
+    decision_reason: String,
+    telemetry_run_id: RetrievalRunId,
+}
+
+impl GraphFsCommandOutput {
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn next_cursor(&self) -> Option<&str> {
+        self.next_cursor.as_deref()
+    }
+
+    #[must_use]
+    pub fn decision(&self) -> GraphFsCoreutilsDecision {
+        self.decision
+    }
+
+    #[must_use]
+    pub fn decision_reason(&self) -> &str {
+        &self.decision_reason
+    }
+
+    #[must_use]
+    pub fn telemetry_run_id(&self) -> RetrievalRunId {
+        self.telemetry_run_id
+    }
+}
+
 pub struct GraphFsResolver<'read, 'vault> {
     scoped_read: &'read ScopedRead<'vault>,
     options: GraphFsOptions,
@@ -484,6 +584,615 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             Ok(Some(format!("/claims/{}", claim_id.to_hex())))
         } else {
             Ok(None)
+        }
+    }
+
+    pub fn grep(
+        &self,
+        pattern: &str,
+        path: &str,
+        recursive: bool,
+        cursor: Option<&str>,
+    ) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let normalized = normalize_path(path)?;
+        if let Some(literal) = literal_grep_pattern(pattern)
+            && recursive
+            && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
+        {
+            let (bytes, next_cursor, total) = self.grep_claims_pushdown(literal, cursor)?;
+            return Ok(self.finish_coreutils_command(
+                GraphFsCoreutilsVerb::Grep,
+                started,
+                started_at,
+                GraphFsCoreutilsDecision::Pushdown,
+                "claims text index",
+                bytes,
+                next_cursor,
+                vec![RetrievalSignal::Text],
+                total,
+            ));
+        }
+
+        let (bytes, next_cursor, total) =
+            self.grep_walk(pattern, &normalized, recursive, cursor)?;
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Grep,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs bounded walk",
+            bytes,
+            next_cursor,
+            Vec::new(),
+            total,
+        ))
+    }
+
+    pub fn ls(
+        &self,
+        path: &str,
+        sort_by_time: bool,
+        cursor: Option<&str>,
+    ) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let normalized = normalize_path(path)?;
+        if sort_by_time && matches!(normalized.as_str(), "/claims" | "/claims/by-id") {
+            let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
+            return Ok(self.finish_coreutils_command(
+                GraphFsCoreutilsVerb::Ls,
+                started,
+                started_at,
+                GraphFsCoreutilsDecision::Pushdown,
+                "claims temporal index",
+                bytes,
+                next_cursor,
+                vec![RetrievalSignal::Temporal],
+                total,
+            ));
+        }
+
+        let page = self.readdir(&normalized, cursor)?;
+        let mut out = CommandOutputBuilder::new(self.options);
+        let mut last_name = None;
+        for entry in page.entries() {
+            if entry.kind() == GraphFsEntryKind::Cursor {
+                continue;
+            }
+            let mut line = entry.name().to_owned();
+            line.push('\n');
+            if !out.try_push(line.as_bytes()) {
+                break;
+            }
+            last_name = Some(entry.name().to_owned());
+        }
+        let next_cursor = page
+            .next_cursor()
+            .map(str::to_owned)
+            .or_else(|| if out.is_full() { last_name } else { None });
+        let total = out.entries();
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Ls,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs readdir",
+            out.into_bytes(),
+            next_cursor,
+            Vec::new(),
+            total,
+        ))
+    }
+
+    pub fn find(
+        &self,
+        path: &str,
+        newer_than: Option<u64>,
+        cursor: Option<&str>,
+    ) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let normalized = normalize_path(path)?;
+        if let Some(newer_than) = newer_than {
+            let (bytes, next_cursor, total) =
+                self.find_newer_pushdown(&normalized, newer_than, cursor)?;
+            return Ok(self.finish_coreutils_command(
+                GraphFsCoreutilsVerb::Find,
+                started,
+                started_at,
+                GraphFsCoreutilsDecision::Pushdown,
+                "temporal learned index",
+                bytes,
+                next_cursor,
+                vec![RetrievalSignal::Temporal],
+                total,
+            ));
+        }
+
+        let (bytes, next_cursor, total) = self.find_walk(&normalized, cursor)?;
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Find,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs bounded walk",
+            bytes,
+            next_cursor,
+            Vec::new(),
+            total,
+        ))
+    }
+
+    pub fn cat(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let offset = parse_byte_cursor(cursor)?;
+        let mut next_cursor = None;
+        let bytes = if let Some(file) = self.read_file(path)? {
+            let bytes = file.bytes();
+            let start = offset.min(bytes.len());
+            let end = start
+                .saturating_add(self.options.page_byte_cap)
+                .min(bytes.len());
+            if end < bytes.len() {
+                next_cursor = Some(end.to_string());
+            }
+            bytes[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Cat,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs read_file",
+            bytes,
+            next_cursor,
+            Vec::new(),
+            0,
+        ))
+    }
+
+    pub fn head(&self, path: &str, lines: usize) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let mut out = CommandOutputBuilder::new(self.options);
+        if let Some(file) = self.read_file(path)? {
+            for line in String::from_utf8_lossy(file.bytes()).lines().take(lines) {
+                let mut rendered = line.to_owned();
+                rendered.push('\n');
+                if !out.try_push(rendered.as_bytes()) {
+                    break;
+                }
+            }
+        }
+        let total = out.entries();
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Head,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs read_file",
+            out.into_bytes(),
+            None,
+            Vec::new(),
+            total,
+        ))
+    }
+
+    pub fn wc(&self, path: &str) -> Result<GraphFsCommandOutput> {
+        let started = Instant::now();
+        let started_at = crate::unix_seconds_now();
+        let bytes = if let Some(file) = self.read_file(path)? {
+            let text = String::from_utf8_lossy(file.bytes());
+            let lines = text.lines().count();
+            let words = text.split_whitespace().count();
+            format!("{lines} {words} {} {path}\n", file.bytes().len()).into_bytes()
+        } else {
+            format!("0 0 0 {path}\n").into_bytes()
+        };
+        Ok(self.finish_coreutils_command(
+            GraphFsCoreutilsVerb::Wc,
+            started,
+            started_at,
+            GraphFsCoreutilsDecision::Walk,
+            "graph-fs read_file",
+            bytes,
+            None,
+            Vec::new(),
+            0,
+        ))
+    }
+
+    fn grep_claims_pushdown(
+        &self,
+        pattern: &str,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let mut last_emitted = cursor.map(str::to_owned);
+        let mut skipping = cursor.is_some();
+        let mut total = 0;
+        for hit in self
+            .scoped_read
+            .search_text(pattern, self.coreutils_result_cap())?
+        {
+            let id_hex = hit.id.to_hex();
+            if skipping {
+                if cursor == Some(id_hex.as_str()) {
+                    skipping = false;
+                }
+                continue;
+            }
+            let Some(line) = self.render_claim_grep_line(&hit.id)? else {
+                continue;
+            };
+            if !out.try_push(line.as_bytes()) {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            total += 1;
+            last_emitted = Some(id_hex);
+        }
+        Ok((out.into_bytes(), None, total))
+    }
+
+    fn grep_walk(
+        &self,
+        pattern: &str,
+        path: &str,
+        recursive: bool,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let mut last_emitted = cursor.map(str::to_owned);
+        let mut total = 0;
+        if !recursive {
+            if let Some(file) = self.read_file(path)? {
+                append_grep_file_matches(path, file.bytes(), pattern, &mut out, &mut total);
+            }
+            return Ok((out.into_bytes(), None, total));
+        }
+
+        for path in self.walk_paths(path, cursor)? {
+            let Some(file) = self.read_file(&path)? else {
+                continue;
+            };
+            let before_entries = out.entries();
+            append_grep_file_matches(&path, file.bytes(), pattern, &mut out, &mut total);
+            if out.entries() > before_entries {
+                last_emitted = Some(path);
+            }
+            if out.is_full() {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+        }
+        Ok((out.into_bytes(), None, total))
+    }
+
+    fn ls_claims_by_time_pushdown(
+        &self,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let mut skipping = cursor.is_some();
+        let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let mut total = 0;
+        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
+        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let lower: Bound<&[u8]> = Bound::Unbounded;
+        let upper: Bound<&[u8]> = Bound::Unbounded;
+        for (scanned, entry) in self
+            .scoped_read
+            .vault()
+            .store
+            .temporal_learned
+            .rev_range(&rtxn, &(lower, upper))?
+            .enumerate()
+        {
+            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            let (key, _) = entry?;
+            let temporal = temporal_cursor_from_key(key)?;
+            if skipping {
+                if cursor == Some(temporal) {
+                    skipping = false;
+                }
+                continue;
+            }
+            if !self
+                .scoped_read
+                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
+            {
+                continue;
+            }
+            if self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM) {
+                continue;
+            }
+            let line = format!("{}\n", temporal.id.to_hex());
+            if !out.try_push(line.as_bytes()) {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            total += 1;
+            last_emitted = Some(temporal.encode());
+        }
+        Ok((out.into_bytes(), None, total))
+    }
+
+    fn find_newer_pushdown(
+        &self,
+        path: &str,
+        newer_than: u64,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let start_key = cursor.map_or_else(
+            || newer_than.saturating_add(1).to_be_bytes().to_vec(),
+            |cursor| cursor.next_temporal_key().to_vec(),
+        );
+        let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let mut total = 0;
+        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
+        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let lower = Bound::Included(&start_key[..]);
+        let upper = Bound::Unbounded;
+        for (scanned, entry) in self
+            .scoped_read
+            .vault()
+            .store
+            .temporal_learned
+            .range(&rtxn, &(lower, upper))?
+            .enumerate()
+        {
+            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            let (key, _) = entry?;
+            let temporal = temporal_cursor_from_key(key)?;
+            if !self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id)? {
+                continue;
+            }
+            let Some(line) = self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id)? else {
+                continue;
+            };
+            if !out.try_push(line.as_bytes()) {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            total += 1;
+            last_emitted = Some(temporal.encode());
+        }
+        Ok((out.into_bytes(), None, total))
+    }
+
+    fn find_walk(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        let mut out = CommandOutputBuilder::new(self.options);
+        let mut last_emitted = cursor.map(str::to_owned);
+        let mut total = 0;
+        for path in self.walk_paths(path, cursor)? {
+            let mut line = path.clone();
+            line.push('\n');
+            if !out.try_push(line.as_bytes()) {
+                return Ok((out.into_bytes(), last_emitted, total));
+            }
+            total += 1;
+            last_emitted = Some(path);
+        }
+        Ok((out.into_bytes(), None, total))
+    }
+
+    fn walk_paths(&self, path: &str, cursor: Option<&str>) -> Result<Vec<String>> {
+        let mut paths = Vec::new();
+        let mut queue = VecDeque::from([path.to_owned()]);
+        let mut scanned = 0usize;
+        let mut skipping = cursor.is_some();
+        while let Some(current) = queue.pop_front() {
+            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
+                break;
+            }
+            scanned += 1;
+            if !self.coreutils_path_visible(&current)? {
+                continue;
+            }
+            if skipping {
+                if cursor == Some(current.as_str()) {
+                    skipping = false;
+                }
+            } else {
+                paths.push(current.clone());
+                if paths.len() >= self.coreutils_result_cap() {
+                    break;
+                }
+            }
+
+            let page = self.readdir(&current, None)?;
+            for entry in page.entries() {
+                if entry.kind() == GraphFsEntryKind::Cursor {
+                    continue;
+                }
+                let child = join_graph_path(&current, entry.name());
+                if matches!(entry.kind(), GraphFsEntryKind::Directory) {
+                    queue.push_back(child);
+                } else if !skipping && self.coreutils_path_visible(&child)? {
+                    paths.push(child);
+                    if paths.len() >= self.coreutils_result_cap() {
+                        return Ok(paths);
+                    }
+                }
+            }
+        }
+        Ok(paths)
+    }
+
+    fn find_path_for_temporal_hit_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        path: &str,
+        id: &EntityId,
+    ) -> Result<Option<String>> {
+        let entity_type = self.entity_type_in(rtxn, id)?;
+        let is_claim = entity_type == Some(ENTITY_TYPE_CLAIM);
+        let output = match path {
+            "/" => {
+                if is_claim {
+                    format!("/claims/{}", id.to_hex())
+                } else {
+                    format!("/entities/{}", id.to_hex())
+                }
+            }
+            "/claims" | "/claims/by-id" if is_claim => format!("/claims/{}", id.to_hex()),
+            "/entities" => format!("/entities/{}", id.to_hex()),
+            path if path.starts_with("/entities/") && path.ends_with(&id.to_hex()) => {
+                path.to_owned()
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(format!("{output}\n")))
+    }
+
+    fn render_claim_grep_line(&self, claim_id: &EntityId) -> Result<Option<String>> {
+        let Some((entity_type, _, body)) = self.scoped_read.get_entity_parts(claim_id)? else {
+            return Ok(None);
+        };
+        if entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        let body = decode_claim_body(&body, true)?;
+        Ok(Some(format!(
+            "/claims/{}:id={}\tpredicate={}\tvalue={}\n",
+            claim_id.to_hex(),
+            claim_id.to_hex(),
+            sanitize_coreutils_field(&body.predicate),
+            sanitize_coreutils_field(&claim_value_text(&body.value))
+        )))
+    }
+
+    fn entity_type_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+        let Some(raw) = self
+            .scoped_read
+            .vault()
+            .store
+            .entities
+            .get(rtxn, id.as_bytes())?
+        else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        Ok(Some(header.entity_type))
+    }
+
+    fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
+        let components = path_components(path)?;
+        match components.as_slice() {
+            ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),
+            ["claims", "by-time", _, claim] => self
+                .scoped_read
+                .is_entity_readable(&parse_entity_id(claim)?),
+            ["claims", claim] | ["claims", "by-id", claim] => self
+                .scoped_read
+                .is_entity_readable(&parse_entity_id(claim)?),
+            ["entities", entity, ..] | ["backlinks", entity, ..] => {
+                self.coreutils_entity_visible(&parse_entity_id(entity)?)
+            }
+            ["worlds", "base", ..] => Ok(true),
+            ["worlds", world, ..] => self.coreutils_entity_visible(&parse_entity_id(world)?),
+            _ => Ok(true),
+        }
+    }
+
+    fn coreutils_entity_visible(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.scoped_read.vault().store.env.read_txn()?;
+        let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        self.coreutils_entity_visible_in(&rtxn, &policy, id)
+    }
+
+    fn coreutils_entity_visible_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let Some(entity_type) = self.entity_type_in(rtxn, id)? else {
+            return Ok(false);
+        };
+        if entity_type == ENTITY_TYPE_CLAIM {
+            return self
+                .scoped_read
+                .is_entity_readable_with_policy_in(rtxn, policy, id);
+        }
+        if entity_type != ENTITY_TYPE_WORLD {
+            return Ok(true);
+        }
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Ok(false);
+        }
+        if !policy.has_scoped_read_grants() {
+            return Ok(true);
+        }
+        let visible_worlds = self.world_names_from_matching_grants(policy);
+        Ok(visible_worlds.iter().any(|world| world == &id.to_hex()))
+    }
+
+    fn coreutils_result_cap(&self) -> usize {
+        self.options
+            .max_entries
+            .clamp(1, GRAPH_FS_COREUTILS_MAX_RESULT_CAP)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_coreutils_command(
+        &self,
+        verb: GraphFsCoreutilsVerb,
+        started: Instant,
+        started_at: u64,
+        decision: GraphFsCoreutilsDecision,
+        decision_reason: &str,
+        bytes: Vec<u8>,
+        next_cursor: Option<String>,
+        signals: Vec<RetrievalSignal>,
+        total_in_scope: usize,
+    ) -> GraphFsCommandOutput {
+        let run_id = RetrievalRunId::now();
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let telemetry_reason = format!(
+            "graph_fs_coreutils:{}:{}:{}",
+            verb.stable_label(),
+            decision.stable_label(),
+            decision_reason
+        );
+        let record = RetrievalRunRecord::new(
+            run_id,
+            RetrievalAction::GraphFsCoreutils,
+            started_at,
+            elapsed_us,
+            signals,
+            Vec::new(),
+            total_in_scope,
+            0,
+            Some(telemetry_reason),
+        );
+        if let Err(error) = self.scoped_read.vault().store.record_retrieval_run(&record) {
+            tracing::warn!(
+                ?error,
+                command = verb.stable_label(),
+                "graph-fs coreutils telemetry failed"
+            );
+        }
+        GraphFsCommandOutput {
+            bytes,
+            next_cursor,
+            decision,
+            decision_reason: decision_reason.to_owned(),
+            telemetry_run_id: run_id,
         }
     }
 
@@ -1054,6 +1763,50 @@ impl PageBuilder {
     }
 }
 
+struct CommandOutputBuilder {
+    bytes: Vec<u8>,
+    byte_cap: usize,
+    max_entries: usize,
+    entries: usize,
+    full: bool,
+}
+
+impl CommandOutputBuilder {
+    fn new(options: GraphFsOptions) -> Self {
+        Self {
+            bytes: Vec::new(),
+            byte_cap: options.page_byte_cap,
+            max_entries: options.max_entries,
+            entries: 0,
+            full: false,
+        }
+    }
+
+    fn try_push(&mut self, bytes: &[u8]) -> bool {
+        if self.entries >= self.max_entries
+            || self.bytes.len().saturating_add(bytes.len()) > self.byte_cap
+        {
+            self.full = true;
+            return false;
+        }
+        self.bytes.extend_from_slice(bytes);
+        self.entries += 1;
+        true
+    }
+
+    fn entries(&self) -> usize {
+        self.entries
+    }
+
+    fn is_full(&self) -> bool {
+        self.full
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
     GraphFsPage {
         path: path.to_owned(),
@@ -1094,8 +1847,87 @@ fn path_components(path: &str) -> Result<Vec<&str>> {
     Ok(components)
 }
 
+fn parse_byte_cursor(cursor: Option<&str>) -> Result<usize> {
+    match cursor {
+        Some(cursor) => cursor
+            .parse::<usize>()
+            .map_err(|_| Error::InvalidConfig("invalid graph-fs byte cursor".to_owned())),
+        None => Ok(0),
+    }
+}
+
 fn parse_entity_id(value: &str) -> Result<EntityId> {
     EntityId::from_hex(value)
+}
+
+fn literal_grep_pattern(pattern: &str) -> Option<&str> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() || !pattern.is_ascii() {
+        return None;
+    }
+    if pattern.bytes().any(|byte| {
+        matches!(
+            byte,
+            b'.' | b'*'
+                | b'+'
+                | b'?'
+                | b'['
+                | b']'
+                | b'('
+                | b')'
+                | b'{'
+                | b'}'
+                | b'|'
+                | b'^'
+                | b'$'
+                | b'\\'
+        )
+    }) {
+        return None;
+    }
+    Some(pattern)
+}
+
+fn append_grep_file_matches(
+    path: &str,
+    bytes: &[u8],
+    pattern: &str,
+    out: &mut CommandOutputBuilder,
+    total: &mut usize,
+) {
+    let text = String::from_utf8_lossy(bytes);
+    for line in text.lines().filter(|line| line.contains(pattern)) {
+        let rendered = format!("{path}:{line}\n");
+        if !out.try_push(rendered.as_bytes()) {
+            break;
+        }
+        *total += 1;
+    }
+}
+
+fn claim_value_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{value:?}"))
+}
+
+fn sanitize_coreutils_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\t' | '\n' | '\r' => ' ',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn join_graph_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent}/{name}")
+    }
 }
 
 fn decimal_len(mut value: usize) -> usize {
@@ -1365,10 +2197,28 @@ mod tests {
         world: Option<EntityId>,
         learned_at: u64,
     ) -> Result<()> {
+        put_claim_with_value(
+            vault,
+            id,
+            subject,
+            world,
+            learned_at,
+            &format!("claim-{}", id.to_hex()),
+        )
+    }
+
+    fn put_claim_with_value(
+        vault: &crate::Vault,
+        id: EntityId,
+        subject: EntityId,
+        world: Option<EntityId>,
+        learned_at: u64,
+        value: &str,
+    ) -> Result<()> {
         let mut body = ClaimBody::new(
             "profile.note",
             ClaimSubject::Entity(subject),
-            Value::from(format!("claim-{}", id.to_hex())),
+            Value::from(value),
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
@@ -1600,6 +2450,124 @@ mod tests {
                 .iter()
                 .all(|import| !matches!(import.class(), SandboxImportClass::WriteTrap))
         );
+    }
+
+    #[test]
+    fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
+        let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+        let subject = test_id(0x61);
+        let matching_claim = test_id(0x62);
+        let other_claim = test_id(0x63);
+        put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+        put_claim_with_value(
+            &vault,
+            matching_claim,
+            subject,
+            None,
+            10,
+            "pushdownneedle alpha",
+        )?;
+        put_claim_with_value(&vault, other_claim, subject, None, 11, "ordinary beta")?;
+        vault
+            .batch()
+            .text(&matching_claim, &[("body", "pushdownneedle alpha")])
+            .commit()?;
+
+        let reader =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+        let expected_ids: Vec<_> = reader
+            .search_text("pushdownneedle", 10)?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect();
+        let output = resolver(&reader, 1024).grep("pushdownneedle", "/claims", true, None)?;
+        let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 grep output");
+        let actual_ids: Vec<_> = rendered
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix("/claims/")
+                    .and_then(|rest| rest.split_once(':').map(|(id, _)| id))
+            })
+            .map(EntityId::from_hex)
+            .collect::<Result<Vec<_>>>()?;
+
+        assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
+        assert_eq!(actual_ids, expected_ids);
+        assert!(rendered.contains(&matching_claim.to_hex()));
+        assert!(!rendered.contains(&other_claim.to_hex()));
+        let telemetry = vault
+            .retrieval_run(output.telemetry_run_id())?
+            .expect("coreutils telemetry row is written");
+        assert_eq!(telemetry.action, crate::RetrievalAction::GraphFsCoreutils);
+        assert!(
+            telemetry
+                .empty_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("grep:pushdown"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn find_root_under_clamped_actor_is_bounded_and_non_leaking() -> Result<()> {
+        let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+        let allowed_world = test_id(0x64);
+        let excluded_world = test_id(0x65);
+        let subject = test_id(0x66);
+        let allowed_claim = test_id(0x67);
+        let excluded_claim = test_id(0x68);
+        put_entity(&vault, allowed_world, ENTITY_TYPE_WORLD)?;
+        put_entity(&vault, excluded_world, ENTITY_TYPE_WORLD)?;
+        put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+        put_claim(&vault, allowed_claim, subject, Some(allowed_world), 20)?;
+        put_claim(&vault, excluded_claim, subject, Some(excluded_world), 21)?;
+        put_policy_manifest(
+            &vault,
+            test_id(0x91),
+            encode_policy_manifest(vec![core_read_world_grant("reader", allowed_world)]),
+        )?;
+
+        let reader =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+        let output = resolver(&reader, GRAPH_FS_MIN_PAGE_BYTE_CAP).find("/", None, None)?;
+        let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
+
+        assert_eq!(output.decision(), GraphFsCoreutilsDecision::Walk);
+        assert!(output.bytes().len() <= GRAPH_FS_MIN_PAGE_BYTE_CAP);
+        assert!(!rendered.contains(&excluded_world.to_hex()));
+        assert!(!rendered.contains(&excluded_claim.to_hex()));
+        Ok(())
+    }
+
+    #[test]
+    fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
+        let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+        let subject = test_id(0x69);
+        let old_claim = test_id(0x6A);
+        let new_claim = test_id(0x6B);
+        put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+        put_claim(&vault, old_claim, subject, None, 10)?;
+        put_claim(&vault, new_claim, subject, None, 20)?;
+
+        let reader =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+        let output = resolver(&reader, 1024).find("/claims", Some(15), None)?;
+        let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
+
+        assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
+        assert!(rendered.contains(&format!("/claims/{}", new_claim.to_hex())));
+        assert!(!rendered.contains(&old_claim.to_hex()));
+        let telemetry = vault
+            .retrieval_run(output.telemetry_run_id())?
+            .expect("coreutils telemetry row is written");
+        assert_eq!(telemetry.action, crate::RetrievalAction::GraphFsCoreutils);
+        assert!(
+            telemetry
+                .empty_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("find:pushdown"))
+        );
+        Ok(())
     }
 
     #[test]
