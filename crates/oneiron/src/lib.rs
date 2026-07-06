@@ -286,12 +286,12 @@ pub use crate::llm::{
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::outbound::{
-    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
-    OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
-    OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
-    OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
-    outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
-    unsupported_outbound_connector,
+    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
+    OUTBOUND_INTENT_SCHEMA_VERSION, OUTBOUND_VERB_FIELD_CONTRACT, OutboundCapabilityManifest,
+    OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
+    OutboundIntent, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass,
+    OutboundVerbContract, UnsupportedOutboundCapability, outbound_capability_manifest,
+    outbound_capability_manifests, outbound_verb_contract, unsupported_outbound_connector,
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
@@ -304,7 +304,10 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::receipt::{
-    PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptView,
+    BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, PendingTrayAsk,
+    PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery,
+    ReceiptRecord, ReceiptView, project_receipts_by_brief, project_receipts_by_counterparty,
+    project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,

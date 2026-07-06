@@ -6,7 +6,7 @@
 
 use std::sync::OnceLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Stable manifest shape advertised to agents.
@@ -40,6 +40,28 @@ pub const COMMON_OUTBOUND_VERB_KINDS: &[&str] = &[
     "call",
     "schedule_native",
 ];
+
+/// Version for the intent field contract consumed by the later dispatcher.
+pub const OUTBOUND_INTENT_SCHEMA_VERSION: &str = "outbound.intent.v1";
+
+/// Outbound intent spine shared by OF-327 dispatch and receipt projection.
+///
+/// `job_ref` is optional so older ad-hoc or commitment-triggered intents remain
+/// valid. Brief-rooted runs stamp it to make receipt rollups an indexed lookup
+/// instead of a render-time chain walk.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OutboundIntent {
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_behalf_of: Option<String>,
+    pub verb: String,
+    pub channel: String,
+    pub target: String,
+    pub intent_source: String,
+    pub trigger_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_ref: Option<String>,
+}
 
 /// Whether a verb may interrupt the recipient.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -743,6 +765,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn outbound_intent_job_ref_is_optional_for_legacy_intents() {
+        let intent: OutboundIntent = serde_json::from_str(
+            r#"{
+                "actor": "agent-alpha",
+                "verb": "send",
+                "channel": "email",
+                "target": "counterparty:kenji",
+                "intent_source": "agent_immediate",
+                "trigger_ref": "run:planning"
+            }"#,
+        )
+        .expect("legacy intent without job_ref remains valid");
+
+        assert_eq!(intent.job_ref, None);
+
+        let brief_rooted = OutboundIntent {
+            job_ref: Some("brief:party".to_owned()),
+            ..intent
+        };
+        let value = serde_json::to_value(&brief_rooted).expect("serialize intent");
+        assert_eq!(value["job_ref"], "brief:party");
     }
 
     #[test]
