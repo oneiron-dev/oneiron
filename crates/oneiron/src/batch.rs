@@ -1554,6 +1554,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     include_source_in_gate_input,
                     Some(&companion_retired_histories),
                 )?;
+                #[cfg(feature = "sync")]
                 let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
                     crate::embed::EMBED_PRIORITY_SERVER
                 } else {
