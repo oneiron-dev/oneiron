@@ -1312,6 +1312,38 @@ impl Vault {
         decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
+    /// Reads the ChannelIdentity bound to an exact `(channel, address)` key.
+    pub fn channel_identity_by_assignment(
+        &self,
+        channel: &str,
+        address_or_handle: &str,
+    ) -> Result<Option<(EntityId, ChannelIdentity)>> {
+        let rtxn = self.store.env.read_txn()?;
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+        {
+            let (key, _) = entry?;
+            let id = entity_id_from_type_index_key(key)?;
+            let raw = self
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if identity.assignment_key() == (channel, address_or_handle) {
+                return Ok(Some((id, identity)));
+            }
+        }
+        Ok(None)
+    }
+
     fn channel_identity_assignment_conflict_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
