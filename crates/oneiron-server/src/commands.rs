@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::http::HeaderValue;
+use rmpv::Value as MsgpackValue;
+use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::build_app;
-use crate::cli::{RevokeArgs, SkillsPackArgs, VaultArgs};
+use crate::cli::{ProvenanceArgs, RevokeArgs, SkillsPackArgs, VaultArgs};
 use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
@@ -37,6 +39,25 @@ pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
     print_doctor_report(&vault)
 }
 
+pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
+    let vault_args = VaultArgs {
+        path: args.vault_path,
+        dimensions: args.dimensions,
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths,
+    };
+    let vault = open_vault_for_command(&vault_args)?;
+    let output = if let Some(sha) = args.sha {
+        provenance_for_commit(&vault, &args.repo_path, &sha, args.git_notes)?
+    } else if let Some(claim_id) = args.claim_id {
+        provenance_for_claim(&vault, &args.repo_path, &claim_id, args.git_notes)?
+    } else {
+        anyhow::bail!("provenance requires a SHA or --claim-id");
+    };
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
 pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
     let mode = if args.json {
         OutputMode::Json
@@ -55,6 +76,174 @@ pub fn skills_pack(args: SkillsPackArgs) -> anyhow::Result<()> {
         anyhow::bail!("write skills pack to stdout failed: {error}");
     }
     Ok(())
+}
+
+fn provenance_for_commit(
+    vault: &oneiron::Vault,
+    repo_path: &Path,
+    sha: &str,
+    git_notes: bool,
+) -> anyhow::Result<JsonValue> {
+    let link = oneiron::repo_commit_provenance(repo_path, sha)?
+        .ok_or_else(|| anyhow::anyhow!("commit {sha} has no Oneiron provenance trailer"))?;
+    let commit_sha = link.commit_sha;
+    let claim_id = link.claim_id;
+    let mut output = json!({
+        "commit": commit_sha,
+        "claim_id": claim_id.to_hex(),
+        "claim": claim_json(vault, &claim_id)?,
+    });
+    if git_notes {
+        oneiron::export_repo_provenance_git_note(repo_path, &commit_sha, &claim_id)?;
+        output["git_notes"] = json!({
+            "exported": true,
+            "ref": oneiron::REPO_PROVENANCE_NOTES_REF,
+        });
+    }
+    Ok(output)
+}
+
+fn provenance_for_claim(
+    vault: &oneiron::Vault,
+    repo_path: &Path,
+    claim_id: &str,
+    git_notes: bool,
+) -> anyhow::Result<JsonValue> {
+    let claim_id = oneiron::EntityId::from_hex(claim_id)
+        .map_err(|_| anyhow::anyhow!("claim id must be a 32-hex entity id"))?;
+    let commits = oneiron::repo_commits_for_provenance_claim(repo_path, &claim_id)?;
+    let claim = claim_json(vault, &claim_id)?;
+    let mut git_notes_exported = None;
+    if git_notes {
+        let mut exported = Vec::new();
+        for commit in &commits {
+            oneiron::export_repo_provenance_git_note(repo_path, commit, &claim_id)?;
+            exported.push(commit.to_owned());
+        }
+        git_notes_exported = Some(json!({
+            "exported": exported,
+            "ref": oneiron::REPO_PROVENANCE_NOTES_REF,
+        }));
+    }
+    let mut output = json!({
+        "claim_id": claim_id.to_hex(),
+        "commits": commits,
+        "claim": claim,
+    });
+    if let Some(exported) = git_notes_exported {
+        output["git_notes"] = exported;
+    }
+    Ok(output)
+}
+
+fn claim_json(vault: &oneiron::Vault, claim_id: &oneiron::EntityId) -> anyhow::Result<JsonValue> {
+    let body = vault
+        .get_claim(claim_id)?
+        .ok_or_else(|| anyhow::anyhow!("claim {} was not found in the vault", claim_id.to_hex()))?;
+    Ok(json!({
+        "predicate": body.predicate,
+        "subject": claim_subject_json(&body.subject),
+        "value": msgpack_value_json(&body.value),
+        "confidence": body.confidence,
+        "approval": body.approval.as_str(),
+        "lifecycle": body.lifecycle.as_str(),
+        "salience": body.salience,
+        "evidence": body.evidence.as_ref().map(msgpack_value_json),
+        "valid_from": body.valid_from,
+        "valid_to": body.valid_to,
+        "source": body.source.map(oneiron::ClaimSource::as_str),
+        "world": body.world.map(|id| id.to_hex()),
+        "scope": body.scope.as_ref().map(msgpack_value_json),
+        "stale": body.stale,
+    }))
+}
+
+fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
+    match subject {
+        oneiron::ClaimSubject::Entity(id) => json!({
+            "kind": "entity",
+            "id": id.to_hex(),
+        }),
+        oneiron::ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } => json!({
+            "kind": "edge",
+            "source": source.to_hex(),
+            "edge_kind": *kind as u8,
+            "target": target.to_hex(),
+        }),
+    }
+}
+
+fn msgpack_value_json(value: &MsgpackValue) -> JsonValue {
+    match value {
+        MsgpackValue::Nil => JsonValue::Null,
+        MsgpackValue::Boolean(value) => json!(value),
+        MsgpackValue::Integer(value) => value
+            .as_i64()
+            .map_or_else(|| json!(value.as_u64()), |value| json!(value)),
+        MsgpackValue::F32(value) => json!(value),
+        MsgpackValue::F64(value) => json!(value),
+        MsgpackValue::String(value) => value.as_str().map_or_else(
+            || json!({ "string": value.to_string() }),
+            |value| json!(value),
+        ),
+        MsgpackValue::Binary(value) => json!({ "binary_hex": hex_bytes(value) }),
+        MsgpackValue::Array(values) => {
+            JsonValue::Array(values.iter().map(msgpack_value_json).collect())
+        }
+        MsgpackValue::Map(values) => {
+            let mut map = serde_json::Map::new();
+            for (key, value) in values {
+                insert_json_map_value(&mut map, msgpack_map_key(key), msgpack_value_json(value));
+            }
+            JsonValue::Object(map)
+        }
+        MsgpackValue::Ext(tag, value) => json!({
+            "ext_type": tag,
+            "data_hex": hex_bytes(value),
+        }),
+    }
+}
+
+fn msgpack_map_key(value: &MsgpackValue) -> String {
+    match value {
+        MsgpackValue::String(value) => value
+            .as_str()
+            .map_or_else(|| value.to_string(), std::borrow::ToOwned::to_owned),
+        _ => serde_json::to_string(&msgpack_value_json(value))
+            .unwrap_or_else(|_| format!("{value:?}")),
+    }
+}
+
+fn insert_json_map_value(
+    map: &mut serde_json::Map<String, JsonValue>,
+    key: String,
+    value: JsonValue,
+) {
+    if !map.contains_key(&key) {
+        map.insert(key, value);
+        return;
+    }
+    for index in 2.. {
+        let candidate = format!("{key}#{index}");
+        if !map.contains_key(&candidate) {
+            map.insert(candidate, value);
+            return;
+        }
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {

@@ -282,9 +282,12 @@ pub use crate::recovery::{
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,
     REPO_CONFLICT_RESOLUTION_VALUE_KEYS, REPO_MUTATION_ALLOWED_OPERATION_KINDS,
-    REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, REPO_MUTATION_OPLOG_SCHEMA_VERSION, RepoConflictClaim,
-    RepoConflictResolutionClaim, RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry,
-    RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus,
+    REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, REPO_MUTATION_OPLOG_SCHEMA_VERSION,
+    REPO_PROVENANCE_NOTES_REF, REPO_PROVENANCE_TRAILER_KEY, RepoCommitProvenance,
+    RepoConflictClaim, RepoConflictResolutionClaim, RepoForkHash, RepoMutationOperation,
+    RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest, RepoMutationStatus,
+    export_repo_provenance_git_note, parse_repo_provenance_trailer, repo_commit_provenance,
+    repo_commits_for_provenance_claim, repo_provenance_git_note,
 };
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
