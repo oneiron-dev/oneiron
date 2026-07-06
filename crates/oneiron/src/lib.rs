@@ -7,6 +7,7 @@ pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod channel_identity;
+pub mod channel_identity_manifest;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
@@ -99,6 +100,13 @@ pub use crate::channel_identity::{
     PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT, decode_channel_identity_body,
     encode_channel_identity_body,
+};
+pub use crate::channel_identity_manifest::{
+    CHANNEL_IDENTITY_CAPABILITY_MATRIX_VERSION, ChannelIdentityCapabilityMatrix,
+    ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError,
+    ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities,
+    ChannelIdentityReputationSignal, channel_identity_capability_matrix, channel_identity_manifest,
+    channel_identity_manifests, parse_channel_identity_capability_matrix,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,

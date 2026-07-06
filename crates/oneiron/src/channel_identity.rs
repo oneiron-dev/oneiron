@@ -8,6 +8,7 @@
 use std::io::Cursor;
 
 use rmpv::Value;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
@@ -82,7 +83,7 @@ const MAX_CHANNEL_BYTES: usize = 64;
 const MAX_ADDRESS_OR_HANDLE_BYTES: usize = 512;
 
 /// ChannelIdentity addressability shape (OF-347 R1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ChannelIdentityShape {
     DedicatedAddress,
@@ -108,6 +109,27 @@ impl ChannelIdentityShape {
             "shared_presence" => Some(Self::SharedPresence),
             _ => None,
         }
+    }
+}
+
+impl Serialize for ChannelIdentityShape {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ChannelIdentityShape {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(&value).ok_or_else(|| {
+            serde::de::Error::custom(format!("unknown channel identity shape {value:?}"))
+        })
     }
 }
 
