@@ -158,6 +158,7 @@ pub enum ErrorKind {
     InvalidTemporalExpression,
     EntityNotFound,
     AccessGrantAlreadyExists,
+    ChannelIdentityAlreadyExists,
     CompanionRecordAlreadyExists,
     ConcurrentWrite,
     ArithmeticOverflow,
@@ -166,6 +167,7 @@ pub enum ErrorKind {
     InvalidFederationGrantBody,
     InvalidAuthorityLogBody,
     InvalidAccessGrantBody,
+    InvalidChannelIdentityBody,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
@@ -385,6 +387,9 @@ pub enum Error {
     /// AccessGrant creation attempted to reuse an existing entity id.
     #[error("access grant already exists")]
     AccessGrantAlreadyExists,
+    /// ChannelIdentity creation attempted to reuse an existing id or assignment key.
+    #[error("channel identity already exists")]
+    ChannelIdentityAlreadyExists,
     /// Companion register creation attempted to reuse an existing id or key.
     #[error("companion record already exists")]
     CompanionRecordAlreadyExists,
@@ -452,6 +457,10 @@ pub enum Error {
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
     InvalidAccessGrantBody(&'static str),
+    /// A ChannelIdentity record failed pinned structural validation.
+    /// Nothing was written.
+    #[error("invalid channel identity body: {0}")]
+    InvalidChannelIdentityBody(&'static str),
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -903,6 +912,7 @@ impl Error {
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
             Self::AccessGrantAlreadyExists => ErrorKind::AccessGrantAlreadyExists,
+            Self::ChannelIdentityAlreadyExists => ErrorKind::ChannelIdentityAlreadyExists,
             Self::CompanionRecordAlreadyExists => ErrorKind::CompanionRecordAlreadyExists,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,
@@ -911,6 +921,7 @@ impl Error {
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
+            Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,
