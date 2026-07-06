@@ -1761,6 +1761,30 @@ mod tests {
         let (_vault_dir, vault) = open_test_vault();
         let repo_a = init_repo();
         let repo_b = init_repo();
+        fs::write(repo_a.path().join("repo-a-only.txt"), "repo a only\n")
+            .expect("write repo a unique file");
+        run_git_at_path(
+            repo_a.path(),
+            &[
+                "add".to_owned(),
+                "--".to_owned(),
+                "repo-a-only.txt".to_owned(),
+            ],
+        )
+        .expect("git add repo a unique file");
+        run_git_at_path(
+            repo_a.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                "make repo a unique".to_owned(),
+            ],
+        )
+        .expect("git commit repo a unique file");
         let b_readme = repo_b.path().join("README.md");
         let before_b = fs::read_to_string(&b_readme).expect("read repo b");
 
