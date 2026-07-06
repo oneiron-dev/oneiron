@@ -1174,6 +1174,12 @@ fn fill_schema_description_gaps(spec: &mut Value) {
         "entity_type",
         "Numeric entity type byte.",
     );
+    set_schema_property_description(
+        spec,
+        "CoreEiriMemoryBoardRow",
+        "asset_ref",
+        "Short ref for ASSET and ASSET_TEXT rows. Consumers pass this to the core hydrate resolver.",
+    );
     set_schema_property_description(spec, "CoreEiriMemoryBoardRow", "score", "Retrieval score.");
     set_schema_property_description(
         spec,
@@ -6711,6 +6717,10 @@ struct CoreEiriMemoryBoardRow {
     #[serde(rename = "entity_type")]
     #[schema(example = 1)]
     entity_type: u8,
+    /// Short ref for ASSET and ASSET_TEXT rows. Consumers pass this to the core hydrate resolver.
+    #[serde(rename = "asset_ref", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "tx123:a7")]
+    asset_ref: Option<String>,
     /// Retrieval score.
     #[schema(example = 0.87)]
     score: f32,
@@ -16994,6 +17004,95 @@ mod tests {
             resume_body["session"]["rag_state"]["query_count"],
             Value::from(2)
         );
+    }
+
+    #[tokio::test]
+    async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
+        let (_dir, server) = test_server_with_config(SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        });
+        let asset_text = seeded_test_entity_id(0x1482_0001);
+        let principal_ref = seeded_test_entity_id(0x1482_0002).to_hex();
+        let needle = "one1482 text-only asset transcript";
+        let body = rmp_serde::to_vec_named(&json!({
+            "txt": needle,
+            "source_asset_ref": "asset-source-one1482"
+        }))
+        .expect("encode ASSET_TEXT body");
+        server
+            .vault
+            .batch()
+            .put(
+                &asset_text,
+                oneiron::types::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::TimeRange {
+                    start: 1482,
+                    end: 1482,
+                },
+                1482,
+                &body,
+            )
+            .text(&asset_text, &[("body", needle)])
+            .commit()
+            .expect("seed ASSET_TEXT");
+
+        let request = json!({
+            "query": needle,
+            "limit": 3,
+            "view": "full",
+            "context_version": "v4",
+            "memory_board": {
+                "slots": {
+                    "claims": 0,
+                    "turns": 0,
+                    "summaries": 0,
+                    "facets": 0,
+                    "companions": 0,
+                    "other": 1
+                }
+            }
+        });
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal_ref,
+                Some(&request),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let row = &body["memory_board"]["rows"][0];
+        assert_eq!(
+            row["entity_type"],
+            Value::from(oneiron::types::ENTITY_TYPE_ASSET_TEXT)
+        );
+        let asset_ref = row["asset_ref"]
+            .as_str()
+            .expect("ASSET_TEXT row exposes a core hydrate ref");
+
+        let hydrate_request = json!({
+            "ref": asset_ref,
+            "view": "full"
+        });
+        let (status, hydrated) = core_json(
+            server,
+            "POST",
+            "/v1/core/hydrate",
+            "core:read",
+            Some(&hydrate_request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(hydrated["status"], Value::from("live"));
+        assert_eq!(
+            hydrated["entity_type"],
+            Value::from(oneiron::types::ENTITY_TYPE_ASSET_TEXT)
+        );
+        assert_eq!(hydrated["item"]["txt"], Value::from(needle));
     }
 
     #[tokio::test]
