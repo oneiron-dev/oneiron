@@ -1806,7 +1806,11 @@ pub(crate) fn apply_ops_with_gate_mode(
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 if persist_gate_pending_consent {
-                    store.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+                    store.let_go_pending_gate_consent_in_txn(
+                        wtxn,
+                        &id,
+                        crate::unix_seconds_now(),
+                    )?;
                 }
                 pending_embedding_tokens_written.remove(&id);
                 #[cfg(feature = "sync")]

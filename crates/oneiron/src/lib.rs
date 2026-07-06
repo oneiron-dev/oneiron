@@ -7,6 +7,7 @@ pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod channel_identity;
+pub mod channel_identity_manifest;
 pub mod claim;
 pub mod code_artifact;
 pub mod code_revision;
@@ -28,6 +29,7 @@ pub mod genui;
 pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
+pub mod identity_reputation;
 pub mod ingest;
 pub mod job_queue;
 pub mod lens;
@@ -46,6 +48,7 @@ pub mod serialize;
 pub mod settings;
 pub mod skill;
 pub mod store;
+pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
@@ -100,6 +103,13 @@ pub use crate::channel_identity::{
     PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT, decode_channel_identity_body,
     encode_channel_identity_body,
+};
+pub use crate::channel_identity_manifest::{
+    CHANNEL_IDENTITY_CAPABILITY_MATRIX_VERSION, ChannelIdentityCapabilityMatrix,
+    ChannelIdentityDisclosureClass, ChannelIdentityManifest, ChannelIdentityManifestError,
+    ChannelIdentityMintability, ChannelIdentityPolicyRisk, ChannelIdentityReceiveCapabilities,
+    ChannelIdentityReputationSignal, channel_identity_capability_matrix, channel_identity_manifest,
+    channel_identity_manifests, parse_channel_identity_capability_matrix,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
@@ -220,6 +230,17 @@ pub use crate::graph_fs::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile,
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
+pub use crate::identity_reputation::{
+    CONSTRAINED_REPUTATION_DAILY_CAP, DEGRADED_REPUTATION_DAILY_CAP, EmailReputationWebhookSignal,
+    IDENTITY_REPUTATION_CLAIM_PREDICATES, IDENTITY_REPUTATION_SCHEMA_VERSION,
+    IdentityAttestationTier, IdentityReputation, IdentityReputationSignal,
+    IdentityReputationStatus, IdentitySendRateClamp, IdentityWarmupStage,
+    PREDICATE_IDENTITY_REPUTATION_ATTESTATION_TIER, PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE,
+    PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE, PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
+    PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
+    PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
+    WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
+};
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
     IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry,
@@ -282,7 +303,9 @@ pub use crate::provenance::{
     SupersessionStatus, decode_edge_provenance_body, derive_confirmation_status,
     validate_actor_class,
 };
-pub use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+pub use crate::receipt::{
+    PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptView,
+};
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
@@ -321,6 +344,11 @@ pub use crate::store::{
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
     RetrievalTraceStageRecord,
+};
+pub use crate::surface_event::{
+    INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
+    SurfaceCounterpartyStamp, SurfaceEvent,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
