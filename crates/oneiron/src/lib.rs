@@ -17,6 +17,7 @@ pub mod context_pack;
 pub mod deletion;
 pub(crate) mod distance;
 pub mod dreamer_runner;
+pub mod embed;
 pub mod error;
 pub mod federation;
 pub(crate) mod fusion;
@@ -155,6 +156,14 @@ pub use crate::dreamer_runner::{
     DREAMER_JOB_PROGRESS_THROTTLE_MS, DREAMER_JOB_PROGRESS_VALUE_SCHEMA_VERSION,
     DreamerJobProgressProducer, DreamerJobProgressSnapshot, DreamerJobProgressSource,
     DreamerJobProgressUpdate, DreamerProgressed, dreamer_job_progress_key,
+};
+#[cfg(feature = "sync")]
+pub use crate::embed::{
+    DEFAULT_PENDING_EMBEDDING_LEASE_MS, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler,
+};
+pub use crate::embed::{
+    EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
+    EMBED_PRIORITY_SURFACED_HOT, Embedder, EmbedderLocality, PendingEmbeddingInput,
 };
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::federation::{

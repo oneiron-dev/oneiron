@@ -1225,6 +1225,21 @@ impl Store {
         Ok((marker == current).then_some(marker.to_vec()))
     }
 
+    pub(crate) fn pending_embedding_token_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        let key = Self::pending_embedding_marker_key(id);
+        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+            return Ok(None);
+        };
+        let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
+            return Ok(None);
+        };
+        Ok((marker == current).then_some(marker.to_vec()))
+    }
+
     pub(crate) fn has_current_pending_embedding_in_txn(
         &self,
         wtxn: &RwTxn<'_>,
