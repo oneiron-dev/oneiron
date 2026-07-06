@@ -286,6 +286,33 @@ mod tests {
     }
 
     #[test]
+    fn code_artifact_repo_ref_stores_reference_not_inline_content() -> Result<()> {
+        let body = CodeArtifactBody::new(
+            "Summarize the local checkout.",
+            [0xB6; CODE_ARTIFACT_SUMMARY_HASH_LEN],
+            "local:/workspace/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277",
+        );
+
+        let encoded = encode_code_artifact_body(&body)?;
+        let decoded = decode_code_artifact_body(&encoded)?;
+        assert_eq!(decoded.repo_ref, body.repo_ref);
+
+        let encoded_with_content = code_artifact_map(vec![
+            (
+                KEY_SUMMARY_PROMPT,
+                Value::from(body.summary_prompt.as_str()),
+            ),
+            (KEY_SUMMARY_HASH, Value::Binary(body.summary_hash.to_vec())),
+            (KEY_REPO_REF, Value::from(body.repo_ref.as_str())),
+            ("content", Value::from("fn main() {}")),
+        ]);
+        let err = decode_code_artifact_body(&encoded_with_content)
+            .expect_err("CODE artifact body must reject inline content slots");
+        assert_eq!(err.kind(), ErrorKind::InvalidCodeArtifactBody);
+        Ok(())
+    }
+
+    #[test]
     fn code_artifact_decode_rejects_missing_replay_keys() {
         for missing_key in CODE_ARTIFACT_BODY_KEYS {
             let entries: Vec<(&str, Value)> = CODE_ARTIFACT_BODY_KEYS
