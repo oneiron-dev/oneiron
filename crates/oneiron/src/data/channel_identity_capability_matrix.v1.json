@@ -1,0 +1,428 @@
+{
+  "manifest_version": "channel_identity.capability_matrix.v1",
+  "verified_at": "2026-07-06",
+  "source_design": "OF-347-channel-identity-DESIGN.md R8/R11",
+  "manifests": [
+    {
+      "channel": "own_app",
+      "display_name": "Own app home channel",
+      "mintability": "ours",
+      "shapes": ["dedicated_handle"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": true,
+        "push": true,
+        "webhook": true
+      },
+      "cost_model": "Near-zero marginal identity cost; rides app push/call infrastructure.",
+      "hard_limits": [
+        "Owner channel only",
+        "Requires app install and valid device token",
+        "VoIP push must be used for genuine calls"
+      ],
+      "policy_risk": "normal",
+      "policy_risk_notes": [
+        "Home channel identity is pre-provisioned by Oneiron",
+        "Voice presentation still follows app-platform call rules"
+      ],
+      "verification_tiers": [
+        "app entitlement",
+        "device token active",
+        "authenticated owner session"
+      ],
+      "disclosure_class": "owner_home_channel",
+      "reputation_signal_sources": ["app_delivery_receipts", "device_token_feedback"],
+      "conservative_floor": false
+    },
+    {
+      "channel": "email",
+      "display_name": "Email",
+      "mintability": "api",
+      "shapes": ["dedicated_address"],
+      "cold_contact": true,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "$0-20 per month per identity before placement-monitoring add-ons.",
+      "hard_limits": [
+        "Warmup is required before high volume",
+        "ESPs can contractually ban cold outreach lists",
+        "Sender reputation is identity-specific"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Cold outreach must be owner-approved and policy-scoped",
+        "Deliverability state must clamp OF-327 send floors"
+      ],
+      "verification_tiers": [
+        "sender address verified",
+        "domain authenticated",
+        "warmup complete",
+        "placement monitored"
+      ],
+      "disclosure_class": "agent_sender_disclosure",
+      "reputation_signal_sources": [
+        "esp_complaint_webhook",
+        "esp_bounce_webhook",
+        "esp_placement_monitoring",
+        "provider_delivery_receipt"
+      ],
+      "conservative_floor": false
+    },
+    {
+      "channel": "line",
+      "display_name": "LINE Official Account",
+      "mintability": "console",
+      "shapes": ["shared_presence", "dedicated_handle"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Reactive messages near zero yen; proactive push has free monthly allowance then metered plan.",
+      "hard_limits": [
+        "No API minting",
+        "Friend-add is required before direct messaging",
+        "Dedicated OA caps make shared_presence the consumer-scale default",
+        "Unverified OAs are not search-visible"
+      ],
+      "policy_risk": "normal",
+      "policy_risk_notes": [
+        "Friend-add reachability is a platform permission boundary",
+        "Dedicated per-companion OA is premium or partnership-tier only"
+      ],
+      "verification_tiers": [
+        "unverified OA",
+        "verified product or service badge",
+        "partnership or scaled Business ID allocation"
+      ],
+      "disclosure_class": "bot_or_app_identity",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "slack",
+      "display_name": "Slack app",
+      "mintability": "api",
+      "shapes": ["shared_presence"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Free app identity; workspace install and OAuth scopes are the binding cost.",
+      "hard_limits": [
+        "Workspace-scoped reach",
+        "Requires install and channel visibility",
+        "One app identity hosts many agent personas"
+      ],
+      "policy_risk": "normal",
+      "policy_risk_notes": [
+        "Workspace policy and OAuth scopes gate usable reach"
+      ],
+      "verification_tiers": [
+        "app manifest created",
+        "workspace installed",
+        "distributed app review if published"
+      ],
+      "disclosure_class": "bot_or_app_identity",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "imessage_self_host_bridge",
+      "display_name": "iMessage self-host bridge",
+      "mintability": "self_hosted_bridge",
+      "shapes": ["dedicated_handle"],
+      "cold_contact": true,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Near-zero software cost; requires Apple ID, host Mac, and possible phone line.",
+      "hard_limits": [
+        "Apple ToS gray area",
+        "Per-line or Apple ID ban risk",
+        "Host device availability is part of reliability"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Bridge sends require explicit owner approval",
+        "Platform account risk must be surfaced before use"
+      ],
+      "verification_tiers": [
+        "Apple ID active",
+        "host Mac online",
+        "recipient reachability observed"
+      ],
+      "disclosure_class": "platform_bridge_disclosure",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "imessage_hosted_bridge",
+      "display_name": "iMessage hosted bridge",
+      "mintability": "hosted_bridge",
+      "shapes": ["dedicated_handle"],
+      "cold_contact": true,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Hosted per-line fees plus account risk management.",
+      "hard_limits": [
+        "Provider-specific line availability",
+        "Apple ToS gray area",
+        "Per-line ban risk"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Hosted bridge provenance must stay visible to the owner",
+        "Provider permission is distinct from raw send capability"
+      ],
+      "verification_tiers": [
+        "provider line provisioned",
+        "recipient reachability observed",
+        "hosted account health monitored"
+      ],
+      "disclosure_class": "platform_bridge_disclosure",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "imessage_mfb",
+      "display_name": "Apple Messages for Business",
+      "mintability": "review",
+      "shapes": ["shared_presence"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Review-heavy business channel with months-scale approval cost.",
+      "hard_limits": [
+        "Apple review can take months",
+        "All-virtual agents require clear disclosure and human escalation",
+        "Conversation initiation is approval and recipient-state dependent"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Apple disclosure floor and human escalation requirement must be enforced"
+      ],
+      "verification_tiers": [
+        "brand approved",
+        "agent disclosure accepted",
+        "human escalation path accepted"
+      ],
+      "disclosure_class": "apple_mfb_agent_disclosure",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "telegram",
+      "display_name": "Telegram bot",
+      "mintability": "api",
+      "shapes": ["dedicated_handle"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Free bot identity.",
+      "hard_limits": [
+        "User must start the bot before direct messaging",
+        "Bot account creation limits apply",
+        "Weak JP-native fit"
+      ],
+      "policy_risk": "normal",
+      "policy_risk_notes": [
+        "Reachability depends on /start or chat membership"
+      ],
+      "verification_tiers": [
+        "bot token minted",
+        "webhook configured",
+        "target chat reachable"
+      ],
+      "disclosure_class": "bot_or_app_identity",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "discord",
+      "display_name": "Discord bot",
+      "mintability": "console",
+      "shapes": ["shared_presence"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Free bot identity; guild install and permissions are the operating cost.",
+      "hard_limits": [
+        "Shared server or DM permission required",
+        "Voice is co-presence in channels and cannot ring",
+        "Weak JP-native fit"
+      ],
+      "policy_risk": "normal",
+      "policy_risk_notes": [
+        "Guild permissions are distinct from raw platform capability"
+      ],
+      "verification_tiers": [
+        "application created",
+        "bot installed to guild",
+        "channel permissions granted"
+      ],
+      "disclosure_class": "bot_or_app_identity",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "phone_us",
+      "display_name": "Phone US",
+      "mintability": "api",
+      "shapes": ["dedicated_address"],
+      "cold_contact": true,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": true,
+        "otp": true,
+        "voice": true,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "$1-10 per month all-in before carrier campaign and lookup costs.",
+      "hard_limits": [
+        "10DLC review and campaign registration required for SMS at scale",
+        "Unregistered traffic is blocked",
+        "Voice and AI-agent use may need provider relationship"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Cold SMS and voice calls require owner approval and compliance context",
+        "AI voice presentation must meet FCC-style disclosure floors"
+      ],
+      "verification_tiers": [
+        "number provisioned",
+        "10DLC campaign approved",
+        "carrier lookup monitored",
+        "attestation tier tracked"
+      ],
+      "disclosure_class": "ai_voice_disclosure",
+      "reputation_signal_sources": [
+        "provider_delivery_receipt",
+        "carrier_spam_lookup",
+        "attestation_tier"
+      ],
+      "conservative_floor": false
+    },
+    {
+      "channel": "phone_jp",
+      "display_name": "Phone JP",
+      "mintability": "manual",
+      "shapes": ["dedicated_address"],
+      "cold_contact": true,
+      "receive_capabilities": {
+        "messaging": false,
+        "sms": false,
+        "otp": false,
+        "voice": true,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "050 number roughly $5-10 per month after corporate KYC bundle.",
+      "hard_limits": [
+        "Corporate KYC can take weeks",
+        "JP SMS requires separate sales-mediated gateway",
+        "070/080/090 mobile numbers are an MNO/MVNO license wall",
+        "Validators must accept 060 mobile prefixes"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Voice cold contact requires owner approval and legal disclosure context",
+        "SMS and OTP are not available in this v1 shape"
+      ],
+      "verification_tiers": [
+        "corporate KYC passed",
+        "050 allocation active",
+        "060 prefix accepted by validators"
+      ],
+      "disclosure_class": "ai_voice_disclosure",
+      "reputation_signal_sources": [],
+      "conservative_floor": true
+    },
+    {
+      "channel": "whatsapp",
+      "display_name": "WhatsApp Business",
+      "mintability": "review",
+      "shapes": ["dedicated_address", "shared_presence"],
+      "cold_contact": false,
+      "receive_capabilities": {
+        "messaging": true,
+        "sms": false,
+        "otp": false,
+        "voice": false,
+        "push": false,
+        "webhook": true
+      },
+      "cost_model": "Per-message business pricing plus review and template approval overhead.",
+      "hard_limits": [
+        "Business verification required",
+        "Template and opt-in rules apply",
+        "General third-party AI restrictions make this non-critical path"
+      ],
+      "policy_risk": "hold_to_proposal",
+      "policy_risk_notes": [
+        "Meta business-agent path must be explicitly approved before use",
+        "Platform fight means this channel remains parked"
+      ],
+      "verification_tiers": [
+        "business verified",
+        "template approved",
+        "quality rating monitored"
+      ],
+      "disclosure_class": "business_agent_disclosure",
+      "reputation_signal_sources": [
+        "business_quality_rating",
+        "template_quality_rating",
+        "provider_delivery_receipt"
+      ],
+      "conservative_floor": false
+    }
+  ]
+}
