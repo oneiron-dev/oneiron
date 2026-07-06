@@ -126,19 +126,22 @@
         "push": false,
         "webhook": true
       },
-      "cost_model": "Free app identity; workspace install and OAuth scopes are the binding cost.",
+      "cost_model": "Free app identity minted by apps.manifest.create; workspace install and OAuth scopes are the binding cost.",
       "hard_limits": [
         "Workspace-scoped reach",
         "Requires install and channel visibility",
-        "One app identity hosts many agent personas"
+        "One programmatically minted app identity hosts many agent personas",
+        "The same app can be installed to many workspaces"
       ],
       "policy_risk": "normal",
       "policy_risk_notes": [
-        "Workspace policy and OAuth scopes gate usable reach"
+        "Workspace policy and OAuth scopes gate usable reach",
+        "Outbound persona attribution requires chat:write.customize"
       ],
       "verification_tiers": [
-        "app manifest created",
+        "apps.manifest.create succeeded",
         "workspace installed",
+        "persona ChannelIdentity active",
         "distributed app review if published"
       ],
       "disclosure_class": "bot_or_app_identity",

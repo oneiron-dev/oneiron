@@ -134,7 +134,9 @@ pub use crate::channel_identity_provider::{
     ChannelIdentityProviderInbound, ChannelIdentityProviderProvision,
     DEFAULT_EMAIL_LOCAL_PART_PREFIX, DEV_EMAIL_PROVIDER_KEY, DevEmailIdentityAdapter,
     DevEmailIdentityAdapterConfig, EMAIL_CHANNEL, EmailProviderInbound,
-    MockChannelIdentityProviderAdapter,
+    MockChannelIdentityProviderAdapter, SLACK_CHANNEL, SLACK_SHARED_PRESENCE_PROVIDER_KEY,
+    SlackOutboundMessage, SlackPersonaAttribution, SlackPersonaOutbound, SlackProviderInbound,
+    SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig,
 };
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
