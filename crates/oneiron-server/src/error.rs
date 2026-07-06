@@ -43,6 +43,8 @@ pub enum ErrorCode {
     NotAcceptable,
     #[serde(rename = "INVALID_HEADER")]
     InvalidHeader,
+    #[serde(rename = "UNSUPPORTED_CAPABILITY")]
+    UnsupportedCapability,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -75,6 +77,7 @@ impl ErrorCode {
         Self::UnsupportedFormat,
         Self::NotAcceptable,
         Self::InvalidHeader,
+        Self::UnsupportedCapability,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -100,6 +103,7 @@ impl ErrorCode {
             Self::UnsupportedFormat => "UNSUPPORTED_FORMAT",
             Self::NotAcceptable => "NOT_ACCEPTABLE",
             Self::InvalidHeader => "INVALID_HEADER",
+            Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -129,7 +133,7 @@ impl ErrorCode {
             Self::MirrorNotReady => StatusCode::SERVICE_UNAVAILABLE,
             Self::UnsupportedFormat => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
-            Self::InvalidHeader => StatusCode::BAD_REQUEST,
+            Self::InvalidHeader | Self::UnsupportedCapability => StatusCode::BAD_REQUEST,
             Self::CrdtFrameTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
@@ -182,6 +186,17 @@ pub enum ApiErrorDetails {
     NotAcceptable { accepted: Vec<String> },
     #[serde(rename = "INVALID_HEADER", rename_all = "camelCase")]
     InvalidHeader { header: String },
+    #[serde(rename = "UNSUPPORTED_CAPABILITY", rename_all = "camelCase")]
+    UnsupportedCapability {
+        connector: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verb: Option<String>,
+        connector_known: bool,
+        supported_connectors: Vec<String>,
+        supported_verbs: Vec<String>,
+        #[serde(rename = "recovery_suggestions")]
+        recovery_suggestions: Vec<String>,
+    },
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -220,6 +235,7 @@ impl ApiErrorDetails {
             Self::UnsupportedFormat { .. } => ErrorCode::UnsupportedFormat,
             Self::NotAcceptable { .. } => ErrorCode::NotAcceptable,
             Self::InvalidHeader { .. } => ErrorCode::InvalidHeader,
+            Self::UnsupportedCapability { .. } => ErrorCode::UnsupportedCapability,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
@@ -238,7 +254,7 @@ pub struct ApiError {
     /// Human-readable error summary.
     message: String,
     /// Code-specific structured error details.
-    details: ApiErrorDetails,
+    details: Box<ApiErrorDetails>,
     /// Optional remediation hints for clients.
     suggestions: Vec<String>,
 }
@@ -253,7 +269,7 @@ impl ApiError {
         Self {
             code,
             message: message.into(),
-            details,
+            details: Box::new(details),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
         }
     }
@@ -367,6 +383,37 @@ impl ApiError {
         )
     }
 
+    pub fn unsupported_capability(
+        connector: impl Into<String>,
+        verb: Option<String>,
+        connector_known: bool,
+        supported_connectors: Vec<String>,
+        supported_verbs: Vec<String>,
+        recovery_suggestions: Vec<String>,
+    ) -> Self {
+        let connector = connector.into();
+        let message = match (connector_known, verb.as_deref()) {
+            (true, Some(verb)) => {
+                format!("outbound verb {verb} is not supported by connector {connector}")
+            }
+            (false, Some(_)) | (_, None) => {
+                format!("outbound connector {connector} is not registered")
+            }
+        };
+        Self::new(
+            message,
+            ApiErrorDetails::UnsupportedCapability {
+                connector,
+                verb,
+                connector_known,
+                supported_connectors,
+                supported_verbs,
+                recovery_suggestions: recovery_suggestions.clone(),
+            },
+            recovery_suggestions,
+        )
+    }
+
     pub const fn code(&self) -> ErrorCode {
         self.code
     }
@@ -376,7 +423,7 @@ impl ApiError {
     }
 
     pub fn details(&self) -> &ApiErrorDetails {
-        &self.details
+        self.details.as_ref()
     }
 
     pub fn suggestions(&self) -> &[String] {
@@ -413,7 +460,7 @@ impl<'de> Deserialize<'de> for ApiError {
         Ok(Self {
             code: wire.code,
             message: wire.message,
-            details: wire.details,
+            details: Box::new(wire.details),
             suggestions: wire.suggestions,
         })
     }
@@ -438,7 +485,7 @@ pub struct ApiErrorEnvelopeBody {
     code: ErrorCode,
     message: String,
     request_id: String,
-    details: ApiErrorDetails,
+    details: Box<ApiErrorDetails>,
     suggestions: Vec<String>,
 }
 
@@ -610,6 +657,31 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         ErrorCode::InvalidHeader => {
             required.push("header");
             properties.insert("header".to_owned(), json!({ "type": "string" }));
+        }
+        ErrorCode::UnsupportedCapability => {
+            required.extend([
+                "connector",
+                "verb",
+                "connectorKnown",
+                "supportedConnectors",
+                "supportedVerbs",
+                "recovery_suggestions",
+            ]);
+            properties.insert("connector".to_owned(), json!({ "type": "string" }));
+            properties.insert("verb".to_owned(), json!({ "type": "string" }));
+            properties.insert("connectorKnown".to_owned(), json!({ "type": "boolean" }));
+            properties.insert(
+                "supportedConnectors".to_owned(),
+                json!({ "type": "array", "items": { "type": "string" } }),
+            );
+            properties.insert(
+                "supportedVerbs".to_owned(),
+                json!({ "type": "array", "items": { "type": "string" } }),
+            );
+            properties.insert(
+                "recovery_suggestions".to_owned(),
+                json!({ "type": "array", "items": { "type": "string" } }),
+            );
         }
         ErrorCode::CrdtUnknownTag => {
             optional_integer(&mut properties, "tag");

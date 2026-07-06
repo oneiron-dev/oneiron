@@ -519,6 +519,7 @@ async fn discover_requires_auth_and_returns_empty_contract() {
             "feature_flags",
             "formats",
             "last_activity",
+            "outbound_capabilities",
             "personas",
             "predicate_namespaces",
             "runtime",
@@ -571,6 +572,29 @@ async fn discover_requires_auth_and_returns_empty_contract() {
     assert_eq!(
         body["skill_pack"]["layer_boundary"].as_str(),
         Some("skills = how to think about memory; MCP tools = what to call")
+    );
+    assert_eq!(
+        body["outbound_capabilities"]["manifest_version"].as_str(),
+        Some(oneiron::OUTBOUND_CAPABILITY_MANIFEST_VERSION)
+    );
+    assert_eq!(
+        body["outbound_capabilities"]["schema_on_demand"].as_str(),
+        Some("/v1/core/outbound/capabilities")
+    );
+    assert!(
+        str_array_set(&body["outbound_capabilities"]["field_contract"])
+            .contains("capability_vs_permission")
+    );
+    assert_eq!(
+        body["outbound_capabilities"]["unsupported_error_code"].as_str(),
+        Some("UNSUPPORTED_CAPABILITY")
+    );
+    assert!(
+        body["outbound_capabilities"]["connectors"]
+            .as_array()
+            .expect("outbound connector summaries")
+            .iter()
+            .any(|connector| connector["connector"] == "line")
     );
     assert!(body["bound"]["vault"].is_null());
     assert!(body["bound"]["persona"].is_null());

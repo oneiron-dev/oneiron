@@ -79,6 +79,33 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "list personas and conversations"
 - safety: Read-only; requires the configured `x-oneiron-secret` header unless the server is explicitly in unauthenticated development mode.
 
+#### core-outbound-capabilities - `GET /v1/core/outbound/capabilities`
+
+- when-to-use: List outbound connector capability manifests before planning messages, calls, pushes, reactions, edits, or other connector-specific outbound work.
+- trigger phrases:
+  - "list outbound capabilities"
+  - "what outbound connectors are supported?"
+  - "discover connector verbs"
+- safety: Read-only; requires core read auth. Returns manifest data only: connector names, supported verbs, the seven-field verb contract, permission posture, and recovery metadata.
+
+#### core-outbound-connector-capability - `GET /v1/core/outbound/capabilities/{connector}`
+
+- when-to-use: Fetch one connector's outbound manifest when an agent already knows the connector and needs its supported verb set or permission posture.
+- trigger phrases:
+  - "show the Slack outbound manifest"
+  - "get LINE connector verbs"
+  - "inspect connector capability permissions"
+- safety: Read-only; requires core read auth. Unknown connectors return the typed unsupported-capability shape with supported connectors and recovery guidance.
+
+#### core-outbound-verb-contract - `GET /v1/core/outbound/capabilities/{connector}/verbs/{verb}`
+
+- when-to-use: Validate one connector verb contract before proposing or executing an outbound action, especially when a verb may be connector-specific.
+- trigger phrases:
+  - "can Slack react?"
+  - "is LINE edit supported?"
+  - "get this outbound verb contract"
+- safety: Read-only; requires core read auth. Unsupported connector/verb pairs return `UNSUPPORTED_CAPABILITY` with `recovery_suggestions[]` and the supported verb list.
+
 #### search-vector - `GET /api/search/vector`
 
 - when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding.
@@ -321,6 +348,7 @@ Response fields:
 - `personas`: known person entities, each with `id` and numeric `entity_type`.
 - `conversations`: known conversation entities, each with `id` and numeric `entity_type`.
 - `feature_flags`: capability and mode metadata.
+- `outbound_capabilities`: schema-on-demand metadata for outbound connector manifests, including the manifest version, closed verb field contract, common verb list, connector summaries, and unsupported-capability recovery fields.
 - `counts`: entity counts keyed by numeric entity type.
 - `predicate_namespaces`: first path segment of known claim predicates.
 - `last_activity`: newest learned-at timestamp, or null.
@@ -345,8 +373,24 @@ Example response:
   "personas": [{ "id": "0123456789abcdef0123456789abcdef", "entity_type": 4 }],
   "conversations": [{ "id": "abcdef0123456789abcdef0123456789", "entity_type": 11 }],
   "feature_flags": {
-    "capabilities": ["core.discover", "health.capabilities", "skills_pack.fetch", "search.vector"],
+    "capabilities": ["core.discover", "core.outbound_capabilities", "health.capabilities", "skills_pack.fetch", "search.vector"],
     "modes": ["flash", "thinking", "pro", "ultra"]
+  },
+  "outbound_capabilities": {
+    "manifest_version": "outbound.capability_manifest.v1",
+    "schema_on_demand": "/v1/core/outbound/capabilities",
+    "field_contract": ["kind", "channel_call", "params", "interruption_class", "delivery_semantics", "retry_class", "capability_vs_permission"],
+    "common_verbs": ["send", "send_media", "react", "edit", "retract", "replace", "mark_read", "presence", "push", "call", "schedule_native"],
+    "connectors": [
+      {
+        "connector": "slack",
+        "schema_on_demand": "/v1/core/outbound/capabilities/slack",
+        "verbs": ["send", "react", "edit", "retract"]
+      }
+    ],
+    "unsupported_error_code": "UNSUPPORTED_CAPABILITY",
+    "recovery_suggestions_field": "recovery_suggestions",
+    "foreign_content_posture": "Foreign outbound payloads remain connector-owned; Oneiron advertises capability and permission posture only."
   },
   "counts": { "4": 1, "11": 1 },
   "predicate_namespaces": ["profile"],
@@ -750,7 +794,7 @@ Fetch Tier-3 only when writing validation code, generating clients, or recoverin
 ```json
 {
   "type": "object",
-  "required": ["api_version", "formats", "scopes", "skill_pack", "bound", "personas", "conversations", "feature_flags", "counts", "predicate_namespaces", "last_activity"],
+  "required": ["api_version", "formats", "scopes", "skill_pack", "bound", "personas", "conversations", "feature_flags", "outbound_capabilities", "counts", "predicate_namespaces", "last_activity"],
   "properties": {
     "api_version": { "type": "string" },
     "formats": { "type": "array", "items": { "type": "string" } },
@@ -768,6 +812,31 @@ Fetch Tier-3 only when writing validation code, generating clients, or recoverin
     "personas": { "type": "array", "items": { "$ref": "#/schemas/discovered_entity" } },
     "conversations": { "type": "array", "items": { "$ref": "#/schemas/discovered_entity" } },
     "feature_flags": { "$ref": "#/schemas/feature_flags" },
+    "outbound_capabilities": {
+      "type": "object",
+      "required": ["manifest_version", "schema_on_demand", "field_contract", "common_verbs", "connectors", "unsupported_error_code", "recovery_suggestions_field", "foreign_content_posture"],
+      "properties": {
+        "manifest_version": { "const": "outbound.capability_manifest.v1" },
+        "schema_on_demand": { "const": "/v1/core/outbound/capabilities" },
+        "field_contract": { "type": "array", "items": { "type": "string" } },
+        "common_verbs": { "type": "array", "items": { "type": "string" } },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["connector", "schema_on_demand", "verbs"],
+            "properties": {
+              "connector": { "type": "string" },
+              "schema_on_demand": { "type": "string" },
+              "verbs": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "unsupported_error_code": { "const": "UNSUPPORTED_CAPABILITY" },
+        "recovery_suggestions_field": { "const": "recovery_suggestions" },
+        "foreign_content_posture": { "type": "string" }
+      }
+    },
     "counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
     "predicate_namespaces": { "type": "array", "items": { "type": "string" } },
     "last_activity": { "type": ["integer", "null"] }

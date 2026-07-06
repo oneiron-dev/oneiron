@@ -33,6 +33,7 @@ pub mod lens;
 pub(crate) mod limits;
 pub mod llm;
 pub mod maintain;
+pub mod outbound;
 pub mod pipeline;
 pub(crate) mod ppr;
 pub mod provenance;
@@ -254,6 +255,14 @@ pub use crate::llm::{
     TierPrecedence, UnsupportedCapability,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
+pub use crate::outbound::{
+    COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
+    OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
+    OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
+    OutboundRetryClass, OutboundVerbContract, UnsupportedOutboundCapability,
+    outbound_capability_manifest, outbound_capability_manifests, outbound_verb_contract,
+    unsupported_outbound_connector,
+};
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
     RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
