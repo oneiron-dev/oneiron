@@ -1419,6 +1419,21 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn gate_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<Option<GateDecisionRecord>> {
+        let Some(value) = self.vault_meta.get(txn, &gate_decision_key(decision_id))? else {
+            return Ok(None);
+        };
+        let record = decode_gate_decision(value)?;
+        if record.decision_id != decision_id {
+            return Err(Error::CorruptedIndex("gate decision ledger"));
+        }
+        Ok(Some(record))
+    }
+
     pub(crate) fn put_pending_gate_consent_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -1459,16 +1474,62 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn let_go_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        created_at: u64,
+    ) -> Result<Option<GateDecisionRecord>> {
+        let Some(pending) = self.pending_gate_consent_in_txn(wtxn, claim_id)? else {
+            return Ok(None);
+        };
+        let Some(value) = self
+            .vault_meta
+            .get(wtxn, &gate_decision_key(pending.decision_id))?
+        else {
+            return Err(Error::CorruptedIndex("pending gate consent"));
+        };
+        let original = decode_gate_decision(value)?;
+        if original.decision_id != pending.decision_id {
+            return Err(Error::CorruptedIndex("pending gate consent"));
+        }
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at,
+            outcome: "let_go".to_owned(),
+            reason_codes: vec!["gate.pending.gap_decayed".to_owned()],
+            actor_class: original.actor_class,
+            actor_ref: original.actor_ref,
+            content_kind: original.content_kind,
+            policy_manifest_version: original.policy_manifest_version,
+            claim_id: Some(pending.claim_id),
+            diff_handle: pending.diff_handle,
+            read_frontier_hash: pending.read_frontier_hash,
+        };
+        self.append_gate_decision_in_txn(wtxn, &record)?;
+        self.delete_pending_gate_consent_in_txn(wtxn, claim_id)?;
+        Ok(Some(record))
+    }
+
     pub fn pending_gate_consents(&self, limit: usize) -> Result<Vec<PendingGateConsentRecord>> {
+        let rtxn = self.env.read_txn()?;
+        self.pending_gate_consents_in_txn(&rtxn, limit)
+    }
+
+    pub(crate) fn pending_gate_consents_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        limit: usize,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
 
-        let rtxn = self.env.read_txn()?;
         let upper = pending_gate_consent_upper_bound();
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         for row in self.vault_meta.range(
-            &rtxn,
+            txn,
             &(
                 std::ops::Bound::Included(PENDING_GATE_CONSENT_KEY_PREFIX),
                 std::ops::Bound::Excluded(upper.as_slice()),

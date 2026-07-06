@@ -12,7 +12,7 @@ use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_bod
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
-use crate::store::GateDecisionRecord;
+use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_FEDERATION_GRANT, EntityId,
@@ -24,6 +24,7 @@ use crate::types::{
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
 const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
+const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 
 const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
@@ -197,6 +198,59 @@ pub struct ReceiptRecord {
     pub fields: BTreeMap<String, String>,
 }
 
+/// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptView {
+    pub component: String,
+    pub receipt: ReceiptRecord,
+}
+
+impl ReceiptView {
+    #[must_use]
+    pub fn new(receipt: ReceiptRecord) -> Self {
+        Self {
+            component: RECEIPT_VIEW_COMPONENT.to_owned(),
+            receipt,
+        }
+    }
+}
+
+/// Query for the EF-055 pending tray lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingTrayQuery {
+    pub now: u64,
+    pub limit: usize,
+}
+
+impl PendingTrayQuery {
+    #[must_use]
+    pub fn new(limit: usize) -> Self {
+        Self {
+            now: crate::unix_seconds_now(),
+            limit,
+        }
+    }
+
+    #[must_use]
+    pub const fn at(now: u64, limit: usize) -> Self {
+        Self { now, limit }
+    }
+}
+
+/// One current pending ask for the logbook tray lane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingTrayAsk {
+    pub claim_id: String,
+    pub created_at: u64,
+    pub age_secs: u64,
+    pub hold_reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hold_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dreamer_run_id: Option<String>,
+    pub receipt_view: ReceiptView,
+}
+
 impl Vault {
     /// Queries the unified receipt family across existing receipt emitters.
     pub fn receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
@@ -206,6 +260,29 @@ impl Vault {
     /// Alias for callers that prefer verb-first query naming.
     pub fn query_receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
         self.receipts(query)
+    }
+
+    /// Returns the current pending tray lane rows backed by Pending-state Gate receipts.
+    pub fn pending_tray(&self, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
+        pending_tray_query(self, query)
+    }
+
+    /// Resolves a stale pending ask by emitting a `let_go` receipt and removing it from the tray.
+    pub fn let_go_pending_ask(&self, claim_id: &EntityId) -> Result<Option<ReceiptRecord>> {
+        self.let_go_pending_ask_at(claim_id, crate::unix_seconds_now())
+    }
+
+    /// Testable variant of [`Vault::let_go_pending_ask`] with an explicit event time.
+    pub fn let_go_pending_ask_at(
+        &self,
+        claim_id: &EntityId,
+        now: u64,
+    ) -> Result<Option<ReceiptRecord>> {
+        let emitted = self.with_write_txn(|wtxn| {
+            self.store
+                .let_go_pending_gate_consent_in_txn(wtxn, claim_id, now)
+        })?;
+        Ok(emitted.as_ref().map(gate_decision_receipt))
     }
 }
 
@@ -281,6 +358,53 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
             .map(|id| format!("claim:{}", hex_lower(&id))),
         policy_trace: record.reason_codes.clone(),
         fields,
+    }
+}
+
+fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
+    if query.limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut asks = Vec::new();
+    for pending in vault
+        .store
+        .pending_gate_consents_in_txn(&rtxn, query.limit)?
+    {
+        let Some(decision) = vault
+            .store
+            .gate_decision_in_txn(&rtxn, pending.decision_id)?
+        else {
+            return Err(Error::CorruptedIndex("pending gate consent"));
+        };
+        if decision.outcome != "pending" {
+            return Err(Error::CorruptedIndex("pending gate consent"));
+        }
+        asks.push(pending_tray_ask(&pending, &decision, query.now));
+    }
+    Ok(asks)
+}
+
+fn pending_tray_ask(
+    pending: &PendingGateConsentRecord,
+    decision: &GateDecisionRecord,
+    now: u64,
+) -> PendingTrayAsk {
+    let receipt = gate_decision_receipt(decision);
+    let hold_reasons = pending.reason_codes.clone();
+    let hold_reason = hold_reasons
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "gate.pending".to_owned());
+    PendingTrayAsk {
+        claim_id: hex_lower(&pending.claim_id),
+        created_at: pending.created_at,
+        age_secs: now.saturating_sub(pending.created_at),
+        hold_reason,
+        hold_reasons,
+        dreamer_run_id: pending.dreamer_run_id.clone(),
+        receipt_view: ReceiptView::new(receipt),
     }
 }
 
@@ -586,7 +710,7 @@ mod tests {
         FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
         encode_federation_grant_body,
     };
-    use crate::store::{GateDecisionId, Store};
+    use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
     use crate::types::{
         ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
         WriteEnvelope, WriteProvenance,
@@ -624,6 +748,17 @@ mod tests {
         outcome: &str,
         reason: &str,
     ) -> Result<GateDecisionId> {
+        append_gate_decision_for_claim(vault, created_at, actor, outcome, reason, entity(0x41))
+    }
+
+    fn append_gate_decision_for_claim(
+        vault: &Vault,
+        created_at: u64,
+        actor: &str,
+        outcome: &str,
+        reason: &str,
+        claim_id: EntityId,
+    ) -> Result<GateDecisionId> {
         let decision_id = GateDecisionId::now();
         vault.with_write_txn(|wtxn| {
             vault.store.append_gate_decision_in_txn(
@@ -638,9 +773,37 @@ mod tests {
                     actor_ref: Some(actor.to_owned()),
                     content_kind: "external_effect".to_owned(),
                     policy_manifest_version: "test-policy".to_owned(),
-                    claim_id: Some(*entity(0x41).as_bytes()),
+                    claim_id: Some(*claim_id.as_bytes()),
                     diff_handle: vec![0xA5],
                     read_frontier_hash: [0xB6; 32],
+                },
+            )
+        })?;
+        Ok(decision_id)
+    }
+
+    fn append_pending_gate_consent(
+        vault: &Vault,
+        created_at: u64,
+        actor: &str,
+        claim_id: EntityId,
+        reason: &str,
+        dreamer_run_id: Option<&str>,
+    ) -> Result<GateDecisionId> {
+        let decision_id =
+            append_gate_decision_for_claim(vault, created_at, actor, "pending", reason, claim_id)?;
+        vault.with_write_txn(|wtxn| {
+            vault.store.put_pending_gate_consent_in_txn(
+                wtxn,
+                &PendingGateConsentRecord {
+                    version: 0,
+                    claim_id: *claim_id.as_bytes(),
+                    decision_id,
+                    created_at,
+                    diff_handle: vec![0xA5],
+                    read_frontier_hash: [0xB6; 32],
+                    reason_codes: vec![reason.to_owned()],
+                    dreamer_run_id: dreamer_run_id.map(str::to_owned),
                 },
             )
         })?;
@@ -803,6 +966,113 @@ mod tests {
         let delivered = vault.receipts(ReceiptQuery::new(10).with_outcome("delivered"))?;
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].outcome, "delivered");
+        Ok(())
+    }
+
+    #[test]
+    fn pending_tray_returns_current_asks_with_age_hold_reason_and_receipt_view() -> Result<()> {
+        let (_tmp, vault) = temp_vault()?;
+        let old_claim = entity(0x81);
+        let recent_claim = entity(0x82);
+        let gone_claim = entity(0x83);
+        append_pending_gate_consent(
+            &vault,
+            10,
+            "agent-alpha",
+            old_claim,
+            "gate.pending.external_effect_authority",
+            Some("dreamer-run-a"),
+        )?;
+        append_pending_gate_consent(
+            &vault,
+            30,
+            "agent-beta",
+            recent_claim,
+            "gate.pending.source_trust",
+            None,
+        )?;
+        append_gate_decision_for_claim(
+            &vault,
+            40,
+            "agent-gamma",
+            "let_go",
+            "gate.pending.gap_decayed",
+            gone_claim,
+        )?;
+
+        let asks = vault.pending_tray(PendingTrayQuery::at(50, 10))?;
+        assert_eq!(asks.len(), 2);
+
+        let old = &asks[0];
+        assert_eq!(old.claim_id, old_claim.to_hex());
+        assert_eq!(old.created_at, 10);
+        assert_eq!(old.age_secs, 40);
+        assert_eq!(old.hold_reason, "gate.pending.external_effect_authority");
+        assert_eq!(
+            old.hold_reasons,
+            vec!["gate.pending.external_effect_authority"]
+        );
+        assert_eq!(old.dreamer_run_id.as_deref(), Some("dreamer-run-a"));
+        assert_eq!(old.receipt_view.component, RECEIPT_VIEW_COMPONENT);
+        assert_eq!(old.receipt_view.receipt.receipt_kind, ReceiptKind::Gate);
+        assert_eq!(old.receipt_view.receipt.outcome, "pending");
+        assert_eq!(
+            old.receipt_view.receipt.actor.as_deref(),
+            Some("agent-alpha")
+        );
+        assert_eq!(
+            old.receipt_view.receipt.trigger_ref.as_deref(),
+            Some(format!("claim:{}", old_claim.to_hex()).as_str())
+        );
+
+        let recent = &asks[1];
+        assert_eq!(recent.claim_id, recent_claim.to_hex());
+        assert_eq!(recent.age_secs, 20);
+        assert_eq!(recent.hold_reason, "gate.pending.source_trust");
+        assert!(
+            asks.iter()
+                .all(|ask| ask.claim_id.as_str() != gone_claim.to_hex())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn let_go_pending_ask_emits_receipt_before_clearing_tray() -> Result<()> {
+        let (_tmp, vault) = temp_vault()?;
+        let claim_id = entity(0x84);
+        append_pending_gate_consent(
+            &vault,
+            10,
+            "agent-alpha",
+            claim_id,
+            "gate.pending.external_effect_authority",
+            Some("dreamer-run-a"),
+        )?;
+
+        let emitted = vault
+            .let_go_pending_ask_at(&claim_id, 99)?
+            .expect("age-out must emit a receipt");
+        assert_eq!(emitted.receipt_kind, ReceiptKind::Gate);
+        assert_eq!(emitted.outcome, "let_go");
+        assert_eq!(emitted.actor.as_deref(), Some("agent-alpha"));
+        assert_eq!(
+            emitted.trigger_ref.as_deref(),
+            Some(format!("claim:{}", claim_id.to_hex()).as_str())
+        );
+        assert_eq!(emitted.policy_trace, vec!["gate.pending.gap_decayed"]);
+
+        assert!(
+            vault
+                .pending_tray(PendingTrayQuery::at(100, 10))?
+                .is_empty()
+        );
+        let let_go = vault.receipts(ReceiptQuery::new(10).with_outcome("let_go"))?;
+        assert_eq!(let_go.len(), 1);
+        assert_eq!(let_go[0], emitted);
+
+        assert!(vault.let_go_pending_ask_at(&claim_id, 120)?.is_none());
+        let still_one = vault.receipts(ReceiptQuery::new(10).with_outcome("let_go"))?;
+        assert_eq!(still_one.len(), 1);
         Ok(())
     }
 
