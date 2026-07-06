@@ -46,6 +46,7 @@ pub mod serialize;
 pub mod settings;
 pub mod skill;
 pub mod store;
+pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
@@ -322,6 +323,11 @@ pub use crate::store::{
     RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal,
     RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
     RetrievalTraceStageRecord,
+};
+pub use crate::surface_event::{
+    INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
+    InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
+    SurfaceCounterpartyStamp, SurfaceEvent,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
