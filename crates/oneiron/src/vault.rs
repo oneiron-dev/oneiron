@@ -1372,13 +1372,13 @@ impl Vault {
                 goodbye_artifact: None,
             });
         }
-        if !matches!(existing.subject, CompanionSubject::Relationship { .. }) {
+        if !matches!(&existing.subject, CompanionSubject::Relationship { .. }) {
             return Err(Error::InvalidClaimBody(
                 "companion relationship end requires relationship record",
             ));
         }
 
-        let mut scrubbed = existing.clone();
+        let mut scrubbed = existing;
         scrubbed.value = Value::Map(vec![
             (Value::from("kind"), Value::from("relationship_ended")),
             (Value::from("private_memory"), Value::from("removed")),
