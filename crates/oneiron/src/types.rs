@@ -499,6 +499,90 @@ impl EntityId {
     }
 }
 
+/// First leading byte reserved for received foreign world ids.
+///
+/// Locally authored WORLD ids remain outside this range. Keeping the foreign
+/// range distinct lets outbound federation selectors require [`LocalWorldId`]
+/// while the inbound/re-federation path can fail closed when raw wire bytes
+/// name a received foreign world.
+pub const FOREIGN_WORLD_ID_RANGE_START_BYTE: u8 = 0xF0;
+
+/// Returns whether `id` is in the received-foreign WORLD id range.
+#[must_use]
+pub fn is_foreign_world_id_range(id: EntityId) -> bool {
+    id.0[0] >= FOREIGN_WORLD_ID_RANGE_START_BYTE
+}
+
+/// WORLD id proven eligible for local outbound sharing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LocalWorldId(EntityId);
+
+impl LocalWorldId {
+    /// Creates a local WORLD id wrapper, rejecting the foreign range.
+    pub fn from_entity_id(id: EntityId) -> crate::error::Result<Self> {
+        if is_foreign_world_id_range(id) {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        Ok(Self(id))
+    }
+
+    /// Returns the raw entity id.
+    #[must_use]
+    pub const fn entity_id(self) -> EntityId {
+        self.0
+    }
+}
+
+impl TryFrom<EntityId> for LocalWorldId {
+    type Error = crate::error::Error;
+
+    fn try_from(value: EntityId) -> crate::error::Result<Self> {
+        Self::from_entity_id(value)
+    }
+}
+
+/// WORLD id received from a foreign vault.
+///
+/// This type intentionally does not convert into [`LocalWorldId`], which keeps
+/// A->B->C re-share out of outbound selector construction.
+///
+/// ```compile_fail
+/// use oneiron::sync::SyncSelectorWorld;
+/// use oneiron::types::{EntityId, ForeignWorldId};
+///
+/// let foreign = ForeignWorldId::from_entity_id(
+///     EntityId::from_bytes([0xF1; 16]).unwrap(),
+/// )
+/// .unwrap();
+/// let _cannot_reshare = SyncSelectorWorld::World(foreign);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ForeignWorldId(EntityId);
+
+impl ForeignWorldId {
+    /// Creates a foreign WORLD id wrapper, accepting only the foreign range.
+    pub fn from_entity_id(id: EntityId) -> crate::error::Result<Self> {
+        if !is_foreign_world_id_range(id) {
+            return Err(crate::error::Error::InvalidKey);
+        }
+        Ok(Self(id))
+    }
+
+    /// Returns the raw entity id.
+    #[must_use]
+    pub const fn entity_id(self) -> EntityId {
+        self.0
+    }
+}
+
+impl TryFrom<EntityId> for ForeignWorldId {
+    type Error = crate::error::Error;
+
+    fn try_from(value: EntityId) -> crate::error::Result<Self> {
+        Self::from_entity_id(value)
+    }
+}
+
 /// Parses a `&[u8]` slice into an `EntityId`, returning
 /// `Error::CorruptedIndex(context)` if the length is wrong, or
 /// `Error::InvalidKey` if the bytes match a reserved sentinel pattern
@@ -2846,6 +2930,30 @@ mod tests {
     fn entity_id_from_hex_rejects_invalid() {
         assert!(EntityId::from_hex("too_short").is_err());
         assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
+    }
+
+    #[test]
+    fn local_world_id_rejects_foreign_range() {
+        let local = EntityId::from_bytes([0xEF; 16]).unwrap();
+        let foreign = EntityId::from_bytes([FOREIGN_WORLD_ID_RANGE_START_BYTE; 16]).unwrap();
+
+        assert_eq!(
+            LocalWorldId::from_entity_id(local).unwrap().entity_id(),
+            local
+        );
+        assert!(LocalWorldId::from_entity_id(foreign).is_err());
+    }
+
+    #[test]
+    fn foreign_world_id_accepts_only_foreign_range() {
+        let local = EntityId::from_bytes([0xEF; 16]).unwrap();
+        let foreign = EntityId::from_bytes([0xF1; 16]).unwrap();
+
+        assert_eq!(
+            ForeignWorldId::from_entity_id(foreign).unwrap().entity_id(),
+            foreign
+        );
+        assert!(ForeignWorldId::from_entity_id(local).is_err());
     }
 
     #[test]

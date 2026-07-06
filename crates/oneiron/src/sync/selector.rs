@@ -27,7 +27,8 @@ use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::types::{
     CompanionExportClassification, CompanionScope, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_WORLD, EdgeKind, EntityId, TypeByteBand, band_of, decode_companion_record_body,
+    ENTITY_TYPE_WORLD, EdgeKind, EntityId, LocalWorldId, TypeByteBand, band_of,
+    decode_companion_record_body,
 };
 
 use super::bridge::parse_edge_key;
@@ -72,7 +73,7 @@ pub enum SyncSelectorWorld {
     /// Include only base-reality claims.
     Base,
     /// Include base-reality claims and claims scoped to this world.
-    World(EntityId),
+    World(LocalWorldId),
 }
 
 /// Per-window closed-subgraph selector.
@@ -726,7 +727,7 @@ fn entity_selector_decision(
         match selector.world {
             SyncSelectorWorld::All => {}
             SyncSelectorWorld::Base => return None,
-            SyncSelectorWorld::World(world) if *id != world => return None,
+            SyncSelectorWorld::World(world) if *id != world.entity_id() => return None,
             SyncSelectorWorld::World(_) => {}
         }
     }
@@ -779,7 +780,7 @@ fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool 
     let target = match world {
         SyncSelectorWorld::All => return true,
         SyncSelectorWorld::Base => None,
-        SyncSelectorWorld::World(id) => Some(id),
+        SyncSelectorWorld::World(id) => Some(id.entity_id()),
     };
     if entity_type != ENTITY_TYPE_CLAIM {
         return true;
@@ -805,7 +806,10 @@ fn encode_world(world: SyncSelectorWorld) -> Value {
         )]),
         SyncSelectorWorld::World(id) => Value::Map(vec![
             (Value::from(WORLD_KEYS[0]), Value::from(WORLD_KIND_WORLD)),
-            (Value::from(WORLD_KEYS[1]), Value::from(id.to_hex())),
+            (
+                Value::from(WORLD_KEYS[1]),
+                Value::from(id.entity_id().to_hex()),
+            ),
         ]),
     }
 }
@@ -832,9 +836,10 @@ fn decode_world(value: &Value) -> Result<SyncSelectorWorld> {
         }
         WORLD_KIND_WORLD => {
             validate_world_keys(entries)?;
-            Ok(SyncSelectorWorld::World(decode_entity_hex(
-                required_value(entries, WORLD_KEYS[1])?,
-            )?))
+            let world = decode_entity_hex(required_value(entries, WORLD_KEYS[1])?)?;
+            let local_world = LocalWorldId::try_from(world)
+                .map_err(|_| selector_err("sync selector foreign world id"))?;
+            Ok(SyncSelectorWorld::World(local_world))
         }
         _ => Err(selector_err("sync selector unknown world kind")),
     }
@@ -975,6 +980,10 @@ mod tests {
 
     fn entity_id(byte: u8) -> EntityId {
         EntityId::from_bytes([byte; 16]).unwrap()
+    }
+
+    fn local_world_id(byte: u8) -> LocalWorldId {
+        LocalWorldId::from_entity_id(entity_id(byte)).unwrap()
     }
 
     fn entity_blob(entity_type: u8, body: &[u8]) -> Vec<u8> {
@@ -1272,7 +1281,7 @@ mod tests {
         let selector = SyncSelector::new(
             entity_id(0xA1),
             entity_id(0xB1),
-            SyncSelectorWorld::World(entity_id(0xC1)),
+            SyncSelectorWorld::World(local_world_id(0xC1)),
             vec![entity_id(0xD1), entity_id(0xD1)],
             vec![
                 TypeByteBand::Core,
@@ -1324,6 +1333,44 @@ mod tests {
         let mut unsupported = Vec::new();
         rmpv::encode::write_value(&mut unsupported, &unsupported_version).unwrap();
         assert!(decode_sync_selector(&unsupported).is_err());
+    }
+
+    #[test]
+    fn selector_decode_rejects_foreign_world_id_range() {
+        let selector = SyncSelector::new(
+            entity_id(0xA1),
+            entity_id(0xB1),
+            SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let mut decoded = match rmpv::decode::read_value(&mut Cursor::new(
+            encode_sync_selector(&selector).unwrap(),
+        ))
+        .unwrap()
+        {
+            Value::Map(entries) => entries,
+            other => panic!("selector must encode as map, got {other:?}"),
+        };
+        for (key, value) in &mut decoded {
+            if key.as_str() == Some(KEY_WORLD) {
+                *value = Value::Map(vec![
+                    (Value::from(WORLD_KEYS[0]), Value::from(WORLD_KIND_WORLD)),
+                    (
+                        Value::from(WORLD_KEYS[1]),
+                        Value::from(entity_id(0xF1).to_hex()),
+                    ),
+                ]);
+            }
+        }
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &Value::Map(decoded)).unwrap();
+
+        let err = decode_sync_selector(&bytes).expect_err("foreign world id must be rejected");
+
+        assert!(
+            matches!(err, Error::SyncProtocolError(message) if message == "sync selector foreign world id")
+        );
     }
 
     #[test]
@@ -1712,15 +1759,15 @@ mod tests {
         let (_dir, vault, grant_id) = test_vault_with_grant(member);
         let window_key = WindowKey::new("2026-04");
         let doc = create_window_doc("source", &window_key);
-        let world = entity_id(0xE1);
+        let world = local_world_id(0xE1);
         let other_world = entity_id(0xE2);
         let claim_world = entity_id(0x41);
         let claim_base = entity_id(0x42);
         let claim_other_world = entity_id(0x43);
-        let world_entity = world;
+        let world_entity = world.entity_id();
         let task_like = entity_id(0x45);
 
-        insert_blob(&doc, claim_world, &claim_blob(Some(world)));
+        insert_blob(&doc, claim_world, &claim_blob(Some(world.entity_id())));
         insert_blob(&doc, claim_base, &claim_blob(None));
         insert_blob(&doc, claim_other_world, &claim_blob(Some(other_world)));
         insert_entity(&doc, world_entity, ENTITY_TYPE_WORLD, b"world");
