@@ -7,6 +7,7 @@ pub mod authority;
 pub mod batch;
 pub(crate) mod bm25;
 pub mod channel_identity;
+pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod claim;
 pub mod code_artifact;
@@ -103,6 +104,13 @@ pub use crate::channel_identity::{
     PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
     PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT, decode_channel_identity_body,
     encode_channel_identity_body,
+};
+pub use crate::channel_identity_lifecycle::{
+    BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
+    ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
+    ChannelIdentityLifecyclePolicyRisk, ChannelIdentityLifecycleRequest,
+    ChannelIdentityLifecycleResult, ChannelIdentityLifecycleVerb, ProvisionIntent, ReleaseIntent,
+    RotateIntent, RouteInboundIntent,
 };
 pub use crate::channel_identity_manifest::{
     CHANNEL_IDENTITY_CAPABILITY_MATRIX_VERSION, ChannelIdentityCapabilityMatrix,
