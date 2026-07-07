@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"url\":\"https://www.linkedin.com/messaging/thread/2-jane-doe-abc/\",\"sections\":{\"conversation\":\"Jane Doe\\nJane Doe\\n10:01 AM\\nThanks for reaching out about the pilot.\\nYura\\n10:04 AM\\nHappy to share more details.\"},\"references\":{\"conversation\":[{\"kind\":\"conversation\",\"url\":\"/messaging/thread/2-jane-doe-abc/\",\"context\":\"conversation\",\"text\":\"Jane Doe\"}]}}"
+    }
+  ]
+}

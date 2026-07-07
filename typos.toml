@@ -7,6 +7,9 @@ extend-exclude = [
 
 [default.extend-words]
 anc = "anc"
+ba = "ba"
 Caf = "Caf"
 caf = "caf"
+mis = "mis"
 SINIC = "SINIC"
+unparseable = "unparseable"

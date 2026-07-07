@@ -1,0 +1,22 @@
+{
+  "url": "https://www.linkedin.com/messaging/",
+  "sections": {
+    "inbox": "Messaging\nJane Doe\nThanks for reaching out about the pilot.\nKenji Mori\nCan you send the overview?\nLoad more conversations"
+  },
+  "references": {
+    "inbox": [
+      {
+        "kind": "conversation",
+        "url": "/messaging/thread/2-jane-doe-abc/",
+        "context": "inbox",
+        "text": "Jane Doe"
+      },
+      {
+        "kind": "conversation",
+        "url": "/messaging/thread/2-kenji-mori-def/",
+        "context": "inbox",
+        "text": "Kenji Mori"
+      }
+    ]
+  }
+}
