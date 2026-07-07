@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use crate::Vault;
 use crate::delivery_window::{
-    DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
-    DeliveryWindowVerbClass,
+    DeliveryWindowContextCondition, DeliveryWindowEvaluationContext, DeliveryWindowEvaluator,
+    DeliveryWindowPolicyClaim, DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
 };
 use crate::error::Error;
 use crate::gate::{
@@ -21,7 +21,7 @@ use crate::gate::{
     GateProvenanceHandles,
 };
 use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
-use crate::types::EntityId;
+use crate::types::{ENTITY_TYPE_CLAIM, EntityId};
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
@@ -324,6 +324,9 @@ pub struct OutboundDispatchRequest {
     /// dispatch rejects the intent with [`Error::OffRecordTalkOnly`] while
     /// the referenced session is in off-record mode.
     pub originating_session_ref: Option<String>,
+    /// Granted ambient conditions active at the send-time door, such as a
+    /// calendar busy signal. Producers live outside this dispatch primitive.
+    pub active_delivery_contexts: Vec<DeliveryWindowContextCondition>,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
     /// recorded onto the emit receipt for every dispatch outcome.
     /// Optional by design: RS9 pins one hook at the assembly seam, not a
@@ -355,6 +358,7 @@ impl OutboundDispatchRequest {
             counterparty_ref: None,
             window_decision,
             originating_session_ref: None,
+            active_delivery_contexts: Vec::new(),
             context_receipt: None,
         }
     }
@@ -396,6 +400,14 @@ impl OutboundDispatchRequest {
         claims: &[DeliveryWindowPolicyClaim],
     ) -> Self {
         self.window_decision = DeliveryWindowEvaluator::evaluate(context, claims);
+        self
+    }
+
+    #[must_use]
+    pub fn active_delivery_context(mut self, condition: DeliveryWindowContextCondition) -> Self {
+        if !self.active_delivery_contexts.contains(&condition) {
+            self.active_delivery_contexts.push(condition);
+        }
         self
     }
 }
@@ -733,6 +745,8 @@ impl OutboundDispatchPipeline {
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
+        let window_decision =
+            outbound_delivery_window_decision_at_door(vault, &request, verb_contract)?;
         let effect = ExternalEffectGateInput {
             actor: request.actor.gate_actor(),
             provenance: request.actor.provenance(),
@@ -774,7 +788,7 @@ impl OutboundDispatchPipeline {
             .collect::<Vec<_>>();
 
         let (outcome, execution) = match gate_outcome_kind {
-            GateOutcome::Allow => match &request.window_decision {
+            GateOutcome::Allow => match &window_decision {
                 OutboundDeliveryWindowDecision::DeliverNow
                 | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
                     let execution_request = OutboundExecutionRequest {
@@ -820,9 +834,7 @@ impl OutboundDispatchPipeline {
         receipt
             .policy_trace
             .extend(gate_receipt_reasons.iter().cloned());
-        receipt
-            .policy_trace
-            .push(request.window_decision.policy_trace());
+        receipt.policy_trace.push(window_decision.policy_trace());
         let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
         receipt
             .fields
@@ -912,7 +924,7 @@ impl OutboundDispatchPipeline {
             &gate_reason_codes,
             &gate_receipt_reasons,
         );
-        append_window_receipt_fields(&mut receipt, &request.window_decision);
+        append_window_receipt_fields(&mut receipt, &window_decision);
         if let Some(context) = request.context_receipt.as_ref() {
             context.append_to_fields(&mut receipt.fields);
         }
@@ -947,6 +959,113 @@ fn outbound_dispatch_policy_risk(
         ExternalEffectPolicyRisk::HoldToProposal
     } else {
         gate.policy_risk.to_gate()
+    }
+}
+
+fn outbound_delivery_window_decision_at_door(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    verb_contract: &OutboundVerbContract,
+) -> crate::Result<OutboundDeliveryWindowDecision> {
+    let stored_claims = stored_delivery_window_policy_claims(vault)?;
+    if stored_claims.is_empty() {
+        return Ok(request.window_decision.clone());
+    }
+
+    let context = outbound_delivery_window_context(request, verb_contract)?;
+    let stored_decision = DeliveryWindowEvaluator::evaluate(&context, &stored_claims);
+    Ok(most_restrictive_delivery_window_decision(
+        request.window_decision.clone(),
+        stored_decision,
+    ))
+}
+
+fn stored_delivery_window_policy_claims(
+    vault: &Vault,
+) -> crate::Result<Vec<DeliveryWindowPolicyClaim>> {
+    let mut claims = Vec::new();
+    for id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
+        let Some(body) = vault.get_claim(&id)? else {
+            continue;
+        };
+        if is_delivery_window_claim_predicate(&body.predicate) {
+            claims.push(DeliveryWindowPolicyClaim::from_claim_body(&body)?);
+        }
+    }
+    Ok(claims)
+}
+
+fn outbound_delivery_window_context(
+    request: &OutboundDispatchRequest,
+    verb_contract: &OutboundVerbContract,
+) -> crate::Result<DeliveryWindowEvaluationContext> {
+    let mut context = DeliveryWindowEvaluationContext::new(
+        request.occurred_at,
+        local_minute_of_day(request.occurred_at),
+        outbound_delivery_window_verb_class(&request.intent, verb_contract),
+    )?
+    .channel(outbound_delivery_window_channel(
+        &request.intent,
+        verb_contract,
+    ))
+    .interrupt_surface(format!(
+        "{}:{}",
+        normalize_key(&request.intent.channel),
+        verb_contract.kind
+    ));
+    for condition in &request.active_delivery_contexts {
+        context = context.active_context(*condition);
+    }
+    Ok(context)
+}
+
+fn outbound_delivery_window_verb_class(
+    intent: &OutboundIntent,
+    verb_contract: &OutboundVerbContract,
+) -> DeliveryWindowVerbClass {
+    match outbound_delivery_window_channel(intent, verb_contract) {
+        "call" | "push" | "text" => DeliveryWindowVerbClass::Interrupt,
+        _ => DeliveryWindowVerbClass::Ambient,
+    }
+}
+
+fn outbound_delivery_window_channel(
+    intent: &OutboundIntent,
+    verb_contract: &OutboundVerbContract,
+) -> &'static str {
+    let connector = normalize_key(&intent.channel);
+    match (connector.as_str(), verb_contract.kind.as_str()) {
+        ("voice", "call") => "call",
+        ("apns", "push") => "push",
+        ("imessage_bridge" | "imessage_mfb", "send" | "send_media" | "invite") => "text",
+        (_, "call") => "call",
+        (_, "push") => "push",
+        _ => "chat",
+    }
+}
+
+fn local_minute_of_day(epoch_secs: u64) -> u16 {
+    ((epoch_secs / 60) % (24 * 60)) as u16
+}
+
+fn most_restrictive_delivery_window_decision(
+    current: OutboundDeliveryWindowDecision,
+    candidate: OutboundDeliveryWindowDecision,
+) -> OutboundDeliveryWindowDecision {
+    if delivery_window_decision_rank(&candidate) > delivery_window_decision_rank(&current) {
+        candidate
+    } else {
+        current
+    }
+}
+
+fn delivery_window_decision_rank(decision: &OutboundDeliveryWindowDecision) -> u8 {
+    match decision {
+        OutboundDeliveryWindowDecision::DeliverNow => 0,
+        OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => 1,
+        OutboundDeliveryWindowDecision::Degrade { .. } => 2,
+        OutboundDeliveryWindowDecision::Hold { .. } => 3,
+        OutboundDeliveryWindowDecision::LetGo { .. } => 4,
     }
 }
 
@@ -1634,13 +1753,17 @@ mod tests {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::claim::{
         ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+        encode_claim_body,
     };
     use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
     use crate::delivery_window::{
-        DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowAppliesTo, PREDICATE_DELIVERY_WINDOW_QUIET,
+        DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowAppliesTo, DeliveryWindowContextCondition,
+        PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
     };
     use crate::store::Store;
-    use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, VaultConfig};
+    use crate::types::{
+        ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, VaultConfig,
+    };
 
     fn temp_vault() -> (tempfile::TempDir, Vault) {
         let tmp = tempfile::tempdir().expect("temp dir");
@@ -1719,6 +1842,24 @@ mod tests {
         })
     }
 
+    fn put_claim_body(vault: &Vault, seed: u8, body: &ClaimBody) -> crate::Result<()> {
+        let id = entity(seed);
+        let data = encode_claim_body(body)?;
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(ENTITY_TYPE_CLAIM);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&data);
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key = Store::encode_type_key(ENTITY_TYPE_CLAIM, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+    }
+
     struct RecordingExecutor {
         calls: Vec<(String, String, String)>,
         outcome: OutboundExecutionOutcome,
@@ -1755,10 +1896,10 @@ mod tests {
         )
     }
 
-    fn quiet_delivery_window_policy() -> DeliveryWindowPolicyClaim {
+    fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
         let mut claim = ClaimBody::new(
             PREDICATE_DELIVERY_WINDOW_QUIET,
-            ClaimSubject::Entity(entity(0xE1)),
+            ClaimSubject::Entity(entity(subject_seed)),
             Value::Map(vec![
                 (
                     Value::from("schema_version"),
@@ -1781,7 +1922,38 @@ mod tests {
             ClaimLifecycleStatus::Active,
         );
         claim.source = Some(ClaimSource::UserStated);
+        claim
+    }
+
+    fn quiet_delivery_window_policy() -> DeliveryWindowPolicyClaim {
+        let claim = quiet_delivery_window_claim_body(0xE1);
         DeliveryWindowPolicyClaim::from_claim_body(&claim).expect("valid quiet claim")
+    }
+
+    fn calendar_busy_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
+        let mut claim = ClaimBody::new(
+            PREDICATE_DELIVERY_WINDOW_CONTEXT,
+            ClaimSubject::Entity(entity(subject_seed)),
+            Value::Map(vec![
+                (
+                    Value::from("schema_version"),
+                    Value::from(DELIVERY_WINDOW_SCHEMA_VERSION),
+                ),
+                (
+                    Value::from("applies_to"),
+                    Value::from(DeliveryWindowAppliesTo::Interrupt.as_str()),
+                ),
+                (
+                    Value::from("when"),
+                    Value::from(DeliveryWindowContextCondition::CalendarBusy.as_str()),
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        claim.source = Some(ClaimSource::UserStated);
+        claim
     }
 
     #[test]
@@ -2465,6 +2637,181 @@ mod tests {
                 .policy_trace
                 .contains(&"delivery_window.hold:quiet_window".to_owned())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_door_defers_call_inside_stored_quiet_hours()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xB1);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xE2,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "voice",
+                &["call"],
+            ),
+        )?;
+        put_claim_body(&vault, 0xE3, &quiet_delivery_window_claim_body(0xE4))?;
+
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "call", "voice", "+15551234567"),
+            OutboundIntentTrigger::commitment_timer_wake("commitment:quiet-call"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:quiet-call",
+            "intent:quiet-call",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            23 * 60 * 60,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "allow");
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("hold")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_reason")
+                .map(String::as_str),
+            Some("quiet_window")
+        );
+        assert_eq!(
+            result.receipt.fields.get("retry_at").map(String::as_str),
+            Some("115200")
+        );
+        assert_ne!(result.receipt.outcome, "suppressed");
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_door_allows_chat_send_inside_stored_quiet_hours()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xB2);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xE5,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "slack",
+                &["send"],
+            ),
+        )?;
+        put_claim_body(&vault, 0xE6, &quiet_delivery_window_claim_body(0xE7))?;
+
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "send", "slack", "slack:channel:C123"),
+            OutboundIntentTrigger::agent_immediate("session:chat-leave"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:chat-leave",
+            "intent:chat-leave",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            23 * 60 * 60,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(
+            executor.calls,
+            vec![(
+                "intent:chat-leave".to_owned(),
+                "slack".to_owned(),
+                "send".to_owned()
+            )]
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("deliver_now")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.no_restriction".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_door_defers_interruption_when_calendar_busy_is_active()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xB3);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xE8,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "voice",
+                &["call"],
+            ),
+        )?;
+        put_claim_body(
+            &vault,
+            0xE9,
+            &calendar_busy_delivery_window_claim_body(0xEA),
+        )?;
+
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "call", "voice", "+15557654321"),
+            OutboundIntentTrigger::agent_immediate("session:calendar-busy-call"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:calendar-busy-call",
+            "intent:calendar-busy-call",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            12 * 60 * 60,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .active_delivery_context(DeliveryWindowContextCondition::CalendarBusy);
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_reason")
+                .map(String::as_str),
+            Some("context_window")
+        );
+        assert_eq!(result.receipt.fields.get("retry_at"), None);
+        assert_ne!(result.receipt.outcome, "suppressed");
         Ok(())
     }
 
