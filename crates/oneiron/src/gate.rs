@@ -2116,6 +2116,7 @@ pub(crate) fn check_claim_policy_for_write(
                 .iter()
                 .map(|reason| (*reason).to_owned())
                 .collect(),
+            system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
             actor_ref: input.actor.actor_ref.clone(),
             content_kind: input.content_kind.as_str().to_owned(),
@@ -2215,6 +2216,7 @@ pub(crate) fn check_external_effect_policy(
                 .iter()
                 .map(|reason| (*reason).to_owned())
                 .collect(),
+            system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
             actor_ref: input.actor.actor_ref.clone(),
             content_kind: input.content_kind.as_str().to_owned(),
