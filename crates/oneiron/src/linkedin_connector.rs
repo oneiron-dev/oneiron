@@ -6,6 +6,8 @@
 //! OF-247 `InboundSurfaceEventInput` values without starting a browser or
 //! touching a live LinkedIn session.
 
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::error::{Error, Result};
@@ -31,6 +33,10 @@ pub const LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL: &str = "connect_with_person";
 
 const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
 const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
+const MAX_LINKEDIN_THREAD_ID_BYTES: usize = 256;
+const MAX_LINKEDIN_EVENT_ID_BYTES: usize = 384;
+const MAX_LINKEDIN_PAYLOAD_REF_BYTES: usize = 384;
+const MAX_LINKEDIN_COUNTERPARTY_KEY_BYTES: usize = 320;
 
 /// Adapter for recorded `stickerdaniel/linkedin-mcp-server` messaging outputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,21 +114,24 @@ impl LinkedInMcpConnectorAdapter {
         }
 
         let mut events = Vec::new();
+        let mut seen_thread_ids = HashSet::new();
         for reference in section_references(&payload, "inbox") {
             if !reference_kind_is(reference, "conversation") {
                 continue;
             }
-            let Some(thread_id) = thread_id_from_reference(reference) else {
+            let Some(thread_id) = thread_id_from_reference(reference)? else {
                 continue;
             };
-            let participant = reference_text(reference);
-            let hash = event_hash(["get_inbox", &thread_id, inbox_text].as_slice());
+            if !seen_thread_ids.insert(thread_id.clone()) {
+                continue;
+            };
+            let hash = event_hash(["get_inbox", &thread_id].as_slice());
             events.push(self.surface_event_input(
                 format!("linkedin:inbox:{thread_id}:{hash}"),
-                counterparty_key(&thread_id, participant),
+                counterparty_key(&thread_id),
                 format!("linkedin:mcp:get_inbox:{thread_id}:{hash}"),
                 received_at,
-            ));
+            )?);
         }
         Ok(events)
     }
@@ -141,27 +150,22 @@ impl LinkedInMcpConnectorAdapter {
             return Ok(Vec::new());
         }
 
-        let thread_id = thread_id_from_payload_url(&payload)
-            .or_else(|| {
-                section_references(&payload, "conversation")
-                    .iter()
-                    .find_map(|reference| thread_id_from_reference(reference))
-            })
-            .ok_or_else(|| {
+        let conversation_references = section_references(&payload, "conversation");
+        let thread_id = match thread_id_from_payload_url(&payload)? {
+            Some(thread_id) => thread_id,
+            None => first_conversation_thread_id(&conversation_references)?.ok_or_else(|| {
                 Error::InvalidConfig(
                     "LinkedIn get_conversation output did not include a thread id".to_owned(),
                 )
-            })?;
-        let participant = section_references(&payload, "conversation")
-            .iter()
-            .find_map(|reference| reference_text(reference));
+            })?,
+        };
         let hash = event_hash(["get_conversation", &thread_id, conversation_text].as_slice());
         Ok(vec![self.surface_event_input(
             format!("linkedin:conversation:{thread_id}:{hash}"),
-            counterparty_key(&thread_id, participant),
+            counterparty_key(&thread_id),
             format!("linkedin:mcp:get_conversation:{thread_id}:{hash}"),
             received_at,
-        )])
+        )?])
     }
 
     fn surface_event_input(
@@ -170,7 +174,22 @@ impl LinkedInMcpConnectorAdapter {
         counterparty_key: String,
         payload_ref: String,
         received_at: u64,
-    ) -> InboundSurfaceEventInput {
+    ) -> Result<InboundSurfaceEventInput> {
+        let event_id = bounded_identifier(
+            event_id,
+            MAX_LINKEDIN_EVENT_ID_BYTES,
+            "LinkedIn surface event id exceeds maximum length",
+        )?;
+        let counterparty_key = bounded_identifier(
+            counterparty_key,
+            MAX_LINKEDIN_COUNTERPARTY_KEY_BYTES,
+            "LinkedIn counterparty key exceeds maximum length",
+        )?;
+        let payload_ref = bounded_identifier(
+            payload_ref,
+            MAX_LINKEDIN_PAYLOAD_REF_BYTES,
+            "LinkedIn payload ref exceeds maximum length",
+        )?;
         let input = InboundSurfaceEventInput::new(
             event_id,
             LINKEDIN_CHANNEL,
@@ -181,9 +200,9 @@ impl LinkedInMcpConnectorAdapter {
         )
         .with_payload_ref(payload_ref);
         if let Some(session_ref) = &self.session_ref {
-            input.with_workspace_ref(session_ref.clone())
+            Ok(input.with_workspace_ref(session_ref.clone()))
         } else {
-            input
+            Ok(input)
         }
     }
 }
@@ -207,12 +226,19 @@ fn mcp_payload(output: &Value) -> Result<Value> {
             Error::InvalidConfig(format!("LinkedIn MCP content text was not JSON: {err}"))
         });
     }
-    Ok(output.clone())
+    Err(Error::InvalidConfig(
+        "LinkedIn MCP output did not match a recognized shape".to_owned(),
+    ))
 }
 
 fn optional_section_text<'a>(payload: &'a Value, section: &str) -> Result<Option<&'a str>> {
     let Some(sections) = payload.get("sections") else {
         return Ok(None);
+    };
+    let Some(sections) = sections.as_object() else {
+        return Err(Error::InvalidConfig(
+            "LinkedIn MCP sections must be an object".to_owned(),
+        ));
     };
     let Some(section_value) = sections.get(section) else {
         return Ok(None);
@@ -235,60 +261,80 @@ fn reference_kind_is(reference: &Value, kind: &str) -> bool {
     reference.get("kind").and_then(Value::as_str) == Some(kind)
 }
 
-fn reference_text(reference: &Value) -> Option<&str> {
-    reference
-        .get("text")
-        .or_else(|| reference.get("title"))
-        .or_else(|| reference.get("name"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
+fn first_conversation_thread_id(references: &[&Value]) -> Result<Option<String>> {
+    for reference in references {
+        if !reference_kind_is(reference, "conversation") {
+            continue;
+        }
+        if let Some(thread_id) = thread_id_from_reference(reference)? {
+            return Ok(Some(thread_id));
+        }
+    }
+    Ok(None)
 }
 
-fn thread_id_from_reference(reference: &Value) -> Option<String> {
-    reference
-        .get("thread_id")
-        .and_then(Value::as_str)
-        .and_then(normalize_thread_id)
-        .or_else(|| {
-            reference
-                .get("url")
-                .and_then(Value::as_str)
-                .and_then(thread_id_from_url)
-        })
+fn thread_id_from_reference(reference: &Value) -> Result<Option<String>> {
+    if let Some(thread_id) = reference.get("thread_id").and_then(Value::as_str) {
+        return normalize_thread_id(thread_id).map(Some);
+    }
+    if let Some(url) = reference.get("url").and_then(Value::as_str) {
+        return thread_id_from_url(url);
+    }
+    Ok(None)
 }
 
-fn thread_id_from_payload_url(payload: &Value) -> Option<String> {
-    payload
-        .get("url")
-        .and_then(Value::as_str)
-        .and_then(thread_id_from_url)
+fn thread_id_from_payload_url(payload: &Value) -> Result<Option<String>> {
+    if let Some(url) = payload.get("url").and_then(Value::as_str) {
+        return thread_id_from_url(url);
+    }
+    Ok(None)
 }
 
-fn thread_id_from_url(url: &str) -> Option<String> {
+fn thread_id_from_url(url: &str) -> Result<Option<String>> {
     let marker = "/messaging/thread/";
-    let (_, rest) = url.split_once(marker)?;
+    let Some((_, rest)) = url.split_once(marker) else {
+        return Ok(None);
+    };
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    normalize_thread_id(&rest[..end])
+    normalize_thread_id(&rest[..end]).map(Some)
 }
 
-fn normalize_thread_id(thread_id: &str) -> Option<String> {
+fn normalize_thread_id(thread_id: &str) -> Result<String> {
     let thread_id = thread_id.trim();
-    if thread_id.is_empty()
-        || thread_id
-            .bytes()
-            .any(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'?' | b'#'))
-    {
-        return None;
+    if thread_id.is_empty() {
+        return Err(Error::InvalidConfig(
+            "LinkedIn thread id must be non-empty".to_owned(),
+        ));
     }
-    Some(thread_id.to_owned())
+    if thread_id.len() > MAX_LINKEDIN_THREAD_ID_BYTES {
+        return Err(Error::InvalidConfig(
+            "LinkedIn thread id exceeds maximum length".to_owned(),
+        ));
+    }
+    if thread_id
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'?' | b'#' | b':'))
+    {
+        return Err(Error::InvalidConfig(
+            "LinkedIn thread id contains a reserved delimiter".to_owned(),
+        ));
+    }
+    Ok(thread_id.to_owned())
 }
 
-fn counterparty_key(thread_id: &str, participant: Option<&str>) -> String {
-    match participant {
-        Some(participant) => format!("linkedin:thread:{thread_id}:participant:{participant}"),
-        None => format!("linkedin:thread:{thread_id}"),
+fn counterparty_key(thread_id: &str) -> String {
+    format!("linkedin:thread:{thread_id}")
+}
+
+fn bounded_identifier(
+    value: String,
+    max_bytes: usize,
+    too_long_message: &'static str,
+) -> Result<String> {
+    if value.len() > max_bytes {
+        return Err(Error::InvalidConfig(too_long_message.to_owned()));
     }
+    Ok(value)
 }
 
 fn event_hash(parts: &[&str]) -> String {

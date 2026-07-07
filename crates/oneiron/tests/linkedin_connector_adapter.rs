@@ -5,7 +5,7 @@ use oneiron::{
     LinkedInMcpConnectorAdapter, OutboundPermissionState, Result, SurfaceCounterpartyStamp, Vault,
     VaultConfig, outbound_capability_manifest, outbound_verb_contract,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn entity(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid test id")
@@ -107,7 +107,7 @@ fn linkedin_get_conversation_fixture_normalizes_to_idempotent_surface_event() ->
     assert!(event.foreign_inbound);
     assert_eq!(
         event.counterparty,
-        SurfaceCounterpartyStamp::unknown("linkedin:thread:2-jane-doe-abc:participant:Jane Doe")
+        SurfaceCounterpartyStamp::unknown("linkedin:thread:2-jane-doe-abc")
     );
     Ok(())
 }
@@ -115,7 +115,12 @@ fn linkedin_get_conversation_fixture_normalizes_to_idempotent_surface_event() ->
 #[test]
 fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> {
     let adapter = adapter()?;
-    let output = fixture(include_str!("fixtures/linkedin_mcp/get_inbox.json"));
+    let mut output = fixture(include_str!("fixtures/linkedin_mcp/get_inbox.json"));
+    let duplicate = output["references"]["inbox"][0].clone();
+    output["references"]["inbox"]
+        .as_array_mut()
+        .expect("inbox references")
+        .push(duplicate);
 
     let events = adapter.normalize_get_inbox_tool_output(&output, 1_800_000_020)?;
     assert_eq!(events.len(), 2);
@@ -130,6 +135,13 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
             .event_id
             .starts_with("linkedin:inbox:2-kenji-mori-def:")
     );
+
+    let mut changed_inbox_text = output.clone();
+    changed_inbox_text["sections"]["inbox"] =
+        json!("Messaging\nJane Doe\nChanged preview text\nKenji Mori\nCan you send the overview?");
+    let repeated = adapter.normalize_get_inbox_tool_output(&changed_inbox_text, 1_800_000_020)?;
+    assert_eq!(events[0].event_id, repeated[0].event_id);
+    assert_eq!(events[0].payload_ref, repeated[0].payload_ref);
 
     let (_tmp, vault) = temp_vault();
     let identity_id = entity(0x51);
@@ -153,7 +165,94 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
     assert!(surface_event.foreign_inbound);
     assert_eq!(
         surface_event.payload_ref.as_deref(),
-        Some("linkedin:mcp:get_inbox:2-jane-doe-abc:779bec96ce760587")
+        events[0].payload_ref.as_deref()
     );
+    Ok(())
+}
+
+#[test]
+fn linkedin_conversation_reference_filtering_never_uses_display_text_as_key() -> Result<()> {
+    let adapter = adapter()?;
+    let output = json!({
+        "sections": {
+            "conversation": "Jane Doe\n10:01 AM\nThanks for reaching out."
+        },
+        "references": {
+            "conversation": [
+                {
+                    "kind": "profile",
+                    "thread_id": "bad:id",
+                    "text": "Mutable Display Name"
+                },
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-jane-doe-abc/",
+                    "text": "Jane Doe"
+                }
+            ]
+        }
+    });
+
+    let events = adapter.normalize_get_conversation_tool_output(&output, 1_800_000_030)?;
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].counterparty,
+        SurfaceCounterpartyStamp::unknown("linkedin:thread:2-jane-doe-abc")
+    );
+    Ok(())
+}
+
+#[test]
+fn linkedin_rejects_unknown_mcp_shapes_and_bad_thread_ids() -> Result<()> {
+    let adapter = adapter()?;
+
+    let err = adapter
+        .normalize_get_inbox_tool_output(&json!({"unexpected": true}), 1_800_000_040)
+        .expect_err("unknown envelope fails loudly");
+    assert!(
+        format!("{err:?}").contains("recognized shape"),
+        "unexpected error: {err:?}"
+    );
+
+    let err = adapter
+        .normalize_get_conversation_tool_output(
+            &json!({
+                "url": "https://www.linkedin.com/messaging/thread/bad:id/",
+                "sections": {
+                    "conversation": "Jane Doe\nReserved delimiter."
+                }
+            }),
+            1_800_000_041,
+        )
+        .expect_err("colon-delimited thread id fails");
+    assert!(
+        format!("{err:?}").contains("reserved delimiter"),
+        "unexpected error: {err:?}"
+    );
+
+    let oversized_thread_id = "a".repeat(257);
+    let err = adapter
+        .normalize_get_conversation_tool_output(
+            &json!({
+                "sections": {
+                    "conversation": "Jane Doe\nOversized thread id."
+                },
+                "references": {
+                    "conversation": [
+                        {
+                            "kind": "conversation",
+                            "thread_id": oversized_thread_id
+                        }
+                    ]
+                }
+            }),
+            1_800_000_042,
+        )
+        .expect_err("oversized thread id fails");
+    assert!(
+        format!("{err:?}").contains("maximum length"),
+        "unexpected error: {err:?}"
+    );
+
     Ok(())
 }
