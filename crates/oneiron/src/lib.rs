@@ -396,7 +396,7 @@ pub use crate::policy_model::{
     PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict, PolicyConfidence,
     PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice, PolicyHedgeBucket,
     PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement, PolicyRewordFeedback,
-    PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
+    PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory, RelayFloorPass, RelayTrustDomain,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,

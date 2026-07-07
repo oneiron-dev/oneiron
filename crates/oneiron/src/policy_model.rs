@@ -430,6 +430,72 @@ pub enum PolicyRubricLayer {
     OwnerPolicy,
 }
 
+/// B11-2 / ONE-WIRE-2 R9 trust domain for a relay-boundary floor pass.
+///
+/// The floor runs where OUR infrastructure touches content, once per trust
+/// domain. The hosted relay / connector edge (the caller) MUST derive this from
+/// the connection's infrastructure trust domain, NEVER from a vault-attested
+/// "already classified" receipt — a sovereign machine owns its box, so its
+/// receipt is not evidence (R9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayTrustDomain {
+    /// Cloud vault: content was floor-classified vault-side on our infra; the
+    /// relay trusts that pass and does not re-run.
+    CloudVault,
+    /// Local/self-host vault whose outbound transits an Oneiron-hosted connector
+    /// (shared Slack app, push relay, hosted email sender). Our infra relays the
+    /// content, so the relay runs a FLOOR-ONLY pass at the boundary.
+    LocalViaHostedConnector,
+    /// Local/self-host vault using its own BYO connector: nothing transits us.
+    LocalViaByoConnector,
+}
+
+impl RelayTrustDomain {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CloudVault => "cloud_vault",
+            Self::LocalViaHostedConnector => "local_via_hosted_connector",
+            Self::LocalViaByoConnector => "local_via_byo_connector",
+        }
+    }
+}
+
+/// Outcome of a relay-boundary FLOOR pass (B11-2 / R9).
+///
+/// `FloorEnforced` is the only variant that ran a classify pass, and its verdict
+/// is FLOOR ONLY — the owner custom tier is never assembled at the relay, so the
+/// verdict category can never be [`PolicyVerdictCategory::OwnerPolicy`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelayFloorPass {
+    /// Cloud vault: already classified vault-side; the relay trusts it.
+    TrustedVaultSide,
+    /// BYO connector: nothing transits our infra; nothing ran.
+    NotRelayedByUs,
+    /// Hosted connector on a local vault: OUR infra ran a floor-only pass.
+    FloorEnforced { verdict: PolicyClassifyVerdict },
+}
+
+impl RelayFloorPass {
+    /// The floor verdict, present only when OUR infra ran a relay classify pass.
+    #[must_use]
+    pub fn floor_verdict(&self) -> Option<&PolicyClassifyVerdict> {
+        match self {
+            Self::FloorEnforced { verdict } => Some(verdict),
+            Self::TrustedVaultSide | Self::NotRelayedByUs => None,
+        }
+    }
+
+    /// Whether OUR infra ran a classify pass at the relay boundary. False for a
+    /// cloud vault (trusted vault-side) and BYO (never transits us).
+    #[must_use]
+    pub fn ran_relay_classify(&self) -> bool {
+        matches!(self, Self::FloorEnforced { .. })
+    }
+}
+
 impl Vault {
     pub fn classify_policy_model(
         &self,
@@ -871,6 +937,121 @@ impl Vault {
         })
     }
 
+    /// B11-2 / R9 relay-boundary FLOOR pass, deterministic (Rung-1) tier only.
+    ///
+    /// Runs where OUR infrastructure touches a vault's outbound content, once
+    /// per trust domain. `domain` MUST be derived by the caller (the hosted
+    /// relay / connector edge) from the connection's infrastructure trust
+    /// domain, NEVER from a vault-attested "already classified" receipt (R9).
+    ///
+    /// * [`RelayTrustDomain::CloudVault`] — trusts the vault-side floor pass; no
+    ///   re-run ([`RelayFloorPass::TrustedVaultSide`]).
+    /// * [`RelayTrustDomain::LocalViaHostedConnector`] — runs the Rung-1
+    ///   deterministic floor tripwire on 100% of relayed content, FLOOR ONLY:
+    ///   the owner custom tier is never assembled or evaluated here.
+    /// * [`RelayTrustDomain::LocalViaByoConnector`] — nothing transits us; no
+    ///   pass runs ([`RelayFloorPass::NotRelayedByUs`]).
+    ///
+    /// This never touches the input side and never runs the owner custom tier;
+    /// it can only ADD floor coverage on the hosted-relay path, never weaken an
+    /// existing floor or deny path.
+    pub fn relay_boundary_floor_pass(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+    ) -> Result<RelayFloorPass> {
+        self.relay_boundary_floor_pass_with_config(request, domain, &PolicyModelConfig::default())
+    }
+
+    pub fn relay_boundary_floor_pass_with_config(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+        config: &PolicyModelConfig,
+    ) -> Result<RelayFloorPass> {
+        match domain {
+            RelayTrustDomain::CloudVault => Ok(RelayFloorPass::TrustedVaultSide),
+            RelayTrustDomain::LocalViaByoConnector => Ok(RelayFloorPass::NotRelayedByUs),
+            RelayTrustDomain::LocalViaHostedConnector => {
+                let context = self.policy_model_floor_only_context(&request, config)?;
+                let verdict = relay_floor_rung1_verdict(&request, context.binding, config);
+                Ok(RelayFloorPass::FloorEnforced { verdict })
+            }
+        }
+    }
+
+    /// B11-2 / R9 relay-boundary FLOOR pass with the safeguard model available
+    /// for a flagged span. Rung-1 runs on 100% of the hosted-relay path; the
+    /// FLOOR-ONLY safeguard model adjudicates the span only when Rung-1 did not
+    /// already resolve it. The owner custom tier is never assembled, so the
+    /// model classifies against floor rows only and a relay verdict can never be
+    /// [`PolicyVerdictCategory::OwnerPolicy`]. If the safeguard model is down,
+    /// the deterministic Rung-1 result stands (floor backstop intact).
+    pub async fn relay_boundary_floor_pass_with_backend(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        lease: &BudgetLease,
+    ) -> Result<RelayFloorPass> {
+        match domain {
+            RelayTrustDomain::CloudVault => Ok(RelayFloorPass::TrustedVaultSide),
+            RelayTrustDomain::LocalViaByoConnector => Ok(RelayFloorPass::NotRelayedByUs),
+            RelayTrustDomain::LocalViaHostedConnector => {
+                let context = self.policy_model_floor_only_context(&request, config)?;
+                let binding = context.binding;
+                if let Some(local) = classify_from_local_floor(&request) {
+                    return Ok(RelayFloorPass::FloorEnforced {
+                        verdict: PolicyClassifyVerdict {
+                            binding,
+                            safeguard_binding: config.safeguard_binding.selector(),
+                            ..local
+                        },
+                    });
+                }
+                let verdict = match backend
+                    .generate(context.prompt.llm_request(config), lease)
+                    .await
+                {
+                    Ok(response) => parse_policy_model_response(
+                        &response,
+                        &context.prompt.rubric_rows,
+                        binding,
+                        config,
+                    )?,
+                    Err(_error) => verdict(
+                        PolicyClassifyDecision::Allow,
+                        PolicyVerdictCategory::None,
+                        PolicyConfidence::HIGH,
+                        binding,
+                        config,
+                    ),
+                };
+                Ok(RelayFloorPass::FloorEnforced { verdict })
+            }
+        }
+    }
+
+    fn policy_model_floor_only_context(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyModelFloorOnlyContext> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "policy manifest is malformed for relay-boundary floor pass".to_owned(),
+            ));
+        }
+        // FLOOR ONLY: owner-policy rows are never assembled here, so a dropped or
+        // forged owner-rows manifest cannot block or misfire the floor pass.
+        let prompt = build_policy_classify_prompt_floor_only(request, &policy)?;
+        let binding = content_binding(request, &policy, config)?;
+        Ok(PolicyModelFloorOnlyContext { prompt, binding })
+    }
+
     fn append_policy_model_gate_receipt(
         &self,
         request: &PolicyClassifyRequest,
@@ -991,6 +1172,11 @@ struct PolicyModelContext {
     prompt: PolicyClassifyPrompt,
     binding: PolicyContentBinding,
     owner_policy_rows_dropped: bool,
+}
+
+struct PolicyModelFloorOnlyContext {
+    prompt: PolicyClassifyPrompt,
+    binding: PolicyContentBinding,
 }
 
 struct PolicyBackendEnforcement<'a> {
@@ -1180,16 +1366,53 @@ fn build_policy_classify_prompt_for_policy(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<PolicyClassifyPrompt> {
-    let rubric_rows = rubric_rows(request, policy)?;
-    let system = [
+    Ok(render_classify_prompt(
+        request,
+        rubric_rows(request, policy)?,
+    ))
+}
+
+/// FLOOR-ONLY classify prompt (B11-2 / R9): engine floor + vault legal-floor
+/// rows only. The owner custom tier is never appended, so a relay verdict can
+/// never be `OwnerPolicy`.
+fn build_policy_classify_prompt_floor_only(
+    request: &PolicyClassifyRequest,
+    policy: &PolicyManifestResolution,
+) -> Result<PolicyClassifyPrompt> {
+    Ok(render_classify_prompt(
+        request,
+        rubric_rows_floor_only(policy)?,
+    ))
+}
+
+fn render_classify_prompt(
+    request: &PolicyClassifyRequest,
+    rubric_rows: Vec<PolicyRubricRow>,
+) -> PolicyClassifyPrompt {
+    let system = classify_system_prompt();
+    let user = render_classify_user_section(request, &rubric_rows);
+    PolicyClassifyPrompt {
+        system,
+        user,
+        rubric_rows,
+    }
+}
+
+fn classify_system_prompt() -> String {
+    [
         "You are the Oneiron policy classifier, a system voice independent of any persona.",
         "Classify only against the rubric rows in this prompt.",
         "Suppress all factory/default model safety taxonomies.",
         "Return exactly one decision: allow, block, route-to-help, or reword-retry.",
         "Allowed content includes legal consensual adult NSFW, dark fiction, profanity, and controversial opinion.",
     ]
-    .join("\n");
+    .join("\n")
+}
 
+fn render_classify_user_section(
+    request: &PolicyClassifyRequest,
+    rubric_rows: &[PolicyRubricRow],
+) -> String {
     let mut user = String::new();
     user.push_str("subject=");
     user.push_str(request.subject.as_str());
@@ -1201,7 +1424,7 @@ fn build_policy_classify_prompt_for_policy(
     user.push_str(request.account_jurisdiction.as_deref().unwrap_or("unknown"));
     user.push('\n');
     user.push_str("rubric:\n");
-    for row in &rubric_rows {
+    for row in rubric_rows {
         user.push_str("- ");
         user.push_str(&row.row_ref);
         user.push_str(" [");
@@ -1216,12 +1439,31 @@ fn build_policy_classify_prompt_for_policy(
     }
     user.push_str("candidate:\n");
     user.push_str(&request.content);
+    user
+}
 
-    Ok(PolicyClassifyPrompt {
-        system,
-        user,
-        rubric_rows,
-    })
+/// Deterministic Rung-1 floor verdict for a relay-boundary pass: the floor
+/// tripwire result, or a floor-clean `Allow` when nothing fires. FLOOR ONLY —
+/// the owner custom tier is never consulted.
+fn relay_floor_rung1_verdict(
+    request: &PolicyClassifyRequest,
+    binding: PolicyContentBinding,
+    config: &PolicyModelConfig,
+) -> PolicyClassifyVerdict {
+    match classify_from_local_floor(request) {
+        Some(local) => PolicyClassifyVerdict {
+            binding,
+            safeguard_binding: config.safeguard_binding.selector(),
+            ..local
+        },
+        None => verdict(
+            PolicyClassifyDecision::Allow,
+            PolicyVerdictCategory::None,
+            PolicyConfidence::HIGH,
+            binding,
+            config,
+        ),
+    }
 }
 
 impl PolicyRubricLayer {
@@ -1238,6 +1480,27 @@ fn rubric_rows(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<Vec<PolicyRubricRow>> {
+    let mut rows = rubric_rows_floor_only(policy)?;
+    for row in policy.active_owner_policy_rows(request.world_ref.as_deref()) {
+        rows.push(PolicyRubricRow {
+            row_ref: row.row_ref.clone(),
+            layer: PolicyRubricLayer::OwnerPolicy,
+            category: "owner_policy".to_owned(),
+            action: if row.block {
+                PolicyClassifyDecision::Block
+            } else {
+                PolicyClassifyDecision::RewordRetry
+            },
+            text: row.text.clone(),
+        });
+    }
+    Ok(rows)
+}
+
+/// The floor rubric only — engine floor + active vault legal-floor rows, no
+/// owner custom tier. Shared by the vault-egress classify and the B11-2 relay
+/// floor pass so the two never drift apart.
+fn rubric_rows_floor_only(policy: &PolicyManifestResolution) -> Result<Vec<PolicyRubricRow>> {
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     for row in engine_floor_rows() {
@@ -1257,19 +1520,6 @@ fn rubric_rows(
                 text: row.text.clone(),
             });
         }
-    }
-    for row in policy.active_owner_policy_rows(request.world_ref.as_deref()) {
-        rows.push(PolicyRubricRow {
-            row_ref: row.row_ref.clone(),
-            layer: PolicyRubricLayer::OwnerPolicy,
-            category: "owner_policy".to_owned(),
-            action: if row.block {
-                PolicyClassifyDecision::Block
-            } else {
-                PolicyClassifyDecision::RewordRetry
-            },
-            text: row.text.clone(),
-        });
     }
     Ok(rows)
 }
@@ -3165,6 +3415,229 @@ mod tests {
             PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
         );
         assert!(floor.receipt_ref.is_some());
+        Ok(())
+    }
+
+    // --- B11-2 / R9: relay-boundary floor pass on hosted connectors ---
+
+    #[test]
+    fn hosted_relay_outbound_from_local_vault_hits_rung1() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+
+        assert!(pass.ran_relay_classify());
+        let verdict = pass
+            .floor_verdict()
+            .expect("hosted relay runs a floor pass");
+        // Rung-1 deterministic tripwire fired at the relay boundary.
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_vault_relay_path_does_not_double_classify() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Content that WOULD block if re-run; a cloud vault already classified it
+        // vault-side on our infra, so the relay trusts it and never re-runs.
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::CloudVault,
+        )?;
+
+        assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+        assert!(!pass.ran_relay_classify());
+        assert!(pass.floor_verdict().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x50,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+
+        // Sanity: the vault-egress classify DOES fire the owner (custom-tier) row.
+        let vault_side = vault.classify_policy_model(
+            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+        assert_eq!(
+            vault_side.category,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: "owner:spoilers".to_owned()
+            }
+        );
+
+        // The relay floor pass is FLOOR ONLY: the owner row is never evaluated.
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+        let verdict = pass
+            .floor_verdict()
+            .expect("hosted relay runs a floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert!(!matches!(
+            verdict.category,
+            PolicyVerdictCategory::OwnerPolicy { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn byo_path_untouched() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaByoConnector,
+        )?;
+
+        assert_eq!(pass, RelayFloorPass::NotRelayedByUs);
+        assert!(!pass.ran_relay_classify());
+        assert!(pass.floor_verdict().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_catches_flagged_floor_span() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Rung-1 is clean on this phrasing; the FLOOR-ONLY safeguard model is the
+        // flagged-span nuance layer and catches it.
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"block","category":"legal_floor/serious_crime","row_ref":null,"confidence":0.95,"hedge_bucket":"high"}"#,
+        };
+        let pass = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-model-catch"),
+            ),
+        )?;
+
+        let verdict = pass.floor_verdict().expect("hosted relay floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_stays_floor_only_and_rejects_owner_verdict() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x51,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+        // The relay rubric carries no owner row, so an owner_policy verdict has no
+        // row to bind to and is rejected — the custom tier can never take effect
+        // at the relay.
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"reword-retry","category":"owner_policy","row_ref":"owner:spoilers","confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+        let err = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("an ordinary flagged span")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-owner-reject"),
+            ),
+        )
+        .expect_err("relay floor pass must reject an owner_policy verdict");
+        assert!(
+            format!("{err}").contains("owner_policy"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let backend = FailingPolicyBackend;
+        // Rung-1 still catches the catastrophe with the safeguard model down.
+        let caught = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-down-catch"),
+            ),
+        )?;
+        assert_eq!(
+            caught.floor_verdict().expect("floor verdict").category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+
+        // A floor-clean span with the model down falls open over the floor
+        // (Rung-1 is the deterministic backstop; nothing weaker than it).
+        let clean = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-down-clean"),
+            ),
+        )?;
+        assert_eq!(
+            clean.floor_verdict().expect("floor verdict").decision,
+            PolicyClassifyDecision::Allow
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Cloud + BYO never run a relay classify regardless of content.
+        for domain in [
+            RelayTrustDomain::CloudVault,
+            RelayTrustDomain::LocalViaByoConnector,
+        ] {
+            let pass = vault.relay_boundary_floor_pass(
+                PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                domain,
+            )?;
+            assert!(
+                !pass.ran_relay_classify(),
+                "{} re-ran classify",
+                domain.as_str()
+            );
+            assert!(pass.floor_verdict().is_none());
+        }
         Ok(())
     }
 }
