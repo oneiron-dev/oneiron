@@ -4,7 +4,7 @@ use serde_json::{Map, Number, Value};
 
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_ASSET,
+    ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET,
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT,
     ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
@@ -2250,6 +2250,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "SKILLS",
             title: "Skills",
         }),
+        ENTITY_TYPE_AGENT_DEF => Some(GroupLabels {
+            key: "agent_definitions",
+            name: "AGENT_DEFINITIONS",
+            title: "Agent Definitions",
+        }),
         ENTITY_TYPE_SUMMARY => Some(GroupLabels {
             key: "summaries",
             name: "SUMMARIES",
@@ -2393,6 +2398,13 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         (ENTITY_TYPE_SKILL, FieldProfile::Minimal) => &["skillId"],
         (ENTITY_TYPE_SKILL, FieldProfile::Standard) => &["skillId", "desc", "approvalStatus"],
         (ENTITY_TYPE_SKILL, FieldProfile::Full) => &crate::skill::SKILL_RECORD_BODY_KEYS,
+
+        // AGENT_DEF mirrors SKILL: identity-only Minimal, identity + summary in
+        // Standard, and the full pinned body only at Full — the 16 KiB
+        // `instructions` prompt must never surface in Minimal/Standard packs.
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal) => &["agentId"],
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Standard) => &["agentId", "desc", "approvalStatus"],
+        (ENTITY_TYPE_AGENT_DEF, FieldProfile::Full) => &crate::agent_def::AGENT_DEF_BODY_KEYS,
 
         // TaskList (project container)
         (ENTITY_TYPE_TASK_LIST, FieldProfile::Minimal) => &["name"],
@@ -5030,6 +5042,24 @@ mod tests {
         assert_eq!(full, crate::skill::SKILL_RECORD_BODY_KEYS);
         for key in ["generated", "humanAuthored", "dependencies", "provenance"] {
             assert!(full.contains(&key), "full SKILL profile must include {key}");
+        }
+    }
+
+    #[test]
+    fn agent_def_profiles_keep_prompt_out_of_lean_packs() {
+        assert_eq!(
+            fields_for_profile(ENTITY_TYPE_AGENT_DEF, FieldProfile::Minimal),
+            &["agentId"]
+        );
+        let full = fields_for_profile(ENTITY_TYPE_AGENT_DEF, FieldProfile::Full);
+        assert_eq!(full, crate::agent_def::AGENT_DEF_BODY_KEYS);
+        // The bounded 16 KiB custom prompt is a Full-only field: an empty
+        // allow-list would otherwise leak every hydrated key into lean packs.
+        for profile in [FieldProfile::Minimal, FieldProfile::Standard] {
+            assert!(
+                !fields_for_profile(ENTITY_TYPE_AGENT_DEF, profile).contains(&"instructions"),
+                "instructions must be excluded from the {profile:?} profile"
+            );
         }
     }
 

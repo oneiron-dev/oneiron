@@ -3517,8 +3517,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 9,
-        "ONE-1530 pins the current storage ABI at 9",
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3552,8 +3552,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 9,
-        "ONE-1530 pins the current storage ABI at 9",
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3587,8 +3587,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 9,
-        "ONE-1530 pins the current storage ABI at 9",
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3622,8 +3622,8 @@ fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
 #[test]
 fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 9,
-        "ONE-1530 pins the current storage ABI at 9",
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3657,8 +3657,8 @@ fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 9,
-        "ONE-1530 pins the current storage ABI at 9",
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3682,6 +3682,41 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
             }
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(8), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
+    );
+    Ok(())
+}
+
+/// ONE-1443 fail-closed gate over registering persistent CORE type AGENT_DEF at
+/// byte 17: v9 code does not know this persistent entity kind, so v9 vaults must
+/// not open under ABI v10 without rebuild.
+#[test]
+fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 10,
+        "ONE-1443 pins the current storage ABI at 10",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+
+    {
+        let _vault = Vault::open(path, test_config())?;
+    }
+    set_raw_storage_abi_version(path, Some(9))?;
+
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("expected Vault::open to reject a pre-ONE-1443 ABI v9 vault"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(
+            err,
+            Error::StorageAbiVersionChanged {
+                stored: Some(9),
+                current: STORAGE_ABI_VERSION,
+            }
+        ),
+        "expected StorageAbiVersionChanged {{ stored: Some(9), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
     Ok(())
 }
@@ -6267,7 +6302,8 @@ fn all_entity_type_prefixes() {
     // ARCH-0002 / oneiron-contracts.ts §1 pinned storage ABI: per registry
     // row (kind id, type byte, short-id prefix, classification, band).
     // CLAIM=semantic ("deliberately NOT a StructuralKind"); TURN..NOTIFICATION
-    // = core (band 1–63); COMPANION_REGISTER = companion pack (band
+    // plus AGENT_DEF (byte 17) = core (band 1–63); COMPANION_REGISTER =
+    // companion pack (band
     // 64–79); TASK_LIST/TASK/MACHINE/CODE_ARTIFACT/CODE_SYMBOL/
     // BLOB_ARTIFACT = productivity pack
     // (band 80–99); REDACTION_AUDIT/MODEL/POLICY_MANIFEST/
@@ -6398,6 +6434,13 @@ fn all_entity_type_prefixes() {
             "NOTIFICATION",
             16,
             Some("nt"),
+            EntityClassification::Core,
+            TypeByteBand::Core,
+        ),
+        (
+            "AGENT_DEF",
+            17,
+            Some("ag"),
             EntityClassification::Core,
             TypeByteBand::Core,
         ),
@@ -6632,8 +6675,9 @@ fn type_byte_band_allocation_matches_contract() {
     }
 
     // is_structural_kind: false for the semantic byte 0 and for every
-    // maintenance-band allocation; true for every REGISTERED core (1..=16)
-    // and pack (64/80/81/82/83/84) kind. The pinned maintenance allocation is:
+    // maintenance-band allocation; true for every REGISTERED core (1..=17,
+    // AGENT_DEF being byte 17) and pack (64/80/81/82/83/84) kind. The pinned
+    // maintenance allocation is:
     // 120 REDACTION_AUDIT; 121 MODEL; 122 AUTHORITY_LOG;
     // 123 POLICY_MANIFEST; 124 FEDERATION_GRANT; 125 CONNECTION_RECORD
     // reserved; 126 DIAGNOSTIC reserved; 127 FEDERATION_KEY_ENVELOPE reserved;
@@ -6696,7 +6740,7 @@ fn type_byte_band_allocation_matches_contract() {
         !is_structural_kind(133),
         "OUTBOUND_GRANT is NOT a StructuralKind (OF-367: standing consent grants)"
     );
-    for byte in 1..=16_u8 {
+    for byte in 1..=17_u8 {
         assert!(is_structural_kind(byte), "core byte {byte}");
     }
     for byte in [64_u8, 80, 81, 82, 83, 84, 85] {
@@ -6706,7 +6750,7 @@ fn type_byte_band_allocation_matches_contract() {
     // Unregistered bytes — including bytes INSIDE structural bands — are not
     // StructuralKinds, and the existing write-path gate still rejects them
     // with the same typed error.
-    for byte in [17_u8, 63, 79, 86, 99, 100, 119, 125, 126, 127, 130, 255] {
+    for byte in [63_u8, 79, 86, 99, 100, 119, 125, 126, 127, 130, 255] {
         assert!(!is_structural_kind(byte), "unregistered byte {byte}");
         assert!(
             matches!(
