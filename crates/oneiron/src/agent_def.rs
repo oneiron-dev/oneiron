@@ -1,0 +1,1042 @@
+//! AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334).
+//!
+//! A saved, host-agnostic composition record: a set of skills, connectors,
+//! code-mode MCPs, an optional model tier, a run scope, and an optional custom
+//! prompt, carried alongside the shared `SkillRecord` lifecycle block. The body
+//! is a hand-written pinned-key MessagePack map following the SKILL codec
+//! discipline (strict: trailing bytes, non-string keys, unknown keys, and
+//! duplicate keys are all rejected), so a host can never smuggle presentation
+//! fields into the record. A stored definition is inert at rest: it references
+//! skills/connectors/MCPs by id and grants nothing until a later dispatch layer
+//! (AGENT-3) resolves and authorizes them.
+
+use std::collections::HashSet;
+
+use rmpv::Value;
+
+use crate::Vault;
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::error::{Error, Result};
+use crate::llm::ModelTierRef;
+use crate::pipeline::WorldScope;
+use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
+use crate::types::{ENTITY_TYPE_AGENT_DEF, EntityId, TimeRange};
+
+/// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
+///
+/// `instructions`, `modelTier`, and `world` are optional and elided from the
+/// encoded map when absent (the elide-the-default pattern); every other key is
+/// required. Decode rejects any key outside this set, so the schema is a
+/// review-visible contract and hosts cannot add fields.
+pub const AGENT_DEF_BODY_KEYS: [&str; 17] = [
+    "agentId",
+    "desc",
+    "version",
+    "instructions",
+    "skills",
+    "connectors",
+    "codeModeMcps",
+    "modelTier",
+    "scope",
+    "world",
+    "approvalStatus",
+    "lifecycleStatus",
+    "source",
+    "confidence",
+    "generated",
+    "humanAuthored",
+    "provenance",
+];
+
+/// The pinned key pair for an [`McpRef`] sub-map.
+pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
+
+/// Maximum byte length of an `agent_id`.
+pub const AGENT_ID_MAX_BYTES: usize = 256;
+/// Maximum byte length of a `desc`.
+pub const AGENT_DESC_MAX_BYTES: usize = 4096;
+/// Maximum byte length of a `version` string (also reused for ref `min_version`).
+pub const AGENT_VERSION_MAX_BYTES: usize = 128;
+/// Maximum byte length of the optional `instructions` custom prompt.
+pub const AGENT_INSTRUCTIONS_MAX_BYTES: usize = 16_384;
+/// Maximum byte length of the optional `model_tier` reference string.
+pub const AGENT_MODEL_TIER_MAX_BYTES: usize = 256;
+/// Maximum byte length of a skill/connector/MCP reference id or key.
+pub const AGENT_REF_KEY_MAX_BYTES: usize = 256;
+/// Maximum number of entries in each composition list.
+pub const AGENT_MAX_LIST_ENTRIES: usize = 64;
+
+const KEY_AGENT_ID: &str = AGENT_DEF_BODY_KEYS[0];
+const KEY_DESC: &str = AGENT_DEF_BODY_KEYS[1];
+const KEY_VERSION: &str = AGENT_DEF_BODY_KEYS[2];
+const KEY_INSTRUCTIONS: &str = AGENT_DEF_BODY_KEYS[3];
+const KEY_SKILLS: &str = AGENT_DEF_BODY_KEYS[4];
+const KEY_CONNECTORS: &str = AGENT_DEF_BODY_KEYS[5];
+const KEY_CODE_MODE_MCPS: &str = AGENT_DEF_BODY_KEYS[6];
+const KEY_MODEL_TIER: &str = AGENT_DEF_BODY_KEYS[7];
+const KEY_SCOPE: &str = AGENT_DEF_BODY_KEYS[8];
+const KEY_WORLD: &str = AGENT_DEF_BODY_KEYS[9];
+const KEY_APPROVAL_STATUS: &str = AGENT_DEF_BODY_KEYS[10];
+const KEY_LIFECYCLE_STATUS: &str = AGENT_DEF_BODY_KEYS[11];
+const KEY_SOURCE: &str = AGENT_DEF_BODY_KEYS[12];
+const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[13];
+const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[14];
+const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[15];
+const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[16];
+
+const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
+const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
+
+const KEY_MCP_KEY: &str = MCP_REF_KEYS[0];
+const KEY_MCP_MIN_VERSION: &str = MCP_REF_KEYS[1];
+
+const SCOPE_ALL: &str = "all";
+const SCOPE_BASE: &str = "base";
+const SCOPE_WORLD: &str = "world";
+
+/// A versioned reference to a code-mode MCP, patterned on [`SkillDependency`].
+///
+/// `min_version` is the cheap forward hook for the OF-215 trajectory where MCPs
+/// become versioned entities; today it is stored verbatim and never
+/// existence-checked at write time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct McpRef {
+    pub key: String,
+    pub min_version: Option<String>,
+}
+
+impl McpRef {
+    #[must_use]
+    pub fn new(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            min_version: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_min_version(key: impl Into<String>, min_version: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            min_version: Some(min_version.into()),
+        }
+    }
+}
+
+/// The run scope persisted with an `AgentDefinition`.
+///
+/// A new persisted descriptor rather than an embedded [`WorldScope`], which is
+/// a runtime-only type that does not implement `Serialize`. `World` carries the
+/// world's [`EntityId`], hex-encoded into the body. `WorldSet` is deliberately
+/// not modelled here — it is a repo-clamp key with no day-1 caller, and a later
+/// additive variant per the `#[non_exhaustive]` marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AgentScope {
+    /// Span every world (the constructor default; matches `PipelineBuilder`).
+    All,
+    /// Base-reality only.
+    Base,
+    /// This world plus base reality.
+    World(EntityId),
+}
+
+impl AgentScope {
+    /// Maps to the runtime [`WorldScope`] a dispatch layer (AGENT-3) reconstitutes.
+    #[must_use]
+    pub fn to_world_scope(&self) -> WorldScope {
+        match self {
+            Self::All => WorldScope::All,
+            Self::Base => WorldScope::Base,
+            Self::World(world) => WorldScope::World(*world),
+        }
+    }
+
+    fn discriminant(&self) -> &'static str {
+        match self {
+            Self::All => SCOPE_ALL,
+            Self::Base => SCOPE_BASE,
+            Self::World(_) => SCOPE_WORLD,
+        }
+    }
+}
+
+/// A saved, host-agnostic agent composition record.
+///
+/// The lifecycle block (`approval_status` … `provenance`) is the shared
+/// `SkillRecord` machinery, field-for-field. `generated`/`human_authored` are a
+/// mutually-exclusive authorship pair and `generated` tracks
+/// `source == ClaimSource::Generated`; both invariants are frozen on update.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct AgentDefinition {
+    pub agent_id: String,
+    pub desc: String,
+    pub version: String,
+    pub instructions: Option<String>,
+    pub skills: Vec<SkillDependency>,
+    pub connectors: Vec<String>,
+    pub code_mode_mcps: Vec<McpRef>,
+    pub model_tier: Option<ModelTierRef>,
+    pub scope: AgentScope,
+    pub approval_status: ClaimApprovalStatus,
+    pub lifecycle_status: ClaimLifecycleStatus,
+    pub source: ClaimSource,
+    pub confidence: f32,
+    pub generated: bool,
+    pub human_authored: bool,
+    pub provenance: Value,
+}
+
+impl AgentDefinition {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "constructor mirrors the pinned AGENT_DEF record fields"
+    )]
+    #[must_use]
+    pub fn new(
+        agent_id: impl Into<String>,
+        desc: impl Into<String>,
+        version: impl Into<String>,
+        instructions: Option<String>,
+        skills: Vec<SkillDependency>,
+        connectors: Vec<String>,
+        code_mode_mcps: Vec<McpRef>,
+        model_tier: Option<ModelTierRef>,
+        scope: AgentScope,
+        approval_status: ClaimApprovalStatus,
+        lifecycle_status: ClaimLifecycleStatus,
+        source: ClaimSource,
+        confidence: f32,
+        generated: bool,
+        human_authored: bool,
+        provenance: Value,
+    ) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            desc: desc.into(),
+            version: version.into(),
+            instructions,
+            skills,
+            connectors,
+            code_mode_mcps,
+            model_tier,
+            scope,
+            approval_status,
+            lifecycle_status,
+            source,
+            confidence,
+            generated,
+            human_authored,
+            provenance,
+        }
+    }
+}
+
+/// Encodes a validated `AgentDefinition` into its pinned-key MessagePack body.
+pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
+    validate_agent_definition(def)?;
+    let mut entries = vec![
+        (
+            Value::from(KEY_AGENT_ID),
+            Value::from(def.agent_id.as_str()),
+        ),
+        (Value::from(KEY_DESC), Value::from(def.desc.as_str())),
+        (Value::from(KEY_VERSION), Value::from(def.version.as_str())),
+    ];
+    if let Some(instructions) = &def.instructions {
+        entries.push((
+            Value::from(KEY_INSTRUCTIONS),
+            Value::from(instructions.as_str()),
+        ));
+    }
+    entries.push((
+        Value::from(KEY_SKILLS),
+        Value::Array(def.skills.iter().map(encode_skill_dependency).collect()),
+    ));
+    entries.push((
+        Value::from(KEY_CONNECTORS),
+        Value::Array(
+            def.connectors
+                .iter()
+                .map(|connector| Value::from(connector.as_str()))
+                .collect(),
+        ),
+    ));
+    entries.push((
+        Value::from(KEY_CODE_MODE_MCPS),
+        Value::Array(def.code_mode_mcps.iter().map(encode_mcp_ref).collect()),
+    ));
+    if let Some(model_tier) = &def.model_tier {
+        entries.push((
+            Value::from(KEY_MODEL_TIER),
+            Value::from(model_tier.as_str()),
+        ));
+    }
+    entries.push((
+        Value::from(KEY_SCOPE),
+        Value::from(def.scope.discriminant()),
+    ));
+    if let AgentScope::World(world) = &def.scope {
+        entries.push((Value::from(KEY_WORLD), Value::from(world.to_hex())));
+    }
+    entries.push((
+        Value::from(KEY_APPROVAL_STATUS),
+        Value::from(def.approval_status.as_str()),
+    ));
+    entries.push((
+        Value::from(KEY_LIFECYCLE_STATUS),
+        Value::from(def.lifecycle_status.as_str()),
+    ));
+    entries.push((Value::from(KEY_SOURCE), Value::from(def.source.as_str())));
+    entries.push((Value::from(KEY_CONFIDENCE), Value::F32(def.confidence)));
+    entries.push((Value::from(KEY_GENERATED), Value::Boolean(def.generated)));
+    entries.push((
+        Value::from(KEY_HUMAN_AUTHORED),
+        Value::Boolean(def.human_authored),
+    ));
+    entries.push((Value::from(KEY_PROVENANCE), def.provenance.clone()));
+
+    let value = Value::Map(entries);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &value)
+        .map_err(|_| Error::InvariantViolation("AGENT_DEF body MessagePack encode failed"))?;
+    Ok(out)
+}
+
+/// Decodes a pinned-key MessagePack body into an `AgentDefinition`.
+pub fn decode_agent_definition(bytes: &[u8]) -> Result<AgentDefinition> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidAgentDefBody("body is not valid MessagePack"))?;
+    if !cursor.is_empty() {
+        return Err(Error::InvalidAgentDefBody("trailing bytes after body map"));
+    }
+    decode_agent_definition_value(&value)
+}
+
+pub(crate) fn validate_agent_definition_bytes(bytes: &[u8]) -> Result<()> {
+    decode_agent_definition(bytes).map(|_| ())
+}
+
+pub(crate) fn validate_agent_definition_update(
+    prior: &AgentDefinition,
+    updated: &AgentDefinition,
+) -> Result<()> {
+    validate_agent_definition(updated)?;
+    if prior == updated {
+        return Ok(());
+    }
+    if prior.agent_id != updated.agent_id {
+        return Err(Error::InvalidAgentDefBody(
+            "agentId cannot change on update",
+        ));
+    }
+    if prior.generated != updated.generated || prior.human_authored != updated.human_authored {
+        return Err(Error::InvalidAgentDefBody(
+            "authorship flags cannot change on update",
+        ));
+    }
+    if prior.source != updated.source {
+        return Err(Error::InvalidAgentDefBody("source cannot change on update"));
+    }
+    if prior.version == updated.version {
+        return Err(Error::InvalidAgentDefBody(
+            "version must change when updating agent definition body",
+        ));
+    }
+    Ok(())
+}
+
+fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidAgentDefBody("body must be a MessagePack map"));
+    };
+
+    let mut agent_id = None;
+    let mut desc = None;
+    let mut version = None;
+    let mut instructions = None;
+    let mut skills = None;
+    let mut connectors = None;
+    let mut code_mode_mcps = None;
+    let mut model_tier = None;
+    let mut scope_discriminant = None;
+    let mut world = None;
+    let mut approval_status = None;
+    let mut lifecycle_status = None;
+    let mut source = None;
+    let mut confidence = None;
+    let mut generated = None;
+    let mut human_authored = None;
+    let mut provenance = None;
+    let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
+
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidAgentDefBody("body keys must be strings"));
+        };
+        let Some(index) = AGENT_DEF_BODY_KEYS.iter().position(|known| *known == key) else {
+            return Err(Error::InvalidAgentDefBody(
+                "body key is not in the pinned AGENT_DEF_BODY_KEYS set",
+            ));
+        };
+        if seen[index] {
+            return Err(Error::InvalidAgentDefBody("duplicate body key"));
+        }
+        seen[index] = true;
+
+        match AGENT_DEF_BODY_KEYS[index] {
+            KEY_AGENT_ID => {
+                agent_id = Some(text_value(
+                    value,
+                    AGENT_ID_MAX_BYTES,
+                    "agentId must be a non-empty UTF-8 string at most 256 bytes",
+                )?);
+            }
+            KEY_DESC => {
+                desc = Some(text_value(
+                    value,
+                    AGENT_DESC_MAX_BYTES,
+                    "desc must be a non-empty UTF-8 string at most 4096 bytes",
+                )?);
+            }
+            KEY_VERSION => {
+                version = Some(text_value(
+                    value,
+                    AGENT_VERSION_MAX_BYTES,
+                    "version must be a non-empty UTF-8 string at most 128 bytes",
+                )?);
+            }
+            KEY_INSTRUCTIONS => {
+                instructions = Some(text_value(
+                    value,
+                    AGENT_INSTRUCTIONS_MAX_BYTES,
+                    "instructions must be a non-empty UTF-8 string at most 16384 bytes",
+                )?);
+            }
+            KEY_SKILLS => skills = Some(decode_skill_dependencies(value)?),
+            KEY_CONNECTORS => connectors = Some(decode_connectors(value)?),
+            KEY_CODE_MODE_MCPS => code_mode_mcps = Some(decode_mcp_refs(value)?),
+            KEY_MODEL_TIER => {
+                let tier = text_value(
+                    value,
+                    AGENT_MODEL_TIER_MAX_BYTES,
+                    "modelTier must be a non-empty UTF-8 string at most 256 bytes",
+                )?;
+                model_tier = Some(ModelTierRef(tier));
+            }
+            KEY_SCOPE => {
+                scope_discriminant = Some(
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or(Error::InvalidAgentDefBody("scope must be a string"))?,
+                );
+            }
+            KEY_WORLD => {
+                let hex = value.as_str().ok_or(Error::InvalidAgentDefBody(
+                    "world must be a hex-encoded EntityId string",
+                ))?;
+                world = Some(EntityId::from_hex(hex).map_err(|_| {
+                    Error::InvalidAgentDefBody("world must be a hex-encoded EntityId string")
+                })?);
+            }
+            KEY_APPROVAL_STATUS => {
+                approval_status = Some(value.as_str().and_then(ClaimApprovalStatus::parse).ok_or(
+                    Error::InvalidAgentDefBody(
+                        "approvalStatus must be one of auto|proposed|approved|rejected",
+                    ),
+                )?);
+            }
+            KEY_LIFECYCLE_STATUS => {
+                lifecycle_status =
+                    Some(value.as_str().and_then(ClaimLifecycleStatus::parse).ok_or(
+                        Error::InvalidAgentDefBody(
+                            "lifecycleStatus must be one of active|superseded|retracted",
+                        ),
+                    )?);
+            }
+            KEY_SOURCE => {
+                source =
+                    Some(
+                        value.as_str().and_then(ClaimSource::parse).ok_or(
+                            Error::InvalidAgentDefBody(
+                                "source must be one of user_stated|observed|inferred|imported|tool_output|generated",
+                            ),
+                        )?,
+                    );
+            }
+            KEY_CONFIDENCE => {
+                confidence = Some(crate::claim::unit_interval_f32(value).ok_or(
+                    Error::InvalidAgentDefBody("confidence must be finite in the unit interval"),
+                )?);
+            }
+            KEY_GENERATED => {
+                let Value::Boolean(flag) = value else {
+                    return Err(Error::InvalidAgentDefBody("generated must be a boolean"));
+                };
+                generated = Some(*flag);
+            }
+            KEY_HUMAN_AUTHORED => {
+                let Value::Boolean(flag) = value else {
+                    return Err(Error::InvalidAgentDefBody(
+                        "humanAuthored must be a boolean",
+                    ));
+                };
+                human_authored = Some(*flag);
+            }
+            KEY_PROVENANCE => provenance = Some(value.clone()),
+            _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
+        }
+    }
+
+    let scope = resolve_scope(scope_discriminant.as_deref(), world)?;
+
+    let definition = AgentDefinition {
+        agent_id: agent_id.ok_or(Error::InvalidAgentDefBody("missing required key agentId"))?,
+        desc: desc.ok_or(Error::InvalidAgentDefBody("missing required key desc"))?,
+        version: version.ok_or(Error::InvalidAgentDefBody("missing required key version"))?,
+        instructions,
+        skills: skills.ok_or(Error::InvalidAgentDefBody("missing required key skills"))?,
+        connectors: connectors.ok_or(Error::InvalidAgentDefBody(
+            "missing required key connectors",
+        ))?,
+        code_mode_mcps: code_mode_mcps.ok_or(Error::InvalidAgentDefBody(
+            "missing required key codeModeMcps",
+        ))?,
+        model_tier,
+        scope,
+        approval_status: approval_status.ok_or(Error::InvalidAgentDefBody(
+            "missing required key approvalStatus",
+        ))?,
+        lifecycle_status: lifecycle_status.ok_or(Error::InvalidAgentDefBody(
+            "missing required key lifecycleStatus",
+        ))?,
+        source: source.ok_or(Error::InvalidAgentDefBody("missing required key source"))?,
+        confidence: confidence.ok_or(Error::InvalidAgentDefBody(
+            "missing required key confidence",
+        ))?,
+        generated: generated.ok_or(Error::InvalidAgentDefBody("missing required key generated"))?,
+        human_authored: human_authored.ok_or(Error::InvalidAgentDefBody(
+            "missing required key humanAuthored",
+        ))?,
+        provenance: provenance.ok_or(Error::InvalidAgentDefBody(
+            "missing required key provenance",
+        ))?,
+    };
+    validate_agent_definition(&definition)?;
+    Ok(definition)
+}
+
+/// Resolves the `scope`/`world` two-key cross-field invariant: the `world` key
+/// is present iff the discriminant is `world`. Unknown-key rejection cannot
+/// catch this case because `world` is itself a pinned key, so it needs its own
+/// arm.
+fn resolve_scope(discriminant: Option<&str>, world: Option<EntityId>) -> Result<AgentScope> {
+    let discriminant =
+        discriminant.ok_or(Error::InvalidAgentDefBody("missing required key scope"))?;
+    match discriminant {
+        SCOPE_ALL => {
+            if world.is_some() {
+                return Err(Error::InvalidAgentDefBody(
+                    "world key is only valid when scope is world",
+                ));
+            }
+            Ok(AgentScope::All)
+        }
+        SCOPE_BASE => {
+            if world.is_some() {
+                return Err(Error::InvalidAgentDefBody(
+                    "world key is only valid when scope is world",
+                ));
+            }
+            Ok(AgentScope::Base)
+        }
+        SCOPE_WORLD => {
+            let world = world.ok_or(Error::InvalidAgentDefBody(
+                "scope world requires a world key",
+            ))?;
+            Ok(AgentScope::World(world))
+        }
+        _ => Err(Error::InvalidAgentDefBody(
+            "scope must be one of all|base|world",
+        )),
+    }
+}
+
+fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_DEP_SKILL_ID),
+            Value::from(dependency.skill_id.as_str()),
+        ),
+        (
+            Value::from(KEY_DEP_MIN_VERSION),
+            dependency
+                .min_version
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
+    ])
+}
+
+fn encode_mcp_ref(mcp: &McpRef) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_MCP_KEY), Value::from(mcp.key.as_str())),
+        (
+            Value::from(KEY_MCP_MIN_VERSION),
+            mcp.min_version.as_deref().map_or(Value::Nil, Value::from),
+        ),
+    ])
+}
+
+fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDependency>> {
+    let Value::Array(values) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "skills must be a MessagePack array",
+        ));
+    };
+    if values.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "skills must contain at most 64 entries",
+        ));
+    }
+    values.iter().map(decode_skill_dependency).collect()
+}
+
+fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "skill dependency must be a MessagePack map",
+        ));
+    };
+
+    let mut skill_id = None;
+    let mut min_version = None;
+    let mut seen = [false; SKILL_DEPENDENCY_KEYS.len()];
+
+    for (key, value) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidAgentDefBody(
+                "skill dependency keys must be strings",
+            ));
+        };
+        let Some(index) = SKILL_DEPENDENCY_KEYS.iter().position(|known| *known == key) else {
+            return Err(Error::InvalidAgentDefBody(
+                "skill dependency key must be skillId|minVersion",
+            ));
+        };
+        if seen[index] {
+            return Err(Error::InvalidAgentDefBody("duplicate skill dependency key"));
+        }
+        seen[index] = true;
+        match SKILL_DEPENDENCY_KEYS[index] {
+            KEY_DEP_SKILL_ID => {
+                skill_id = Some(text_value(
+                    value,
+                    AGENT_REF_KEY_MAX_BYTES,
+                    "skill dependency skillId must be a non-empty UTF-8 string at most 256 bytes",
+                )?);
+            }
+            KEY_DEP_MIN_VERSION => {
+                min_version = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(text_value(
+                        value,
+                        AGENT_VERSION_MAX_BYTES,
+                        "skill dependency minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                    )?),
+                });
+            }
+            _ => unreachable!("index resolved from SKILL_DEPENDENCY_KEYS"),
+        }
+    }
+
+    Ok(SkillDependency {
+        skill_id: skill_id.ok_or(Error::InvalidAgentDefBody(
+            "missing required skill dependency key skillId",
+        ))?,
+        min_version: min_version.ok_or(Error::InvalidAgentDefBody(
+            "missing required skill dependency key minVersion",
+        ))?,
+    })
+}
+
+fn decode_connectors(value: &Value) -> Result<Vec<String>> {
+    let Value::Array(values) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "connectors must be a MessagePack array",
+        ));
+    };
+    if values.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "connectors must contain at most 64 entries",
+        ));
+    }
+    values
+        .iter()
+        .map(|value| {
+            text_value(
+                value,
+                AGENT_REF_KEY_MAX_BYTES,
+                "connector key must be a non-empty UTF-8 string at most 256 bytes",
+            )
+        })
+        .collect()
+}
+
+fn decode_mcp_refs(value: &Value) -> Result<Vec<McpRef>> {
+    let Value::Array(values) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "codeModeMcps must be a MessagePack array",
+        ));
+    };
+    if values.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "codeModeMcps must contain at most 64 entries",
+        ));
+    }
+    values.iter().map(decode_mcp_ref).collect()
+}
+
+fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
+    let Value::Map(entries) = value else {
+        return Err(Error::InvalidAgentDefBody(
+            "MCP ref must be a MessagePack map",
+        ));
+    };
+
+    let mut key = None;
+    let mut min_version = None;
+    let mut seen = [false; MCP_REF_KEYS.len()];
+
+    for (entry_key, value) in entries {
+        let Some(entry_key) = entry_key.as_str() else {
+            return Err(Error::InvalidAgentDefBody("MCP ref keys must be strings"));
+        };
+        let Some(index) = MCP_REF_KEYS.iter().position(|known| *known == entry_key) else {
+            return Err(Error::InvalidAgentDefBody(
+                "MCP ref key must be key|minVersion",
+            ));
+        };
+        if seen[index] {
+            return Err(Error::InvalidAgentDefBody("duplicate MCP ref key"));
+        }
+        seen[index] = true;
+        match MCP_REF_KEYS[index] {
+            KEY_MCP_KEY => {
+                key = Some(text_value(
+                    value,
+                    AGENT_REF_KEY_MAX_BYTES,
+                    "MCP ref key must be a non-empty UTF-8 string at most 256 bytes",
+                )?);
+            }
+            KEY_MCP_MIN_VERSION => {
+                min_version = Some(match value {
+                    Value::Nil => None,
+                    _ => Some(text_value(
+                        value,
+                        AGENT_VERSION_MAX_BYTES,
+                        "MCP ref minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                    )?),
+                });
+            }
+            _ => unreachable!("index resolved from MCP_REF_KEYS"),
+        }
+    }
+
+    Ok(McpRef {
+        key: key.ok_or(Error::InvalidAgentDefBody(
+            "missing required MCP ref key key",
+        ))?,
+        min_version: min_version.ok_or(Error::InvalidAgentDefBody(
+            "missing required MCP ref key minVersion",
+        ))?,
+    })
+}
+
+fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
+    validate_text_field(
+        &def.agent_id,
+        AGENT_ID_MAX_BYTES,
+        "agentId must be a non-empty UTF-8 string at most 256 bytes",
+    )?;
+    validate_text_field(
+        &def.desc,
+        AGENT_DESC_MAX_BYTES,
+        "desc must be a non-empty UTF-8 string at most 4096 bytes",
+    )?;
+    validate_text_field(
+        &def.version,
+        AGENT_VERSION_MAX_BYTES,
+        "version must be a non-empty UTF-8 string at most 128 bytes",
+    )?;
+    if let Some(instructions) = &def.instructions {
+        validate_text_field(
+            instructions,
+            AGENT_INSTRUCTIONS_MAX_BYTES,
+            "instructions must be a non-empty UTF-8 string at most 16384 bytes",
+        )?;
+    }
+    if let Some(model_tier) = &def.model_tier {
+        validate_text_field(
+            model_tier.as_str(),
+            AGENT_MODEL_TIER_MAX_BYTES,
+            "modelTier must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+    }
+    if !def.confidence.is_finite() || !(0.0..=1.0).contains(&def.confidence) {
+        return Err(Error::InvalidAgentDefBody(
+            "confidence must be finite in the unit interval",
+        ));
+    }
+    if def.generated == def.human_authored {
+        return Err(Error::InvalidAgentDefBody(
+            "exactly one of generated or humanAuthored must be true",
+        ));
+    }
+    if def.generated != (def.source == ClaimSource::Generated) {
+        return Err(Error::InvalidAgentDefBody(
+            "generated flag must match generated source",
+        ));
+    }
+    validate_provenance(&def.provenance)?;
+    validate_skill_dependencies(&def.skills)?;
+    validate_connectors(&def.connectors)?;
+    validate_mcp_refs(&def.code_mode_mcps)?;
+    Ok(())
+}
+
+fn validate_provenance(provenance: &Value) -> Result<()> {
+    let Value::Map(entries) = provenance else {
+        return Err(Error::InvalidAgentDefBody(
+            "provenance must be a non-empty MessagePack map",
+        ));
+    };
+    if entries.is_empty() {
+        return Err(Error::InvalidAgentDefBody(
+            "provenance must be a non-empty MessagePack map",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for (key, _) in entries {
+        let Some(key) = key.as_str() else {
+            return Err(Error::InvalidAgentDefBody(
+                "provenance keys must be strings",
+            ));
+        };
+        if key.trim().is_empty() {
+            return Err(Error::InvalidAgentDefBody(
+                "provenance keys must be non-empty strings",
+            ));
+        }
+        if !seen.insert(key) {
+            return Err(Error::InvalidAgentDefBody("duplicate provenance key"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
+    if skills.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "skills must contain at most 64 entries",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for dependency in skills {
+        validate_text_field(
+            &dependency.skill_id,
+            AGENT_REF_KEY_MAX_BYTES,
+            "skill dependency skillId must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+        if !seen.insert(dependency.skill_id.as_str()) {
+            return Err(Error::InvalidAgentDefBody("duplicate skill dependency"));
+        }
+        if let Some(min_version) = &dependency.min_version {
+            validate_text_field(
+                min_version,
+                AGENT_VERSION_MAX_BYTES,
+                "skill dependency minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_connectors(connectors: &[String]) -> Result<()> {
+    if connectors.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "connectors must contain at most 64 entries",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for connector in connectors {
+        validate_text_field(
+            connector,
+            AGENT_REF_KEY_MAX_BYTES,
+            "connector key must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+        if !seen.insert(connector.as_str()) {
+            return Err(Error::InvalidAgentDefBody("duplicate connector"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
+    if mcps.len() > AGENT_MAX_LIST_ENTRIES {
+        return Err(Error::InvalidAgentDefBody(
+            "codeModeMcps must contain at most 64 entries",
+        ));
+    }
+    let mut seen = HashSet::new();
+    for mcp in mcps {
+        validate_text_field(
+            &mcp.key,
+            AGENT_REF_KEY_MAX_BYTES,
+            "MCP ref key must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+        if !seen.insert(mcp.key.as_str()) {
+            return Err(Error::InvalidAgentDefBody("duplicate MCP ref"));
+        }
+        if let Some(min_version) = &mcp.min_version {
+            validate_text_field(
+                min_version,
+                AGENT_VERSION_MAX_BYTES,
+                "MCP ref minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn text_value(value: &Value, max_bytes: usize, context: &'static str) -> Result<String> {
+    let text = value.as_str().ok_or(Error::InvalidAgentDefBody(context))?;
+    validate_text_field(text, max_bytes, context)?;
+    Ok(text.to_owned())
+}
+
+fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> Result<()> {
+    if text.trim().is_empty() || text.len() > max_bytes {
+        return Err(Error::InvalidAgentDefBody(context));
+    }
+    Ok(())
+}
+
+impl Vault {
+    /// Encodes (validating) and writes an `AgentDefinition` through the generic
+    /// entity door.
+    pub fn put_agent_definition(
+        &self,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        self.put_entity(id, ENTITY_TYPE_AGENT_DEF, occurred, learned_at, &data)
+    }
+
+    /// Discoverability alias for `put_agent_definition` so the registry verb
+    /// name `define_agent` greps to the vault surface. The house
+    /// `put_/get_/update_` naming stays canonical.
+    #[inline]
+    pub fn define_agent(
+        &self,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.put_agent_definition(id, def, occurred, learned_at)
+    }
+
+    /// Reads the prior record, enforces the immutability gate, and writes the
+    /// new body in a single write transaction.
+    pub fn update_agent_definition(
+        &self,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let existing = self.read_agent_definition_in_txn(&wtxn, id)?;
+        validate_agent_definition_update(&existing, def)?;
+        self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Returns the decoded `AgentDefinition` for `id`, or `None` if absent.
+    pub fn get_agent_definition(&self, id: &EntityId) -> Result<Option<AgentDefinition>> {
+        let Some(raw) = self.get_raw(id)? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+            return Err(Error::InvalidAgentDefBody(
+                "entity is not a type-17 AGENT_DEF",
+            ));
+        }
+        decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    fn read_agent_definition_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<AgentDefinition> {
+        let raw = self
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+            return Err(Error::InvalidAgentDefBody(
+                "entity is not a type-17 AGENT_DEF",
+            ));
+        }
+        decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..])
+    }
+
+    fn apply_agent_definition_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                occurred,
+                learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests;
