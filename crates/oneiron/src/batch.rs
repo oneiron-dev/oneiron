@@ -2213,6 +2213,11 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+    let blob_cleanup =
+        crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
+    had_vector |= blob_cleanup.had_vector;
+    had_graph_mutation |= blob_cleanup.had_graph_mutation;
+    neighbors.extend(blob_cleanup.neighbors);
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
@@ -2577,6 +2582,8 @@ fn apply_put(
         decoded_claim_body = Some(body);
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+    } else if entity_type == crate::types::ENTITY_TYPE_BLOB_ARTIFACT {
+        crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
             validate_replicated_authority_log_for_local_vault(store, wtxn, data)?;

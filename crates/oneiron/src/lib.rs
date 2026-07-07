@@ -6,6 +6,7 @@ pub mod analyzer;
 pub mod artifact_hosting;
 pub mod authority;
 pub mod batch;
+pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
@@ -22,6 +23,7 @@ pub mod context_pack;
 pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
+pub mod delivery_window;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -104,6 +106,12 @@ pub use crate::authority::{
     genesis_vault_id, validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
+pub use crate::blob_artifact::{
+    BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES,
+    BLOB_ARTIFACT_NAME_MAX_BYTES, BLOB_ARTIFACT_RUN_REF_MAX_BYTES,
+    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactBody, BlobArtifactVersion,
+    BlobVersionProvenance, decode_blob_artifact_body, encode_blob_artifact_body,
+};
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
@@ -221,6 +229,14 @@ pub use crate::critic::{
 pub use crate::deletion::{
     DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
     TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
+};
+pub use crate::delivery_window::{
+    DELIVERY_WINDOW_CLAIM_PREDICATES, DELIVERY_WINDOW_SCHEMA_VERSION,
+    DeliveryWindowApnsInterruptionLevel, DeliveryWindowAppliesTo, DeliveryWindowContextCondition,
+    DeliveryWindowDecision, DeliveryWindowEvaluationContext, DeliveryWindowEvaluator,
+    DeliveryWindowPolicyClaim, DeliveryWindowTimeWindow, DeliveryWindowVerbClass,
+    PREDICATE_DELIVERY_WINDOW_CHANNEL, PREDICATE_DELIVERY_WINDOW_CONTEXT,
+    PREDICATE_DELIVERY_WINDOW_QUIET, is_delivery_window_claim_predicate,
 };
 pub use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
@@ -424,11 +440,13 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, PendingTrayAsk,
-    PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery,
-    ReceiptRecord, ReceiptView, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
-    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, outbound_intent_receipt,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
+    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
+    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
+    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
+    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,

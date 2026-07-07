@@ -1210,7 +1210,7 @@ fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<EntityId> 
     )
 }
 
-fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
+pub(crate) fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
     for salt in 0_u64..=u64::MAX {
         let mut hasher = blake3::Hasher::new();
         hasher.update(domain);
