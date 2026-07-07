@@ -22,13 +22,15 @@ const FULL_TASK_COUNT: usize = 80;
 const SMOKE_TASK_COUNT: usize = 8;
 const OWNER_SPOTCHECK_COUNT: usize = 8;
 const FULL_REP_COUNT: u32 = 2;
-const FULL_RUN_COUNT: usize = FULL_TASK_COUNT * ArmId::ALL.len() * FULL_REP_COUNT as usize;
+const MAX_FULL_REPS: u32 = 8;
 const TOOL_CALL_CAP: u32 = 25;
 const WALL_CLOCK_CAP_S: u32 = 600;
 const PER_TASK_TOKEN_CEILING: u32 = 10_000;
 const SMOKE_TOKEN_CEILING: u32 = 250_000;
 const FULL_TOKEN_CEILING: u32 = 5_000_000;
 const MODEL: &str = "z-ai/glm-5.2";
+const DEFAULT_PROVIDER: &str = "wandb";
+const DEFAULT_OUT_DIR: &str = "target/interface-bench/interface-bench-1";
 const OPENROUTER_CHAT_COMPLETIONS: &str = "https://openrouter.ai/api/v1/chat/completions";
 const REQUEST_TEMPERATURE: f64 = 0.2;
 const SCORER_VERSION: &str = "interface-bench-scorer-v2";
@@ -505,6 +507,42 @@ struct ChatResponse {
     generation_id: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RunSettings {
+    model: String,
+    provider: String,
+    full_reps: u32,
+}
+
+impl Default for RunSettings {
+    fn default() -> Self {
+        Self {
+            model: MODEL.to_owned(),
+            provider: DEFAULT_PROVIDER.to_owned(),
+            full_reps: FULL_REP_COUNT,
+        }
+    }
+}
+
+impl RunSettings {
+    fn provider_lock(&self) -> ProviderLock {
+        ProviderLock {
+            order: vec![self.provider.clone()],
+            allow_fallbacks: false,
+        }
+    }
+
+    fn full_run_count(&self) -> usize {
+        FULL_TASK_COUNT * ArmId::ALL.len() * self.full_reps as usize
+    }
+
+    fn full_token_ceiling(&self) -> u32 {
+        let scaled =
+            u64::from(FULL_TOKEN_CEILING) * u64::from(self.full_reps) / u64::from(FULL_REP_COUNT);
+        u32::try_from(scaled).unwrap_or(u32::MAX)
+    }
+}
+
 pub(crate) fn run(args: &[String]) -> ExitCode {
     match args {
         [] => {
@@ -532,14 +570,22 @@ fn print_help() {
            config                 print the interface-bench-1 CampaignConfig JSON\n\
            taskgen [--out DIR]    generate seeded fixture vault, full/smoke tasks,\n\
                                   frozen holdout metadata, and owner spot-check sample\n\
-           smoke [--out DIR]      run the 8-task x 3-arm smoke through OpenRouter\n\
-                                  using OPENROUTER_API_KEY and W&B-only routing\n\
-           probe [--out DIR]      run one task x arm_sdk x 2 reps and verify\n\
+           smoke [flags]          run the 8-task x 3-arm smoke through OpenRouter\n\
+                                  using OPENROUTER_API_KEY and provider-locked routing\n\
+           probe [flags]          run one task x arm_sdk x 2 reps and verify\n\
                                   distinct memo keys, request hashes, and generation ids\n\
-           full [--out DIR]       run/resume the full 80-task x 3-arm x 2-rep\n\
-                                  campaign (480 rows exactly)\n\
+           full [flags]           run/resume the full 80-task x 3-arm x N-rep\n\
+                                  campaign (default {FULL_REP_COUNT} reps, 480 rows exactly)\n\
          \n\
-         default output dir: target/interface-bench/interface-bench-1"
+         flags (smoke/probe/full):\n\
+           --out DIR              output directory (default {DEFAULT_OUT_DIR})\n\
+           --model ID             OpenRouter model id (default {MODEL})\n\
+           --provider NAME        single locked provider; fallbacks always stay disabled\n\
+                                  (default {DEFAULT_PROVIDER})\n\
+           --reps N               reps per task+arm for full runs, 1..={MAX_FULL_REPS}\n\
+                                  (default {FULL_REP_COUNT}; probe always runs 2 reps)\n\
+         \n\
+         default output dir: {DEFAULT_OUT_DIR}"
     );
 }
 
@@ -557,7 +603,7 @@ fn print_config() -> ExitCode {
 }
 
 fn run_taskgen_cli(args: &[String]) -> ExitCode {
-    match parse_out_dir(args).and_then(|out| write_taskgen_outputs(&out)) {
+    match parse_out_dir(args).and_then(|out| write_taskgen_outputs(&out, &RunSettings::default())) {
         Ok(report) => {
             println!(
                 "generated {} claims, {} full tasks, {} smoke tasks in {}",
@@ -583,7 +629,7 @@ fn run_taskgen_cli(args: &[String]) -> ExitCode {
 }
 
 fn run_smoke_cli(args: &[String]) -> ExitCode {
-    match parse_out_dir(args).and_then(|out| run_smoke(&out)) {
+    match parse_run_flags(args).and_then(|(out, settings)| run_smoke(&out, &settings)) {
         Ok(report_path) => {
             println!("interface-bench smoke report: {}", report_path.display());
             ExitCode::SUCCESS
@@ -596,7 +642,7 @@ fn run_smoke_cli(args: &[String]) -> ExitCode {
 }
 
 fn run_probe_cli(args: &[String]) -> ExitCode {
-    match parse_out_dir(args).and_then(|out| run_memo_probe(&out)) {
+    match parse_run_flags(args).and_then(|(out, settings)| run_memo_probe(&out, &settings)) {
         Ok(report_path) => {
             println!(
                 "interface-bench memo probe report: {}",
@@ -612,7 +658,7 @@ fn run_probe_cli(args: &[String]) -> ExitCode {
 }
 
 fn run_full_cli(args: &[String]) -> ExitCode {
-    match parse_out_dir(args).and_then(|out| run_full(&out)) {
+    match parse_run_flags(args).and_then(|(out, settings)| run_full(&out, &settings)) {
         Ok(report_path) => {
             println!("interface-bench full report: {}", report_path.display());
             ExitCode::SUCCESS
@@ -640,10 +686,66 @@ fn parse_out_dir(args: &[String]) -> Result<PathBuf, String> {
         }
     }
 
-    Ok(out_dir.unwrap_or_else(|| PathBuf::from("target/interface-bench/interface-bench-1")))
+    Ok(out_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_OUT_DIR)))
+}
+
+fn parse_run_flags(args: &[String]) -> Result<(PathBuf, RunSettings), String> {
+    let mut out_dir = None;
+    let mut settings = RunSettings::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "--out requires a directory".to_owned())?;
+                out_dir = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--model" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "--model requires a non-empty OpenRouter model id".to_owned())?;
+                settings.model = value.clone();
+                index += 2;
+            }
+            "--provider" => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "--provider requires a non-empty provider name".to_owned())?;
+                settings.provider = value.clone();
+                index += 2;
+            }
+            "--reps" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "--reps requires a count".to_owned())?;
+                let reps = value
+                    .parse::<u32>()
+                    .map_err(|error| format!("--reps expects an integer: {error}"))?;
+                if !(1..=MAX_FULL_REPS).contains(&reps) {
+                    return Err(format!("--reps must be between 1 and {MAX_FULL_REPS}"));
+                }
+                settings.full_reps = reps;
+                index += 2;
+            }
+            other => return Err(format!("unknown flag `{other}`")),
+        }
+    }
+
+    Ok((
+        out_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_OUT_DIR)),
+        settings,
+    ))
 }
 
 fn interface_bench_1_config() -> CampaignConfig {
+    campaign_config_for(&RunSettings::default())
+}
+
+fn campaign_config_for(settings: &RunSettings) -> CampaignConfig {
     CampaignConfig {
         campaign: CAMPAIGN_ID.to_owned(),
         kind: KIND.to_owned(),
@@ -674,7 +776,7 @@ fn interface_bench_1_config() -> CampaignConfig {
             discipline: "reserve-then-sum-then-reject".to_owned(),
             per_task_token_ceiling: PER_TASK_TOKEN_CEILING,
             smoke_token_ceiling: SMOKE_TOKEN_CEILING,
-            full_token_ceiling: FULL_TOKEN_CEILING,
+            full_token_ceiling: settings.full_token_ceiling(),
             tool_call_cap: TOOL_CALL_CAP,
             wall_clock_cap_s: WALL_CLOCK_CAP_S,
         },
@@ -689,19 +791,12 @@ fn interface_bench_1_config() -> CampaignConfig {
             arm_promotion: "OWNER CALL".to_owned(),
         },
         model_binding: ModelBinding {
-            model: MODEL.to_owned(),
+            model: settings.model.clone(),
             route: ProviderRoute {
-                provider: locked_provider(),
+                provider: settings.provider_lock(),
             },
-            browse_judge_model: MODEL.to_owned(),
+            browse_judge_model: settings.model.clone(),
         },
-    }
-}
-
-fn locked_provider() -> ProviderLock {
-    ProviderLock {
-        order: vec!["wandb".to_owned()],
-        allow_fallbacks: false,
     }
 }
 
@@ -1028,8 +1123,9 @@ fn owner_spotcheck_sample(tasks: &[BenchTask]) -> Vec<BenchTask> {
     sample
 }
 
-fn write_taskgen_outputs(out_dir: &Path) -> Result<TaskgenReport, String> {
-    let bundle = build_task_bundle();
+fn write_taskgen_outputs(out_dir: &Path, settings: &RunSettings) -> Result<TaskgenReport, String> {
+    let mut bundle = build_task_bundle();
+    bundle.config = campaign_config_for(settings);
     fs::create_dir_all(out_dir).map_err(|error| format!("create output dir: {error}"))?;
 
     let files = BTreeMap::from([
@@ -1196,9 +1292,9 @@ fn enforce_budget(rows: &[SmokeRunRow], run_ceiling: u32) -> Result<(), String> 
     Ok(())
 }
 
-fn run_smoke(out_dir: &Path) -> Result<PathBuf, String> {
+fn run_smoke(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
     let api_key = openrouter_api_key("smoke")?;
-    write_taskgen_outputs(out_dir)?;
+    write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
     let rows = run_eval_rows(
         &api_key,
@@ -1208,17 +1304,18 @@ fn run_smoke(out_dir: &Path) -> Result<PathBuf, String> {
         &bundle.smoke_tasks,
         &ArmId::ALL,
         &[0],
+        settings,
     )?;
     enforce_budget(&rows, SMOKE_TOKEN_CEILING)?;
 
     let report = SmokeReport {
         campaign: CAMPAIGN_ID.to_owned(),
-        model: MODEL.to_owned(),
-        provider: locked_provider(),
+        model: settings.model.clone(),
+        provider: settings.provider_lock(),
         run_id: format!("interface-bench-1-smoke-{}", unix_now()),
         task_count: bundle.smoke_tasks.len(),
         aggregates: aggregate_rows(&rows),
-        full_run_token_burn_extrapolation: token_burn_extrapolation(&rows),
+        full_run_token_burn_extrapolation: token_burn_extrapolation(&rows, settings.full_reps),
         runs: rows,
     };
     let report_path = out_dir.join("smoke_report.json");
@@ -1226,9 +1323,9 @@ fn run_smoke(out_dir: &Path) -> Result<PathBuf, String> {
     Ok(report_path)
 }
 
-fn run_memo_probe(out_dir: &Path) -> Result<PathBuf, String> {
+fn run_memo_probe(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
     let api_key = openrouter_api_key("memo probe")?;
-    write_taskgen_outputs(out_dir)?;
+    write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
     let task = bundle
         .full_tasks
@@ -1243,6 +1340,7 @@ fn run_memo_probe(out_dir: &Path) -> Result<PathBuf, String> {
         std::slice::from_ref(task),
         &[ArmId::Sdk],
         &[0, 1],
+        settings,
     )?;
     let memo_keys_distinct = rows[0].memo_key != rows[1].memo_key;
     let request_hashes_distinct = rows[0].request_hash != rows[1].request_hash;
@@ -1253,8 +1351,8 @@ fn run_memo_probe(out_dir: &Path) -> Result<PathBuf, String> {
     let passed = memo_keys_distinct && request_hashes_distinct && generation_ids_distinct;
     let report = MemoProbeReport {
         campaign: CAMPAIGN_ID.to_owned(),
-        model: MODEL.to_owned(),
-        provider: locked_provider(),
+        model: settings.model.clone(),
+        provider: settings.provider_lock(),
         task_id: task.task_id.clone(),
         arm: ArmId::Sdk,
         reps: rows,
@@ -1274,12 +1372,12 @@ fn run_memo_probe(out_dir: &Path) -> Result<PathBuf, String> {
     Ok(report_path)
 }
 
-fn run_full(out_dir: &Path) -> Result<PathBuf, String> {
-    run_memo_probe(out_dir)?;
+fn run_full(out_dir: &Path, settings: &RunSettings) -> Result<PathBuf, String> {
+    run_memo_probe(out_dir, settings)?;
     let api_key = openrouter_api_key("full run")?;
-    write_taskgen_outputs(out_dir)?;
+    write_taskgen_outputs(out_dir, settings)?;
     let bundle = build_task_bundle();
-    let reps = (0..FULL_REP_COUNT).collect::<Vec<_>>();
+    let reps = (0..settings.full_reps).collect::<Vec<_>>();
     let rows = run_eval_rows(
         &api_key,
         out_dir,
@@ -1288,15 +1386,17 @@ fn run_full(out_dir: &Path) -> Result<PathBuf, String> {
         &bundle.full_tasks,
         &ArmId::ALL,
         &reps,
+        settings,
     )?;
-    if rows.len() != FULL_RUN_COUNT {
+    let expected_runs = settings.full_run_count();
+    if rows.len() != expected_runs {
         return Err(format!(
-            "full campaign produced {} rows, expected {FULL_RUN_COUNT}",
+            "full campaign produced {} rows, expected {expected_runs}",
             rows.len()
         ));
     }
-    enforce_budget(&rows, FULL_TOKEN_CEILING)?;
-    let report = full_run_report(&bundle, rows);
+    enforce_budget(&rows, settings.full_token_ceiling())?;
+    let report = full_run_report(&bundle, rows, settings);
     let report_path = out_dir.join("full_report.json");
     write_json_atomic(&report_path, &report)?;
     Ok(report_path)
@@ -1309,6 +1409,7 @@ fn openrouter_api_key(run_label: &str) -> Result<String, String> {
         .ok_or_else(|| format!("OPENROUTER_API_KEY is not present; {run_label} not run"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_eval_rows(
     api_key: &str,
     out_dir: &Path,
@@ -1317,6 +1418,7 @@ fn run_eval_rows(
     tasks: &[BenchTask],
     arms: &[ArmId],
     reps: &[u32],
+    settings: &RunSettings,
 ) -> Result<Vec<SmokeRunRow>, String> {
     let row_dir = out_dir.join(row_dir_name);
     fs::create_dir_all(&row_dir).map_err(|error| format!("create row dir: {error}"))?;
@@ -1331,6 +1433,7 @@ fn run_eval_rows(
                     *arm,
                     *rep_index,
                     &bundle.fixture,
+                    settings,
                 )?;
                 rows.push(row);
             }
@@ -1346,6 +1449,7 @@ fn run_or_load_eval_row(
     arm: ArmId,
     rep_index: u32,
     fixture: &FixtureVault,
+    settings: &RunSettings,
 ) -> Result<SmokeRunRow, String> {
     let context = arm_context(arm, task, fixture)?;
     if context.tool_calls > TOOL_CALL_CAP {
@@ -1362,7 +1466,7 @@ fn run_or_load_eval_row(
         chat_message("user", eval_user_prompt(task, &context)),
     ];
     let request_nonce = request_nonce(task, arm, rep_index);
-    let request = openrouter_request_body(&messages, 900, &request_nonce);
+    let request = openrouter_request_body(&messages, 900, &request_nonce, settings);
     let request_hash = blake3_hex(request.to_string().as_bytes());
     let judge_cache_key = judge_cache_key(task);
     let memo_key = eval_memo_key(
@@ -1389,7 +1493,7 @@ fn run_or_load_eval_row(
     }
 
     let started = Instant::now();
-    let response = call_openrouter(api_key, &messages, 900, &request_nonce)?;
+    let response = call_openrouter(api_key, &messages, 900, &request_nonce, settings)?;
     let candidate_wall_clock_s = started.elapsed().as_secs_f64();
     let (base_accuracy, base_detail) = score_task(task, &response.content);
     let (accuracy, detail, judge_tokens, judge_generation_id) =
@@ -1402,6 +1506,7 @@ fn run_or_load_eval_row(
                 base_accuracy,
                 base_detail,
                 rep_index,
+                settings,
             )?
         } else {
             (base_accuracy, base_detail, 0, None)
@@ -1588,16 +1693,18 @@ fn judge_request_nonce(task: &BenchTask, rep_index: u32) -> String {
     )
 }
 
-fn openrouter_request_body(messages: &[Value], max_tokens: u32, request_user: &str) -> Value {
+fn openrouter_request_body(
+    messages: &[Value],
+    max_tokens: u32,
+    request_user: &str,
+    settings: &RunSettings,
+) -> Value {
     json!({
-        "model": MODEL,
+        "model": settings.model,
         "messages": messages,
         "temperature": REQUEST_TEMPERATURE,
         "max_tokens": max_tokens,
-        "provider": {
-            "order": ["wandb"],
-            "allow_fallbacks": false
-        },
+        "provider": settings.provider_lock(),
         "user": request_user
     })
 }
@@ -1644,11 +1751,12 @@ fn call_openrouter(
     messages: &[Value],
     max_tokens: u32,
     request_user: &str,
+    settings: &RunSettings,
 ) -> Result<ChatResponse, String> {
     if api_key.contains(['\r', '\n']) {
         return Err("OPENROUTER_API_KEY contains unsupported newline characters".to_owned());
     }
-    let request = openrouter_request_body(messages, max_tokens, request_user);
+    let request = openrouter_request_body(messages, max_tokens, request_user, settings);
     let mut request_file =
         tempfile::NamedTempFile::new().map_err(|error| format!("create request body: {error}"))?;
     request_file
@@ -1693,7 +1801,7 @@ fn call_openrouter(
         .map_err(|error| format!("wait for OpenRouter response: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "OpenRouter W&B-locked request failed: status={} stderr={} body={}",
+            "OpenRouter provider-locked request failed: status={} stderr={} body={}",
             output.status,
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
@@ -1795,6 +1903,7 @@ fn score_task(task: &BenchTask, answer: &str) -> (f64, Value) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn judge_browse_answer(
     api_key: &str,
     task: &BenchTask,
@@ -1803,6 +1912,7 @@ fn judge_browse_answer(
     citation_score: f64,
     citation_detail: Value,
     rep_index: u32,
+    settings: &RunSettings,
 ) -> Result<(f64, Value, u32, Option<String>), String> {
     let GoldLabel::BrowseThenAnswer {
         topic,
@@ -1837,6 +1947,7 @@ fn judge_browse_answer(
         ],
         1_200,
         &request_user,
+        settings,
     )?;
     let parsed = serde_json::from_str::<Value>(&response.content).unwrap_or_else(|_| {
         json!({
@@ -1994,21 +2105,25 @@ fn aggregate_rows(rows: &[SmokeRunRow]) -> Vec<ArmAggregate> {
         .collect()
 }
 
-fn full_run_report(bundle: &TaskBundle, rows: Vec<SmokeRunRow>) -> FullRunReport {
+fn full_run_report(
+    bundle: &TaskBundle,
+    rows: Vec<SmokeRunRow>,
+    settings: &RunSettings,
+) -> FullRunReport {
     let aggregates = aggregate_rows(&rows);
-    let class_arm_table = class_arm_table(&rows);
+    let class_arm_table = class_arm_table(&rows, settings.full_reps);
     let pareto_frontier = pareto_frontier(&aggregates);
     let arm_verdict_claims = arm_verdict_claims(&aggregates, &pareto_frontier);
     let falsification_verdict = falsification_verdict(&rows);
-    let budget = budget_summary(&rows, FULL_TOKEN_CEILING);
+    let budget = budget_summary(&rows, settings.full_token_ceiling());
     FullRunReport {
         campaign: CAMPAIGN_ID.to_owned(),
-        model: MODEL.to_owned(),
-        provider: locked_provider(),
+        model: settings.model.clone(),
+        provider: settings.provider_lock(),
         run_id: format!("interface-bench-1-full-{}", unix_now()),
         task_count: bundle.full_tasks.len(),
-        reps_per_task_arm: FULL_REP_COUNT,
-        expected_runs: FULL_RUN_COUNT,
+        reps_per_task_arm: settings.full_reps,
+        expected_runs: settings.full_run_count(),
         completed_runs: rows.len(),
         scorer_version: SCORER_VERSION.to_owned(),
         browse_judge_prompt_version: BROWSE_JUDGE_PROMPT_VERSION.to_owned(),
@@ -2022,7 +2137,7 @@ fn full_run_report(bundle: &TaskBundle, rows: Vec<SmokeRunRow>) -> FullRunReport
     }
 }
 
-fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
+fn class_arm_table(rows: &[SmokeRunRow], reps: u32) -> Vec<ClassArmSummary> {
     let mut table = Vec::new();
     for class in TaskClass::ALL {
         for arm in ArmId::ALL {
@@ -2030,7 +2145,7 @@ fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
                 .iter()
                 .filter(|row| row.class == class && row.arm == arm)
                 .collect::<Vec<_>>();
-            let accuracy_by_rep = rep_values(&class_arm_rows, |rep_rows| {
+            let accuracy_by_rep = rep_values(&class_arm_rows, reps, |rep_rows| {
                 mean(rep_rows.iter().map(|row| row.accuracy))
             });
             let tokens_by_row = class_arm_rows
@@ -2041,7 +2156,7 @@ fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
                 class: class.as_str().to_owned(),
                 arm,
                 runs: class_arm_rows.len(),
-                reps: FULL_REP_COUNT,
+                reps,
                 accuracy_mean: mean(accuracy_by_rep.iter().copied()),
                 accuracy_range: numeric_range(&accuracy_by_rep),
                 tokens_mean: mean(tokens_by_row.iter().copied()),
@@ -2054,8 +2169,12 @@ fn class_arm_table(rows: &[SmokeRunRow]) -> Vec<ClassArmSummary> {
     table
 }
 
-fn rep_values(rows: &[&SmokeRunRow], value_for_rep: impl Fn(&[&SmokeRunRow]) -> f64) -> Vec<f64> {
-    (0..FULL_REP_COUNT)
+fn rep_values(
+    rows: &[&SmokeRunRow],
+    reps: u32,
+    value_for_rep: impl Fn(&[&SmokeRunRow]) -> f64,
+) -> Vec<f64> {
+    (0..reps)
         .map(|rep_index| {
             let rep_rows = rows
                 .iter()
@@ -2199,10 +2318,10 @@ fn mean(values: impl Iterator<Item = f64>) -> f64 {
     }
 }
 
-fn token_burn_extrapolation(rows: &[SmokeRunRow]) -> TokenBurnExtrapolation {
+fn token_burn_extrapolation(rows: &[SmokeRunRow], full_reps: u32) -> TokenBurnExtrapolation {
     let smoke_tokens = rows.iter().map(|row| row.tokens_total).sum::<u32>();
     let observed_runs = rows.len();
-    let full_run_equivalent_runs = 480;
+    let full_run_equivalent_runs = FULL_TASK_COUNT * ArmId::ALL.len() * full_reps as usize;
     let extrapolated_full_tokens = if observed_runs == 0 {
         0
     } else {
@@ -2340,10 +2459,17 @@ mod tests {
 
     #[test]
     fn config_locks_openrouter_wandb_without_fallbacks() {
+        let defaults = RunSettings::default();
+        assert_eq!(defaults.model, MODEL);
+        assert_eq!(defaults.provider, DEFAULT_PROVIDER);
+        assert_eq!(defaults.full_reps, FULL_REP_COUNT);
+        assert_eq!(defaults.full_token_ceiling(), FULL_TOKEN_CEILING);
+
         let config = interface_bench_1_config();
         assert_eq!(config.campaign, CAMPAIGN_ID);
         assert_eq!(config.nodes, ArmId::ALL);
         assert_eq!(config.model_binding.model, MODEL);
+        assert_eq!(config.model_binding.browse_judge_model, MODEL);
         assert_eq!(
             config.model_binding.route.provider.order,
             vec!["wandb".to_owned()]
@@ -2352,6 +2478,27 @@ mod tests {
         assert_eq!(config.budget_lease.tool_call_cap, TOOL_CALL_CAP);
         assert_eq!(config.budget_lease.smoke_token_ceiling, SMOKE_TOKEN_CEILING);
         assert_eq!(config.budget_lease.full_token_ceiling, FULL_TOKEN_CEILING);
+    }
+
+    #[test]
+    fn campaign_config_records_model_provider_and_budget_overrides() {
+        let settings = RunSettings {
+            model: "example/alt-model".to_owned(),
+            provider: "groq".to_owned(),
+            full_reps: 1,
+        };
+        let config = campaign_config_for(&settings);
+        assert_eq!(config.model_binding.model, "example/alt-model");
+        assert_eq!(config.model_binding.browse_judge_model, "example/alt-model");
+        assert_eq!(
+            config.model_binding.route.provider.order,
+            vec!["groq".to_owned()]
+        );
+        assert!(!config.model_binding.route.provider.allow_fallbacks);
+        assert_eq!(
+            config.budget_lease.full_token_ceiling,
+            FULL_TOKEN_CEILING / 2
+        );
     }
 
     #[test]
@@ -2413,9 +2560,10 @@ mod tests {
 
     #[test]
     fn full_run_shape_is_exactly_480_rows() {
-        assert_eq!(FULL_RUN_COUNT, 480);
+        let defaults = RunSettings::default();
+        assert_eq!(defaults.full_run_count(), 480);
         assert_eq!(
-            FULL_RUN_COUNT,
+            defaults.full_run_count(),
             FULL_TASK_COUNT * ArmId::ALL.len() * FULL_REP_COUNT as usize
         );
     }
@@ -2430,15 +2578,16 @@ mod tests {
             chat_message("system", shared_system_prompt(arm)),
             chat_message("user", eval_user_prompt(task, &context)),
         ];
+        let settings = RunSettings::default();
         let nonce_0 = request_nonce(task, arm, 0);
         let nonce_1 = request_nonce(task, arm, 1);
         let request_hash_0 = blake3_hex(
-            openrouter_request_body(&messages, 900, &nonce_0)
+            openrouter_request_body(&messages, 900, &nonce_0, &settings)
                 .to_string()
                 .as_bytes(),
         );
         let request_hash_1 = blake3_hex(
-            openrouter_request_body(&messages, 900, &nonce_1)
+            openrouter_request_body(&messages, 900, &nonce_1, &settings)
                 .to_string()
                 .as_bytes(),
         );
@@ -2465,6 +2614,182 @@ mod tests {
     }
 
     #[test]
+    fn parse_run_flags_defaults_reproduce_pinned_campaign() {
+        let (out_dir, settings) = parse_run_flags(&[]).expect("defaults parse");
+        assert_eq!(out_dir, PathBuf::from(DEFAULT_OUT_DIR));
+        assert_eq!(settings.model, MODEL);
+        assert_eq!(settings.provider, DEFAULT_PROVIDER);
+        assert_eq!(settings.full_reps, FULL_REP_COUNT);
+        assert_eq!(settings.full_run_count(), 480);
+        assert_eq!(settings.full_token_ceiling(), FULL_TOKEN_CEILING);
+    }
+
+    #[test]
+    fn parse_run_flags_accepts_model_provider_and_reps_overrides() {
+        let args = [
+            "--out",
+            "custom-out",
+            "--model",
+            "example/alt-model",
+            "--provider",
+            "groq",
+            "--reps",
+            "1",
+        ]
+        .map(String::from);
+        let (out_dir, settings) = parse_run_flags(&args).expect("overrides parse");
+        assert_eq!(out_dir, PathBuf::from("custom-out"));
+        assert_eq!(settings.model, "example/alt-model");
+        assert_eq!(settings.provider, "groq");
+        assert_eq!(settings.full_reps, 1);
+        assert_eq!(settings.full_run_count(), 240);
+        assert_eq!(settings.full_token_ceiling(), FULL_TOKEN_CEILING / 2);
+    }
+
+    #[test]
+    fn parse_run_flags_rejects_invalid_flags() {
+        assert!(parse_run_flags(&["--reps".to_owned(), "0".to_owned()]).is_err());
+        assert!(parse_run_flags(&["--reps".to_owned(), "two".to_owned()]).is_err());
+        assert!(parse_run_flags(&["--reps".to_owned()]).is_err());
+        assert!(parse_run_flags(&["--model".to_owned()]).is_err());
+        assert!(parse_run_flags(&["--model".to_owned(), String::new()]).is_err());
+        assert!(parse_run_flags(&["--provider".to_owned(), String::new()]).is_err());
+        assert!(parse_run_flags(&["--bogus".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn parse_run_flags_bounds_reps_to_supported_range() {
+        let (_, settings) =
+            parse_run_flags(&["--reps".to_owned(), "8".to_owned()]).expect("max reps parse");
+        assert_eq!(settings.full_reps, MAX_FULL_REPS);
+
+        let error = parse_run_flags(&["--reps".to_owned(), "9".to_owned()])
+            .expect_err("reps above bound should reject");
+        assert!(error.contains("between 1 and 8"));
+
+        let error = parse_run_flags(&["--reps".to_owned(), "0".to_owned()])
+            .expect_err("zero reps should reject");
+        assert!(error.contains("between 1 and 8"));
+    }
+
+    #[test]
+    fn taskgen_flags_stay_out_dir_only() {
+        assert!(parse_out_dir(&["--model".to_owned(), "example/alt-model".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn default_request_body_is_byte_identical_to_pinned_campaign() {
+        let messages = vec![chat_message("system", "pinned prompt".to_owned())];
+        let body = openrouter_request_body(&messages, 900, "nonce", &RunSettings::default());
+        let pinned = json!({
+            "model": "z-ai/glm-5.2",
+            "messages": messages,
+            "temperature": REQUEST_TEMPERATURE,
+            "max_tokens": 900,
+            "provider": {
+                "order": ["wandb"],
+                "allow_fallbacks": false
+            },
+            "user": "nonce"
+        });
+
+        assert_eq!(body.to_string(), pinned.to_string());
+        assert_eq!(
+            blake3_hex(body.to_string().as_bytes()),
+            blake3_hex(pinned.to_string().as_bytes())
+        );
+    }
+
+    #[test]
+    fn provider_override_keeps_fallbacks_disabled() {
+        let settings = RunSettings {
+            provider: "groq".to_owned(),
+            ..RunSettings::default()
+        };
+        let lock = settings.provider_lock();
+        assert_eq!(lock.order, vec!["groq".to_owned()]);
+        assert!(!lock.allow_fallbacks);
+
+        let body = openrouter_request_body(&[], 900, "nonce", &settings);
+        assert_eq!(body["provider"]["order"], json!(["groq"]));
+        assert_eq!(body["provider"]["allow_fallbacks"], json!(false));
+    }
+
+    #[test]
+    fn memo_key_separates_model_and_provider_overrides() {
+        let bundle = build_task_bundle();
+        let task = &bundle.full_tasks[0];
+        let arm = ArmId::Sdk;
+        let context = arm_context(arm, task, &bundle.fixture).expect("context");
+        let messages = vec![
+            chat_message("system", shared_system_prompt(arm)),
+            chat_message("user", eval_user_prompt(task, &context)),
+        ];
+        let nonce = request_nonce(task, arm, 0);
+        let memo_key_for = |settings: &RunSettings| {
+            let request_hash = blake3_hex(
+                openrouter_request_body(&messages, 900, &nonce, settings)
+                    .to_string()
+                    .as_bytes(),
+            );
+            eval_memo_key(
+                task,
+                arm,
+                0,
+                &nonce,
+                &request_hash,
+                judge_cache_key(task).as_deref(),
+            )
+        };
+
+        let default_key = memo_key_for(&RunSettings::default());
+        let model_key = memo_key_for(&RunSettings {
+            model: "example/alt-model".to_owned(),
+            ..RunSettings::default()
+        });
+        let provider_key = memo_key_for(&RunSettings {
+            provider: "groq".to_owned(),
+            ..RunSettings::default()
+        });
+
+        assert_ne!(default_key, model_key);
+        assert_ne!(default_key, provider_key);
+        assert_ne!(model_key, provider_key);
+    }
+
+    #[test]
+    fn full_report_records_effective_model_provider_and_reps() {
+        let bundle = build_task_bundle();
+        let settings = RunSettings {
+            model: "example/alt-model".to_owned(),
+            provider: "groq".to_owned(),
+            full_reps: 1,
+        };
+        let rows = vec![test_row(
+            "task",
+            TaskClass::RetrievalQa,
+            ArmId::Sdk,
+            0,
+            100,
+            0.8,
+        )];
+        let report = full_run_report(&bundle, rows, &settings);
+
+        assert_eq!(report.model, "example/alt-model");
+        assert_eq!(report.provider.order, vec!["groq".to_owned()]);
+        assert!(!report.provider.allow_fallbacks);
+        assert_eq!(report.reps_per_task_arm, 1);
+        assert_eq!(report.expected_runs, 240);
+        assert_eq!(report.budget.run_token_ceiling, FULL_TOKEN_CEILING / 2);
+        assert!(
+            report
+                .class_arm_table
+                .iter()
+                .all(|summary| summary.reps == 1)
+        );
+    }
+
+    #[test]
     fn browse_memo_key_includes_judge_prompt_version() {
         let bundle = build_task_bundle();
         let task = bundle
@@ -2480,7 +2805,7 @@ mod tests {
         ];
         let nonce = request_nonce(task, arm, 0);
         let request_hash = blake3_hex(
-            openrouter_request_body(&messages, 900, &nonce)
+            openrouter_request_body(&messages, 900, &nonce, &RunSettings::default())
                 .to_string()
                 .as_bytes(),
         );
@@ -2518,7 +2843,7 @@ mod tests {
         ];
         let nonce = request_nonce(task, arm, 0);
         let request_hash = blake3_hex(
-            openrouter_request_body(&messages, 900, &nonce)
+            openrouter_request_body(&messages, 900, &nonce, &RunSettings::default())
                 .to_string()
                 .as_bytes(),
         );
@@ -2636,7 +2961,7 @@ mod tests {
             test_row("c", TaskClass::RetrievalQa, ArmId::Sdk, 1, 50, 0.6),
             test_row("d", TaskClass::RetrievalQa, ArmId::Sdk, 1, 70, 0.4),
         ];
-        let table = class_arm_table(&rows);
+        let table = class_arm_table(&rows, FULL_REP_COUNT);
         let summary = table
             .iter()
             .find(|row| row.class == TaskClass::RetrievalQa.as_str() && row.arm == ArmId::Sdk)
@@ -2655,7 +2980,7 @@ mod tests {
             test_row("fs", TaskClass::RetrievalQa, ArmId::Fs, 0, 120, 0.8),
             test_row("hybrid", TaskClass::RetrievalQa, ArmId::Hybrid, 0, 110, 0.9),
         ];
-        let report = full_run_report(&bundle, rows);
+        let report = full_run_report(&bundle, rows, &RunSettings::default());
         let arms = report
             .arm_verdict_claims
             .iter()
@@ -2695,16 +3020,20 @@ mod tests {
             10,
             1.0,
         )];
-        let extrapolation = token_burn_extrapolation(&rows);
+        let extrapolation = token_burn_extrapolation(&rows, FULL_REP_COUNT);
 
         assert_eq!(extrapolation.full_run_equivalent_runs, 480);
         assert_eq!(extrapolation.extrapolated_full_tokens, 4_800);
+
+        let single_rep = token_burn_extrapolation(&rows, 1);
+        assert_eq!(single_rep.full_run_equivalent_runs, 240);
+        assert_eq!(single_rep.extrapolated_full_tokens, 2_400);
     }
 
     #[test]
     fn taskgen_writes_expected_files() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let report = write_taskgen_outputs(temp.path()).expect("taskgen");
+        let report = write_taskgen_outputs(temp.path(), &RunSettings::default()).expect("taskgen");
         assert_eq!(report.generated_claims, CLAIM_COUNT);
         for name in [
             "campaign_config.json",

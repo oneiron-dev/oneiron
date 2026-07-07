@@ -3689,6 +3689,53 @@ mod tests {
         assert!(!outside.path().join("pwned").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn repo_mutation_rejects_leaf_symlink_write_escape() {
+        let (_vault_dir, vault) = open_test_vault();
+        let repo = init_repo();
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let outside_target = outside.path().join("secret");
+        fs::write(&outside_target, "original\n").expect("write outside target");
+        std::os::unix::fs::symlink(&outside_target, repo.path().join("link"))
+            .expect("repo leaf symlink");
+        run_git_at_path(
+            repo.path(),
+            &["add".to_owned(), "--".to_owned(), "link".to_owned()],
+        )
+        .expect("git add leaf symlink");
+        run_git_at_path(
+            repo.path(),
+            &[
+                "-c".to_owned(),
+                "user.name=Oneiron".to_owned(),
+                "-c".to_owned(),
+                "user.email=oneiron@example.invalid".to_owned(),
+                "commit".to_owned(),
+                "-m".to_owned(),
+                "add leaf symlink".to_owned(),
+            ],
+        )
+        .expect("git commit leaf symlink");
+
+        let err = vault
+            .apply_repo_mutation(RepoMutationRequest::new(
+                repo_ref(&repo),
+                RepoMutationOperation::CommitFile {
+                    path: "link".to_owned(),
+                    content: b"owned\n".to_vec(),
+                    message: "attempt leaf escape".to_owned(),
+                },
+            ))
+            .expect_err("leaf symlink escape rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidRepoMutationRecord);
+        assert_eq!(
+            fs::read_to_string(&outside_target).expect("read outside target"),
+            "original\n"
+        );
+    }
+
     #[test]
     fn repo_mutation_commit_file_preserves_unrelated_staged_paths() {
         let (_vault_dir, vault) = open_test_vault();

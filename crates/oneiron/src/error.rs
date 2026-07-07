@@ -209,6 +209,7 @@ pub enum ErrorKind {
     ActorClassMismatch,
     InvalidProvenanceBody,
     InvalidModelSubstrate,
+    EmitAdjacentReceiptRequired,
     ClaimAlreadyClosed,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
@@ -643,6 +644,16 @@ pub enum Error {
     /// (type byte 121) entity. Nothing was written.
     #[error("invalid model substrate: {0}")]
     InvalidModelSubstrate(&'static str),
+    /// A receipt surface that is defined only for emit-adjacent receipts
+    /// (the OF-369/RS9 context field-set, the OF-326 session-local receipt
+    /// log) was given a non-emit receipt kind. Non-emit receipts project
+    /// from their own stored substrates and never carry emit context.
+    /// Nothing was written.
+    #[error("{surface} requires an emit-adjacent receipt kind, got {kind}")]
+    EmitAdjacentReceiptRequired {
+        surface: &'static str,
+        kind: &'static str,
+    },
     /// A claim lifecycle transition (`supersede_claim` / `retract_claim`)
     /// targeted a claim whose `life` status is not `active`. Superseded and
     /// retracted claims are closed history (ARCH-0003: all non-current
@@ -1034,6 +1045,7 @@ impl Error {
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
+            Self::EmitAdjacentReceiptRequired { .. } => ErrorKind::EmitAdjacentReceiptRequired,
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,

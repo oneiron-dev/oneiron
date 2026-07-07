@@ -876,15 +876,26 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         &self,
         cursor: Option<&str>,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        self.ls_claims_by_time_pushdown_with_scan_cap(cursor, GRAPH_FS_MAX_SCAN_ROWS)
+    }
+
+    fn ls_claims_by_time_pushdown_with_scan_cap(
+        &self,
+        cursor: Option<&str>,
+        max_scan_rows: usize,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
         let cursor = TemporalCursor::parse_optional(cursor)?;
-        let mut skipping = cursor.is_some();
         let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
+        let end_key = cursor.map(TemporalCursor::temporal_key);
         let lower: Bound<&[u8]> = Bound::Unbounded;
-        let upper: Bound<&[u8]> = Bound::Unbounded;
+        let upper: Bound<&[u8]> = end_key
+            .as_ref()
+            .map_or(Bound::Unbounded, |key| Bound::Excluded(&key[..]));
         for (scanned, entry) in self
             .scoped_read
             .vault()
@@ -893,17 +904,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .rev_range(&rtxn, &(lower, upper))?
             .enumerate()
         {
-            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                return Ok((out.into_bytes(), last_emitted, total));
+            if scanned >= max_scan_rows {
+                let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
+                return Ok((out.into_bytes(), next_cursor, total));
             }
             let (key, _) = entry?;
             let temporal = temporal_cursor_from_key(key)?;
-            if skipping {
-                if cursor == Some(temporal) {
-                    skipping = false;
-                }
-                continue;
-            }
+            last_scanned = Some(temporal);
             if !self
                 .scoped_read
                 .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
@@ -929,6 +936,16 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         newer_than: u64,
         cursor: Option<&str>,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
+        self.find_newer_pushdown_with_scan_cap(path, newer_than, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+    }
+
+    fn find_newer_pushdown_with_scan_cap(
+        &self,
+        path: &str,
+        newer_than: u64,
+        cursor: Option<&str>,
+        max_scan_rows: usize,
+    ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
         let cursor = TemporalCursor::parse_optional(cursor)?;
         let start_key = cursor.map_or_else(
@@ -936,6 +953,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             |cursor| cursor.next_temporal_key().to_vec(),
         );
         let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
@@ -949,11 +967,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .range(&rtxn, &(lower, upper))?
             .enumerate()
         {
-            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                return Ok((out.into_bytes(), last_emitted, total));
+            if scanned >= max_scan_rows {
+                let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
+                return Ok((out.into_bytes(), next_cursor, total));
             }
             let (key, _) = entry?;
             let temporal = temporal_cursor_from_key(key)?;
+            last_scanned = Some(temporal);
             if !self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id)? {
                 continue;
             }
@@ -1663,8 +1683,12 @@ impl TemporalCursor {
         format!("{}:{}", self.learned_at, self.id.to_hex())
     }
 
+    fn temporal_key(self) -> [u8; 24] {
+        Store::encode_temporal_key(self.learned_at, &self.id)
+    }
+
     fn next_temporal_key(self) -> [u8; 24] {
-        let mut key = Store::encode_temporal_key(self.learned_at, &self.id);
+        let mut key = self.temporal_key();
         increment_lexicographic_key(&mut key);
         key
     }
@@ -2190,6 +2214,21 @@ mod tests {
         vault.put_entity(&id, entity_type, time_range(1), 1, b"entity")
     }
 
+    fn put_entity_learned_at(
+        vault: &crate::Vault,
+        id: EntityId,
+        entity_type: u8,
+        learned_at: u64,
+    ) -> Result<()> {
+        vault.put_entity(
+            &id,
+            entity_type,
+            time_range(learned_at),
+            learned_at,
+            b"entity",
+        )
+    }
+
     fn put_claim(
         vault: &crate::Vault,
         id: EntityId,
@@ -2593,5 +2632,117 @@ mod tests {
         let formatted = format_day_shard(day);
         assert_eq!(parse_day_shard(&formatted).expect("valid day"), day);
         assert_eq!(format_day_shard(0), "1970-01-01");
+    }
+
+    #[test]
+    fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
+        let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+        let subject = test_id(0x72);
+        let old_claim = test_id(0x73);
+        let new_claim = test_id(0x74);
+        put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+        put_claim(&vault, old_claim, subject, None, 10)?;
+        put_claim(&vault, new_claim, subject, None, 11)?;
+        for index in 0..6_u8 {
+            put_entity_learned_at(
+                &vault,
+                test_id(0x80 + index),
+                ENTITY_TYPE_PERSON,
+                100 + u64::from(index),
+            )?;
+        }
+
+        let reader =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+        let fs = resolver(&reader, 1024);
+        let (bytes, first_cursor, total) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, 2)?;
+        assert!(
+            bytes.is_empty(),
+            "cap-hit page before any claim emits no rows"
+        );
+        assert_eq!(total, 0);
+        let first_cursor = first_cursor.expect("cap-hit page must return a resume cursor");
+
+        let (_, second_cursor, _) =
+            fs.ls_claims_by_time_pushdown_with_scan_cap(Some(&first_cursor), 2)?;
+        let second_cursor = second_cursor.expect("cap-hit resume must return a cursor");
+        assert_ne!(
+            first_cursor, second_cursor,
+            "cursor must advance across cap-hit pages"
+        );
+
+        let mut cursor = Some(second_cursor);
+        let mut emitted = String::new();
+        for _ in 0..32 {
+            let Some(current) = cursor else { break };
+            let (bytes, next_cursor, _) =
+                fs.ls_claims_by_time_pushdown_with_scan_cap(Some(&current), 2)?;
+            emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 ls output"));
+            assert_ne!(
+                next_cursor.as_deref(),
+                Some(current.as_str()),
+                "cursor must always advance"
+            );
+            cursor = next_cursor;
+        }
+        assert!(cursor.is_none(), "pagination must terminate");
+        let lines: Vec<_> = emitted.lines().map(str::to_owned).collect();
+        assert_eq!(lines, vec![new_claim.to_hex(), old_claim.to_hex()]);
+        Ok(())
+    }
+
+    #[test]
+    fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
+        let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+        let subject = test_id(0x75);
+        let claim = test_id(0x76);
+        put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+        for index in 0..6_u8 {
+            put_entity_learned_at(
+                &vault,
+                test_id(0x88 + index),
+                ENTITY_TYPE_PERSON,
+                100 + u64::from(index),
+            )?;
+        }
+        put_claim(&vault, claim, subject, None, 200)?;
+
+        let reader =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+        let fs = resolver(&reader, 1024);
+        let (bytes, first_cursor, total) =
+            fs.find_newer_pushdown_with_scan_cap("/claims", 50, None, 2)?;
+        assert!(
+            bytes.is_empty(),
+            "cap-hit page before any match emits no rows"
+        );
+        assert_eq!(total, 0);
+        let first_cursor = first_cursor.expect("cap-hit page must return a resume cursor");
+
+        let (_, second_cursor, _) =
+            fs.find_newer_pushdown_with_scan_cap("/claims", 50, Some(&first_cursor), 2)?;
+        let second_cursor = second_cursor.expect("cap-hit resume must return a cursor");
+        assert_ne!(
+            first_cursor, second_cursor,
+            "cursor must advance across cap-hit pages"
+        );
+
+        let mut cursor = Some(second_cursor);
+        let mut emitted = String::new();
+        for _ in 0..32 {
+            let Some(current) = cursor else { break };
+            let (bytes, next_cursor, _) =
+                fs.find_newer_pushdown_with_scan_cap("/claims", 50, Some(&current), 2)?;
+            emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 find output"));
+            assert_ne!(
+                next_cursor.as_deref(),
+                Some(current.as_str()),
+                "cursor must always advance"
+            );
+            cursor = next_cursor;
+        }
+        assert!(cursor.is_none(), "pagination must terminate");
+        assert_eq!(emitted, format!("/claims/{}\n", claim.to_hex()));
+        Ok(())
     }
 }

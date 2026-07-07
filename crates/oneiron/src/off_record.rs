@@ -20,12 +20,16 @@
 //!   the typed [`crate::Error::OffRecordTalkOnly`] (exit-prompt semantics).
 //!   The OF-333 floor still classifies real egress; its gate-decision
 //!   receipts are floor receipts and survive close untouched.
-//! * **RECEIPTS-FOLLOW-TRANSCRIPT** — emit-adjacent context receipts
-//!   (retrieval-run telemetry, whose `result_ids` would betray what the
-//!   room was about) are session-local: the caller registers them via
-//!   [`Vault::note_off_record_context_receipt`] and close deletes them with
-//!   the transcript. Only floor receipts (gate decisions, redaction audits)
-//!   persist.
+//! * **RECEIPTS-FOLLOW-TRANSCRIPT** — session-local receipts ride two
+//!   substrates and close covers both. Durable retrieval-run context
+//!   receipts (whose `result_ids` would betray what the room was about) are
+//!   registered via [`Vault::note_off_record_context_receipt`] and deleted
+//!   at close. In-memory emit-adjacent receipts (dispatch emit receipts
+//!   carrying the OF-369/RS9 context field-set) ride the session's
+//!   [`SessionLocalReceiptLog`] — minted via
+//!   [`Vault::off_record_receipt_log`] — which close CONSUMES, so there is
+//!   one close path and no emit receipt can be orphaned. Only floor
+//!   receipts (gate decisions, redaction audits) persist.
 //! * **Delete-at-close** — [`Vault::close_off_record_session`] deletes every
 //!   still-fenced turn through the pinned ARCH-0038 contract
 //!   ([`DeleteReason::PolicyDelete`]: CRDT tombstone FIRST, active-store
@@ -48,6 +52,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::deletion::DeleteReason;
 use crate::error::{Error, Result};
+use crate::receipt::SessionLocalReceiptLog;
 use crate::store::{RetrievalRunId, Store};
 use crate::types::EntityId;
 
@@ -163,6 +168,9 @@ pub struct OffRecordCloseOutcome {
     pub turns_missing: usize,
     /// Session-local retrieval-run context receipts removed.
     pub context_receipts_deleted: usize,
+    /// Emit-adjacent receipts dropped with the session's
+    /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
+    pub emit_receipts_deleted: usize,
     /// Promoted turns intentionally left in place.
     pub promoted_turns_kept: usize,
     /// REDACTION_AUDIT receipt ids minted by the per-turn deletions (floor
@@ -478,22 +486,60 @@ impl Vault {
         Ok(Some(decode_off_record_promote(bytes)?))
     }
 
+    /// Opens the session-local emit receipt log bound to a live off-record
+    /// session. One log per session: dispatch-emitted receipts are recorded
+    /// into it, and [`Vault::close_off_record_session`] consumes it so no
+    /// emit-adjacent receipt can be orphaned past close. After a mid-session
+    /// flip back on-record, new emit receipts belong in a fresh
+    /// [`SessionLocalReceiptLog::on_record`] log; anything still riding the
+    /// off-record log is dropped at close (over-deletion is the safe
+    /// direction).
+    pub fn off_record_receipt_log(&self, session_ref: &str) -> Result<SessionLocalReceiptLog> {
+        if self.off_record_session(session_ref)?.is_none() {
+            return Err(Error::OffRecordSessionNotFound {
+                session_ref: session_ref.to_owned(),
+            });
+        }
+        Ok(SessionLocalReceiptLog::off_record(session_ref))
+    }
+
     /// Closes the session: the off-record transcript evaporates.
     ///
     /// Every still-fenced turn is deleted through the pinned ARCH-0038
     /// contract ([`DeleteReason::PolicyDelete`]: CRDT tombstone first,
     /// active-store hard purge, opaque REDACTION_AUDIT receipt,
     /// historical-carrier sweep — the receipts are deletion provenance and
-    /// persist as floor receipts). Session-local context receipts are
-    /// deleted with the transcript. Promoted turns and their promote
-    /// receipts are kept. Fence rows and the session record are removed
-    /// LAST, so a close interrupted mid-way can simply be called again.
-    pub fn close_off_record_session(&self, session_ref: &str) -> Result<OffRecordCloseOutcome> {
+    /// persist as floor receipts). Session-local receipts follow the
+    /// transcript: the durable retrieval-run context receipts are deleted,
+    /// and the session's [`SessionLocalReceiptLog`] is consumed here — the
+    /// one close path — so its emit-adjacent receipts drop with the room.
+    /// Promoted turns and their promote receipts are kept. Fence rows and
+    /// the session record are removed LAST, so a close interrupted mid-way
+    /// can simply be called again (mint a fresh empty log via
+    /// [`Vault::off_record_receipt_log`] to retry).
+    pub fn close_off_record_session(
+        &self,
+        session_ref: &str,
+        receipt_log: SessionLocalReceiptLog,
+    ) -> Result<OffRecordCloseOutcome> {
+        if receipt_log.session_ref() != session_ref {
+            return Err(Error::InvariantViolation(
+                "off-record close given another session's receipt log",
+            ));
+        }
+        if !receipt_log.is_off_record() {
+            return Err(Error::InvariantViolation(
+                "off-record close requires an off-record receipt log",
+            ));
+        }
         let record = self.off_record_session(session_ref)?.ok_or_else(|| {
             Error::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
             }
         })?;
+        let receipt_close = receipt_log.close();
+        debug_assert!(receipt_close.retained.is_empty());
+        let emit_receipts_deleted = receipt_close.deleted;
 
         let mut turns_deleted = 0_usize;
         let mut turns_missing = 0_usize;
@@ -533,6 +579,7 @@ impl Vault {
             turns_deleted,
             turns_missing,
             context_receipts_deleted,
+            emit_receipts_deleted,
             promoted_turns_kept: record.promoted_turns.len(),
             redaction_receipt_ids,
         })
@@ -778,16 +825,50 @@ mod tests {
             .expect("note context receipt");
         assert!(vault.retrieval_run(run_id).expect("run lookup").is_some());
 
+        // Emit-adjacent dispatch receipt: rides the session-local log that
+        // close consumes (RECEIPTS-FOLLOW-TRANSCRIPT, ONE-1544 seam).
+        let mut receipt_log = vault
+            .off_record_receipt_log("sess-close")
+            .expect("mint receipt log");
+        let emit_receipt = crate::receipt::outbound_intent_receipt(
+            "receipt-off-record-close",
+            "intent-off-record-close",
+            &OutboundIntent::from_trigger(
+                OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
+                OutboundIntentTrigger::agent_immediate("intent:off-record-close"),
+            ),
+            100,
+            "delivered_to_channel",
+        );
+        receipt_log.record(emit_receipt).expect("log emit receipt");
+        assert_eq!(receipt_log.receipts().len(), 1);
+
         // Floor receipt (OF-333 egress classification): persists.
         let floor = floor_gate_decision();
         vault
             .with_write_txn(|wtxn| vault.store.append_gate_decision_in_txn(wtxn, &floor))
             .expect("record floor receipt");
 
-        let outcome = vault.close_off_record_session("sess-close").expect("close");
+        // Binding is validated: another session's log or an on-record log
+        // cannot close this session.
+        let foreign_log = SessionLocalReceiptLog::off_record("sess-other");
+        let mismatch = vault
+            .close_off_record_session("sess-close", foreign_log)
+            .expect_err("foreign log rejected");
+        assert_eq!(mismatch.kind(), ErrorKind::InvariantViolation);
+        let on_record_log = SessionLocalReceiptLog::on_record("sess-close");
+        let wrong_mode = vault
+            .close_off_record_session("sess-close", on_record_log)
+            .expect_err("on-record log rejected");
+        assert_eq!(wrong_mode.kind(), ErrorKind::InvariantViolation);
+
+        let outcome = vault
+            .close_off_record_session("sess-close", receipt_log)
+            .expect("close");
         assert_eq!(outcome.turns_deleted, 2);
         assert_eq!(outcome.turns_missing, 0);
         assert_eq!(outcome.context_receipts_deleted, 1);
+        assert_eq!(outcome.emit_receipts_deleted, 1);
         assert_eq!(outcome.promoted_turns_kept, 0);
         assert_eq!(outcome.redaction_receipt_ids.len(), 2);
 
@@ -814,9 +895,17 @@ mod tests {
         );
         assert!(!vault.is_turn_off_record_fenced(&fenced_a).expect("probe"));
         let reclose = vault
-            .close_off_record_session("sess-close")
+            .close_off_record_session(
+                "sess-close",
+                SessionLocalReceiptLog::off_record("sess-close"),
+            )
             .expect_err("second close");
         assert_eq!(reclose.kind(), ErrorKind::OffRecordSessionNotFound);
+        // The log helper is bound to a live session too.
+        let stale_log = vault
+            .off_record_receipt_log("sess-close")
+            .expect_err("log requires live session");
+        assert_eq!(stale_log.kind(), ErrorKind::OffRecordSessionNotFound);
     }
 
     #[test]
@@ -855,10 +944,14 @@ mod tests {
             .expect_err("promote lifts one live fence");
         assert_eq!(repromote.kind(), ErrorKind::OffRecordTurnNotFenced);
 
+        let receipt_log = vault
+            .off_record_receipt_log("sess-promote")
+            .expect("mint receipt log");
         let outcome = vault
-            .close_off_record_session("sess-promote")
+            .close_off_record_session("sess-promote", receipt_log)
             .expect("close");
         assert_eq!(outcome.turns_deleted, 2);
+        assert_eq!(outcome.emit_receipts_deleted, 0);
         assert_eq!(outcome.promoted_turns_kept, 1);
 
         // The promoted turn and its user-initiated receipt survive close.
