@@ -5,6 +5,7 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
@@ -488,6 +489,7 @@ pub struct OutboundExecutionOutcome {
     pub kind: OutboundExecutionOutcomeKind,
     pub provider_ref: Option<String>,
     pub retry_state: Option<String>,
+    pub receipt_fields: BTreeMap<String, String>,
 }
 
 /// Typed adapter execution result. Unknown adapter outcomes must be modeled
@@ -505,6 +507,7 @@ impl OutboundExecutionOutcome {
             kind: OutboundExecutionOutcomeKind::DeliveredToChannel,
             provider_ref: Some(provider_ref.into()),
             retry_state: None,
+            receipt_fields: BTreeMap::new(),
         }
     }
 
@@ -514,7 +517,20 @@ impl OutboundExecutionOutcome {
             kind: OutboundExecutionOutcomeKind::Failed,
             provider_ref: None,
             retry_state: Some(reason.into()),
+            receipt_fields: BTreeMap::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_receipt_field(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.receipt_fields.insert(key.into(), value.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_receipt_fields(mut self, fields: BTreeMap<String, String>) -> Self {
+        self.receipt_fields.extend(fields);
+        self
     }
 }
 
@@ -977,6 +993,7 @@ impl OutboundDispatchPipeline {
                 "retry_state",
                 execution.retry_state.as_deref(),
             );
+            append_execution_receipt_fields(&mut receipt, &execution.receipt_fields);
         }
         append_dispatch_outcome_receipt_fields(
             &mut receipt,
@@ -1212,6 +1229,18 @@ fn append_optional_receipt_field(
         && !value.trim().is_empty()
     {
         receipt.fields.insert(key.to_owned(), value.to_owned());
+    }
+}
+
+fn append_execution_receipt_fields(receipt: &mut ReceiptRecord, fields: &BTreeMap<String, String>) {
+    for (key, value) in fields {
+        if key.trim().is_empty() || value.trim().is_empty() {
+            continue;
+        }
+        receipt
+            .fields
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
     }
 }
 
@@ -1747,7 +1776,8 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                         "linkedin_username": "recipient vanity name or profile key",
                         "profile_urn": "optional fsd_profile URN handle from get_person_profile",
                         "message": "string resolved from content_ref",
-                        "confirm_send": "true only after OF-327 grant/gate approval"
+                        "confirm_send": "true only after OF-327 grant/gate approval",
+                        "verify_after_send": "send_message return is never trusted; re-read get_conversation and content-match before delivered receipt"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
@@ -1755,7 +1785,7 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     OutboundRetryClass::NonIdempotentInterrupt,
                     OutboundPermissionState::Conditional,
                     true,
-                    "Wraps stickerdaniel/linkedin-mcp-server send_message; account-risk and principal-session consent remain permission gates.",
+                    "Wraps stickerdaniel/linkedin-mcp-server send_message with verify-after-send; account-risk and principal-session consent remain permission gates.",
                 ),
                 verb(
                     "connect_request",
@@ -1895,6 +1925,10 @@ mod tests {
         DeliveryWindowAppliesTo, DeliveryWindowContextCondition, PREDICATE_DELIVERY_WINDOW_CHANNEL,
         PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
     };
+    use crate::linkedin_connector::{
+        LINKEDIN_CHANNEL, LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest,
+        LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
+    };
     use crate::store::Store;
     use crate::types::{
         ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, EdgeKind, VaultConfig,
@@ -2025,6 +2059,73 @@ mod tests {
         }
     }
 
+    struct ScriptedLinkedInTransport {
+        send_calls: Vec<LinkedInMcpSendMessageRequest>,
+        get_calls: Vec<String>,
+        send_result: std::result::Result<serde_json::Value, String>,
+        conversations: std::collections::VecDeque<serde_json::Value>,
+    }
+
+    impl ScriptedLinkedInTransport {
+        fn new(conversations: Vec<serde_json::Value>) -> Self {
+            Self {
+                send_calls: Vec::new(),
+                get_calls: Vec::new(),
+                send_result: Ok(serde_json::json!({"status": "ignored"})),
+                conversations: conversations.into(),
+            }
+        }
+
+        fn failing_send(mut self, error_code: &str) -> Self {
+            self.send_result = Err(error_code.to_owned());
+            self
+        }
+    }
+
+    impl LinkedInMcpSendTransport for ScriptedLinkedInTransport {
+        fn send_message(
+            &mut self,
+            request: &LinkedInMcpSendMessageRequest,
+        ) -> std::result::Result<serde_json::Value, String> {
+            self.send_calls.push(request.clone());
+            self.send_result.clone()
+        }
+
+        fn get_conversation(
+            &mut self,
+            thread_id: &str,
+        ) -> std::result::Result<serde_json::Value, String> {
+            self.get_calls.push(thread_id.to_owned());
+            self.conversations
+                .pop_front()
+                .ok_or_else(|| "no_more_recorded_conversations".to_owned())
+        }
+    }
+
+    fn linkedin_adapter() -> crate::Result<LinkedInMcpConnectorAdapter> {
+        LinkedInMcpConnectorAdapter::new("linkedin:member:yura")?
+            .with_session_ref("linkedin:session:yura:tokyo-sandbox")
+    }
+
+    fn linkedin_conversation(thread_id: &str, conversation: &str) -> serde_json::Value {
+        serde_json::json!({
+            "url": format!("https://www.linkedin.com/messaging/thread/{thread_id}/"),
+            "sections": {
+                "conversation": conversation
+            },
+            "references": {
+                "conversation": [
+                    {
+                        "kind": "conversation",
+                        "url": format!("/messaging/thread/{thread_id}/"),
+                        "context": "conversation",
+                        "text": "Jane Doe"
+                    }
+                ]
+            }
+        })
+    }
+
     fn dispatch_intent(trigger: OutboundIntentTrigger) -> OutboundIntent {
         OutboundIntent::from_trigger(
             OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com")
@@ -2034,6 +2135,57 @@ mod tests {
                 .dedupe_key("dedupe:invite-kenji"),
             trigger,
         )
+    }
+
+    fn linkedin_send_intent(trigger: OutboundIntentTrigger) -> OutboundIntent {
+        OutboundIntent::from_trigger(
+            OutboundIntentDraft::new(
+                "agent-alpha",
+                "send_dm",
+                LINKEDIN_CHANNEL,
+                "linkedin:member:jane-doe",
+            )
+            .on_behalf_of("owner")
+            .content_ref("content:linkedin-jane")
+            .idempotency_key("lnkd:send:jane:overview")
+            .dedupe_key("lnkd:thread:2-jane-doe-abc:overview"),
+            trigger,
+        )
+    }
+
+    fn allow_linkedin_send(
+        vault: &Vault,
+        actor: &OutboundDispatchActor,
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        put_policy_manifest(
+            vault,
+            0xE0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                LINKEDIN_CHANNEL,
+                &["send_dm"],
+            ),
+        )?;
+        Ok(())
+    }
+
+    fn linkedin_send_request(
+        actor: OutboundDispatchActor,
+        receipt_id: &str,
+        intent_ref: &str,
+    ) -> OutboundDispatchRequest {
+        OutboundDispatchRequest::new(
+            receipt_id,
+            intent_ref,
+            linkedin_send_intent(OutboundIntentTrigger::agent_immediate(
+                "session:linkedin-send",
+            )),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_060,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .counterparty_ref("linkedin:member:jane-doe")
     }
 
     fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
@@ -2509,6 +2661,199 @@ mod tests {
         assert_eq!(
             result.receipt.fields.get("retry_state").map(String::as_str),
             Some("transport_timeout")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_send_dm_receipt_is_delivered_only_after_content_observation()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB1));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let message = "Happy to share more details.";
+        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+            "2-jane-doe-abc",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+        )])
+        .failing_send("upstream_send_message_flaked");
+        let plan =
+            LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-send", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-send",
+                "intent:linkedin-send",
+            ),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(result.receipt.outcome, "delivered_to_channel");
+        assert_eq!(
+            sink.transport().send_calls.len(),
+            1,
+            "fresh send must call send_message once"
+        );
+        assert_eq!(
+            sink.transport().get_calls,
+            vec!["2-jane-doe-abc".to_owned()],
+            "success is verified by re-reading the thread"
+        );
+        let provider_ref = result
+            .receipt
+            .fields
+            .get("provider_ref")
+            .expect("verified send writes provider/thread message ref");
+        assert!(provider_ref.starts_with("linkedin:thread:2-jane-doe-abc@message:"));
+        assert_eq!(
+            result.receipt.fields.get("artifact_thread_message_ref"),
+            Some(provider_ref),
+            "receipt door must target the artifact thread@message"
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("send_message_return_trusted")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("send_message_tool_error")
+                .map(String::as_str),
+            Some("upstream_send_message_flaked"),
+            "tool errors are recorded but do not decide success"
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("content_observed")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_send_dm_observed_absent_produces_failed_receipt_without_phantom_success()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB2));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
+            "2-jane-doe-abc",
+            "Happy to share more details.",
+        )?
+        .with_max_observation_attempts(2)?;
+        let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+        ]);
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-absent", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-absent",
+                "intent:linkedin-absent",
+            ),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(result.receipt.outcome, "failed");
+        assert!(!result.receipt.fields.contains_key("provider_ref"));
+        assert_eq!(
+            result.receipt.fields.get("retry_state").map(String::as_str),
+            Some("verify_after_send_observed_absent")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("observed_absent")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("verification_attempts")
+                .map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(sink.transport().send_calls.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_retry_guard_observes_existing_message_without_duplicate_send()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB3));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let message = "Happy to share more details.";
+        let plan =
+            LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+                .retry_guarded();
+        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+            "2-jane-doe-abc",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+        )]);
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-retry", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-retry",
+                "intent:linkedin-retry",
+            ),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert!(sink.transport().send_calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("duplicate_send_guard")
+                .map(String::as_str),
+            Some("observed_existing")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("send_message_called")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("content_observed")
         );
         Ok(())
     }
