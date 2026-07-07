@@ -186,6 +186,8 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidAnchor,
+    AnnotationThreadNotFound,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -493,6 +495,14 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// An anchored-annotation anchor or locator failed structural validation.
+    /// Nothing was written.
+    #[error("invalid anchor: {0}")]
+    InvalidAnchor(&'static str),
+    /// The referenced anchored-annotation thread does not exist on the
+    /// artifact. Nothing was written.
+    #[error("anchored-annotation thread not found")]
+    AnnotationThreadNotFound,
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -1045,6 +1055,8 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
+            Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
