@@ -135,7 +135,7 @@ fn answerability_fixture() -> Result<AnswerabilityFixture> {
             receipt_id: "outbound:intent:invite-mika",
             receipt_kind: ReceiptKind::Outbound,
             occurred_at: 104,
-            outcome: "declined",
+            outcome: "suppressed",
             job_ref: Some(BRIEF_REF),
             trigger_ref: Some("intent:invite-mika"),
             policy_trace: &["counterparty.opt_out"],
@@ -147,7 +147,8 @@ fn answerability_fixture() -> Result<AnswerabilityFixture> {
                 ("opt_out", "true"),
                 ("promo_consent", "false"),
                 ("intent_source", "agent_immediate"),
-                ("decline_reason", "counterparty_opt_out"),
+                ("suppression", "counterparty_opt_out"),
+                ("suppression_reason", "counterparty.opt_out"),
                 ("budget_debit", "0"),
             ],
         }),
@@ -330,6 +331,22 @@ const fn test_time(ts: u64) -> TimeRange {
 }
 
 fn receipt(fixture: ReceiptFixture<'_>) -> ReceiptRecord {
+    let mut fields = field_map(fixture.fields);
+    if fixture.receipt_kind == ReceiptKind::Outbound {
+        fields
+            .entry("receipt_schema".to_owned())
+            .or_insert_with(|| "outbound_receipt.v1".to_owned());
+        fields
+            .entry("engine_register".to_owned())
+            .or_insert_with(|| "neutral".to_owned());
+        fields
+            .entry("care_register".to_owned())
+            .or_insert_with(|| "eirispec_care_register".to_owned());
+        fields
+            .entry("audit_register".to_owned())
+            .or_insert_with(|| "dashboard_atom_kit_audit".to_owned());
+    }
+
     ReceiptRecord {
         receipt_id: fixture.receipt_id.to_owned(),
         receipt_kind: fixture.receipt_kind,
@@ -344,7 +361,7 @@ fn receipt(fixture: ReceiptFixture<'_>) -> ReceiptRecord {
             .iter()
             .map(|entry| (*entry).to_owned())
             .collect(),
-        fields: field_map(fixture.fields),
+        fields,
     }
 }
 
@@ -379,6 +396,50 @@ fn receipt_ids(projection: &GrantReceiptProjection) -> BTreeSet<&str> {
 }
 
 #[test]
+fn answerability_pack_outbound_receipts_use_o5_shape_and_register_split() -> Result<()> {
+    let fixture = answerability_fixture()?;
+    let canonical_outcomes = BTreeSet::from([
+        "delivered_to_channel",
+        "held",
+        "degraded",
+        "suppressed",
+        "let_go",
+        "failed",
+    ]);
+
+    for receipt in fixture
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.receipt_kind == ReceiptKind::Outbound)
+    {
+        assert!(
+            canonical_outcomes.contains(receipt.outcome.as_str()),
+            "outbound receipt {} used non-O5 outcome {}",
+            receipt.receipt_id,
+            receipt.outcome
+        );
+        assert_ne!(receipt.outcome, "seen");
+        assert_ne!(receipt.outcome, "declined");
+        assert_ne!(receipt.outcome, "denied");
+        assert_eq!(
+            field(receipt, "receipt_schema", "O5 shape"),
+            "outbound_receipt.v1"
+        );
+        assert_eq!(field(receipt, "engine_register", "O5 shape"), "neutral");
+        assert_eq!(
+            field(receipt, "care_register", "O5 shape"),
+            "eirispec_care_register"
+        );
+        assert_eq!(
+            field(receipt, "audit_register", "O5 shape"),
+            "dashboard_atom_kit_audit"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result<()> {
     let question = "Why didn't you send it?";
     let fixture = answerability_fixture()?;
@@ -388,7 +449,7 @@ fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result
         .filter(|receipt| {
             matches!(
                 receipt.outcome.as_str(),
-                "held" | "degraded" | "suppressed" | "declined" | "let_go" | "failed"
+                "held" | "degraded" | "suppressed" | "let_go" | "failed"
             )
         })
         .collect::<Vec<_>>();
@@ -423,14 +484,14 @@ fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result
     assert!(
         negative_space
             .iter()
-            .any(|receipt| receipt.outcome == "declined"
+            .any(|receipt| receipt.outcome == "suppressed"
                 && receipt
                     .policy_trace
                     .iter()
                     .any(|trace| trace == "counterparty.opt_out")
-                && field(receipt, "decline_reason", question) == "counterparty_opt_out"
+                && field(receipt, "suppression", question) == "counterparty_opt_out"
                 && field(receipt, "opt_out", question) == "true"),
-        "{question}: declined receipt lacks counterparty opt-out explanation"
+        "{question}: suppressed opt-out receipt lacks counterparty explanation"
     );
     assert!(
         negative_space
@@ -526,7 +587,6 @@ fn answerability_test_pack_what_happened_with_the_party_from_brief_projection() 
         "held",
         "degraded",
         "suppressed",
-        "declined",
         "failed",
         "let_go",
     ] {
@@ -566,7 +626,7 @@ fn answerability_test_pack_who_contacted_on_my_behalf_from_counterparty_projecti
     let mika = projections
         .iter()
         .find(|projection| projection.counterparty_ref == "person:mika")
-        .unwrap_or_else(|| panic!("{question}: missing declined counterparty"));
+        .unwrap_or_else(|| panic!("{question}: missing suppressed opt-out counterparty"));
     assert_eq!(mika.first_touch.as_deref(), Some("user_introduction"));
     assert_eq!(mika.opt_out, Some(true));
     assert_eq!(mika.promo_consent, Some(false));
