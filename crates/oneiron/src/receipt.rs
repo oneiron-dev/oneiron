@@ -59,8 +59,16 @@ const FIELD_REASONING_EFFORT: &str = "reasoning_effort";
 const FIELD_PROMPT_INPUT_REF: &str = "prompt_input_ref";
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
+const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
+const FIELD_ENGINE_REGISTER: &str = "engine_register";
+const FIELD_CARE_REGISTER: &str = "care_register";
+const FIELD_AUDIT_REGISTER: &str = "audit_register";
 const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
 const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
+const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
+const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
+const OUTBOUND_CARE_REGISTER: &str = "eirispec_care_register";
+const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
@@ -810,6 +818,22 @@ pub fn outbound_intent_receipt(
     fields.insert("channel".to_owned(), intent.channel.clone());
     fields.insert("target".to_owned(), intent.target.clone());
     fields.insert("intent_source".to_owned(), intent.intent_source.clone());
+    fields.insert(
+        FIELD_RECEIPT_SCHEMA.to_owned(),
+        OUTBOUND_RECEIPT_SCHEMA.to_owned(),
+    );
+    fields.insert(
+        FIELD_ENGINE_REGISTER.to_owned(),
+        OUTBOUND_ENGINE_REGISTER.to_owned(),
+    );
+    fields.insert(
+        FIELD_CARE_REGISTER.to_owned(),
+        OUTBOUND_CARE_REGISTER.to_owned(),
+    );
+    fields.insert(
+        FIELD_AUDIT_REGISTER.to_owned(),
+        OUTBOUND_AUDIT_REGISTER.to_owned(),
+    );
     if let Some(content_ref) = intent.content_ref.as_ref() {
         fields.insert("content_ref".to_owned(), content_ref.clone());
     }
@@ -2924,7 +2948,7 @@ mod tests {
                 "outbound:intent:invite-mika",
                 ReceiptKind::Outbound,
                 102,
-                "declined",
+                "suppressed",
                 Some("brief:party"),
                 Some("intent:invite-mika"),
                 &[

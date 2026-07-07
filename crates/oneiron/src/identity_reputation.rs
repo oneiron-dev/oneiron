@@ -608,6 +608,29 @@ mod tests {
     }
 
     #[test]
+    fn attestation_tier_c_constrains_send_rate_without_complaint_or_bounce() -> Result<()> {
+        let identity_ref = entity(0xA7);
+        let mut reputation = IdentityReputation::new(IdentityWarmupStage::Established, 10);
+
+        reputation.apply_adapter_signal(IdentityReputationSignal::AttestationTier {
+            tier: IdentityAttestationTier::C,
+            observed_at: 11,
+        })?;
+
+        // No complaint/bounce pressure: the constrained status is driven solely by tier C.
+        assert_eq!(reputation.complaint_rate, 0.0);
+        assert_eq!(reputation.bounce_rate, 0.0);
+        assert_eq!(reputation.status(), IdentityReputationStatus::Constrained);
+
+        let clamp = reputation.clamp_send_rate(identity_ref, 1_000);
+        assert_eq!(clamp.status, IdentityReputationStatus::Constrained);
+        assert_eq!(clamp.health_cap, CONSTRAINED_REPUTATION_DAILY_CAP);
+        assert_eq!(clamp.effective_daily_cap, CONSTRAINED_REPUTATION_DAILY_CAP);
+        assert!(!clamp.rotate_proposal_required);
+        Ok(())
+    }
+
+    #[test]
     fn warmup_and_health_clamps_are_per_identity() -> Result<()> {
         let healthy_identity = entity(0xA2);
         let degraded_identity = entity(0xA3);
