@@ -638,6 +638,8 @@ pub struct GateSystemNoticeAction {
     pub target: String,
 }
 
+pub(crate) const GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN: usize = 128;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateSystemNoticeRecord {
     pub notice_type: String,
@@ -2783,10 +2785,9 @@ fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
         && valid_gate_notice_token(&notice.audience, 32)
         && !notice.body.trim().is_empty()
         && notice.body.len() <= 1024
-        && notice
-            .row_ref
-            .as_deref()
-            .is_none_or(|row_ref| !row_ref.trim().is_empty() && row_ref.len() <= 128)
+        && notice.row_ref.as_deref().is_none_or(|row_ref| {
+            !row_ref.trim().is_empty() && row_ref.len() <= GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN
+        })
         && notice.setting_change_offer.as_ref().is_none_or(|offer| {
             !offer.label.trim().is_empty()
                 && offer.label.len() <= 128

@@ -18,7 +18,8 @@ use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, decode_standing_outbound_grant_body,
 };
 use crate::store::{
-    ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, PendingGateConsentRecord,
+    ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
+    PendingGateConsentRecord,
 };
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
@@ -48,6 +49,8 @@ const FIELD_BUDGET: &str = "budget";
 const FIELD_FIRST_TOUCH: &str = "first_touch";
 const FIELD_OPT_OUT: &str = "opt_out";
 const FIELD_PROMO_CONSENT: &str = "promo_consent";
+const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
+const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
 
 const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
@@ -1314,7 +1317,7 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
     if let Some(grant_ref) = record.grant_ref.as_ref() {
         fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
     }
-    if let Some(notice) = record.system_notices.first() {
+    if let Some(notice) = select_gate_system_notice_for_receipt(&record.system_notices) {
         fields.insert("system_notice_type".to_owned(), notice.notice_type.clone());
         fields.insert("system_notice_channel".to_owned(), notice.channel.clone());
         fields.insert("system_notice_voice".to_owned(), notice.voice.clone());
@@ -1348,6 +1351,20 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
         policy_trace,
         fields,
     }
+}
+
+fn select_gate_system_notice_for_receipt(
+    notices: &[GateSystemNoticeRecord],
+) -> Option<&GateSystemNoticeRecord> {
+    notices
+        .iter()
+        .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
+        .or_else(|| {
+            notices
+                .iter()
+                .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_ALL)
+        })
+        .or_else(|| notices.first())
 }
 
 fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
@@ -1994,6 +2011,18 @@ mod tests {
         Ok(decision_id)
     }
 
+    fn gate_system_notice(audience: &str, body: &str) -> GateSystemNoticeRecord {
+        GateSystemNoticeRecord {
+            notice_type: "policy_block".to_owned(),
+            channel: "EF-196/OF-221".to_owned(),
+            voice: "system".to_owned(),
+            audience: audience.to_owned(),
+            body: body.to_owned(),
+            row_ref: None,
+            setting_change_offer: None,
+        }
+    }
+
     fn append_pending_gate_consent(
         vault: &Vault,
         created_at: u64,
@@ -2311,6 +2340,62 @@ mod tests {
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].receipt_kind, ReceiptKind::Share);
         Ok(())
+    }
+
+    #[test]
+    fn gate_receipt_system_notice_selection_is_order_independent() {
+        let decision = GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::now(),
+            created_at: 10,
+            outcome: "block".to_owned(),
+            reason_codes: vec!["gate.policy_model.block".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: vec![
+                gate_system_notice("owner", "owner row details"),
+                gate_system_notice(SYSTEM_NOTICE_AUDIENCE_ALL, "all audience notice"),
+                gate_system_notice(
+                    SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
+                    "third-party safe notice",
+                ),
+            ],
+            actor_class: "policy_model".to_owned(),
+            actor_ref: Some("agent-alpha".to_owned()),
+            content_kind: "outbound_content".to_owned(),
+            policy_manifest_version: "test-policy".to_owned(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: vec![0xA5],
+            read_frontier_hash: [0xB6; 32],
+        };
+
+        let receipt = gate_decision_receipt(&decision);
+        assert_eq!(
+            receipt
+                .fields
+                .get("system_notice_audience")
+                .map(String::as_str),
+            Some(SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
+        );
+        assert_eq!(
+            receipt.fields.get("system_notice").map(String::as_str),
+            Some("third-party safe notice")
+        );
+
+        let notices = vec![
+            gate_system_notice("owner", "owner row details"),
+            gate_system_notice(SYSTEM_NOTICE_AUDIENCE_ALL, "all audience notice"),
+        ];
+        assert_eq!(
+            select_gate_system_notice_for_receipt(&notices).map(|notice| notice.audience.as_str()),
+            Some(SYSTEM_NOTICE_AUDIENCE_ALL)
+        );
+
+        let notices = vec![gate_system_notice("owner", "owner row details")];
+        assert_eq!(
+            select_gate_system_notice_for_receipt(&notices).map(|notice| notice.audience.as_str()),
+            Some("owner")
+        );
     }
 
     #[test]

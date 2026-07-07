@@ -15,7 +15,8 @@ use crate::llm::{
     LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, SafeguardModelBinding,
 };
 use crate::store::{
-    GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord,
+    GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateDecisionId, GateDecisionRecord, GateSystemNoticeAction,
+    GateSystemNoticeRecord,
 };
 use crate::types::bytes_to_hex_lower;
 
@@ -26,6 +27,8 @@ const POLICY_MODEL_BLOCK_NOTICE: &str =
     "Oneiron blocked this outbound content before display or action.";
 const POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE: &str =
     "Oneiron blocked this outbound content under the vault owner's policy.";
+const POLICY_MODEL_OWNER_BLOCK_NOTICE: &str =
+    "Oneiron blocked this outbound content because one of your policy settings asked it to.";
 const POLICY_MODEL_HELP_CARD_NOTICE: &str =
     "Oneiron routed this turn to a help card with EF-304 handoff.";
 const POLICY_MODEL_HELP_MESSAGE: &str =
@@ -1028,33 +1031,47 @@ fn default_system_notice(notices: &[GateSystemNoticeRecord]) -> Option<String> {
     notices
         .iter()
         .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
+        .or_else(|| {
+            notices
+                .iter()
+                .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_ALL)
+        })
         .or_else(|| notices.first())
         .map(|notice| notice.body.clone())
 }
 
 fn block_system_notices(verdict: &PolicyClassifyVerdict) -> Vec<GateSystemNoticeRecord> {
     match &verdict.category {
-        PolicyVerdictCategory::OwnerPolicy { row_ref } => vec![
-            system_notice(
-                SYSTEM_NOTICE_TYPE_BLOCK,
-                SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
-                POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE.to_owned(),
-                None,
-                None,
-            ),
-            system_notice(
-                SYSTEM_NOTICE_TYPE_BLOCK,
-                SYSTEM_NOTICE_AUDIENCE_OWNER,
-                format!(
-                    "Oneiron blocked this outbound content because your policy row {row_ref} asked it to."
+        PolicyVerdictCategory::OwnerPolicy { row_ref } => {
+            let owner_notice_row_ref = safe_system_notice_row_ref(row_ref);
+            let owner_notice_body = owner_notice_row_ref
+                .as_deref()
+                .map(|row_ref| {
+                    format!(
+                        "Oneiron blocked this outbound content because your policy row {row_ref} asked it to."
+                    )
+                })
+                .unwrap_or_else(|| POLICY_MODEL_OWNER_BLOCK_NOTICE.to_owned());
+            vec![
+                system_notice(
+                    SYSTEM_NOTICE_TYPE_BLOCK,
+                    SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
+                    POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE.to_owned(),
+                    None,
+                    None,
                 ),
-                Some(row_ref.clone()),
-                Some(GateSystemNoticeAction {
-                    label: "Change policy setting".to_owned(),
-                    target: OWNER_POLICY_SETTINGS_DEEP_LINK.to_owned(),
-                }),
-            ),
-        ],
+                system_notice(
+                    SYSTEM_NOTICE_TYPE_BLOCK,
+                    SYSTEM_NOTICE_AUDIENCE_OWNER,
+                    owner_notice_body,
+                    owner_notice_row_ref,
+                    Some(GateSystemNoticeAction {
+                        label: "Change policy setting".to_owned(),
+                        target: OWNER_POLICY_SETTINGS_DEEP_LINK.to_owned(),
+                    }),
+                ),
+            ]
+        }
         _ => vec![system_notice(
             SYSTEM_NOTICE_TYPE_BLOCK,
             SYSTEM_NOTICE_AUDIENCE_ALL,
@@ -1062,6 +1079,15 @@ fn block_system_notices(verdict: &PolicyClassifyVerdict) -> Vec<GateSystemNotice
             None,
             None,
         )],
+    }
+}
+
+fn safe_system_notice_row_ref(row_ref: &str) -> Option<String> {
+    let row_ref = row_ref.trim();
+    if row_ref.is_empty() || row_ref.len() > GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN {
+        None
+    } else {
+        Some(row_ref.to_owned())
     }
 }
 
@@ -3029,6 +3055,39 @@ mod tests {
             .expect("owner setting-change offer");
         assert_eq!(offer.label, "Change policy setting");
         assert_eq!(offer.target, OWNER_POLICY_SETTINGS_DEEP_LINK);
+        Ok(())
+    }
+
+    #[test]
+    fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let long_row_ref = format!("owner:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
+        put_policy_manifest_bytes(
+            &vault,
+            0x46,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
+                &long_row_ref,
+                "Block this oversized policy row.",
+                "block",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert!(outcome.receipt_ref.is_some());
+        let notice = outcome
+            .system_notices
+            .iter()
+            .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_OWNER)
+            .expect("owner notice");
+        assert_eq!(notice.row_ref, None);
+        assert!(!notice.body.contains(&long_row_ref));
+        assert_eq!(notice.body, POLICY_MODEL_OWNER_BLOCK_NOTICE);
+        assert!(notice.setting_change_offer.is_some());
         Ok(())
     }
 
