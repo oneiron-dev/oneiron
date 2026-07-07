@@ -27,6 +27,7 @@ pub mod delivery_window;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
+pub mod edit_roundtrip;
 pub mod embed;
 pub mod engine_executor;
 pub mod error;
