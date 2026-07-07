@@ -2890,14 +2890,26 @@ fn load_structural_kind_registry(
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         vet_structural_kind_registration_band(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
-        if entity_type_registry_entry(registration.type_byte).is_some() {
+        if entity_type_registry_entry(registration.type_byte).is_some()
+            || static_short_id_prefix_collision(&registration.short_id_prefix)
+        {
             if is_compatible_legacy_companion_register_row(&registration) {
+                continue;
+            }
+            if is_post_dynamic_static_collision(&registration) {
+                // Forward-compat, not corruption (OF-368 ARTL-1 review): the
+                // row was written while its byte/prefix was legitimately
+                // dynamically registrable and a LATER engine release claimed
+                // it statically. The static definition wins for the byte;
+                // the persisted row stays in vault_meta untouched, and its
+                // prefix stays reserved here so no new dynamic pack can mint
+                // short ids colliding with rows already written under it.
+                prefixes.insert(registration.short_id_prefix.clone());
                 continue;
             }
             return Err(Error::CorruptedIndex("structural kind registry"));
         }
-        if static_short_id_prefix_collision(&registration.short_id_prefix)
-            || !prefixes.insert(registration.short_id_prefix.clone())
+        if !prefixes.insert(registration.short_id_prefix.clone())
             || registry
                 .insert(registration.type_byte, registration)
                 .is_some()
@@ -2906,6 +2918,24 @@ fn load_structural_kind_registry(
         }
     }
     Ok(registry)
+}
+
+/// Static kinds whose type byte (and short-id prefix) were claimed by a
+/// release AFTER older releases already accepted arbitrary dynamic
+/// registrations of them. A persisted dynamic row colliding with one of
+/// these is legacy data from that window — tolerated at load, never
+/// corruption. COMPANION_REGISTER is deliberately NOT in this set: its
+/// static claim shipped together with dynamic registration itself, so only
+/// its own exact legacy shape (handled separately above) can exist
+/// legitimately and anything else at byte 64 stays fail-closed.
+const POST_DYNAMIC_STATIC_KIND_BYTES: &[u8] = &[crate::types::ENTITY_TYPE_BLOB_ARTIFACT];
+
+fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -> bool {
+    POST_DYNAMIC_STATIC_KIND_BYTES.contains(&registration.type_byte)
+        || POST_DYNAMIC_STATIC_KIND_BYTES.iter().any(|byte| {
+            entity_type_registry_entry(*byte).and_then(|entry| entry.short_id_prefix)
+                == Some(registration.short_id_prefix.as_str())
+        })
 }
 
 fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegistration) -> bool {

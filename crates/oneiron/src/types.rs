@@ -64,6 +64,12 @@ pub const ENTITY_TYPE_TASK: u8 = 81;
 pub const ENTITY_TYPE_MACHINE: u8 = 82;
 pub const ENTITY_TYPE_CODE_ARTIFACT: u8 = 83;
 pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 84;
+/// OF-368 D1 (ARTL-1) versioned blob artifact for foreign binary (office)
+/// files. Rides the OF-320 artifact model: append-only version chain in
+/// `vault_meta`, content-addressed ASSET bytes, `blob.version` LEDGER claim
+/// per version. A blob artifact is not a code artifact — kind = shape
+/// (DEC-0005 §7), so CODE_ARTIFACT (83) reuse was rejected.
+pub const ENTITY_TYPE_BLOB_ARTIFACT: u8 = 85;
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 120;
 /// MODEL substrate entity (ONE-1138, ratified): engine-authored maintenance
 /// kind — "written when a substrate first appears in a write path". Public
@@ -500,6 +506,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "CODE_SYMBOL",
         type_byte: ENTITY_TYPE_CODE_SYMBOL,
         short_id_prefix: Some("cs"),
+        classification: EntityClassification::Pack,
+        band: TypeByteBand::Productivity,
+    },
+    EntityTypeRegistryEntry {
+        kind: "BLOB_ARTIFACT",
+        type_byte: ENTITY_TYPE_BLOB_ARTIFACT,
+        short_id_prefix: Some("ba"),
         classification: EntityClassification::Pack,
         band: TypeByteBand::Productivity,
     },
