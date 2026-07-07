@@ -2131,6 +2131,14 @@ mod tests {
         })
     }
 
+    fn linkedin_conversation_without_thread_metadata(conversation: &str) -> serde_json::Value {
+        serde_json::json!({
+            "sections": {
+                "conversation": conversation
+            }
+        })
+    }
+
     fn dispatch_intent(trigger: OutboundIntentTrigger) -> OutboundIntent {
         OutboundIntent::from_trigger(
             OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com")
@@ -2734,6 +2742,110 @@ mod tests {
                 .map(String::as_str),
             Some("ignored"),
             "send_message success return is recorded but not trusted"
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("content_observed")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB7));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
+            "2-jane-doe-abc",
+            "Happy to share more details.",
+        )?;
+        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+            "2-jane-doe-abc",
+            "Yura\n10:04 AM\nHappy to share more details.",
+        )]);
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-target-mismatch", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            OutboundDispatchRequest::new(
+                "outbound:intent:linkedin-target-mismatch",
+                "intent:linkedin-target-mismatch",
+                linkedin_send_intent(OutboundIntentTrigger::agent_immediate(
+                    "session:linkedin-send",
+                )),
+                actor,
+                OutboundDispatchGate::allow_when_policy_grants(),
+                1_061,
+                OutboundDeliveryWindowDecision::DeliverNow,
+            )
+            .counterparty_ref("linkedin:member:mallory"),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(result.receipt.outcome, "failed");
+        assert!(sink.transport().send_calls.is_empty());
+        assert!(sink.transport().get_calls.is_empty());
+        assert_eq!(
+            result.receipt.fields.get("retry_state").map(String::as_str),
+            Some("linkedin_verified_send_target_mismatch")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("send_message_called")
+                .map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("target_mismatch")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_send_dm_verifies_metadata_light_conversation_with_requested_thread()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB8));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let message = "Happy to share more details.";
+        let plan =
+            LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
+        let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation_without_thread_metadata(
+                "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+            ),
+        ]);
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-metadata-light", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-metadata-light",
+                "intent:linkedin-metadata-light",
+            ),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(sink.transport().send_calls.len(), 1);
+        assert_eq!(
+            sink.transport().get_calls,
+            vec!["2-jane-doe-abc".to_owned()]
         );
         assert_eq!(
             result

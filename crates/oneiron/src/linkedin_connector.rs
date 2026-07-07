@@ -374,6 +374,21 @@ impl<T: LinkedInMcpSendTransport> OutboundExecutionSink for LinkedInMcpVerifiedS
             return OutboundExecutionOutcome::failed("linkedin_verified_send_plan_missing");
         };
 
+        let gated_counterparty = request.counterparty_ref.unwrap_or(&request.intent.target);
+        if !plan_matches_gated_counterparty(&plan, gated_counterparty) {
+            let mut fields = verified_send_receipt_fields(&plan);
+            fields.insert(
+                RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                "false".to_owned(),
+            );
+            fields.insert(
+                RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
+                "target_mismatch".to_owned(),
+            );
+            return OutboundExecutionOutcome::failed("linkedin_verified_send_target_mismatch")
+                .with_receipt_fields(fields);
+        }
+
         self.execute_plan(request, &plan)
     }
 }
@@ -695,6 +710,14 @@ fn verified_send_receipt_fields(plan: &LinkedInVerifiedSendPlan) -> BTreeMap<Str
     ])
 }
 
+fn plan_matches_gated_counterparty(
+    plan: &LinkedInVerifiedSendPlan,
+    gated_counterparty: &str,
+) -> bool {
+    gated_counterparty == plan.recipient_key
+        || gated_counterparty == counterparty_key(&plan.thread_id)
+}
+
 fn observed_message_ref(
     output: &Value,
     expected_thread_id: &str,
@@ -704,11 +727,7 @@ fn observed_message_ref(
     let observed_thread_id = match thread_id_from_payload_url(&payload)? {
         Some(thread_id) => thread_id,
         None => first_conversation_thread_id(&section_references(&payload, "conversation"))?
-            .ok_or_else(|| {
-                Error::InvalidConfig(
-                    "LinkedIn get_conversation output did not include a thread id".to_owned(),
-                )
-            })?,
+            .unwrap_or_else(|| expected_thread_id.to_owned()),
     };
     if observed_thread_id != expected_thread_id {
         return Ok(None);
