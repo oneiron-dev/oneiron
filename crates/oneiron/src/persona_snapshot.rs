@@ -200,7 +200,7 @@ pub struct PersonaSnapshotAgentTake {
     pub about_ref: Option<EntityId>,
 }
 
-/// Options for [`Vault::compile_persona_snapshot`].
+/// Options for [`crate::Vault::compile_persona_snapshot`].
 #[derive(Debug, Clone)]
 pub struct PersonaSnapshotCompileOptions {
     /// When the card is FOR someone, their scoped-read actor key; claims
