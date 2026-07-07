@@ -1333,6 +1333,10 @@ mod tests {
             .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
     }
 
+    fn task_body() -> Vec<u8> {
+        crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    }
+
     fn commit_local_entity(
         window: &LoadedWindow,
         id: &EntityId,
@@ -1671,7 +1675,7 @@ mod tests {
 
         let window = client.ensure_window(key).unwrap();
         let id = EntityId::now();
-        let payload_update = commit_local_entity(&window, &id, learned_at, b"private-payload");
+        let payload_update = commit_local_entity(&window, &id, learned_at, &task_body());
         assert!(
             sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
             "corrupt m:u_seq makes Observer A fail before any u:w row is written"
@@ -1732,7 +1736,7 @@ mod tests {
         let learned_at = 1_772_400_000u64;
         let window = client.ensure_window(key).unwrap();
         let id = EntityId::now();
-        let payload_update = commit_local_entity(&window, &id, learned_at, b"snapshot-payload");
+        let payload_update = commit_local_entity(&window, &id, learned_at, &task_body());
         let prefix = format!("u:w:{key}:");
         assert!(
             sync_state_values_with_prefix(&vault, &prefix)
@@ -2271,7 +2275,7 @@ mod tests {
         let key = "2026-03";
         let window = client.ensure_window(key).expect("open window");
         let local_id = test_entity_id(0x8F);
-        commit_local_entity(&window, &local_id, 1_772_400_000, b"local-stays");
+        commit_local_entity(&window, &local_id, 1_772_400_000, &task_body());
         window.persist_state(&vault).expect("persist local state");
 
         let live_before = window.doc.get_deep_value();

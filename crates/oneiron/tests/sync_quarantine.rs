@@ -25,7 +25,7 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::types::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
-    EdgeKind, TimeRange,
+    EdgeKind, TaskRole, TimeRange,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 use xxhash_rust::xxh3::xxh3_64;
@@ -54,6 +54,19 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
     blob.extend_from_slice(&learned_at.to_be_bytes());
     blob.extend_from_slice(data);
     blob
+}
+
+fn task_body() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(
+        &mut bytes,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("role"),
+            rmpv::Value::from(TaskRole::Task.role_byte()),
+        )]),
+    )
+    .expect("writing MessagePack TASK body to Vec cannot fail");
+    bytes
 }
 
 /// Hand-built 24-byte SemanticBare edge value (weight + created_at + VAD),
@@ -237,7 +250,12 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
             container: QuarantineContainer::Entities,
             expected_reason: "InvalidKey",
             setup: |_vault, doc| {
-                let blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"x");
+                let blob = entity_blob(
+                    ENTITY_TYPE_TASK,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &task_body(),
+                );
                 insert_bytes(&doc.get_map("entities"), "not-a-hex-entity-id", &blob);
                 ("not-a-hex-entity-id".to_string(), blob)
             },
@@ -263,7 +281,7 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
                     ENTITY_TYPE_TASK,
                     TimeRange { start: 9, end: 3 },
                     LEARNED_AT,
-                    b"x",
+                    &task_body(),
                 );
                 insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
                 (id.to_hex(), blob)
@@ -276,7 +294,13 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
             setup: |vault, doc| {
                 let id = EntityId::now();
                 vault
-                    .put_entity(&id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"a")
+                    .put_entity(
+                        &id,
+                        ENTITY_TYPE_TASK,
+                        valid_time_range(),
+                        LEARNED_AT,
+                        &task_body(),
+                    )
                     .unwrap();
                 let blob = entity_blob(ENTITY_TYPE_PERSON, valid_time_range(), LEARNED_AT, b"b");
                 insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
@@ -459,10 +483,22 @@ fn each_gate_rejection_class_produces_exactly_one_quarantine_record() {
                 let src = EntityId::now();
                 let tgt = EntityId::now();
                 vault
-                    .put_entity(&src, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"s")
+                    .put_entity(
+                        &src,
+                        ENTITY_TYPE_TASK,
+                        valid_time_range(),
+                        LEARNED_AT,
+                        &task_body(),
+                    )
                     .unwrap();
                 vault
-                    .put_entity(&tgt, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"t")
+                    .put_entity(
+                        &tgt,
+                        ENTITY_TYPE_TASK,
+                        valid_time_range(),
+                        LEARNED_AT,
+                        &task_body(),
+                    )
                     .unwrap();
                 let key = format_edge_key(&src, EdgeKind::Mentions, &tgt);
                 // Finite but outside the contract range [0, 1]: decodes,
@@ -804,13 +840,18 @@ fn poisoned_entity_op_does_not_abort_the_batch() {
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice()),
+        Some(task_body().as_slice()),
         "good op must land despite the poisoned sibling"
     );
     assert!(vault.get(&bad_id).unwrap().is_none());
@@ -837,7 +878,12 @@ fn observer_b_quarantines_malformed_federation_grant_and_continues() {
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
@@ -847,7 +893,7 @@ fn observer_b_quarantines_malformed_federation_grant_and_continues() {
     );
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice()),
+        Some(task_body().as_slice()),
         "valid sibling must land after quarantining the malformed grant"
     );
 
@@ -877,7 +923,12 @@ fn forward_remat_quarantines_malformed_federation_grant_and_continues() {
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
@@ -889,7 +940,7 @@ fn forward_remat_quarantines_malformed_federation_grant_and_continues() {
     );
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice())
+        Some(task_body().as_slice())
     );
 
     let records = quarantined_records(&vault).unwrap();
@@ -913,15 +964,10 @@ fn poisoned_edge_op_does_not_abort_the_batch() {
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
-    for (id, data) in [(&a, b"a"), (&b, b"b"), (&c, b"c")] {
+    for id in [&a, &b, &c] {
+        let body = task_body();
         vault
-            .put_entity(
-                id,
-                ENTITY_TYPE_TASK,
-                valid_time_range(),
-                LEARNED_AT,
-                data.as_slice(),
-            )
+            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
             .unwrap();
     }
 
@@ -1017,7 +1063,7 @@ fn tombstone_removal_delta_is_quarantined_as_protocol_violation() {
             ENTITY_TYPE_TASK,
             valid_time_range(),
             LEARNED_AT,
-            b"victim",
+            &task_body(),
         )
         .unwrap();
     insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1");
@@ -1061,15 +1107,10 @@ fn undecodable_endpoint_blob_quarantines_edge_and_batch_continues() {
 
     let a = EntityId::now();
     let b = EntityId::now();
-    for (id, data) in [(&a, b"a"), (&b, b"b")] {
+    for id in [&a, &b] {
+        let body = task_body();
         vault
-            .put_entity(
-                id,
-                ENTITY_TYPE_TASK,
-                valid_time_range(),
-                LEARNED_AT,
-                data.as_slice(),
-            )
+            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
             .unwrap();
     }
     let bad = EntityId::now();
@@ -1130,15 +1171,10 @@ fn child_of_cardinality_violation_quarantines_only_failing_op() {
     let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
     let parent_a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
     let parent_b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
-    for (id, data) in [(&child, b"c"), (&parent_a, b"p"), (&parent_b, b"q")] {
+    for id in [&child, &parent_a, &parent_b] {
+        let body = task_body();
         vault
-            .put_entity(
-                id,
-                ENTITY_TYPE_TASK,
-                valid_time_range(),
-                LEARNED_AT,
-                data.as_slice(),
-            )
+            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
             .unwrap();
     }
 
@@ -1208,7 +1244,7 @@ fn string_valued_tombstone_purges_entity_and_invalid_key_still_quarantined() {
             ENTITY_TYPE_TASK,
             valid_time_range(),
             LEARNED_AT,
-            b"victim",
+            &task_body(),
         )
         .unwrap();
 
@@ -1267,7 +1303,12 @@ fn forward_remat_quarantines_non_binary_entity_value_and_continues() {
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
@@ -1279,7 +1320,7 @@ fn forward_remat_quarantines_non_binary_entity_value_and_continues() {
     );
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice()),
+        Some(task_body().as_slice()),
         "the pass must continue past the quarantined op"
     );
 
@@ -1313,15 +1354,10 @@ fn forward_remat_quarantines_non_binary_edge_value_and_continues() {
     let a = EntityId::now();
     let b = EntityId::now();
     let c = EntityId::now();
-    for (id, data) in [(&a, b"a"), (&b, b"b"), (&c, b"c")] {
+    for id in [&a, &b, &c] {
+        let body = task_body();
         vault
-            .put_entity(
-                id,
-                ENTITY_TYPE_TASK,
-                valid_time_range(),
-                LEARNED_AT,
-                data.as_slice(),
-            )
+            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
             .unwrap();
     }
 
@@ -1381,13 +1417,23 @@ fn observer_b_quarantines_uppercase_alias_entity_key() {
     let alias_key = alias_id.to_hex().to_uppercase();
     assert_ne!(alias_key, alias_id.to_hex(), "case-shift must be real");
     let good_id = EntityId::now();
-    let alias_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"alias");
+    let alias_blob = entity_blob(
+        ENTITY_TYPE_TASK,
+        valid_time_range(),
+        LEARNED_AT,
+        &task_body(),
+    );
     let entities = doc.get_map("entities");
     insert_bytes(&entities, &alias_key, &alias_blob);
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
@@ -1397,7 +1443,7 @@ fn observer_b_quarantines_uppercase_alias_entity_key() {
     );
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice()),
+        Some(task_body().as_slice()),
         "canonical lowercase delivery still works — the batch is not aborted"
     );
 
@@ -1431,13 +1477,23 @@ fn forward_remat_quarantines_uppercase_alias_entity_key() {
     let alias_id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
     let alias_key = alias_id.to_hex().to_uppercase();
     let good_id = EntityId::now();
-    let alias_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"alias");
+    let alias_blob = entity_blob(
+        ENTITY_TYPE_TASK,
+        valid_time_range(),
+        LEARNED_AT,
+        &task_body(),
+    );
     let entities = doc.get_map("entities");
     insert_bytes(&entities, &alias_key, &alias_blob);
     insert_bytes(
         &entities,
         &good_id.to_hex(),
-        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
     );
     doc.commit();
 
@@ -1449,7 +1505,7 @@ fn forward_remat_quarantines_uppercase_alias_entity_key() {
     );
     assert_eq!(
         vault.get(&good_id).unwrap().as_deref(),
-        Some(b"good".as_slice())
+        Some(task_body().as_slice())
     );
 
     let records = quarantined_records(&vault).unwrap();

@@ -172,6 +172,7 @@ pub enum ErrorKind {
     InvalidOutboundGrantBody,
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
+    InvalidTaskBody,
     CorruptedIndex,
     ContextPackValidation,
     IndexOverflow,
@@ -480,6 +481,9 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
     InvalidCounterpartyContactBody(&'static str),
+    /// A TASK record failed pinned role-field validation. Nothing was written.
+    #[error("invalid TASK body: {0}")]
+    InvalidTaskBody(&'static str),
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -945,6 +949,7 @@ impl Error {
             Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
+            Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             Self::IndexOverflow(_) => ErrorKind::IndexOverflow,

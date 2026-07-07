@@ -3706,7 +3706,13 @@ mod tests {
         let actor = EntityId::now();
         let subject = EntityId::now();
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(at), at, b"actor")?;
-        vault.put_entity(&subject, ENTITY_TYPE_TASK, occurred(at), at, b"subject")?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_TASK,
+            occurred(at),
+            at,
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        )?;
         let envelope = WriteEnvelope::new(
             WriteActor::new(actor, EdgeActorClass::Human),
             ClaimSource::UserStated,
@@ -3777,7 +3783,13 @@ mod tests {
         let actor = EntityId::now();
         let subject = EntityId::now();
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(at), at, b"actor")?;
-        vault.put_entity(&subject, ENTITY_TYPE_TASK, occurred(at), at, b"subject")?;
+        vault.put_entity(
+            &subject,
+            ENTITY_TYPE_TASK,
+            occurred(at),
+            at,
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        )?;
         let envelope = WriteEnvelope::new(
             WriteActor::new(actor, EdgeActorClass::Human),
             ClaimSource::UserStated,

@@ -31,7 +31,7 @@ use oneiron::sync::{
     ConnectionConfig, EphemeralStore, EphemeralWireState, LoroValue, SyncClient, SyncClientConfig,
     SyncConnection, SyncEvent, SyncStatus, WindowManager,
 };
-use oneiron::types::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::types::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN, TaskRole};
 use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
@@ -558,7 +558,7 @@ async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
     let id = EntityId::now();
     let body = msgpack_json(&serde_json::json!({
         "title": "Ship projection",
-        "role": "agent",
+        "role": TaskRole::Task.role_byte(),
         "status": "open",
         "priority": 2,
         "body": "long heavy body",
@@ -604,7 +604,7 @@ async fn http_entity_default_returns_standard_raw_body() {
     let id = EntityId::now();
     let body = msgpack_json(&serde_json::json!({
         "title": "Raw default",
-        "role": "agent",
+        "role": TaskRole::Task.role_byte(),
         "status": "open"
     }));
     vault
@@ -632,7 +632,7 @@ async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
     let id = EntityId::now();
     let body = msgpack_json(&serde_json::json!({
         "title": "Vector hit",
-        "role": "agent",
+        "role": TaskRole::Task.role_byte(),
         "status": "open",
         "priority": 1,
         "dueDate": 1_777_100_000_u64,
@@ -706,7 +706,8 @@ async fn http_edges_default_summary_and_standard_preserves_current_fields() {
     let vault = open_vault(dir.path());
     let source = EntityId::now();
     let target = EntityId::now();
-    let body = msgpack_json(&serde_json::json!({"title": "node", "role": "agent"}));
+    let body =
+        msgpack_json(&serde_json::json!({"title": "node", "role": TaskRole::Task.role_byte()}));
     for id in [source, target] {
         vault
             .put_entity(
