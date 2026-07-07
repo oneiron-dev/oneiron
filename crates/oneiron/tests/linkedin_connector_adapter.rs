@@ -1,9 +1,15 @@
 use oneiron::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState, EntityId,
-    InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB,
-    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
-    LinkedInMcpConnectorAdapter, OutboundPermissionState, Result, SurfaceCounterpartyStamp, Vault,
-    VaultConfig, outbound_capability_manifest, outbound_verb_contract,
+    InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY,
+    LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
+    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
+    LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB, LinkedInAccountRiskLimits,
+    LinkedInMcpConnectorAdapter, LinkedInPasswordCustody, LinkedInSandboxHostConfig,
+    LinkedInSandboxHostHarness, LinkedInSandboxRuntime, LinkedInSeatDispatchState,
+    LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy, OutboundPermissionState, Result,
+    SurfaceCounterpartyStamp, Vault, VaultConfig, linkedin_connect_consent_screen_copy,
+    outbound_capability_manifest, outbound_verb_contract, run_linkedin_kill_switch,
 };
 use serde_json::{Value, json};
 
@@ -28,6 +34,33 @@ fn fixture(json: &str) -> Value {
 fn adapter() -> Result<LinkedInMcpConnectorAdapter> {
     LinkedInMcpConnectorAdapter::new("linkedin:member:yura")?
         .with_session_ref("linkedin:session:yura:tokyo-sandbox")
+}
+
+#[derive(Default)]
+struct RecordingSandboxHarness {
+    destroyed: Vec<String>,
+    revoked: Vec<String>,
+}
+
+impl LinkedInSandboxHostHarness for RecordingSandboxHarness {
+    fn destroy_sandbox(&mut self, host: &LinkedInSandboxHostConfig) -> Result<()> {
+        self.destroyed.push(host.sandbox_ref.clone());
+        Ok(())
+    }
+
+    fn revoke_verb_catalog(&mut self, seat_ref: &str) -> Result<()> {
+        self.revoked.push(seat_ref.to_owned());
+        Ok(())
+    }
+}
+
+fn sandbox_host() -> Result<LinkedInSandboxHostConfig> {
+    LinkedInSandboxHostConfig::new(
+        "linkedin:seat:yura",
+        "sandbox:tokyo:yura",
+        "browser-profile:linkedin:yura",
+        "vault-secret:linkedin:yura:session-cookie",
+    )
 }
 
 #[test]
@@ -72,6 +105,174 @@ fn linkedin_outbound_manifest_registers_dm_and_connect_request_verbs() -> Result
     assert_eq!(
         adapter.supported_outbound_verbs(),
         [LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB]
+    );
+    Ok(())
+}
+
+#[test]
+fn linkedin_sandbox_host_config_records_custody_and_login_handoff() -> Result<()> {
+    let config = sandbox_host()?;
+    assert_eq!(config.runtime, LinkedInSandboxRuntime::Container);
+    assert!(config.mcp_server.persistent_browser_profile);
+    assert_eq!(
+        config.session_cookie_secret_ref,
+        "vault-secret:linkedin:yura:session-cookie"
+    );
+    assert!(config.login_handoff.one_time_remote_browser);
+    assert!(config.login_handoff.member_completes_2fa);
+    assert_eq!(
+        config.login_handoff.password_custody,
+        LinkedInPasswordCustody::MemberOnly
+    );
+
+    let bad_secret_ref = LinkedInSandboxHostConfig::new(
+        "linkedin:seat:yura",
+        "sandbox:tokyo:yura",
+        "browser-profile:linkedin:yura",
+        "raw-cookie",
+    )
+    .expect_err("session cookie custody must be a vault-scoped secret ref");
+    assert!(
+        format!("{bad_secret_ref:?}").contains("vault-scoped"),
+        "unexpected error: {bad_secret_ref:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn linkedin_d5_consent_copy_and_caps_are_plain_and_mechanical() -> Result<()> {
+    let copy = linkedin_connect_consent_screen_copy();
+    assert_eq!(copy.title, "Connect LinkedIn");
+    for required in [
+        "does not officially support",
+        "own logged-in browser session",
+        "does not need or store your password",
+        "account limited",
+        "15 DMs per day",
+        "sweeps are not allowed",
+        "deletes the sandbox",
+    ] {
+        assert!(
+            LINKEDIN_CONNECT_CONSENT_BODY.contains(required),
+            "consent copy missing D5 phrase: {required}"
+        );
+    }
+    assert!(
+        copy.acknowledgements
+            .iter()
+            .any(|ack| ack.contains("15 DMs per day") && ack.contains("no sweeps"))
+    );
+
+    let limits = LinkedInAccountRiskLimits::default();
+    assert_eq!(limits.daily_dm_cap, LINKEDIN_DEFAULT_DAILY_DM_CAP);
+    assert_eq!(
+        limits.daily_profile_read_cap,
+        LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP
+    );
+    assert_eq!(
+        limits.cadence_jitter_min_seconds,
+        LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS
+    );
+    assert_eq!(
+        limits.cadence_jitter_max_seconds,
+        LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS
+    );
+    let next_send = limits.jittered_next_send_not_before(1_800_000_000, 42);
+    assert!(next_send >= 1_800_000_000 + u64::from(LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS));
+    assert!(next_send <= 1_800_000_000 + u64::from(LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS));
+    assert_eq!(limits.capped_down(10)?.daily_dm_cap, 10);
+    assert!(
+        LinkedInAccountRiskLimits::default()
+            .capped_down(LINKEDIN_DEFAULT_DAILY_DM_CAP + 1)
+            .is_err(),
+        "seat owners can lower default caps, not silently raise them"
+    );
+    assert_eq!(
+        LinkedInAccountRiskLimits::default()
+            .with_owner_approved_daily_dm_cap(20, "consent:linkedin-owner-warning")?
+            .owner_warning_ack_ref
+            .as_deref(),
+        Some("consent:linkedin-owner-warning")
+    );
+    Ok(())
+}
+
+#[test]
+fn linkedin_profile_read_cap_is_engine_policy_not_adapter_state() -> Result<()> {
+    let policy = LinkedInSeatSandboxPolicy::active(sandbox_host()?).with_state(
+        LinkedInSeatDispatchState::active()
+            .with_profile_reads_today(LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP),
+    );
+
+    let decision = policy.evaluate_profile_read();
+    assert_eq!(decision.action, LinkedInSeatPolicyAction::Hold);
+    assert_eq!(
+        decision.reason_code.as_deref(),
+        Some("linkedin.daily_profile_read_cap")
+    );
+    assert_eq!(
+        decision
+            .receipt_fields
+            .get("linkedin_daily_profile_read_cap")
+            .map(String::as_str),
+        Some("25")
+    );
+    assert_eq!(
+        decision
+            .receipt_fields
+            .get("linkedin_profile_reads_today")
+            .map(String::as_str),
+        Some("25")
+    );
+    assert_eq!(
+        decision
+            .receipt_fields
+            .get("linkedin_policy_enforced_engine_side")
+            .map(String::as_str),
+        Some("true")
+    );
+    Ok(())
+}
+
+#[test]
+fn linkedin_kill_switch_harness_destroys_sandbox_and_revokes_catalog() -> Result<()> {
+    let policy = LinkedInSeatSandboxPolicy::active(sandbox_host()?)
+        .with_state(LinkedInSeatDispatchState::active());
+    assert_eq!(
+        policy.verb_catalog(),
+        [LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB]
+    );
+
+    let mut harness = RecordingSandboxHarness::default();
+    let killed = run_linkedin_kill_switch(
+        policy,
+        &mut harness,
+        1_800_000_100,
+        "consent:owner-disabled-linkedin",
+    )?;
+    assert_eq!(harness.destroyed, vec!["sandbox:tokyo:yura"]);
+    assert_eq!(harness.revoked, vec!["linkedin:seat:yura"]);
+    assert!(killed.verb_catalog().is_empty());
+
+    let decision = killed.evaluate_outbound(LINKEDIN_CHANNEL, LINKEDIN_SEND_DM_VERB, 1_800_000_101);
+    assert_eq!(decision.action, LinkedInSeatPolicyAction::Suppress);
+    assert_eq!(
+        decision.reason_code.as_deref(),
+        Some("linkedin.kill_switch_engaged")
+    );
+    assert_eq!(
+        decision
+            .receipt_fields
+            .get("linkedin_sandbox_destroyed")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        decision
+            .receipt_fields
+            .get("linkedin_verb_catalog_revoked")
+            .map(String::as_str),
+        Some("true")
     );
     Ok(())
 }
