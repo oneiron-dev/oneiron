@@ -566,7 +566,7 @@ fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
 // Rider 6: a discard validates the proposal ref (the same bar select applies)
 // before persisting a ledger row — a blank ref is refused.
 #[test]
-fn discard_validates_proposal_ref() -> Result<()> {
+fn discard_validates_proposal_ref() {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let actor = put_actor(&vault, 10);
     let artifact = put_workbook(&vault, actor, 10);
@@ -576,5 +576,4 @@ fn discard_validates_proposal_ref() -> Result<()> {
         .settle_discard_edit_proposal(&artifact, &prop, &owner(), actor, "no", 11)
         .expect_err("a blank proposal ref must be refused");
     assert_eq!(err.kind(), crate::error::ErrorKind::EditRoundtripFailed);
-    Ok(())
 }
