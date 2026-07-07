@@ -59,6 +59,8 @@ const RECEIPT_FIELD_VERIFICATION_STATE: &str = "linkedin_send_verification";
 const RECEIPT_FIELD_VERIFICATION_ATTEMPTS: &str = "verification_attempts";
 const RECEIPT_FIELD_DUPLICATE_SEND_GUARD: &str = "duplicate_send_guard";
 const RECEIPT_FIELD_RETRY_WINDOW: &str = "retry_window";
+const RECEIPT_FIELD_PRE_SEND_MATCH_COUNT: &str = "pre_send_match_count";
+const RECEIPT_FIELD_POST_SEND_MATCH_COUNT: &str = "post_send_match_count";
 
 /// Adapter for recorded `stickerdaniel/linkedin-mcp-server` messaging outputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -413,55 +415,55 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             plan.max_observation_attempts.to_string(),
         );
 
-        if plan.guard_retry {
-            match self.transport.get_conversation(&plan.thread_id) {
-                Ok(output) => {
-                    match observed_message_ref(&output, &plan.thread_id, &plan.message_text) {
-                        Ok(Some(message_ref)) => {
-                            fields.insert(
-                                RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                                "observed_existing".to_owned(),
-                            );
-                            fields.insert(
-                                RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
-                                "false".to_owned(),
-                            );
-                            fields.insert(
-                                RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
-                                "content_observed".to_owned(),
-                            );
-                            fields.insert(
-                                RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
-                                "1".to_owned(),
-                            );
-                            return OutboundExecutionOutcome::delivered_to_channel(message_ref)
-                                .with_receipt_fields(fields);
-                        }
-                        Ok(None) => {
-                            fields.insert(
-                                RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                                "observed_absent".to_owned(),
-                            );
-                        }
-                        Err(err) => {
-                            fields.insert(
-                                RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                                "precheck_failed".to_owned(),
-                            );
-                            fields.insert(
-                                RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
-                                "false".to_owned(),
-                            );
-                            fields.insert(
-                                "verify_precheck_error".to_owned(),
-                                receipt_error_code(&err.to_string()),
-                            );
-                            return OutboundExecutionOutcome::failed(
-                                "verify_after_send_precheck_failed",
-                            )
-                            .with_receipt_fields(fields);
-                        }
+        let pre_send_match_count = match self.transport.get_conversation(&plan.thread_id) {
+            Ok(output) => match observed_message(&output, &plan.thread_id, &plan.message_text) {
+                Ok(Some(observation)) => {
+                    fields.insert(
+                        RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
+                        observation.occurrence_count.to_string(),
+                    );
+                    if plan.guard_retry && observation.tail_matches {
+                        fields.insert(
+                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                            "observed_existing".to_owned(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                            "false".to_owned(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
+                            "content_observed".to_owned(),
+                        );
+                        fields.insert(
+                            RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
+                            "1".to_owned(),
+                        );
+                        return OutboundExecutionOutcome::delivered_to_channel(
+                            observation.message_ref,
+                        )
+                        .with_receipt_fields(fields);
                     }
+                    if plan.guard_retry {
+                        fields.insert(
+                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                            "observed_existing_not_tail".to_owned(),
+                        );
+                    }
+                    observation.occurrence_count
+                }
+                Ok(None) => {
+                    fields.insert(
+                        RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
+                        "0".to_owned(),
+                    );
+                    if plan.guard_retry {
+                        fields.insert(
+                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                            "observed_absent".to_owned(),
+                        );
+                    }
+                    0
                 }
                 Err(err) => {
                     fields.insert(
@@ -472,12 +474,28 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                         RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
                         "false".to_owned(),
                     );
-                    fields.insert("verify_precheck_error".to_owned(), receipt_error_code(&err));
+                    fields.insert(
+                        "verify_precheck_error".to_owned(),
+                        receipt_error_code(&err.to_string()),
+                    );
                     return OutboundExecutionOutcome::failed("verify_after_send_precheck_failed")
                         .with_receipt_fields(fields);
                 }
+            },
+            Err(err) => {
+                fields.insert(
+                    RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                    "precheck_failed".to_owned(),
+                );
+                fields.insert(
+                    RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                    "false".to_owned(),
+                );
+                fields.insert("verify_precheck_error".to_owned(), receipt_error_code(&err));
+                return OutboundExecutionOutcome::failed("verify_after_send_precheck_failed")
+                    .with_receipt_fields(fields);
             }
-        }
+        };
 
         let send_request = LinkedInMcpSendMessageRequest {
             recipient_key: plan.recipient_key.clone(),
@@ -520,11 +538,20 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         }
 
         let mut last_get_error = None;
+        let mut observed_stale = false;
+        let mut post_send_match_count = 0;
         for attempt in 1..=plan.max_observation_attempts {
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
-                    match observed_message_ref(&output, &plan.thread_id, &plan.message_text) {
-                        Ok(Some(message_ref)) => {
+                    match observed_message(&output, &plan.thread_id, &plan.message_text) {
+                        Ok(Some(observation))
+                            if observation.tail_matches
+                                && observation.occurrence_count > pre_send_match_count =>
+                        {
+                            fields.insert(
+                                RECEIPT_FIELD_POST_SEND_MATCH_COUNT.to_owned(),
+                                observation.occurrence_count.to_string(),
+                            );
                             fields.insert(
                                 RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
                                 "content_observed".to_owned(),
@@ -533,8 +560,16 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                                 RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
                                 attempt.to_string(),
                             );
-                            return OutboundExecutionOutcome::delivered_to_channel(message_ref)
-                                .with_receipt_fields(fields);
+                            return OutboundExecutionOutcome::delivered_to_channel(
+                                observation.message_ref,
+                            )
+                            .with_receipt_fields(fields);
+                        }
+                        Ok(Some(observation)) => {
+                            observed_stale = true;
+                            post_send_match_count =
+                                post_send_match_count.max(observation.occurrence_count);
+                            last_get_error = None;
                         }
                         Ok(None) => {
                             last_get_error = None;
@@ -553,10 +588,18 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             }
         }
 
+        if post_send_match_count > 0 {
+            fields.insert(
+                RECEIPT_FIELD_POST_SEND_MATCH_COUNT.to_owned(),
+                post_send_match_count.to_string(),
+            );
+        }
         fields.insert(
             RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
             if last_get_error.is_some() {
                 "get_conversation_failed"
+            } else if observed_stale {
+                "observed_stale"
             } else {
                 "observed_absent"
             }
@@ -569,6 +612,9 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         if let Some(error) = last_get_error {
             fields.insert("verify_get_conversation_error".to_owned(), error);
             OutboundExecutionOutcome::failed("verify_after_send_get_conversation_failed")
+                .with_receipt_fields(fields)
+        } else if observed_stale {
+            OutboundExecutionOutcome::failed("verify_after_send_observed_stale")
                 .with_receipt_fields(fields)
         } else {
             OutboundExecutionOutcome::failed("verify_after_send_observed_absent")
@@ -718,11 +764,17 @@ fn plan_matches_gated_counterparty(
         || gated_counterparty == counterparty_key(&plan.thread_id)
 }
 
-fn observed_message_ref(
+struct LinkedInObservedMessage {
+    message_ref: String,
+    occurrence_count: usize,
+    tail_matches: bool,
+}
+
+fn observed_message(
     output: &Value,
     expected_thread_id: &str,
     message_text: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<LinkedInObservedMessage>> {
     let payload = mcp_payload(output)?;
     let observed_thread_id = match thread_id_from_payload_url(&payload)? {
         Some(thread_id) => thread_id,
@@ -735,14 +787,15 @@ fn observed_message_ref(
     let Some(conversation_text) = optional_section_text(&payload, "conversation")? else {
         return Ok(None);
     };
-    if conversation_contains_message(conversation_text, message_text) {
-        Ok(Some(linkedin_thread_message_ref(
-            expected_thread_id,
-            message_text,
-        )))
-    } else {
-        Ok(None)
+    let occurrence_count = conversation_message_occurrence_count(conversation_text, message_text);
+    if occurrence_count == 0 {
+        return Ok(None);
     }
+    Ok(Some(LinkedInObservedMessage {
+        message_ref: linkedin_thread_message_ref(expected_thread_id, message_text),
+        occurrence_count,
+        tail_matches: conversation_ends_with_message(conversation_text, message_text),
+    }))
 }
 
 fn linkedin_thread_message_ref(thread_id: &str, message_text: &str) -> String {
@@ -753,7 +806,35 @@ fn linkedin_thread_message_ref(thread_id: &str, message_text: &str) -> String {
     )
 }
 
-fn conversation_contains_message(conversation_text: &str, message_text: &str) -> bool {
+fn conversation_message_occurrence_count(conversation_text: &str, message_text: &str) -> usize {
+    let message = normalize_whitespace(message_text);
+    if message.is_empty() {
+        return 0;
+    }
+    let conversation_lines = conversation_text
+        .lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if conversation_lines.is_empty() {
+        return 0;
+    }
+    let message_line_count = message_text
+        .lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .count()
+        .max(1);
+    if message_line_count > conversation_lines.len() {
+        return 0;
+    }
+    conversation_lines
+        .windows(message_line_count)
+        .filter(|window| normalize_whitespace(&window.join(" ")) == message)
+        .count()
+}
+
+fn conversation_ends_with_message(conversation_text: &str, message_text: &str) -> bool {
     let message = normalize_whitespace(message_text);
     if message.is_empty() {
         return false;
@@ -763,9 +844,6 @@ fn conversation_contains_message(conversation_text: &str, message_text: &str) ->
         .map(normalize_whitespace)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    if conversation_lines.is_empty() {
-        return false;
-    }
     let message_line_count = message_text
         .lines()
         .map(normalize_whitespace)

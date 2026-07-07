@@ -2081,8 +2081,8 @@ mod tests {
             self
         }
 
-        fn with_get_error_first(mut self, error_code: &str) -> Self {
-            self.conversations.push_front(Err(error_code.to_owned()));
+        fn with_get_error_after_precheck(mut self, error_code: &str) -> Self {
+            self.conversations.insert(1, Err(error_code.to_owned()));
             self
         }
     }
@@ -2686,10 +2686,16 @@ mod tests {
         allow_linkedin_send(&vault, &actor)?;
 
         let message = "Happy to share more details.";
-        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
-        )]);
+        let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+            ),
+        ]);
         let plan =
             LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
         let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
@@ -2712,8 +2718,8 @@ mod tests {
         );
         assert_eq!(
             sink.transport().get_calls,
-            vec!["2-jane-doe-abc".to_owned()],
-            "success is verified by re-reading the thread"
+            vec!["2-jane-doe-abc".to_owned(), "2-jane-doe-abc".to_owned()],
+            "success is verified by baseline and post-send thread reads"
         );
         let provider_ref = result
             .receipt
@@ -2826,6 +2832,10 @@ mod tests {
         let plan =
             LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?;
         let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
             linkedin_conversation_without_thread_metadata(
                 "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
             ),
@@ -2845,7 +2855,7 @@ mod tests {
         assert_eq!(sink.transport().send_calls.len(), 1);
         assert_eq!(
             sink.transport().get_calls,
-            vec!["2-jane-doe-abc".to_owned()]
+            vec!["2-jane-doe-abc".to_owned(), "2-jane-doe-abc".to_owned()]
         );
         assert_eq!(
             result
@@ -2868,7 +2878,7 @@ mod tests {
         let message = "Happy to share more details.";
         let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
             "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.",
         )])
         .failing_send("upstream_send_message_flaked");
         let plan =
@@ -2888,9 +2898,9 @@ mod tests {
         assert_eq!(result.receipt.outcome, "failed");
         assert!(!result.receipt.fields.contains_key("provider_ref"));
         assert_eq!(sink.transport().send_calls.len(), 1);
-        assert!(
-            sink.transport().get_calls.is_empty(),
-            "failed sends must not be upgraded by later observation"
+        assert_eq!(
+            sink.transport().get_calls,
+            vec!["2-jane-doe-abc".to_owned()]
         );
         assert_eq!(
             result.receipt.fields.get("retry_state").map(String::as_str),
@@ -2937,6 +2947,10 @@ mod tests {
         )?
         .with_max_observation_attempts(2)?;
         let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
             linkedin_conversation(
                 "2-jane-doe-abc",
                 "Jane Doe\n10:01 AM\nThanks for reaching out.",
@@ -2995,10 +3009,16 @@ mod tests {
         let plan =
             LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
                 .with_max_observation_attempts(1)?;
-        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
-            "2-jane-doe-abc",
-            "Yura\n10:04 AM\nHappy to share more details.\nJane Doe\n10:05 AM\nSounds good.",
-        )]);
+        let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Yura\n10:04 AM\nHappy to share more details.\nJane Doe\n10:05 AM\nSounds good.",
+            ),
+        ]);
         let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
             .with_plan("intent:linkedin-older-match", plan)?;
         let result = vault.dispatch_outbound_intent(
@@ -3013,10 +3033,10 @@ mod tests {
         assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
         assert!(!result.receipt.fields.contains_key("provider_ref"));
         assert_eq!(sink.transport().send_calls.len(), 1);
-        assert_eq!(sink.transport().get_calls.len(), 1);
+        assert_eq!(sink.transport().get_calls.len(), 2);
         assert_eq!(
             result.receipt.fields.get("retry_state").map(String::as_str),
-            Some("verify_after_send_observed_absent")
+            Some("verify_after_send_observed_stale")
         );
         assert_eq!(
             result
@@ -3024,7 +3044,68 @@ mod tests {
                 .fields
                 .get("linkedin_send_verification")
                 .map(String::as_str),
-            Some("observed_absent")
+            Some("observed_stale")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_send_dm_requires_new_post_send_occurrence()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xB9));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let message = "Happy to share more details.";
+        let plan =
+            LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+                .with_max_observation_attempts(1)?;
+        let existing_thread = linkedin_conversation(
+            "2-jane-doe-abc",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.\nYura\n10:04 AM\nHappy to share more details.",
+        );
+        let transport =
+            ScriptedLinkedInTransport::new(vec![existing_thread.clone(), existing_thread]);
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan("intent:linkedin-noop-send", plan)?;
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-noop-send",
+                "intent:linkedin-noop-send",
+            ),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(sink.transport().send_calls.len(), 1);
+        assert_eq!(
+            result.receipt.fields.get("retry_state").map(String::as_str),
+            Some("verify_after_send_observed_stale")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_send_verification")
+                .map(String::as_str),
+            Some("observed_stale")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("pre_send_match_count")
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("post_send_match_count")
+                .map(String::as_str),
+            Some("1")
         );
         Ok(())
     }
@@ -3042,11 +3123,17 @@ mod tests {
             "Happy to share more details.",
         )?
         .with_max_observation_attempts(2)?;
-        let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
-            "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        )])
-        .with_get_error_first("temporary_get_failure");
+        let transport = ScriptedLinkedInTransport::new(vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+        ])
+        .with_get_error_after_precheck("temporary_get_failure");
         let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
             .with_plan("intent:linkedin-transient-error", plan)?;
         let result = vault.dispatch_outbound_intent(
@@ -3059,7 +3146,7 @@ mod tests {
         )?;
 
         assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
-        assert_eq!(sink.transport().get_calls.len(), 2);
+        assert_eq!(sink.transport().get_calls.len(), 3);
         assert_eq!(
             result.receipt.fields.get("retry_state").map(String::as_str),
             Some("verify_after_send_observed_absent")
