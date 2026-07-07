@@ -508,6 +508,15 @@ pub fn outbound_intent_receipt(
     fields.insert("channel".to_owned(), intent.channel.clone());
     fields.insert("target".to_owned(), intent.target.clone());
     fields.insert("intent_source".to_owned(), intent.intent_source.clone());
+    if let Some(content_ref) = intent.content_ref.as_ref() {
+        fields.insert("content_ref".to_owned(), content_ref.clone());
+    }
+    if let Some(idempotency_key) = intent.idempotency_key.as_ref() {
+        fields.insert("idempotency_key".to_owned(), idempotency_key.clone());
+    }
+    if let Some(dedupe_key) = intent.dedupe_key.as_ref() {
+        fields.insert("dedupe_key".to_owned(), dedupe_key.clone());
+    }
 
     ReceiptRecord {
         receipt_id,
@@ -2267,6 +2276,9 @@ mod tests {
             verb: "send".to_owned(),
             channel: "email".to_owned(),
             target: "kenji@example.com".to_owned(),
+            content_ref: None,
+            idempotency_key: None,
+            dedupe_key: None,
             intent_source: "brief_run".to_owned(),
             trigger_ref: "intent:invite-kenji".to_owned(),
             job_ref: Some("brief:party".to_owned()),
