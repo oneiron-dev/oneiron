@@ -732,6 +732,11 @@ impl OutboundDispatchPipeline {
             .iter()
             .map(|reason| reason.as_str().to_owned())
             .collect::<Vec<_>>();
+        let gate_receipt_reasons = gate_decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect::<Vec<_>>();
 
         let (outcome, execution) = match gate_outcome_kind {
             GateOutcome::Allow => match &request.window_decision {
@@ -778,6 +783,9 @@ impl OutboundDispatchPipeline {
             .extend(gate_reason_codes.iter().cloned());
         receipt
             .policy_trace
+            .extend(gate_receipt_reasons.iter().cloned());
+        receipt
+            .policy_trace
             .push(request.window_decision.policy_trace());
         let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
         receipt
@@ -789,6 +797,12 @@ impl OutboundDispatchPipeline {
         receipt
             .fields
             .insert("gate_reason_codes".to_owned(), gate_reason_codes.join(","));
+        if !gate_receipt_reasons.is_empty() {
+            receipt.fields.insert(
+                "gate_receipt_reasons".to_owned(),
+                gate_receipt_reasons.join(","),
+            );
+        }
         receipt.fields.insert(
             "channel_call".to_owned(),
             verb_contract.channel_call.clone(),
@@ -860,6 +874,7 @@ impl OutboundDispatchPipeline {
             outcome,
             gate_outcome_kind,
             &gate_reason_codes,
+            &gate_receipt_reasons,
         );
         append_window_receipt_fields(&mut receipt, &request.window_decision);
 
@@ -913,8 +928,13 @@ fn append_dispatch_outcome_receipt_fields(
     outcome: OutboundDispatchOutcome,
     gate_outcome: GateOutcome,
     gate_reason_codes: &[String],
+    gate_receipt_reasons: &[String],
 ) {
     let gate_reason = gate_reason_codes
+        .iter()
+        .find(|reason| !reason.trim().is_empty())
+        .map(String::as_str);
+    let gate_receipt_reason = gate_receipt_reasons
         .iter()
         .find(|reason| !reason.trim().is_empty())
         .map(String::as_str);
@@ -924,10 +944,22 @@ fn append_dispatch_outcome_receipt_fields(
             append_optional_receipt_field(receipt, "hold_reason", gate_reason);
         }
         (OutboundDispatchOutcome::Suppressed, GateOutcome::Deny) => {
+            let suppression = if gate_reason_codes
+                .iter()
+                .any(|reason| reason == "gate.deny.counterparty_opt_out")
+            {
+                "counterparty_opt_out"
+            } else {
+                "gate_denied"
+            };
             receipt
                 .fields
-                .insert("suppression".to_owned(), "gate_denied".to_owned());
-            append_optional_receipt_field(receipt, "suppression_reason", gate_reason);
+                .insert("suppression".to_owned(), suppression.to_owned());
+            append_optional_receipt_field(
+                receipt,
+                "suppression_reason",
+                gate_receipt_reason.or(gate_reason),
+            );
         }
         _ => {}
     }
@@ -952,7 +984,8 @@ fn append_window_receipt_fields(
                 .insert("window_reason".to_owned(), reason.clone());
             receipt
                 .fields
-                .insert("hold_reason".to_owned(), reason.clone());
+                .entry("hold_reason".to_owned())
+                .or_insert_with(|| reason.clone());
             if let Some(retry_at) = retry_at {
                 receipt
                     .fields
@@ -1917,6 +1950,73 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA7);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD7,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let gate = OutboundDispatchGate {
+            has_opted_in: true,
+            has_permission: false,
+            policy_risk: OutboundDispatchPolicyRisk::Normal,
+        };
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:gate-and-window-held",
+            "intent:gate-and-window-held",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate(
+                "session:gate-window-held",
+            )),
+            actor,
+            gate,
+            1_015,
+        )
+        .window_decision(OutboundDeliveryWindowDecision::Hold {
+            reason: "quiet_window".to_owned(),
+            retry_at: Some(2_100),
+        });
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "pending");
+        assert_eq!(
+            result.receipt.fields.get("hold_reason").map(String::as_str),
+            Some("gate.pending.external_effect_authority")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_reason")
+                .map(String::as_str),
+            Some("quiet_window")
+        );
+        assert_eq!(
+            result.receipt.fields.get("retry_at").map(String::as_str),
+            Some("2100")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.hold:quiet_window".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn dispatch_pipeline_suppresses_gate_denied_without_executing()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let (_tmp, vault) = temp_vault();
@@ -1963,13 +2063,35 @@ mod tests {
         assert_eq!(result.receipt.outcome, "suppressed");
         assert_eq!(
             result.receipt.fields.get("suppression").map(String::as_str),
-            Some("gate_denied")
+            Some("counterparty_opt_out")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("suppression_reason")
+                .map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe")
         );
         assert!(
             result
                 .receipt
                 .policy_trace
                 .contains(&"gate.deny.counterparty_opt_out".to_owned())
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"counterparty_opt_out_unsubscribe".to_owned())
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("gate_receipt_reasons")
+                .map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
         );
         Ok(())
     }
