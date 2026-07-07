@@ -122,6 +122,11 @@ use crate::types::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v10 (ONE-1443): AGENT_DEF was registered as a persistent CORE entity type
+/// byte 17. v9 readers do not know this persistent entity kind, so v9 vaults
+/// fail closed at the ABI gate — there is no silent migration; rebuild the
+/// vault.
+///
 /// v9 (ONE-1530): OUTBOUND_GRANT was registered as persistent maintenance
 /// entity type byte 133. v8 readers do not know this persistent entity kind,
 /// so v8 vaults fail closed at the ABI gate — there is no silent migration;
@@ -148,7 +153,7 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 9;
+pub const STORAGE_ABI_VERSION: u16 = 10;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
