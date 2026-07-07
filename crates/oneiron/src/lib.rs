@@ -42,6 +42,7 @@ pub mod ingest;
 pub mod job_queue;
 pub mod lens;
 pub(crate) mod limits;
+pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
 pub mod outbound;
@@ -367,6 +368,11 @@ pub use crate::lens::{
     StatusDotAtom, TextBlockAtom, TextInputControl, ThreadEntryAtom, ThrobberAtom, ToggleControl,
     TwoClocksAtom, VadBadge, VoiceLineAtom,
 };
+pub use crate::linkedin_connector::{
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
+    LINKEDIN_MCP_CONNECTOR_KEY, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
+    LinkedInMcpConnectorAdapter,
+};
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
@@ -424,7 +430,8 @@ pub use crate::policy_model::{
     PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict, PolicyConfidence,
     PolicyContentBinding, PolicyEnforcementAction, PolicyEnforcementVoice, PolicyHedgeBucket,
     PolicyHelpRouting, PolicyModelConfig, PolicyModelEnforcement, PolicyRewordFeedback,
-    PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
+    PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory, RelayFloorDegrade, RelayFloorPass,
+    RelayTrustDomain,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,
