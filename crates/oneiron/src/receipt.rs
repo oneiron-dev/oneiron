@@ -17,13 +17,14 @@ use crate::outbound::OutboundIntent;
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, decode_standing_outbound_grant_body,
 };
+use crate::prompt::PromptRecompileStamp;
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
     PendingGateConsentRecord,
 };
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, EntityId,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, EiriMemoryBoard, EntityId,
     companion::{
         CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
         decode_companion_record_body,
@@ -49,8 +50,25 @@ const FIELD_BUDGET: &str = "budget";
 const FIELD_FIRST_TOUCH: &str = "first_touch";
 const FIELD_OPT_OUT: &str = "opt_out";
 const FIELD_PROMO_CONSENT: &str = "promo_consent";
+const FIELD_PERSONA_COMPILE_STAMP: &str = "persona_compile_stamp";
+const FIELD_ACTIVATED_MEMORY_IDS: &str = "activated_memory_ids";
+const FIELD_BOARD_STATE_REF: &str = "board_state_ref";
+const FIELD_SUBSTRATE_REF: &str = "substrate_ref";
+const FIELD_MODEL: &str = "model";
+const FIELD_REASONING_EFFORT: &str = "reasoning_effort";
+const FIELD_PROMPT_INPUT_REF: &str = "prompt_input_ref";
+const BOARD_STATE_REF_PREFIX: &str = "board:";
+const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
+const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
+const FIELD_ENGINE_REGISTER: &str = "engine_register";
+const FIELD_CARE_REGISTER: &str = "care_register";
+const FIELD_AUDIT_REGISTER: &str = "audit_register";
 const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
 const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
+const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
+const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
+const OUTBOUND_CARE_REGISTER: &str = "eirispec_care_register";
+const OUTBOUND_AUDIT_REGISTER: &str = "dashboard_atom_kit_audit";
 
 const fn default_receipt_query_limit() -> usize {
     DEFAULT_RECEIPT_QUERY_LIMIT
@@ -97,6 +115,16 @@ impl ReceiptKind {
             "share" => Some(Self::Share),
             _ => None,
         }
+    }
+
+    /// Returns true when this receipt kind is stamped on an agent emit
+    /// (OF-369/RS9: chat turn, voice utterance, outbound send, artifact
+    /// write). Only emit-adjacent receipts carry the context receipt
+    /// field-set; today the outbound send receipt is the only emit path
+    /// with a receipt, and future emit receipt kinds extend this match.
+    #[must_use]
+    pub const fn is_emit_adjacent(self) -> bool {
+        matches!(self, Self::Outbound)
     }
 }
 
@@ -251,6 +279,288 @@ impl ReceiptView {
             receipt,
         }
     }
+}
+
+/// OF-369/RS9 context receipt field-set on emit-adjacent receipts.
+///
+/// Every agent emit is stamped with the exact assembled context that
+/// produced it, so "why did she say that" is answered by READING a receipt,
+/// never by re-deriving. Record-not-replay law: the LEDGER/bitemporal
+/// substrate replays facts-at-T, but derived views (retrieval output, the
+/// board as shown) drift with embedder/index/ranker versions, so they are
+/// RECORDED here at emit time and never recomputed.
+///
+/// This is a field-set on the RS1 shared spine, NOT a new receipt kind: it
+/// rides the `fields` map of receipts whose kind is
+/// [`ReceiptKind::is_emit_adjacent`].
+///
+/// The provenance joins (`substrate_ref`, `model`, `reasoning_effort`)
+/// mirror the ratified provenance ABI, where `substrate_ref` and
+/// `reasoning_effort` are themselves optional fields: they are recorded
+/// when the emit's provenance carries them, absent otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextReceiptFields {
+    /// The OF-217 B9 standing-block compile id in effect for this emit.
+    pub persona_compile_stamp: String,
+    /// The claim/summary entity ids actually placed in context this emit,
+    /// in board row order.
+    pub activated_memory_ids: Vec<String>,
+    /// Content-hash ref of the assembled context board at emit.
+    pub board_state_ref: String,
+    /// Provenance join: ref of the MODEL substrate entity in effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub substrate_ref: Option<String>,
+    /// Provenance join: model identifier in effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Provenance join: reasoning-effort scalar in effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// When OF-236 pre-compression ran, the post-compression input hash
+    /// (r-knob auditability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_input_ref: Option<String>,
+}
+
+impl ContextReceiptFields {
+    /// Captures the field-set at the context-assembly seam — the one hook
+    /// where the activation set is finalized (OF-369/RS9 emission point).
+    ///
+    /// `persona_compile_stamp` records the compile id of the resolved
+    /// standing-block prompt in effect; `activated_memory_ids` and
+    /// `board_state_ref` record the assembled memory board as shown.
+    pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Result<Self> {
+        Ok(Self {
+            persona_compile_stamp: format!(
+                "{}:{}",
+                persona.schema_version, persona.resolved_fingerprint
+            ),
+            activated_memory_ids: board.rows.iter().map(|row| row.id.clone()).collect(),
+            board_state_ref: eiri_memory_board_state_ref(board)?,
+            substrate_ref: None,
+            model: None,
+            reasoning_effort: None,
+            prompt_input_ref: None,
+        })
+    }
+
+    /// Joins the provenance `substrate_ref` (MODEL entity ref) to the stamp.
+    #[must_use]
+    pub fn substrate_ref(mut self, substrate_ref: impl Into<String>) -> Self {
+        self.substrate_ref = Some(substrate_ref.into());
+        self
+    }
+
+    /// Joins the provenance model identifier to the stamp.
+    #[must_use]
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Joins the provenance reasoning-effort scalar to the stamp.
+    #[must_use]
+    pub fn reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
+        self.reasoning_effort = Some(reasoning_effort.into());
+        self
+    }
+
+    /// Records the OF-236 post-compression prompt input hash.
+    #[must_use]
+    pub fn prompt_input_ref(mut self, prompt_input_ref: impl Into<String>) -> Self {
+        self.prompt_input_ref = Some(prompt_input_ref.into());
+        self
+    }
+
+    pub(crate) fn append_to_fields(&self, fields: &mut BTreeMap<String, String>) {
+        fields.insert(
+            FIELD_PERSONA_COMPILE_STAMP.to_owned(),
+            self.persona_compile_stamp.clone(),
+        );
+        fields.insert(
+            FIELD_ACTIVATED_MEMORY_IDS.to_owned(),
+            self.activated_memory_ids
+                .join(&ACTIVATED_MEMORY_IDS_SEPARATOR.to_string()),
+        );
+        fields.insert(
+            FIELD_BOARD_STATE_REF.to_owned(),
+            self.board_state_ref.clone(),
+        );
+        if let Some(substrate_ref) = self.substrate_ref.as_ref() {
+            fields.insert(FIELD_SUBSTRATE_REF.to_owned(), substrate_ref.clone());
+        }
+        if let Some(model) = self.model.as_ref() {
+            fields.insert(FIELD_MODEL.to_owned(), model.clone());
+        }
+        if let Some(reasoning_effort) = self.reasoning_effort.as_ref() {
+            fields.insert(FIELD_REASONING_EFFORT.to_owned(), reasoning_effort.clone());
+        }
+        if let Some(prompt_input_ref) = self.prompt_input_ref.as_ref() {
+            fields.insert(FIELD_PROMPT_INPUT_REF.to_owned(), prompt_input_ref.clone());
+        }
+    }
+}
+
+/// Computes the content-hash ref of an assembled context board.
+///
+/// The ref covers the board as shown (rows, scores, budget, companion), so
+/// any drift in retrieval output produces a different ref while already
+/// recorded receipts keep the ref captured at their emit.
+pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
+    let bytes = rmp_serde::to_vec_named(board)
+        .map_err(|_| Error::InvariantViolation("memory board state ref encode failed"))?;
+    Ok(format!(
+        "{BOARD_STATE_REF_PREFIX}{}",
+        hex_lower(blake3::hash(&bytes).as_bytes())
+    ))
+}
+
+/// Attaches the OF-369 context field-set to an emit-adjacent receipt.
+///
+/// Non-emit receipts never carry emit context; attaching to one is rejected
+/// without modifying the receipt.
+pub fn append_context_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    context: &ContextReceiptFields,
+) -> Result<()> {
+    if !receipt.receipt_kind.is_emit_adjacent() {
+        return Err(Error::EmitAdjacentReceiptRequired {
+            surface: "context receipt field-set",
+            kind: receipt.receipt_kind.as_str(),
+        });
+    }
+    context.append_to_fields(&mut receipt.fields);
+    Ok(())
+}
+
+impl ReceiptRecord {
+    /// Reads the OF-369 context field-set recorded on this receipt.
+    ///
+    /// Returns `None` on non-emit receipt kinds and on emit receipts that
+    /// were stamped before the field-set existed. The values are read from
+    /// the recorded fields alone — never recomputed from live index state.
+    #[must_use]
+    pub fn context_receipt_fields(&self) -> Option<ContextReceiptFields> {
+        if !self.receipt_kind.is_emit_adjacent() {
+            return None;
+        }
+        let persona_compile_stamp = self.fields.get(FIELD_PERSONA_COMPILE_STAMP)?;
+        let activated_memory_ids = self.fields.get(FIELD_ACTIVATED_MEMORY_IDS)?;
+        let board_state_ref = self.fields.get(FIELD_BOARD_STATE_REF)?;
+        Some(ContextReceiptFields {
+            persona_compile_stamp: persona_compile_stamp.clone(),
+            activated_memory_ids: activated_memory_ids
+                .split(ACTIVATED_MEMORY_IDS_SEPARATOR)
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            board_state_ref: board_state_ref.clone(),
+            substrate_ref: self.fields.get(FIELD_SUBSTRATE_REF).cloned(),
+            model: self.fields.get(FIELD_MODEL).cloned(),
+            reasoning_effort: self.fields.get(FIELD_REASONING_EFFORT).cloned(),
+            prompt_input_ref: self.fields.get(FIELD_PROMPT_INPUT_REF).cloned(),
+        })
+    }
+}
+
+/// Session-local holder for emit-adjacent receipts (OF-326 interaction).
+///
+/// Emit-adjacent receipts follow the transcript: in an off-record session
+/// they are session-local and deleted with the transcript at session close
+/// (the context field-set — `activated_memory_ids` above all — would betray
+/// what the room was about). Floor receipts never ride this log: they
+/// project from their own stored substrates and persist regardless of
+/// session mode, which is exactly the OF-326 "only floor receipts persist"
+/// split.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLocalReceiptLog {
+    session_ref: String,
+    off_record: bool,
+    receipts: Vec<ReceiptRecord>,
+}
+
+impl SessionLocalReceiptLog {
+    /// Opens the emit receipt log for an on-record session: receipts are
+    /// retained at close.
+    #[must_use]
+    pub fn on_record(session_ref: impl Into<String>) -> Self {
+        Self {
+            session_ref: session_ref.into(),
+            off_record: false,
+            receipts: Vec::new(),
+        }
+    }
+
+    /// Opens the emit receipt log for an off-record session: receipts are
+    /// deleted with the transcript at close.
+    #[must_use]
+    pub fn off_record(session_ref: impl Into<String>) -> Self {
+        Self {
+            session_ref: session_ref.into(),
+            off_record: true,
+            receipts: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn session_ref(&self) -> &str {
+        &self.session_ref
+    }
+
+    #[must_use]
+    pub const fn is_off_record(&self) -> bool {
+        self.off_record
+    }
+
+    /// Records one emit-adjacent receipt into the session-local log.
+    ///
+    /// Non-emit receipts are rejected: they persist through their own
+    /// substrates and must never become deletable via session close.
+    pub fn record(&mut self, receipt: ReceiptRecord) -> Result<()> {
+        if !receipt.receipt_kind.is_emit_adjacent() {
+            return Err(Error::EmitAdjacentReceiptRequired {
+                surface: "session-local receipt log",
+                kind: receipt.receipt_kind.as_str(),
+            });
+        }
+        self.receipts.push(receipt);
+        Ok(())
+    }
+
+    /// The receipts visible while the session lives, regardless of mode.
+    #[must_use]
+    pub fn receipts(&self) -> &[ReceiptRecord] {
+        &self.receipts
+    }
+
+    /// Closes the session log. On-record sessions retain their emit
+    /// receipts; off-record sessions delete them with the transcript.
+    #[must_use]
+    pub fn close(self) -> SessionReceiptClose {
+        let (retained, deleted) = if self.off_record {
+            (Vec::new(), self.receipts.len())
+        } else {
+            (self.receipts, 0)
+        };
+        SessionReceiptClose {
+            session_ref: self.session_ref,
+            off_record: self.off_record,
+            retained,
+            deleted,
+        }
+    }
+}
+
+/// Outcome of closing a [`SessionLocalReceiptLog`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReceiptClose {
+    pub session_ref: String,
+    pub off_record: bool,
+    /// Emit receipts that survive the close (empty for off-record sessions).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<ReceiptRecord>,
+    /// Count of emit receipts deleted with the transcript.
+    pub deleted: usize,
 }
 
 /// Query for the EF-055 pending tray lane.
@@ -508,6 +818,22 @@ pub fn outbound_intent_receipt(
     fields.insert("channel".to_owned(), intent.channel.clone());
     fields.insert("target".to_owned(), intent.target.clone());
     fields.insert("intent_source".to_owned(), intent.intent_source.clone());
+    fields.insert(
+        FIELD_RECEIPT_SCHEMA.to_owned(),
+        OUTBOUND_RECEIPT_SCHEMA.to_owned(),
+    );
+    fields.insert(
+        FIELD_ENGINE_REGISTER.to_owned(),
+        OUTBOUND_ENGINE_REGISTER.to_owned(),
+    );
+    fields.insert(
+        FIELD_CARE_REGISTER.to_owned(),
+        OUTBOUND_CARE_REGISTER.to_owned(),
+    );
+    fields.insert(
+        FIELD_AUDIT_REGISTER.to_owned(),
+        OUTBOUND_AUDIT_REGISTER.to_owned(),
+    );
     if let Some(content_ref) = intent.content_ref.as_ref() {
         fields.insert("content_ref".to_owned(), content_ref.clone());
     }
@@ -2636,7 +2962,7 @@ mod tests {
                 "outbound:intent:invite-mika",
                 ReceiptKind::Outbound,
                 102,
-                "declined",
+                "suppressed",
                 Some("brief:party"),
                 Some("intent:invite-mika"),
                 &[
@@ -3010,5 +3336,262 @@ mod tests {
         assert_eq!(child.intents[0].intent_ref, "intent:child");
         assert_eq!(child.intents[0].receipts.len(), 1);
         assert_eq!(projection.budget_debit_total, 5);
+    }
+
+    fn test_prompt_stamp() -> PromptRecompileStamp {
+        PromptRecompileStamp {
+            schema_version: crate::prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION.to_owned(),
+            prompt_path: "eiri/v3.md".to_owned(),
+            compiled_at_secs: 1_700_000_000,
+            source_fingerprint: "feedbead".to_owned(),
+            resolved_fingerprint: "deadbeef".to_owned(),
+            source_paths: vec!["eiri/v3.md".to_owned()],
+        }
+    }
+
+    fn test_memory_board(claim_score: f32) -> EiriMemoryBoard {
+        use crate::types::{
+            EIRI_CONTEXT_VERSION_V4, EiriMemoryBoardBudget, EiriMemoryBoardRow,
+            EiriMemoryBoardSlot, EiriMemoryBoardSource,
+        };
+
+        let row = |row_index: usize, seed: u8, slot: EiriMemoryBoardSlot, score: f32| {
+            EiriMemoryBoardRow {
+                row_index,
+                slot,
+                source: EiriMemoryBoardSource::Result,
+                id: entity(seed).to_hex(),
+                short_id: format!("mem{seed:02x}"),
+                content_hash: format!("{seed:02x}"),
+                entity_type: if slot == EiriMemoryBoardSlot::Claims {
+                    crate::types::ENTITY_TYPE_CLAIM
+                } else {
+                    crate::types::ENTITY_TYPE_SUMMARY
+                },
+                asset_ref: None,
+                score,
+            }
+        };
+
+        EiriMemoryBoard {
+            version: EIRI_CONTEXT_VERSION_V4.to_owned(),
+            budget: EiriMemoryBoardBudget::new(2, 0, 1, 0, 0, 0),
+            rows: vec![
+                row(0, 0x21, EiriMemoryBoardSlot::Claims, claim_score),
+                row(1, 0x22, EiriMemoryBoardSlot::Claims, 0.25),
+                row(2, 0x31, EiriMemoryBoardSlot::Summaries, 0.125),
+            ],
+            companion: None,
+        }
+    }
+
+    #[test]
+    fn context_receipt_field_set_rides_emit_receipts_and_round_trips() {
+        let board = test_memory_board(0.5);
+        let context = ContextReceiptFields::from_assembly(&test_prompt_stamp(), &board)
+            .expect("assembled board stamps")
+            .substrate_ref(format!("model:{}", entity(0x77).to_hex()))
+            .model("test-model-v1")
+            .reasoning_effort("high")
+            .prompt_input_ref("prompt:cafe1234");
+
+        assert_eq!(
+            context.persona_compile_stamp,
+            "oneiron.prompt_recompile.v1:deadbeef"
+        );
+        assert_eq!(
+            context.activated_memory_ids,
+            vec![
+                entity(0x21).to_hex(),
+                entity(0x22).to_hex(),
+                entity(0x31).to_hex(),
+            ]
+        );
+        assert!(context.board_state_ref.starts_with("board:"));
+        assert_eq!(
+            context.board_state_ref,
+            eiri_memory_board_state_ref(&board).expect("assembled board hashes")
+        );
+
+        let mut receipt = projected_receipt(
+            "outbound:intent:say-it",
+            ReceiptKind::Outbound,
+            100,
+            "delivered_to_channel",
+            Some("brief:party"),
+            Some("intent:say-it"),
+            &[("intent_ref", "intent:say-it")],
+        );
+        append_context_receipt_fields(&mut receipt, &context).expect("emit receipt accepts stamp");
+
+        assert_eq!(
+            receipt
+                .fields
+                .get(FIELD_ACTIVATED_MEMORY_IDS)
+                .map(String::as_str),
+            Some(
+                format!(
+                    "{},{},{}",
+                    entity(0x21).to_hex(),
+                    entity(0x22).to_hex(),
+                    entity(0x31).to_hex()
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            receipt.fields.get(FIELD_MODEL).map(String::as_str),
+            Some("test-model-v1")
+        );
+        assert_eq!(receipt.context_receipt_fields(), Some(context));
+    }
+
+    #[test]
+    fn context_receipt_field_set_is_rejected_on_non_emit_receipts() {
+        let context =
+            ContextReceiptFields::from_assembly(&test_prompt_stamp(), &test_memory_board(0.5))
+                .expect("assembled board stamps");
+
+        for kind in [
+            ReceiptKind::Gate,
+            ReceiptKind::IdentityLifecycle,
+            ReceiptKind::ScopedRead,
+            ReceiptKind::Share,
+        ] {
+            assert!(!kind.is_emit_adjacent());
+            let mut receipt = projected_receipt(
+                &format!("{}:receipt", kind.as_str()),
+                kind,
+                100,
+                "allow",
+                None,
+                None,
+                &[],
+            );
+            let fields_before = receipt.fields.clone();
+            let error = append_context_receipt_fields(&mut receipt, &context)
+                .expect_err("non-emit receipts never carry emit context");
+            assert!(matches!(error, Error::EmitAdjacentReceiptRequired { .. }));
+            assert_eq!(receipt.fields, fields_before, "rejection must not write");
+        }
+
+        // Extraction is kind-gated too: context keys smuggled onto a non-emit
+        // receipt stay unreadable through the field-set surface.
+        let mut smuggled = projected_receipt(
+            "gate:receipt",
+            ReceiptKind::Gate,
+            100,
+            "allow",
+            None,
+            None,
+            &[],
+        );
+        context.append_to_fields(&mut smuggled.fields);
+        assert_eq!(smuggled.context_receipt_fields(), None);
+    }
+
+    #[test]
+    fn board_state_ref_records_the_board_as_shown() -> Result<()> {
+        let board = test_memory_board(0.5);
+        assert_eq!(
+            eiri_memory_board_state_ref(&board)?,
+            eiri_memory_board_state_ref(&test_memory_board(0.5))?,
+            "same board as shown, same ref"
+        );
+        assert_ne!(
+            eiri_memory_board_state_ref(&board)?,
+            eiri_memory_board_state_ref(&test_memory_board(0.75))?,
+            "retrieval drift changes the ref"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn session_local_receipt_log_deletes_off_record_emit_receipts_at_close() {
+        let emit_receipt = |receipt_id: &str| {
+            projected_receipt(
+                receipt_id,
+                ReceiptKind::Outbound,
+                100,
+                "delivered_to_channel",
+                None,
+                None,
+                &[],
+            )
+        };
+
+        let mut off_record = SessionLocalReceiptLog::off_record("session:off-record");
+        off_record
+            .record(emit_receipt("outbound:intent:one"))
+            .expect("emit receipt rides the session log");
+        off_record
+            .record(emit_receipt("outbound:intent:two"))
+            .expect("emit receipt rides the session log");
+        assert!(off_record.is_off_record());
+        assert_eq!(
+            off_record.receipts().len(),
+            2,
+            "visible while session lives"
+        );
+
+        let closed = off_record.close();
+        assert!(closed.off_record);
+        assert_eq!(closed.deleted, 2);
+        assert!(closed.retained.is_empty(), "deleted with the transcript");
+
+        let mut on_record = SessionLocalReceiptLog::on_record("session:on-record");
+        on_record
+            .record(emit_receipt("outbound:intent:three"))
+            .expect("emit receipt rides the session log");
+        let closed = on_record.close();
+        assert!(!closed.off_record);
+        assert_eq!(closed.deleted, 0);
+        assert_eq!(closed.retained.len(), 1);
+
+        // Floor receipts persist through their own substrates and must never
+        // become deletable via session close.
+        let mut log = SessionLocalReceiptLog::off_record("session:off-record");
+        let error = log
+            .record(projected_receipt(
+                "gate:floor",
+                ReceiptKind::Gate,
+                100,
+                "allow",
+                None,
+                None,
+                &[],
+            ))
+            .expect_err("floor receipts never ride the session log");
+        assert!(matches!(error, Error::EmitAdjacentReceiptRequired { .. }));
+        assert!(log.receipts().is_empty());
+    }
+
+    #[test]
+    fn family_projections_never_carry_context_fields() -> Result<()> {
+        let (_tmp, vault) = temp_vault()?;
+        append_gate_decision(&vault, 10, "agent-alpha", "allow", "gate.allow")?;
+
+        let receipts = vault.receipts(ReceiptQuery::new(50))?;
+        assert!(!receipts.is_empty());
+        for receipt in receipts {
+            assert!(!receipt.receipt_kind.is_emit_adjacent());
+            assert_eq!(receipt.context_receipt_fields(), None);
+            for key in [
+                FIELD_PERSONA_COMPILE_STAMP,
+                FIELD_ACTIVATED_MEMORY_IDS,
+                FIELD_BOARD_STATE_REF,
+                FIELD_SUBSTRATE_REF,
+                FIELD_MODEL,
+                FIELD_REASONING_EFFORT,
+                FIELD_PROMPT_INPUT_REF,
+            ] {
+                assert!(
+                    !receipt.fields.contains_key(key),
+                    "{} leaked the context field {key}",
+                    receipt.receipt_id
+                );
+            }
+        }
+        Ok(())
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! Capability discovery is the O1 field contract. The O2 dispatcher below is
 //! intentionally connector-agnostic: concrete adapters plug in through
-//! [`OutboundExecutionSink`], while delivery-window policy remains a later
-//! evaluator hook.
+//! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
+//! delivery-time request stage.
 
 use std::sync::OnceLock;
 
@@ -11,13 +11,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::Vault;
+use crate::delivery_window::{
+    DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
+    DeliveryWindowVerbClass,
+};
 use crate::error::Error;
 use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
-use crate::receipt::{ReceiptRecord, outbound_intent_receipt};
+use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
 use crate::types::EntityId;
+
+pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
 /// Stable manifest shape advertised to agents.
 pub const OUTBOUND_CAPABILITY_MANIFEST_VERSION: &str = "outbound.capability_manifest.v1";
@@ -302,36 +308,6 @@ impl OutboundDispatchGate {
     }
 }
 
-/// Delivery-window stage result. ONE-1500 owns policy; this type is the O2 hook.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum OutboundDeliveryWindowDecision {
-    #[default]
-    DeliverNow,
-    Hold {
-        reason: String,
-        retry_at: Option<u64>,
-    },
-    Degrade {
-        reason: String,
-        from: String,
-        to: String,
-    },
-    LetGo {
-        reason: String,
-    },
-}
-
-impl OutboundDeliveryWindowDecision {
-    fn policy_trace(&self) -> String {
-        match self {
-            Self::DeliverNow => "delivery_window.not_configured".to_owned(),
-            Self::Hold { reason, .. } => format!("delivery_window.hold:{reason}"),
-            Self::Degrade { reason, .. } => format!("delivery_window.degrade:{reason}"),
-            Self::LetGo { reason } => format!("delivery_window.let_go:{reason}"),
-        }
-    }
-}
-
 /// Request envelope for one O2 dispatch pipeline run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundDispatchRequest {
@@ -344,6 +320,13 @@ pub struct OutboundDispatchRequest {
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<String>,
     pub window_decision: OutboundDeliveryWindowDecision,
+    /// OF-369/RS9 context field-set captured at the context-assembly seam;
+    /// recorded onto the emit receipt for every dispatch outcome.
+    /// Optional by design: RS9 pins one hook at the assembly seam, not a
+    /// wall at dispatch — emits that never ride a context assembly
+    /// (commitment-timer and gap-queue wakes, pre-field-set callers) have
+    /// no board or persona compile to record and dispatch unstamped.
+    pub context_receipt: Option<ContextReceiptFields>,
 }
 
 impl OutboundDispatchRequest {
@@ -355,6 +338,7 @@ impl OutboundDispatchRequest {
         actor: OutboundDispatchActor,
         gate: OutboundDispatchGate,
         occurred_at: u64,
+        window_decision: OutboundDeliveryWindowDecision,
     ) -> Self {
         Self {
             receipt_id: receipt_id.into(),
@@ -365,7 +349,8 @@ impl OutboundDispatchRequest {
             occurred_at,
             channel_identity_ref: None,
             counterparty_ref: None,
-            window_decision: OutboundDeliveryWindowDecision::DeliverNow,
+            window_decision,
+            context_receipt: None,
         }
     }
 
@@ -384,6 +369,22 @@ impl OutboundDispatchRequest {
     #[must_use]
     pub fn window_decision(mut self, decision: OutboundDeliveryWindowDecision) -> Self {
         self.window_decision = decision;
+        self
+    }
+
+    #[must_use]
+    pub fn context_receipt(mut self, context: ContextReceiptFields) -> Self {
+        self.context_receipt = Some(context);
+        self
+    }
+
+    #[must_use]
+    pub fn delivery_window_policy(
+        mut self,
+        context: &DeliveryWindowEvaluationContext,
+        claims: &[DeliveryWindowPolicyClaim],
+    ) -> Self {
+        self.window_decision = DeliveryWindowEvaluator::evaluate(context, claims);
         self
     }
 }
@@ -444,9 +445,9 @@ pub enum OutboundDispatchOutcome {
     DeliveredToChannel,
     Held,
     Degraded,
+    Suppressed,
     LetGo,
     Failed,
-    Denied,
 }
 
 impl OutboundDispatchOutcome {
@@ -456,9 +457,9 @@ impl OutboundDispatchOutcome {
             Self::DeliveredToChannel => "delivered_to_channel",
             Self::Held => "held",
             Self::Degraded => "degraded",
+            Self::Suppressed => "suppressed",
             Self::LetGo => "let_go",
             Self::Failed => "failed",
-            Self::Denied => "denied",
         }
     }
 }
@@ -491,6 +492,15 @@ pub struct OutboundDispatchPipeline;
 pub enum OutboundInterruptionClass {
     Ambient,
     Interrupt,
+}
+
+impl From<OutboundInterruptionClass> for DeliveryWindowVerbClass {
+    fn from(value: OutboundInterruptionClass) -> Self {
+        match value {
+            OutboundInterruptionClass::Ambient => Self::Ambient,
+            OutboundInterruptionClass::Interrupt => Self::Interrupt,
+        }
+    }
 }
 
 /// Retry class consumed by the later dispatch/retry policy.
@@ -725,16 +735,23 @@ impl OutboundDispatchPipeline {
             gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
         wtxn.commit().map_err(Error::from)?;
 
-        let gate_outcome = gate_decision.outcome().as_str().to_owned();
+        let gate_outcome_kind = gate_decision.outcome();
+        let gate_outcome = gate_outcome_kind.as_str().to_owned();
         let gate_reason_codes = gate_decision
             .reason_codes()
             .iter()
             .map(|reason| reason.as_str().to_owned())
             .collect::<Vec<_>>();
+        let gate_receipt_reasons = gate_decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            .collect::<Vec<_>>();
 
-        let (outcome, execution) = match gate_decision.outcome() {
+        let (outcome, execution) = match gate_outcome_kind {
             GateOutcome::Allow => match &request.window_decision {
-                OutboundDeliveryWindowDecision::DeliverNow => {
+                OutboundDeliveryWindowDecision::DeliverNow
+                | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
                     let execution_request = OutboundExecutionRequest {
                         intent_ref: &request.intent_ref,
                         intent: &request.intent,
@@ -762,7 +779,7 @@ impl OutboundDispatchPipeline {
                 }
             },
             GateOutcome::Pending => (OutboundDispatchOutcome::Held, None),
-            GateOutcome::Deny => (OutboundDispatchOutcome::Denied, None),
+            GateOutcome::Deny => (OutboundDispatchOutcome::Suppressed, None),
         };
 
         let mut receipt = outbound_intent_receipt(
@@ -772,6 +789,12 @@ impl OutboundDispatchPipeline {
             request.occurred_at,
             outcome.as_str(),
         );
+        receipt
+            .policy_trace
+            .extend(gate_reason_codes.iter().cloned());
+        receipt
+            .policy_trace
+            .extend(gate_receipt_reasons.iter().cloned());
         receipt
             .policy_trace
             .push(request.window_decision.policy_trace());
@@ -785,6 +808,12 @@ impl OutboundDispatchPipeline {
         receipt
             .fields
             .insert("gate_reason_codes".to_owned(), gate_reason_codes.join(","));
+        if !gate_receipt_reasons.is_empty() {
+            receipt.fields.insert(
+                "gate_receipt_reasons".to_owned(),
+                gate_receipt_reasons.join(","),
+            );
+        }
         receipt.fields.insert(
             "channel_call".to_owned(),
             verb_contract.channel_call.clone(),
@@ -851,7 +880,17 @@ impl OutboundDispatchPipeline {
                 execution.retry_state.as_deref(),
             );
         }
+        append_dispatch_outcome_receipt_fields(
+            &mut receipt,
+            outcome,
+            gate_outcome_kind,
+            &gate_reason_codes,
+            &gate_receipt_reasons,
+        );
         append_window_receipt_fields(&mut receipt, &request.window_decision);
+        if let Some(context) = request.context_receipt.as_ref() {
+            context.append_to_fields(&mut receipt.fields);
+        }
 
         Ok(OutboundDispatchResult {
             outcome,
@@ -898,6 +937,48 @@ fn append_optional_receipt_field(
     }
 }
 
+fn append_dispatch_outcome_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    outcome: OutboundDispatchOutcome,
+    gate_outcome: GateOutcome,
+    gate_reason_codes: &[String],
+    gate_receipt_reasons: &[String],
+) {
+    let gate_reason = gate_reason_codes
+        .iter()
+        .find(|reason| !reason.trim().is_empty())
+        .map(String::as_str);
+    let gate_receipt_reason = gate_receipt_reasons
+        .iter()
+        .find(|reason| !reason.trim().is_empty())
+        .map(String::as_str);
+
+    match (outcome, gate_outcome) {
+        (OutboundDispatchOutcome::Held, GateOutcome::Pending) => {
+            append_optional_receipt_field(receipt, "hold_reason", gate_reason);
+        }
+        (OutboundDispatchOutcome::Suppressed, GateOutcome::Deny) => {
+            let suppression = if gate_reason_codes
+                .iter()
+                .any(|reason| reason == "gate.deny.counterparty_opt_out")
+            {
+                "counterparty_opt_out"
+            } else {
+                "gate_denied"
+            };
+            receipt
+                .fields
+                .insert("suppression".to_owned(), suppression.to_owned());
+            append_optional_receipt_field(
+                receipt,
+                "suppression_reason",
+                gate_receipt_reason.or(gate_reason),
+            );
+        }
+        _ => {}
+    }
+}
+
 fn append_window_receipt_fields(
     receipt: &mut ReceiptRecord,
     decision: &OutboundDeliveryWindowDecision,
@@ -908,6 +989,18 @@ fn append_window_receipt_fields(
                 .fields
                 .insert("window_action".to_owned(), "deliver_now".to_owned());
         }
+        OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { reason, from, to } => {
+            receipt
+                .fields
+                .insert("window_action".to_owned(), "deliver_now".to_owned());
+            receipt
+                .fields
+                .insert("window_reason".to_owned(), reason.clone());
+            receipt
+                .fields
+                .insert("degraded_from".to_owned(), from.clone());
+            receipt.fields.insert("degraded_to".to_owned(), to.clone());
+        }
         OutboundDeliveryWindowDecision::Hold { reason, retry_at } => {
             receipt
                 .fields
@@ -915,6 +1008,10 @@ fn append_window_receipt_fields(
             receipt
                 .fields
                 .insert("window_reason".to_owned(), reason.clone());
+            receipt
+                .fields
+                .entry("hold_reason".to_owned())
+                .or_insert_with(|| reason.clone());
             if let Some(retry_at) = retry_at {
                 receipt
                     .fields
@@ -930,8 +1027,8 @@ fn append_window_receipt_fields(
                 .insert("window_reason".to_owned(), reason.clone());
             receipt
                 .fields
-                .insert("degrade_from".to_owned(), from.clone());
-            receipt.fields.insert("degrade_to".to_owned(), to.clone());
+                .insert("degraded_from".to_owned(), from.clone());
+            receipt.fields.insert("degraded_to".to_owned(), to.clone());
         }
         OutboundDeliveryWindowDecision::LetGo { reason } => {
             receipt
@@ -940,6 +1037,9 @@ fn append_window_receipt_fields(
             receipt
                 .fields
                 .insert("window_reason".to_owned(), reason.clone());
+            receipt
+                .fields
+                .insert("let_go_reason".to_owned(), reason.clone());
         }
     }
 }
@@ -1468,6 +1568,13 @@ mod tests {
     use rmpv::Value;
 
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
+    use crate::delivery_window::{
+        DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowAppliesTo, PREDICATE_DELIVERY_WINDOW_QUIET,
+    };
     use crate::store::Store;
     use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, VaultConfig};
 
@@ -1582,6 +1689,35 @@ mod tests {
                 .dedupe_key("dedupe:invite-kenji"),
             trigger,
         )
+    }
+
+    fn quiet_delivery_window_policy() -> DeliveryWindowPolicyClaim {
+        let mut claim = ClaimBody::new(
+            PREDICATE_DELIVERY_WINDOW_QUIET,
+            ClaimSubject::Entity(entity(0xE1)),
+            Value::Map(vec![
+                (
+                    Value::from("schema_version"),
+                    Value::from(DELIVERY_WINDOW_SCHEMA_VERSION),
+                ),
+                (
+                    Value::from("applies_to"),
+                    Value::from(DeliveryWindowAppliesTo::Interrupt.as_str()),
+                ),
+                (
+                    Value::from("window"),
+                    Value::Map(vec![
+                        (Value::from("start_minute"), Value::from(22 * 60)),
+                        (Value::from("end_minute"), Value::from(8 * 60)),
+                    ]),
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        claim.source = Some(ClaimSource::UserStated);
+        DeliveryWindowPolicyClaim::from_claim_body(&claim).expect("valid quiet claim")
     }
 
     #[test]
@@ -1702,6 +1838,7 @@ mod tests {
             actor,
             OutboundDispatchGate::allow_when_policy_grants(),
             1_000,
+            OutboundDeliveryWindowDecision::DeliverNow,
         )
         .counterparty_ref("counterparty:kenji");
 
@@ -1769,7 +1906,154 @@ mod tests {
             result
                 .receipt
                 .policy_trace
-                .contains(&"delivery_window.not_configured".to_owned())
+                .contains(&"delivery_window.no_restriction".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_records_context_receipt_field_set()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA1);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let context = ContextReceiptFields {
+            persona_compile_stamp: "oneiron.prompt_recompile.v1:deadbeef".to_owned(),
+            activated_memory_ids: vec![entity(0x21).to_hex(), entity(0x22).to_hex()],
+            board_state_ref: "board:cafe1234".to_owned(),
+            substrate_ref: Some(format!("model:{}", entity(0x77).to_hex())),
+            model: Some("test-model-v1".to_owned()),
+            reasoning_effort: Some("high".to_owned()),
+            prompt_input_ref: None,
+        };
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:invite-kenji",
+            "intent:invite-kenji",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:send-now")),
+            actor.clone(),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_000,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .context_receipt(context.clone());
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(
+            result.receipt.context_receipt_fields().as_ref(),
+            Some(&context),
+            "what she knew rides the emit receipt"
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("activated_memory_ids")
+                .map(String::as_str),
+            Some(format!("{},{}", entity(0x21).to_hex(), entity(0x22).to_hex()).as_str())
+        );
+
+        // Emits dispatched without an assembled-context stamp stay unstamped.
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:invite-yuki",
+            "intent:invite-yuki",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:send-now")),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_001,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+        assert_eq!(result.receipt.context_receipt_fields(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_executes_deliverable_apns_cap()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA8);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD8,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "apns",
+                &["push"],
+            ),
+        )?;
+
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "push", "apns", "device:kenji")
+                .on_behalf_of("owner")
+                .content_ref("content:push-kenji")
+                .idempotency_key("idem:push-kenji")
+                .dedupe_key("dedupe:push-kenji"),
+            OutboundIntentTrigger::agent_immediate("session:push-now"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:push-kenji",
+            "intent:push-kenji",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_005,
+            OutboundDeliveryWindowDecision::DeliverNowWithApnsCap {
+                reason: "apns_time_sensitive_ceiling".to_owned(),
+                from: "push:critical".to_owned(),
+                to: "push:time_sensitive".to_owned(),
+            },
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(
+            executor.calls,
+            vec![(
+                "intent:push-kenji".to_owned(),
+                "apns".to_owned(),
+                "push".to_owned()
+            )]
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("deliver_now")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("degraded_from")
+                .map(String::as_str),
+            Some("push:critical")
+        );
+        assert_eq!(
+            result.receipt.fields.get("degraded_to").map(String::as_str),
+            Some("push:time_sensitive")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.apns_cap:apns_time_sensitive_ceiling".to_owned())
         );
         Ok(())
     }
@@ -1799,6 +2083,7 @@ mod tests {
             actor,
             OutboundDispatchGate::allow_when_policy_grants(),
             1_040,
+            OutboundDeliveryWindowDecision::DeliverNow,
         );
 
         let mut executor = RecordingExecutor {
@@ -1844,6 +2129,7 @@ mod tests {
             actor,
             gate,
             1_010,
+            OutboundDeliveryWindowDecision::DeliverNow,
         );
 
         let mut executor = RecordingExecutor::default();
@@ -1852,6 +2138,16 @@ mod tests {
         assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
         assert!(executor.calls.is_empty());
         assert_eq!(result.gate_outcome, "pending");
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"gate.pending.external_effect_authority".to_owned())
+        );
+        assert_eq!(
+            result.receipt.fields.get("hold_reason").map(String::as_str),
+            Some("gate.pending.external_effect_authority")
+        );
         assert_eq!(
             result
                 .receipt
@@ -1861,6 +2157,154 @@ mod tests {
             Some("gate.pending.external_effect_authority")
         );
         assert_eq!(result.receipt.outcome, "held");
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA7);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD7,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let gate = OutboundDispatchGate {
+            has_opted_in: true,
+            has_permission: false,
+            policy_risk: OutboundDispatchPolicyRisk::Normal,
+        };
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:gate-and-window-held",
+            "intent:gate-and-window-held",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate(
+                "session:gate-window-held",
+            )),
+            actor,
+            gate,
+            1_015,
+            OutboundDeliveryWindowDecision::Hold {
+                reason: "quiet_window".to_owned(),
+                retry_at: Some(2_100),
+            },
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "pending");
+        assert_eq!(
+            result.receipt.fields.get("hold_reason").map(String::as_str),
+            Some("gate.pending.external_effect_authority")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_reason")
+                .map(String::as_str),
+            Some("quiet_window")
+        );
+        assert_eq!(
+            result.receipt.fields.get("retry_at").map(String::as_str),
+            Some("2100")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.hold:quiet_window".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_suppresses_gate_denied_without_executing()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA6);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD4,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let identity_ref = entity(0xB6);
+        let contact_id = entity(0xB7);
+        let contact =
+            CounterpartyContactRecord::user_introduction(identity_ref, "kenji@example.com", 10)?;
+        vault.create_counterparty_contact(&contact_id, &contact)?;
+        vault.opt_out_counterparty_contact(
+            &contact_id,
+            CounterpartyOptOutReason::Unsubscribe,
+            20,
+        )?;
+
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:suppressed",
+            "intent:suppressed",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:suppressed")),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_045,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .channel_identity_ref(identity_ref)
+        .counterparty_ref("kenji@example.com");
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "deny");
+        assert_eq!(result.receipt.outcome, "suppressed");
+        assert_eq!(
+            result.receipt.fields.get("suppression").map(String::as_str),
+            Some("counterparty_opt_out")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("suppression_reason")
+                .map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"gate.deny.counterparty_opt_out".to_owned())
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"counterparty_opt_out_unsubscribe".to_owned())
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("gate_receipt_reasons")
+                .map(String::as_str),
+            Some("counterparty_opt_out_unsubscribe,counterparty_first_touch_user_introduction")
+        );
         Ok(())
     }
 
@@ -1880,6 +2324,7 @@ mod tests {
             actor,
             OutboundDispatchGate::allow_when_policy_grants(),
             1_020,
+            OutboundDeliveryWindowDecision::DeliverNow,
         );
 
         let mut executor = RecordingExecutor::default();
@@ -1922,11 +2367,11 @@ mod tests {
             actor,
             OutboundDispatchGate::allow_when_policy_grants(),
             1_030,
-        )
-        .window_decision(OutboundDeliveryWindowDecision::Hold {
-            reason: "quiet_window".to_owned(),
-            retry_at: Some(2_000),
-        });
+            OutboundDeliveryWindowDecision::Hold {
+                reason: "quiet_window".to_owned(),
+                retry_at: Some(2_000),
+            },
+        );
 
         let mut executor = RecordingExecutor::default();
         let result = vault.dispatch_outbound_intent(request, &mut executor)?;
@@ -1946,11 +2391,86 @@ mod tests {
             result.receipt.fields.get("retry_at").map(String::as_str),
             Some("2000")
         );
+        assert_eq!(
+            result.receipt.fields.get("hold_reason").map(String::as_str),
+            Some("quiet_window")
+        );
         assert!(
             result
                 .receipt
                 .policy_trace
                 .contains(&"delivery_window.hold:quiet_window".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_request_evaluates_delivery_window_policy_before_execution()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA5);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD3,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let context = DeliveryWindowEvaluationContext::new(
+            1_030,
+            23 * 60,
+            DeliveryWindowVerbClass::Interrupt,
+        )?
+        .interrupt_surface("email:send")
+        .degrade_to("chat:passive");
+        let policy = quiet_delivery_window_policy();
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:window-degraded",
+            "intent:window-degraded",
+            dispatch_intent(OutboundIntentTrigger::commitment_timer_wake(
+                "commitment:quiet",
+            )),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_030,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .delivery_window_policy(&context, &[policy]);
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Degraded);
+        assert!(executor.calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("degrade")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("degraded_from")
+                .map(String::as_str),
+            Some("email:send")
+        );
+        assert_eq!(
+            result.receipt.fields.get("degraded_to").map(String::as_str),
+            Some("chat:passive")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.degrade:quiet_window".to_owned())
         );
         Ok(())
     }

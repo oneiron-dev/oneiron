@@ -183,6 +183,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidPsychProfileBody,
     InvalidCodeArtifactBody,
+    InvalidBlobArtifactBody,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -209,6 +210,7 @@ pub enum ErrorKind {
     ActorClassMismatch,
     InvalidProvenanceBody,
     InvalidModelSubstrate,
+    EmitAdjacentReceiptRequired,
     ClaimAlreadyClosed,
     ClaimSelfSupersession,
     ProvenanceClaimLifecycle,
@@ -463,6 +465,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// A BLOB_ARTIFACT entity body or version record failed pinned
+    /// structural validation. Nothing was written.
+    #[error("invalid BLOB artifact body: {0}")]
+    InvalidBlobArtifactBody(&'static str),
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -639,6 +645,16 @@ pub enum Error {
     /// (type byte 121) entity. Nothing was written.
     #[error("invalid model substrate: {0}")]
     InvalidModelSubstrate(&'static str),
+    /// A receipt surface that is defined only for emit-adjacent receipts
+    /// (the OF-369/RS9 context field-set, the OF-326 session-local receipt
+    /// log) was given a non-emit receipt kind. Non-emit receipts project
+    /// from their own stored substrates and never carry emit context.
+    /// Nothing was written.
+    #[error("{surface} requires an emit-adjacent receipt kind, got {kind}")]
+    EmitAdjacentReceiptRequired {
+        surface: &'static str,
+        kind: &'static str,
+    },
     /// A claim lifecycle transition (`supersede_claim` / `retract_claim`)
     /// targeted a claim whose `life` status is not `active`. Superseded and
     /// retracted claims are closed history (ARCH-0003: all non-current
@@ -973,6 +989,7 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
+            Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
@@ -1007,6 +1024,7 @@ impl Error {
             Self::ActorClassMismatch { .. } => ErrorKind::ActorClassMismatch,
             Self::InvalidProvenanceBody(_) => ErrorKind::InvalidProvenanceBody,
             Self::InvalidModelSubstrate(_) => ErrorKind::InvalidModelSubstrate,
+            Self::EmitAdjacentReceiptRequired { .. } => ErrorKind::EmitAdjacentReceiptRequired,
             Self::ClaimAlreadyClosed { .. } => ErrorKind::ClaimAlreadyClosed,
             Self::ClaimSelfSupersession => ErrorKind::ClaimSelfSupersession,
             Self::ProvenanceClaimLifecycle { .. } => ErrorKind::ProvenanceClaimLifecycle,
