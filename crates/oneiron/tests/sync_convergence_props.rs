@@ -38,7 +38,8 @@ use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeProvenanceFlags, TaskRole,
 };
 use oneiron::{
     DeleteReason, EdgeKind, EntityId, SupersessionStatus, TOMBSTONE_VALUE_V2_LEN, Vault,
@@ -50,6 +51,17 @@ use sync_harness::{
 };
 
 const TEST_LEASE_VAULT_ID: u64 = 0;
+
+fn task_body(role: TaskRole) -> Vec<u8> {
+    let body = rmpv::Value::Map(vec![(
+        rmpv::Value::from("role"),
+        rmpv::Value::from(role.role_byte()),
+    )]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &body)
+        .expect("writing MessagePack TASK body to Vec cannot fail");
+    out
+}
 
 // ─── (a) entity convergence, both directions ────────────────────────────────
 
@@ -126,6 +138,67 @@ fn two_vault_entity_convergence_both_directions() {
 
     // A second exchange after convergence is a zero-round no-op.
     assert_eq!(exchange(&a, &b, WINDOW), 0);
+}
+
+#[test]
+fn concurrent_checkins_preserve_count() {
+    let (a, b) = vault_pair();
+    let habit = EntityId::now();
+    let habit_blob = entity_blob(
+        ENTITY_TYPE_TASK,
+        time_range(T0 + 1),
+        T0 + 1,
+        &task_body(TaskRole::Habit),
+    );
+
+    a.put_entity_in_window(WINDOW, &habit, &habit_blob);
+    exchange(&a, &b, WINDOW);
+
+    let checkins = [
+        (a.name, &a, EntityId::now(), T0 + 10),
+        (a.name, &a, EntityId::now(), T0 + 11),
+        (b.name, &b, EntityId::now(), T0 + 20),
+        (b.name, &b, EntityId::now(), T0 + 21),
+    ];
+    for (_, node, checkin, learned_at) in checkins {
+        let checkin_blob = entity_blob(
+            ENTITY_TYPE_TASK,
+            time_range(learned_at),
+            learned_at,
+            &task_body(TaskRole::HabitCheckin),
+        );
+        node.put_entity_in_window(WINDOW, &checkin, &checkin_blob);
+        node.put_edge_in_window(
+            WINDOW,
+            &checkin,
+            EdgeKind::ChildOf,
+            &habit,
+            1.0,
+            learned_at,
+            oneiron::Vad::NEUTRAL,
+        );
+    }
+
+    exchange(&a, &b, WINDOW);
+
+    for (node_name, vault) in [(a.name, &a.vault), (b.name, &b.vault)] {
+        let mut children = vault.sources(&habit, EdgeKind::ChildOf, None).unwrap();
+        children.sort();
+        assert_eq!(
+            children.len(),
+            checkins.len(),
+            "{node_name}: concurrent check-ins must merge without LWW loss"
+        );
+        for (_, _, checkin, _) in checkins {
+            assert!(
+                children.contains(&checkin),
+                "{node_name}: missing check-in {} after merge",
+                checkin.to_hex()
+            );
+        }
+    }
+
+    assert_converged(&a, &b, WINDOW);
 }
 
 // ─── (b) concurrent same-entity edit → LWW, loser displaced ────────────────
