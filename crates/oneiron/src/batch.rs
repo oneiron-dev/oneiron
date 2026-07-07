@@ -27,7 +27,7 @@ use crate::types::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
     ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
-    EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
+    EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole, TimeRange, Vad, WriteEnvelope,
     decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
     validate_edge_weight,
 };
@@ -360,6 +360,29 @@ impl<'a> BatchBuilder<'a> {
             allow_reserved_predicate: false,
         });
         self
+    }
+
+    /// Appends an immutable TASK/HabitCheckin child under an existing Habit TASK.
+    ///
+    /// The check-in is stored as its own TASK entity and linked with a
+    /// `ChildOf` edge (`checkin -> habit`). The shared apply path rejects
+    /// divergent same-id re-put of check-ins and rejects attachments whose
+    /// parent is not a Habit-role TASK.
+    pub fn put_habit_checkin(
+        self,
+        habit_id: &EntityId,
+        checkin_id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        let mut builder = self.put(checkin_id, ENTITY_TYPE_TASK, occurred, learned_at, data);
+        if builder.validation_error.is_none()
+            && let Err(e) = validate_habit_checkin_body(data)
+        {
+            builder.validation_error = Some(e);
+        }
+        builder.edge_checked(checkin_id, habit_id, 1.0)
     }
 
     /// Adds a claim candidate write stamped by a [`WriteEnvelope`].
@@ -899,6 +922,24 @@ impl<'a> TxnBatchBuilder<'a> {
         self
     }
 
+    /// Transactional variant of [`BatchBuilder::put_habit_checkin`].
+    pub fn put_habit_checkin(
+        self,
+        habit_id: &EntityId,
+        checkin_id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Self {
+        let mut builder = self.put(checkin_id, ENTITY_TYPE_TASK, occurred, learned_at, data);
+        if builder.validation_error.is_none()
+            && let Err(e) = validate_habit_checkin_body(data)
+        {
+            builder.validation_error = Some(e);
+        }
+        builder.edge(checkin_id, EdgeKind::ChildOf, habit_id, 1.0)
+    }
+
     /// Adds a claim candidate write stamped by a [`WriteEnvelope`].
     pub fn claim_candidate(
         mut self,
@@ -1201,6 +1242,15 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
+    match crate::types::task_role_from_body_bytes(data)? {
+        TaskRole::HabitCheckin => Ok(()),
+        _ => Err(Error::InvalidTaskBody(
+            "habit check-in writes require HabitCheckin role",
+        )),
+    }
 }
 
 fn is_legacy_raw_claim_compatibility_body(body: &crate::claim::ClaimBody) -> bool {
@@ -2550,7 +2600,8 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
-        crate::types::validate_task_body_bytes(data)?;
+        let task_role = crate::types::task_role_from_body_bytes(data)?;
+        validate_task_role_put_invariants(store, &*wtxn, &id, task_role)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -2617,6 +2668,17 @@ fn apply_put(
                 existing: old_type,
                 attempted: entity_type,
             });
+        }
+        if old_type == ENTITY_TYPE_TASK {
+            validate_task_checkin_immutable(
+                old_record,
+                old_occurred,
+                old_learned,
+                occurred,
+                learned_at,
+                data,
+                body_changed,
+            )?;
         }
         if old_type == ENTITY_TYPE_SKILL && body_changed {
             let updated = new_skill_record
@@ -3180,6 +3242,7 @@ fn apply_edge_with_created_at(
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });
     }
+    validate_task_checkin_child_of_edge(store, &*wtxn, &src, kind, &tgt)?;
 
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
@@ -3215,9 +3278,139 @@ fn validate_child_of_batch(
         if would_create_child_of_cycle(store, rtxn, child_of_overlay, &child, parent)? {
             return Err(Error::CycleDetected);
         }
+        validate_task_checkin_child_parent(store, rtxn, &child, parent)?;
     }
 
     Ok(())
+}
+
+fn stored_task_role(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<TaskRole>> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity header"));
+    };
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Ok(None);
+    }
+    crate::types::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+}
+
+fn validate_task_checkin_child_parent(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    child: &EntityId,
+    parent: &EntityId,
+) -> Result<()> {
+    if stored_task_role(store, rtxn, child)? != Some(TaskRole::HabitCheckin) {
+        return Ok(());
+    }
+    validate_habit_checkin_parent_role(store, rtxn, parent)
+}
+
+fn validate_habit_checkin_parent_role(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    parent: &EntityId,
+) -> Result<()> {
+    match stored_task_role(store, rtxn, parent)? {
+        Some(TaskRole::Habit) => Ok(()),
+        Some(_) => Err(Error::InvalidTaskBody(
+            "habit check-in parent must be Habit TASK",
+        )),
+        None => Err(Error::InvalidTaskBody(
+            "habit check-in parent must be a TASK",
+        )),
+    }
+}
+
+fn validate_task_checkin_child_of_edge(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+) -> Result<()> {
+    if kind == EdgeKind::ChildOf {
+        validate_task_checkin_child_parent(store, rtxn, src, tgt)?;
+    }
+    Ok(())
+}
+
+fn validate_task_role_put_invariants(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    role: TaskRole,
+) -> Result<()> {
+    if role == TaskRole::HabitCheckin {
+        let prefix = child_of_prefix(id);
+        for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = entry?;
+            validate_edge_record(key, value)?;
+            let parent = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            validate_habit_checkin_parent_role(store, rtxn, &parent)?;
+        }
+    }
+
+    if role != TaskRole::Habit {
+        let prefix = child_of_prefix(id);
+        for entry in store.edges_in.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = entry?;
+            validate_edge_record(key, value)?;
+            let child = EntityId::from_bytes(
+                key[17..33]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            if stored_task_role(store, rtxn, &child)? == Some(TaskRole::HabitCheckin) {
+                return Err(Error::InvalidTaskBody(
+                    "Habit TASK with check-ins cannot change role",
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_task_checkin_immutable(
+    old_record: &[u8],
+    old_occurred: TimeRange,
+    old_learned: u64,
+    occurred: TimeRange,
+    learned_at: u64,
+    data: &[u8],
+    body_changed: bool,
+) -> Result<()> {
+    let old_role =
+        crate::types::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
+    let new_role = crate::types::task_role_from_body_bytes(data)?;
+    if old_role != TaskRole::HabitCheckin && new_role != TaskRole::HabitCheckin {
+        return Ok(());
+    }
+    if old_role == TaskRole::HabitCheckin
+        && new_role == TaskRole::HabitCheckin
+        && !body_changed
+        && old_occurred == occurred
+        && old_learned == learned_at
+    {
+        return Ok(());
+    }
+    Err(Error::InvalidTaskBody(
+        "habit check-in records are immutable",
+    ))
 }
 
 fn would_create_child_of_cycle(
@@ -3956,6 +4149,68 @@ mod tests {
 
     fn test_time_range(start: u64, end: u64) -> TimeRange {
         TimeRange { start, end }
+    }
+
+    #[test]
+    fn checkin_on_non_habit_rejected() -> Result<()> {
+        let (_dir, vault) = open_raw_test_vault();
+        let task = EntityId::now();
+        let checkin = EntityId::now();
+        let task_body = crate::types::task_body_for_test(TaskRole::Task);
+        let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+
+        vault.put_entity(
+            &task,
+            ENTITY_TYPE_TASK,
+            test_time_range(10, 10),
+            10,
+            &task_body,
+        )?;
+
+        let err = vault
+            .put_habit_checkin(&task, &checkin, test_time_range(11, 11), 11, &checkin_body)
+            .expect_err("check-in under non-Habit TASK must be rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+        assert!(!vault.entity_exists(&checkin)?);
+        assert!(!vault.edge_exists(&checkin, EdgeKind::ChildOf, &task)?);
+        Ok(())
+    }
+
+    #[test]
+    fn checkin_immutable() -> Result<()> {
+        let (_dir, vault) = open_raw_test_vault();
+        let habit = EntityId::now();
+        let checkin = EntityId::now();
+        let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
+        let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+        let replacement_body = crate::types::task_body_for_test(TaskRole::Task);
+
+        vault.put_entity(
+            &habit,
+            ENTITY_TYPE_TASK,
+            test_time_range(10, 10),
+            10,
+            &habit_body,
+        )?;
+        vault.put_habit_checkin(&habit, &checkin, test_time_range(11, 11), 11, &checkin_body)?;
+        let original = vault
+            .get_raw(&checkin)?
+            .expect("check-in row must be written");
+
+        let err = vault
+            .put_entity(
+                &checkin,
+                ENTITY_TYPE_TASK,
+                test_time_range(12, 12),
+                12,
+                &replacement_body,
+            )
+            .expect_err("check-in re-put must be rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+        assert_eq!(vault.get_raw(&checkin)?, Some(original));
+        Ok(())
     }
 
     fn first_party_eiri_connector_actor_id() -> Result<EntityId> {

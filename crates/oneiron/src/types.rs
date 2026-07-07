@@ -164,7 +164,7 @@ pub(crate) fn task_body_for_test(role: TaskRole) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn validate_task_body_bytes(bytes: &[u8]) -> crate::error::Result<()> {
+pub(crate) fn task_role_from_body_bytes(bytes: &[u8]) -> crate::error::Result<TaskRole> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| crate::error::Error::InvalidTaskBody("body is not valid MessagePack"))?;
@@ -200,8 +200,7 @@ pub(crate) fn validate_task_body_bytes(bytes: &[u8]) -> crate::error::Result<()>
                 .ok_or(crate::error::Error::InvalidTaskBody("unknown task role"))?,
         );
     }
-    role.ok_or(crate::error::Error::InvalidTaskBody("missing task role"))?;
-    Ok(())
+    role.ok_or(crate::error::Error::InvalidTaskBody("missing task role"))
 }
 
 /// Registry classification mirroring the contracts.ts §1
