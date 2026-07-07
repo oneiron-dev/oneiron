@@ -1011,7 +1011,7 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
 fn map_selector_filter_err(e: oneiron::Error) -> ProtocolError {
     if matches!(
         e,
-        oneiron::Error::SyncProtocolError(_) | oneiron::Error::InvalidFederationGrantBody(_)
+        oneiron::Error::SyncProtocolError { .. } | oneiron::Error::InvalidFederationGrantBody(_)
     ) {
         ProtocolError::InvalidPayload("sync selector rejected")
     } else {

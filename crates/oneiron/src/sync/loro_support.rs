@@ -6,12 +6,12 @@
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncEngineContext};
 use crate::types::EntityId;
 
 pub(crate) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
     map.insert(key, value)
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapInsert, e))
 }
 
 pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
@@ -23,7 +23,7 @@ pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
 
 pub(crate) fn map_delete(map: &LoroMap, key: &str) -> Result<()> {
     map.delete(key)
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapDelete, e))
 }
 
 pub(crate) fn map_contains_binary(map: &LoroMap, key: &str) -> bool {
@@ -135,7 +135,7 @@ pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str
 #[cfg(test)]
 pub(crate) fn export_all_updates(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::all_updates())
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
 }
 
 /// The single delta-export entry point for the sync wire (ONE-1127).
@@ -158,12 +158,12 @@ pub fn export_updates_since(doc: &LoroDoc, remote_vv: &[u8]) -> Result<Vec<u8>> 
 /// delta for the delete-bearing offline-queue row (ONE-1135).
 pub(crate) fn export_updates_from(doc: &LoroDoc, vv: &VersionVector) -> Result<Vec<u8>> {
     doc.export(ExportMode::updates(vv))
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))
 }
 
 pub(crate) fn export_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::Snapshot)
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))
 }
 
 pub(crate) fn import_doc(doc: &LoroDoc, bytes: &[u8]) -> Result<()> {

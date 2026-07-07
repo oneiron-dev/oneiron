@@ -130,18 +130,24 @@ impl SyncServerConfig {
 
     pub fn validate(&self) -> Result<(), oneiron::Error> {
         if self.ephemeral_timeout_ms <= 0 {
-            return Err(oneiron::Error::SyncProtocolError(
-                "ephemeral_timeout_ms must be positive".to_owned(),
+            return Err(oneiron::Error::sync_protocol(
+                oneiron::SyncProtocolValidation::InvalidConfig {
+                    field: oneiron::SyncConfigField::EphemeralTimeoutMs,
+                },
             ));
         }
         if self.max_ephemeral_payload_bytes == 0 {
-            return Err(oneiron::Error::SyncProtocolError(
-                "max_ephemeral_payload_bytes must be positive".to_owned(),
+            return Err(oneiron::Error::sync_protocol(
+                oneiron::SyncProtocolValidation::InvalidConfig {
+                    field: oneiron::SyncConfigField::MaxEphemeralPayloadBytes,
+                },
             ));
         }
         if self.max_ephemeral_snapshot_bytes == 0 {
-            return Err(oneiron::Error::SyncProtocolError(
-                "max_ephemeral_snapshot_bytes must be positive".to_owned(),
+            return Err(oneiron::Error::sync_protocol(
+                oneiron::SyncProtocolValidation::InvalidConfig {
+                    field: oneiron::SyncConfigField::MaxEphemeralSnapshotBytes,
+                },
             ));
         }
         Ok(())

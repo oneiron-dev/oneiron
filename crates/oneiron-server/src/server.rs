@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::DreamerJobProgressProducer;
+use oneiron::SyncEngineContext;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::lease::{self, LEASE_DURATION_SECS, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::schema::{
@@ -151,7 +152,9 @@ impl SyncServer {
                 // (`schema::create_root_doc`) — NOT a Loro i64, which the
                 // byte-only schema readers would not decode.
                 meta.insert("schema_version", schema_version_bytes().as_slice())
-                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    .map_err(|e| {
+                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                    })?;
                 // `meta.windows` must use the shared schema-owned encoding so
                 // fresh server docs, root-doc creation, and client decoding
                 // cannot drift.
@@ -421,9 +424,9 @@ impl SyncServer {
                     record.status = LeaseStatus::Expired;
                     let scoped_key = lease::lease_registry_key(entry.vault_id, entry.client_id);
                     if entry.key != scoped_key {
-                        leases
-                            .delete(entry.key.as_str())
-                            .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                        leases.delete(entry.key.as_str()).map_err(|e| {
+                            oneiron::Error::sync_engine(SyncEngineContext::LoroMapDelete, e)
+                        })?;
                         entry.key = scoped_key;
                     }
                     leases
@@ -431,7 +434,9 @@ impl SyncServer {
                             entry.key.as_str(),
                             lease::encode_lease_record(&record).as_slice(),
                         )
-                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                        .map_err(|e| {
+                            oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                        })?;
                     entry.record = record;
                     expired_rows += 1;
                 }
@@ -506,9 +511,7 @@ impl SyncServer {
                 .doc
                 .export(ExportMode::updates(&vv_before))
                 .map_err(|e| {
-                    oneiron::Error::SyncProtocolError(format!(
-                        "ra drain window delta export failed for {key}: {e}"
-                    ))
+                    oneiron::Error::sync_engine(SyncEngineContext::LoroExportUpdates, e)
                 })?;
             updates.push((key.as_str().to_string(), update));
         }
@@ -689,9 +692,9 @@ impl SyncServer {
                 record.status = LeaseStatus::Expired;
                 let scoped_key = lease::lease_registry_key(entry.vault_id, entry.client_id);
                 if entry.key != scoped_key {
-                    leases
-                        .delete(entry.key.as_str())
-                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    leases.delete(entry.key.as_str()).map_err(|e| {
+                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapDelete, e)
+                    })?;
                     entry.key = scoped_key;
                 }
                 leases
@@ -699,7 +702,9 @@ impl SyncServer {
                         entry.key.as_str(),
                         lease::encode_lease_record(&record).as_slice(),
                     )
-                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    .map_err(|e| {
+                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                    })?;
                 entry.record = record;
                 changed = true;
             }
@@ -747,7 +752,9 @@ impl SyncServer {
                             key_hex.as_str(),
                             lease::encode_lease_record(&record).as_slice(),
                         )
-                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                        .map_err(|e| {
+                            oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                        })?;
                     changed = true;
                     LeaseDecision::granted(record.expires_at)
                 }
@@ -773,16 +780,18 @@ impl SyncServer {
                     expires_at: now + LEASE_DURATION_SECS,
                 };
                 if entry.key != key_hex {
-                    leases
-                        .delete(entry.key.as_str())
-                        .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    leases.delete(entry.key.as_str()).map_err(|e| {
+                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapDelete, e)
+                    })?;
                 }
                 leases
                     .insert(
                         key_hex.as_str(),
                         lease::encode_lease_record(&renewed).as_slice(),
                     )
-                    .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                    .map_err(|e| {
+                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                    })?;
                 changed = true;
                 LeaseDecision::granted(renewed.expires_at)
             }
@@ -828,14 +837,14 @@ impl SyncServer {
         if entry.key != key_hex {
             leases
                 .delete(entry.key.as_str())
-                .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+                .map_err(|e| oneiron::Error::sync_engine(SyncEngineContext::LoroMapDelete, e))?;
         }
         leases
             .insert(
                 key_hex.as_str(),
                 lease::encode_lease_record(&record).as_slice(),
             )
-            .map_err(|e| oneiron::Error::SyncProtocolError(e.to_string()))?;
+            .map_err(|e| oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e))?;
         self.commit_lease_changes(true, &vv_before, &frontiers_before)
     }
 
@@ -865,17 +874,19 @@ impl SyncServer {
             lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         }) {
-            self.root_doc.revert_to(frontiers_before).map_err(|e| {
-                oneiron::Error::SyncProtocolError(format!(
-                    "root revert after lease txn failure: {e}"
-                ))
-            })?;
+            if let Err(revert_err) = self.root_doc.revert_to(frontiers_before) {
+                return Err(oneiron::Error::sync_engine_rollback(
+                    SyncEngineContext::LoroRevert,
+                    err,
+                    revert_err,
+                ));
+            }
             return Err(err);
         }
         let delta = self
             .root_doc
             .export(ExportMode::updates(vv_before))
-            .map_err(|e| oneiron::Error::SyncProtocolError(format!("root delta export: {e}")))?;
+            .map_err(|e| oneiron::Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
         Ok(Some(delta))
     }
 }

@@ -36,7 +36,7 @@ use crate::types::{
     ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, Vad,
     decode_companion_record_body, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
-use crate::{Error, Result, Vault};
+use crate::{Error, Result, SyncProtocolValidation, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
@@ -1403,9 +1403,7 @@ fn materialize_tombstones_from_delta(
                     window_key,
                     QuarantineContainer::Tombstones,
                     key.as_ref(),
-                    &Error::SyncProtocolError(
-                        "tombstone removal delta (tombstones are permanent)".to_string(),
-                    ),
+                    &Error::sync_protocol(SyncProtocolValidation::TombstoneRemovalDelta),
                     &[],
                 ) {
                     tracing::error!(
