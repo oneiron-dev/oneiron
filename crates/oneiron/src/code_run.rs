@@ -272,6 +272,34 @@ pub struct CodeRunReplayRecord {
     pub abi_layout_checks: Vec<CodeRunAbiLayoutCheck>,
 }
 
+/// Stable replay-row generation used for guarded executor appends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodeRunReplayGeneration {
+    pub bridge_call_count: u64,
+    pub step_checkpoint_count: u64,
+    pub output_count: u64,
+    pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+}
+
+impl CodeRunReplayGeneration {
+    fn for_record(record: &CodeRunReplayRecord) -> Result<Self> {
+        Ok(Self {
+            bridge_call_count: u64::try_from(record.bridge_calls.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
+            step_checkpoint_count: u64::try_from(record.step_checkpoints.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run step checkpoint count"))?,
+            output_count: u64::try_from(record.outputs.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run output count"))?,
+            last_state_hash: record
+                .step_checkpoints
+                .last()
+                .map_or([0; CODE_RUN_REPLAY_HASH_LEN], |checkpoint| {
+                    checkpoint.state_hash
+                }),
+        })
+    }
+}
+
 impl CodeRunReplayRecord {
     #[must_use]
     pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
@@ -288,6 +316,11 @@ impl CodeRunReplayRecord {
     #[must_use]
     pub fn replay_cursor(&self) -> CodeRunReplayCursor<'_> {
         CodeRunReplayCursor::new(self)
+    }
+
+    /// Returns the current replay-row generation fingerprint.
+    pub fn generation(&self) -> Result<CodeRunReplayGeneration> {
+        CodeRunReplayGeneration::for_record(self)
     }
 }
 
@@ -480,6 +513,36 @@ impl Vault {
             &encoded,
         )?;
         wtxn.commit().map_err(Error::from)
+    }
+
+    /// Persists the replay record only if the stored row still matches `expected`.
+    pub fn put_code_run_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let encoded = encode_code_run_replay_record(record)?;
+        let next_generation = record.generation()?;
+        let key = code_run_replay_record_key(&record.run_id);
+        let mut wtxn = self.store.env.write_txn()?;
+        let current = self
+            .store
+            .vault_meta
+            .get(&wtxn, &key)?
+            .map(decode_code_run_replay_record)
+            .transpose()?;
+        let current_generation = current
+            .as_ref()
+            .map(CodeRunReplayRecord::generation)
+            .transpose()?;
+        if current_generation != expected {
+            return Err(Error::ConcurrentWrite(
+                "code-run replay record changed; retry executor",
+            ));
+        }
+        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        wtxn.commit().map_err(Error::from)?;
+        Ok(next_generation)
     }
 
     /// Loads the replay record for `run_id`, if present.
@@ -739,11 +802,11 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         validate_label(&checkpoint.label, "checkpoint label")?;
     }
 
-    let mut output_handles = HashSet::new();
+    let mut output_paths = HashSet::new();
     for output in &record.outputs {
         validate_raw_output(output)?;
-        if !output_handles.insert(output.handle.as_str()) {
-            return Err(invalid_code_run_replay("duplicate raw output handle"));
+        if !output_paths.insert(output.path.as_str()) {
+            return Err(invalid_code_run_replay("duplicate raw output path"));
         }
     }
 
@@ -1238,6 +1301,13 @@ pub struct HostSelfDispatcher<'a> {
     actor: WriteActor,
     run_ref: String,
 }
+
+/// Explicit first-party GatedActorWrite trap surface for engine-native code.
+///
+/// This is a type alias for [`HostSelfDispatcher`], whose public `self.memory.*`
+/// variants stamp host-owned actor/provenance and run per-operation gate checks
+/// before any write commits.
+pub type GatedActorWrite<'a> = HostSelfDispatcher<'a>;
 
 impl<'a> HostSelfDispatcher<'a> {
     /// Creates a dispatcher for a first-party run.
@@ -2247,8 +2317,12 @@ mod tests {
             .collect::<String>()
             .into_bytes();
         let output = CodeRunRawOutput::from_bytes("/mnt/outputs/large.txt", &raw)?;
+        let same_raw_other_path =
+            CodeRunRawOutput::from_bytes("/mnt/outputs/large-copy.txt", &raw)?;
 
         assert_eq!(output.raw_len, raw.len() as u64);
+        assert_eq!(output.handle, same_raw_other_path.handle);
+        assert_ne!(output.path, same_raw_other_path.path);
         assert!(output.preview.truncated);
         assert!(
             output.preview.text.chars().count()
@@ -2257,21 +2331,38 @@ mod tests {
         assert!(!output.preview.text.contains("\n\n"));
 
         vault.put_code_run_raw_output(&output, &raw)?;
+        vault.put_code_run_raw_output(&same_raw_other_path, &raw)?;
         let mut record = CodeRunReplayRecord::new(
             run_id,
             CodeRunDeterminism::new(1_719_000_002_000, [0xBC; 32]),
         );
         record.outputs.push(output.clone());
+        record.outputs.push(same_raw_other_path.clone());
         vault.put_code_run_replay_record(&record)?;
 
         let loaded = vault
             .get_code_run_replay_record(&run_id)?
             .expect("stored replay record");
-        assert_eq!(loaded.outputs, vec![output.clone()]);
-        let loaded_raw = vault
-            .get_code_run_raw_output(&output)?
-            .expect("stored raw output");
-        assert_eq!(loaded_raw, raw);
+        assert_eq!(
+            loaded.outputs,
+            vec![output.clone(), same_raw_other_path.clone()]
+        );
+        for stored_output in [&output, &same_raw_other_path] {
+            let loaded_raw = vault
+                .get_code_run_raw_output(stored_output)?
+                .expect("stored raw output");
+            assert_eq!(loaded_raw, raw);
+        }
+
+        let mut duplicate_path = loaded;
+        duplicate_path.outputs.push(CodeRunRawOutput::from_bytes(
+            "/mnt/outputs/large.txt",
+            b"different bytes",
+        )?);
+        let err = vault
+            .put_code_run_replay_record(&duplicate_path)
+            .expect_err("duplicate output path rejected");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
         Ok(())
     }
 

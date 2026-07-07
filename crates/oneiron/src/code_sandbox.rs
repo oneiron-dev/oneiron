@@ -42,6 +42,7 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
   }
 
   function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
+  function ask_human(input: { prompt: string }): Promise<{ waitId: string }>;
 }
 
 declare namespace oneiron {
@@ -170,6 +171,7 @@ pub enum SandboxImportClass {
     ReadOnly,
     CredentialHandle,
     Determinism,
+    DurableWait,
     WriteTrap,
 }
 
@@ -230,12 +232,18 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.clock.now_unix_ms", SandboxImportClass::Determinism);
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
+const SELF_MEMORY_SEARCH_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.memory.search", SandboxImportClass::ReadOnly);
 const SELF_MEMORY_PUT_CLAIM_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_claim", SandboxImportClass::WriteTrap);
 const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.supersede_claim", SandboxImportClass::WriteTrap);
 const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
+const SELF_ASK_HUMAN_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.ask_human", SandboxImportClass::DurableWait);
+const SELF_ASK_HUMAN_CAMEL_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.askHuman", SandboxImportClass::DurableWait);
 const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     READ_FILE_IMPORT,
     CREDENTIAL_CALL_IMPORT,
@@ -247,9 +255,12 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    SELF_MEMORY_SEARCH_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
+    SELF_ASK_HUMAN_IMPORT,
+    SELF_ASK_HUMAN_CAMEL_IMPORT,
 ];
 
 /// Link-time contract for one guest tier.
@@ -1135,9 +1146,12 @@ mod tests {
                 "sandbox.credential.call",
                 "oneiron.clock.now_unix_ms",
                 "oneiron.random.bytes",
+                "self.memory.search",
                 "self.memory.put_claim",
                 "self.memory.supersede_claim",
                 "self.memory.put_edge",
+                "self.ask_human",
+                "self.askHuman",
             ]
         );
         let write_imports = first_party
@@ -1182,6 +1196,16 @@ mod tests {
             deterministic_imports,
             vec!["oneiron.clock.now_unix_ms", "oneiron.random.bytes"]
         );
+        let durable_wait_imports = first_party
+            .linked_imports()
+            .iter()
+            .filter(|import| import.class() == SandboxImportClass::DurableWait)
+            .map(|import| import.name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            durable_wait_imports,
+            vec!["self.ask_human", "self.askHuman"]
+        );
         for import in first_party.linked_imports() {
             for forbidden in [
                 "batch",
@@ -1208,9 +1232,12 @@ mod tests {
         let dts = contract.prompt_side_dts();
 
         assert!(dts.contains("declare namespace self"));
+        assert!(dts.contains("function search"));
         assert!(dts.contains("function putClaim"));
         assert!(dts.contains("function supersedeClaim"));
         assert!(dts.contains("function putEdge"));
+        assert!(dts.contains("function askHuman"));
+        assert!(dts.contains("function ask_human"));
         assert!(dts.contains("namespace clock"));
         assert!(dts.contains("function nowUnixMs"));
         assert!(dts.contains("namespace random"));
