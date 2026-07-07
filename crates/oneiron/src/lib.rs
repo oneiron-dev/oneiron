@@ -252,12 +252,14 @@ pub use crate::dreamer_runner::{
 };
 pub use crate::dreamer_tournament::{
     DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DREAMER_TOURNAMENT_MAX_FANOUT_M,
-    DREAMER_TOURNAMENT_MAX_ROUNDS_K, DREAMER_TOURNAMENT_MIN_FANOUT_M,
+    DREAMER_TOURNAMENT_MAX_ROUNDS_K, DREAMER_TOURNAMENT_MIN_FANOUT_M, DreamerTournamentAuthorFork,
     DreamerTournamentBlindJudgeContext, DreamerTournamentBordaBallot, DreamerTournamentBranch,
     DreamerTournamentBranchEvidence, DreamerTournamentBranchVerdict, DreamerTournamentCandidate,
-    DreamerTournamentEvidenceStore, DreamerTournamentJudgeClaim, DreamerTournamentRound,
-    DreamerTournamentRun, DreamerTournamentRunResult, DreamerTournamentStopReason,
-    DreamerTournamentWinner, run_dreamer_claim_tournament,
+    DreamerTournamentCandidateIdentity, DreamerTournamentEvidenceStore,
+    DreamerTournamentJudgeClaim, DreamerTournamentRound, DreamerTournamentRun,
+    DreamerTournamentRunResult, DreamerTournamentStopReason, DreamerTournamentSynthesisArtifact,
+    DreamerTournamentSynthesisVerdict, DreamerTournamentWeaveArtifact, DreamerTournamentWinner,
+    run_dreamer_claim_tournament,
 };
 #[cfg(feature = "sync")]
 pub use crate::embed::{
