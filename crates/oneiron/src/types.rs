@@ -59,6 +59,11 @@ pub const ENTITY_TYPE_FACET: u8 = 13;
 pub const ENTITY_TYPE_WORLD: u8 = 14;
 pub const ENTITY_TYPE_ASSET: u8 = 15;
 pub const ENTITY_TYPE_NOTIFICATION: u8 = 16;
+/// OF-334 AgentDefinition entity (AGENT-1, ONE-1443). A saved, host-agnostic
+/// composition record (skills / connectors / code-mode MCPs / model tier /
+/// scope / optional prompt) with structural CRUD and an update gate — SKILL's
+/// shape, so it is a CORE StructuralKind. Short-ID prefix `ag`.
+pub const ENTITY_TYPE_AGENT_DEF: u8 = 17;
 pub const ENTITY_TYPE_TASK_LIST: u8 = 80;
 pub const ENTITY_TYPE_TASK: u8 = 81;
 pub const ENTITY_TYPE_MACHINE: u8 = 82;
@@ -469,6 +474,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
         kind: "NOTIFICATION",
         type_byte: ENTITY_TYPE_NOTIFICATION,
         short_id_prefix: Some("nt"),
+        classification: EntityClassification::Core,
+        band: TypeByteBand::Core,
+    },
+    EntityTypeRegistryEntry {
+        kind: "AGENT_DEF",
+        type_byte: ENTITY_TYPE_AGENT_DEF,
+        short_id_prefix: Some("ag"),
         classification: EntityClassification::Core,
         band: TypeByteBand::Core,
     },

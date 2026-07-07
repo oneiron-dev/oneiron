@@ -177,6 +177,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
+        | ErrorKind::InvalidAgentDefBody
         | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
@@ -1281,6 +1282,10 @@ mod tests {
         assert_eq!(
             remote_rejection_reason(&Error::InvalidSkillBody("bad skill")).as_deref(),
             Some("InvalidSkillBody")
+        );
+        assert_eq!(
+            remote_rejection_reason(&Error::InvalidAgentDefBody("bad agent def")).as_deref(),
+            Some("InvalidAgentDefBody")
         );
         assert_eq!(
             remote_rejection_reason(&Error::InvalidTaskBody("missing task role")).as_deref(),

@@ -2,6 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod access_grant;
 pub mod affect;
+pub mod agent_def;
 pub mod analyzer;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
@@ -89,6 +90,12 @@ pub use crate::affect::{
     ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, VadDelta,
     affect_trigger_claim_candidate, affect_trigger_value, decode_affect_trigger_claim,
     decode_affect_trigger_value,
+};
+pub use crate::agent_def::{
+    AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
+    AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
+    AGENT_VERSION_MAX_BYTES, AgentDefinition, AgentScope, MCP_REF_KEYS, McpRef,
+    decode_agent_definition, encode_agent_definition,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,

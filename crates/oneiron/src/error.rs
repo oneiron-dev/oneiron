@@ -193,6 +193,7 @@ pub enum ErrorKind {
     InvalidEditManifest,
     EditRoundtripFailed,
     InvalidSkillBody,
+    InvalidAgentDefBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
@@ -806,6 +807,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// An AGENT_DEF entity body failed pinned structural/lifecycle validation
+    /// or the update-immutability gate. Nothing was written.
+    #[error("invalid AGENT_DEF body: {0}")]
+    InvalidAgentDefBody(&'static str),
     /// An AccessGrant control-plane record failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
@@ -1405,6 +1410,7 @@ impl Error {
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
+            Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted

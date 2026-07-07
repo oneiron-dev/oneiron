@@ -24,12 +24,12 @@ use crate::types::{
     ClaimCandidate, CompanionExportClassification, CompanionRecord, CompanionRecordKey,
     CompanionSubject, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
     EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole,
-    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, encode_edge_value,
-    parse_strict_edge_record, validate_edge_weight,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags,
+    EntityId, TaskRole, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
+    encode_edge_value, parse_strict_edge_record, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -1239,6 +1239,7 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
             }
         }
         ENTITY_TYPE_SKILL => crate::skill::validate_skill_record_bytes(data)?,
+        ENTITY_TYPE_AGENT_DEF => crate::agent_def::validate_agent_definition_bytes(data)?,
         _ => {}
     }
     Ok(())
@@ -2463,6 +2464,7 @@ fn apply_put(
     // Bodies of all other type bytes stay opaque at the storage layer.
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
+    let mut new_agent_definition = None;
     let mut decoded_claim_body = None;
     if entity_type == crate::types::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
@@ -2594,6 +2596,8 @@ fn apply_put(
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
+    } else if entity_type == ENTITY_TYPE_AGENT_DEF {
+        new_agent_definition = Some(crate::agent_def::decode_agent_definition(data)?);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
@@ -2689,6 +2693,19 @@ fn apply_put(
                         && crate::skill::is_legacy_opaque_skill_body(prior_body) => {}
                 Err(error) => return Err(error),
             }
+        }
+        if old_type == ENTITY_TYPE_AGENT_DEF && body_changed {
+            let updated = new_agent_definition
+                .as_ref()
+                .ok_or(Error::InvariantViolation(
+                    "validated AGENT_DEF record missing",
+                ))?;
+            // No legacy-opaque escape hatch (contrast SKILL): AGENT_DEF is a
+            // brand-new kind with no pre-existing bodies, so a prior body that
+            // fails to decode is corruption — fail closed.
+            let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+            let prior = crate::agent_def::decode_agent_definition(prior_body)?;
+            crate::agent_def::validate_agent_definition_update(&prior, updated)?;
         }
         if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
