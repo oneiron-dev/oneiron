@@ -194,6 +194,9 @@ pub enum ApiErrorDetails {
         connector_known: bool,
         supported_connectors: Vec<String>,
         supported_verbs: Vec<String>,
+        // Intentionally snake_case inside this camelCase variant: it bridges to the snake_case
+        // agent recovery catalog and is pinned by the discovery manifest `recovery_suggestions_field`,
+        // the skills-pack schema const, and the OpenAPI contract snapshot. Do not camelCase.
         #[serde(rename = "recovery_suggestions")]
         recovery_suggestions: Vec<String>,
     },
