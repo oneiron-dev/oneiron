@@ -2577,6 +2577,8 @@ fn apply_put(
         decoded_claim_body = Some(body);
     } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
+    } else if entity_type == crate::types::ENTITY_TYPE_BLOB_ARTIFACT {
+        crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
     } else if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
             validate_replicated_authority_log_for_local_vault(store, wtxn, data)?;

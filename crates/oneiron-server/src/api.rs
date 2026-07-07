@@ -10314,6 +10314,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidAccessGrantBody
         | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidCodeArtifactBody
+        | ErrorKind::InvalidBlobArtifactBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody

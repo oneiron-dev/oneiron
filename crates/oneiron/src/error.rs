@@ -183,6 +183,7 @@ pub enum ErrorKind {
     InvalidClaimBody,
     InvalidPsychProfileBody,
     InvalidCodeArtifactBody,
+    InvalidBlobArtifactBody,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -463,6 +464,10 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
     InvalidCodeArtifactBody(&'static str),
+    /// A BLOB_ARTIFACT entity body or version record failed pinned
+    /// structural validation. Nothing was written.
+    #[error("invalid BLOB artifact body: {0}")]
+    InvalidBlobArtifactBody(&'static str),
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -973,6 +978,7 @@ impl Error {
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
+            Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {

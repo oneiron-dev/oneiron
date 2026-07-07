@@ -6,6 +6,7 @@ pub mod analyzer;
 pub mod artifact_hosting;
 pub mod authority;
 pub mod batch;
+pub mod blob_artifact;
 pub(crate) mod bm25;
 pub mod channel_identity;
 pub mod channel_identity_lifecycle;
@@ -103,6 +104,12 @@ pub use crate::authority::{
     genesis_vault_id, validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
+pub use crate::blob_artifact::{
+    BLOB_ARTIFACT_BODY_KEYS, BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES,
+    BLOB_ARTIFACT_NAME_MAX_BYTES, BLOB_ARTIFACT_RUN_REF_MAX_BYTES,
+    BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactBody, BlobArtifactVersion,
+    BlobVersionProvenance, decode_blob_artifact_body, encode_blob_artifact_body,
+};
 pub use crate::bm25::{
     Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot, Bm25Formula,
     bm25_diagnostics_snapshot,
