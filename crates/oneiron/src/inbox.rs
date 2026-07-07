@@ -16,13 +16,16 @@
 //!   member never drops its siblings, and the group closes only when every
 //!   member is resolved;
 //! * cross-run same-claim-hash duplicates collapse into the EARLIEST open
-//!   group; the later group shows a pointer row;
+//!   group; the later group shows a pointer row, and a duplicate's exception
+//!   classes propagate to the owning row so the dial can never hide them;
 //! * the settings dial (approve-all ↔ exceptions-only ↔ review-everything)
 //!   adjusts SURFACING only. Manifest-critical rows surface under every dial
 //!   position — the dial cannot waive them. Auto-redemption of non-surfaced
 //!   rows awaits the ONE-1183-D2 auto_checker knob; until it lands, hidden
 //!   rows stay consentable (bundle verbs, tray) and gap-decay per item, so
 //!   receipts remain the always-on audit trail.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -33,21 +36,31 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_CONFLICT_OPEN,
 };
-use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
+use crate::dreamer_runner::{
+    DREAMER_RUNNER_JOB_KIND, DreamerJobPayload, decode_dreamer_job_payload,
+};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
-use crate::job_queue::{JobQueue, job_record_order};
-use crate::receipt::{ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower};
+use crate::job_queue::{JobId, JobQueue};
+use crate::receipt::{
+    MAX_RECEIPT_QUERY_SCAN, ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower,
+};
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, PendingGateConsentRecord,
 };
 use crate::types::{ENTITY_TYPE_CLAIM, EntityId, TimeRange, bytes_to_hex_lower};
 
-/// Upper bound on pending-consent rows visited per projection pass.
+/// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;
 
-/// Upper bound on decision-ledger rows visited when reopening a group.
-const INBOX_REOPEN_DECISION_SCAN_LIMIT: usize = 10_000;
+/// Deeper pending-row scan budget for EXPLICIT group resolution and reopen,
+/// aligned with the receipt family's `MAX_RECEIPT_QUERY_SCAN`: a named bulk
+/// verb must reach its group even when the browse window is saturated.
+/// Per-item gap-decay bounds the open tray well below this in practice.
+pub const INBOX_RESOLVE_PENDING_SCAN_LIMIT: usize = 100_000;
+
+/// Cycle/depth guard when climbing dreamer parent links to the run root.
+const INBOX_RUN_ROOT_CLIMB_LIMIT: usize = 64;
 
 /// Sub-clusters by entity/theme are emitted only when a run surfaces at
 /// least this many members ("when the run emits many items").
@@ -298,7 +311,7 @@ impl Vault {
     /// Projects open dreamer-run groups, surfaced under the persisted dial.
     pub fn inbox_groups(&self, query: InboxQuery) -> Result<Vec<InboxGroup>> {
         let dial = self.inbox_review_dial()?;
-        inbox_groups_projection(self, query, dial)
+        inbox_groups_projection(self, query, dial, INBOX_PENDING_SCAN_LIMIT)
     }
 
     /// Applies one bulk verb to a group at the current time, covering every
@@ -327,8 +340,9 @@ impl Vault {
     ) -> Result<InboxBundleResolution> {
         let groups = inbox_groups_projection(
             self,
-            InboxQuery::at(now, INBOX_PENDING_SCAN_LIMIT),
+            InboxQuery::at(now, INBOX_RESOLVE_PENDING_SCAN_LIMIT),
             InboxReviewDial::ReviewEverything,
+            INBOX_RESOLVE_PENDING_SCAN_LIMIT,
         )?;
         let group = groups
             .into_iter()
@@ -440,15 +454,19 @@ impl Vault {
 
         let open_group = inbox_groups_projection(
             self,
-            InboxQuery::at(now, INBOX_PENDING_SCAN_LIMIT),
+            InboxQuery::at(now, INBOX_RESOLVE_PENDING_SCAN_LIMIT),
             InboxReviewDial::ReviewEverything,
+            INBOX_RESOLVE_PENDING_SCAN_LIMIT,
         )?
         .into_iter()
         .find(|group| group.group_key == group_key || group.run_id == group_key);
 
+        // Same ledger scan budget as the RS1 receipt-family query; a durable
+        // per-grant_ref decision index is follow-up work on the RCPT-1
+        // receipt-family index track.
         let resolution_receipts = self
             .store
-            .gate_decisions(INBOX_REOPEN_DECISION_SCAN_LIMIT)?
+            .gate_decisions(MAX_RECEIPT_QUERY_SCAN)?
             .iter()
             .filter(|record| record.grant_ref.as_deref() == Some(bundle_ref.as_str()))
             .map(gate_decision_receipt)
@@ -495,13 +513,13 @@ struct OpenMember {
     run_id: String,
 }
 
-fn open_dreamer_members(vault: &Vault) -> Result<Vec<OpenMember>> {
+fn open_dreamer_members(vault: &Vault, scan_limit: usize) -> Result<Vec<OpenMember>> {
     let mut rows = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
         for pending in vault
             .store
-            .pending_gate_consents_in_txn(&rtxn, INBOX_PENDING_SCAN_LIMIT)?
+            .pending_gate_consents_in_txn(&rtxn, scan_limit)?
         {
             let Some(run_id) = pending.dreamer_run_id.clone() else {
                 continue;
@@ -535,38 +553,81 @@ fn open_dreamer_members(vault: &Vault) -> Result<Vec<OpenMember>> {
 
 /// Resolves the OF-193 group identity for one stamped run id: the run-tree
 /// ROOT job id plus the Dreamer-authored intent from the root's run brief.
-/// Runs without queue rows keep the stamped run id as their key.
+/// Only Dreamer job rows can anchor a run tree — other job kinds may share
+/// a run id and must never be mistaken for the root. When the run's rows
+/// are all branches (a child branch carrying its own run id), the parent
+/// links climb to the root; runs without any Dreamer rows keep the stamped
+/// run id as their key.
 fn resolve_run_identity(vault: &Vault, run_id: &str) -> Result<(String, Option<String>)> {
     let queue = JobQueue::new(vault);
-    let mut records = queue.list_run(run_id)?;
-    records.sort_by(job_record_order);
+    // `list_run` already returns rows in deterministic `job_record_order`.
+    let records = queue.list_run(run_id)?;
+    let mut first_branch: Option<(JobId, DreamerJobPayload)> = None;
     for record in &records {
-        let payload = if record.kind == DREAMER_RUNNER_JOB_KIND {
-            decode_dreamer_job_payload(&record.payload).ok()
-        } else {
-            None
-        };
-        let is_root = payload
-            .as_ref()
-            .is_none_or(|payload| payload.parent_job.is_none());
-        if !is_root {
+        if record.kind != DREAMER_RUNNER_JOB_KIND {
             continue;
         }
-        let intent = payload.as_ref().and_then(|payload| {
-            let rmpv::Value::Map(entries) = &payload.input else {
-                return None;
-            };
-            entries.iter().find_map(|(key, value)| {
-                if key.as_str() != Some(INBOX_RUN_BRIEF_INTENT_KEY) {
-                    return None;
-                }
-                let intent = value.as_str()?.trim();
-                (!intent.is_empty()).then(|| intent.to_owned())
-            })
-        });
-        return Ok((bytes_to_hex_lower(record.id.as_bytes()), intent));
+        let Ok(payload) = decode_dreamer_job_payload(&record.payload) else {
+            continue;
+        };
+        if payload.parent_job.is_none() {
+            let intent = run_brief_intent(&payload.input);
+            return Ok((bytes_to_hex_lower(record.id.as_bytes()), intent));
+        }
+        if first_branch.is_none() {
+            first_branch = Some((record.id, payload));
+        }
+    }
+    if let Some((job_id, payload)) = first_branch {
+        return climb_to_run_root(&queue, job_id, payload);
     }
     Ok((run_id.to_owned(), None))
+}
+
+fn run_brief_intent(input: &rmpv::Value) -> Option<String> {
+    let rmpv::Value::Map(entries) = input else {
+        return None;
+    };
+    entries.iter().find_map(|(key, value)| {
+        if key.as_str() != Some(INBOX_RUN_BRIEF_INTENT_KEY) {
+            return None;
+        }
+        let intent = value.as_str()?.trim();
+        (!intent.is_empty()).then(|| intent.to_owned())
+    })
+}
+
+/// Follows dreamer parent links from a branch job to the run-tree root,
+/// bounded by a visited set and depth cap. Stops (keeping the deepest
+/// reachable ancestor) on missing parents, non-Dreamer parents, undecodable
+/// payloads, or cycles.
+fn climb_to_run_root(
+    queue: &JobQueue<'_>,
+    start_id: JobId,
+    start_payload: DreamerJobPayload,
+) -> Result<(String, Option<String>)> {
+    let mut job_id = start_id;
+    let mut payload = start_payload;
+    let mut visited = vec![job_id];
+    while let Some(parent_id) = payload.parent_job {
+        if visited.contains(&parent_id) || visited.len() >= INBOX_RUN_ROOT_CLIMB_LIMIT {
+            break;
+        }
+        let Some(parent) = queue.get(parent_id)? else {
+            break;
+        };
+        if parent.kind != DREAMER_RUNNER_JOB_KIND {
+            break;
+        }
+        let Ok(parent_payload) = decode_dreamer_job_payload(&parent.payload) else {
+            break;
+        };
+        job_id = parent_id;
+        payload = parent_payload;
+        visited.push(job_id);
+    }
+    let intent = run_brief_intent(&payload.input);
+    Ok((bytes_to_hex_lower(job_id.as_bytes()), intent))
 }
 
 fn classify_member(
@@ -629,8 +690,11 @@ fn would_supersede_active_truth(vault: &Vault, member: &OpenMember) -> Result<Op
         let Some(existing) = vault.get_claim(&claim_id)? else {
             continue;
         };
+        // Stale rows are excluded from read-path truth, so approving over
+        // one is not a supersession of anything current.
         if existing.predicate != member.body.predicate
             || existing.lifecycle != ClaimLifecycleStatus::Active
+            || existing.stale
             || matches!(
                 existing.approval,
                 ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Rejected
@@ -719,22 +783,21 @@ fn inbox_groups_projection(
     vault: &Vault,
     query: InboxQuery,
     dial: InboxReviewDial,
+    scan_limit: usize,
 ) -> Result<Vec<InboxGroup>> {
     if query.limit == 0 {
         return Ok(Vec::new());
     }
 
-    let open_members = open_dreamer_members(vault)?;
+    let open_members = open_dreamer_members(vault, scan_limit)?;
     let mut drafts: Vec<GroupDraft> = Vec::new();
+    let mut group_index_by_run: HashMap<String, usize> = HashMap::new();
     // Same-claim-hash collapse: earliest open row per content hash wins.
-    let mut seen_hashes: Vec<(Vec<u8>, usize, usize)> = Vec::new();
+    let mut owner_by_hash: HashMap<Vec<u8>, (usize, usize)> = HashMap::new();
 
     for member in open_members {
-        let group_index = match drafts
-            .iter()
-            .position(|draft| draft.run_id == member.run_id)
-        {
-            Some(index) => index,
+        let group_index = match group_index_by_run.get(&member.run_id) {
+            Some(index) => *index,
             None => {
                 let (group_key, intent) = resolve_run_identity(vault, &member.run_id)?;
                 drafts.push(GroupDraft {
@@ -745,25 +808,34 @@ fn inbox_groups_projection(
                     members: Vec::new(),
                     pointer_rows: Vec::new(),
                 });
+                group_index_by_run.insert(member.run_id.clone(), drafts.len() - 1);
                 drafts.len() - 1
             }
         };
 
         let claim_id_hex = hex_lower(&member.pending.claim_id);
         let claim_hash = inbox_claim_hash(&member.body)?;
-        let duplicate_owner = seen_hashes
-            .iter()
-            .find_map(|(hash, owner_group, owner_member)| {
-                (*hash == claim_hash && *owner_group != group_index)
-                    .then_some((*owner_group, *owner_member))
-            });
+        let duplicate_owner = owner_by_hash
+            .get(&claim_hash)
+            .copied()
+            .filter(|(owner_group, _)| *owner_group != group_index);
         if let Some((owner_group, owner_member)) = duplicate_owner {
+            // The duplicate's own exception classes must survive the
+            // collapse: the dial can never hide a manifest-critical or
+            // checker-held row behind a pointer.
+            let (duplicate_classes, _) = classify_member(vault, &member)?;
             let owner_key = drafts[owner_group].group_key.clone();
             let owner_row = &mut drafts[owner_group].members[owner_member];
             owner_row
                 .member
                 .duplicate_claim_ids
                 .push(claim_id_hex.clone());
+            if !duplicate_classes.is_empty() {
+                owner_row.member.exception_classes.extend(duplicate_classes);
+                owner_row.member.exception_classes.sort_unstable();
+                owner_row.member.exception_classes.dedup();
+                owner_row.surfaced = member_surfaces(dial, &owner_row.member.exception_classes);
+            }
             let duplicate_of_claim_id = owner_row.member.claim_id.clone();
             drafts[group_index].pointer_rows.push(InboxPointerRow {
                 claim_id: claim_id_hex,
@@ -786,7 +858,11 @@ fn inbox_groups_projection(
             receipt_view: ReceiptView::new(gate_decision_receipt(&member.decision)),
         };
         let member_index = drafts[group_index].members.len();
-        seen_hashes.push((claim_hash, group_index, member_index));
+        // Same-group repeats keep the earliest entry so later runs still
+        // collapse onto the first occurrence.
+        owner_by_hash
+            .entry(claim_hash)
+            .or_insert((group_index, member_index));
         drafts[group_index].members.push(MemberDraft {
             member: row,
             surfaced,
@@ -1012,7 +1088,7 @@ mod tests {
 
     use super::*;
     use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
-    use crate::job_queue::JobId;
+    use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
     use crate::receipt::ReceiptQuery;
     use crate::store::GateDecisionId;
     use crate::types::{
@@ -1781,6 +1857,217 @@ mod tests {
             format!("entity:{}", second_subject.to_hex())
         );
         assert_eq!(second_cluster.member_claim_ids.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let run_id = "run-mixed";
+        // A non-Dreamer job with the same run id, created BEFORE the dreamer
+        // root, must never be picked as the run-tree root.
+        let queue = JobQueue::new(&vault);
+        let EnqueueOutcome::Enqueued(webhook) = queue.enqueue(EnqueueJob {
+            kind: "webhook".to_owned(),
+            payload: b"webhook payload".to_vec(),
+            dedupe_key: None,
+            run_id: Some(run_id.to_owned()),
+            now: 5,
+        })?
+        else {
+            panic!("expected fresh enqueue");
+        };
+        let root = enqueue_dreamer_job(
+            &vault,
+            "orchestrator",
+            None,
+            Value::Map(vec![(Value::from("intent"), Value::from("Mixed run"))]),
+            run_id,
+            10,
+        )?;
+
+        write_dreamer_proposal(
+            &vault,
+            entity(0xA1),
+            entity(0xB1),
+            entity(0xC1),
+            "profile.diet",
+            "vegan",
+            run_id,
+            30,
+            &[REASON_CEILING],
+        )?;
+
+        vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].group_key, bytes_to_hex_lower(root.as_bytes()));
+        assert_ne!(
+            groups[0].group_key,
+            bytes_to_hex_lower(webhook.id.as_bytes())
+        );
+        assert_eq!(groups[0].headline, "Mixed run: 1 new claim");
+        Ok(())
+    }
+
+    #[test]
+    fn run_root_climbs_parent_links_for_branch_run_ids() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let root = enqueue_dreamer_job(
+            &vault,
+            "orchestrator",
+            None,
+            Value::Map(vec![(Value::from("intent"), Value::from("Branch climb"))]),
+            "run-parent",
+            10,
+        )?;
+        let branch = enqueue_dreamer_job(
+            &vault,
+            "entity-sweep",
+            Some(root),
+            Value::from("branch input"),
+            "run-branch",
+            20,
+        )?;
+
+        // The proposal is stamped with the BRANCH run id; the group key must
+        // still be the OF-193 root reached through parent links.
+        write_dreamer_proposal(
+            &vault,
+            entity(0xA1),
+            entity(0xB1),
+            entity(0xC1),
+            "profile.diet",
+            "vegan",
+            "run-branch",
+            30,
+            &[REASON_CEILING],
+        )?;
+
+        vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].group_key, bytes_to_hex_lower(root.as_bytes()));
+        assert_ne!(groups[0].group_key, bytes_to_hex_lower(branch.as_bytes()));
+        assert_eq!(groups[0].run_id, "run-branch");
+        assert_eq!(groups[0].headline, "Branch climb: 1 new claim");
+        Ok(())
+    }
+
+    #[test]
+    fn stale_truth_does_not_classify_updates() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let subject = entity(0xC1);
+        let owner = entity(0xB0);
+        vault.put_entity(&owner, ENTITY_TYPE_PERSON, time(1), 1, b"owner")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
+
+        // The only same subject+predicate truth is STALE: it is excluded
+        // from read-path truth, so the proposal is a new claim, not an
+        // update over user_stated truth.
+        let stale_truth = entity(0xA0);
+        let envelope = WriteEnvelope::new(
+            WriteActor::new(owner, EdgeActorClass::Human),
+            ClaimSource::UserStated,
+            WriteProvenance::new(Value::from("user said so")).expect("provenance"),
+            ClaimApprovalStatus::Approved,
+        );
+        let candidate = crate::types::ClaimCandidate::new(
+            "profile.diet",
+            ClaimSubject::Entity(subject),
+            Value::from("vegan"),
+            1.0,
+        )
+        .with_stale(true);
+        vault
+            .batch()
+            .claim_candidate(&stale_truth, candidate, &envelope, time(5), 5)
+            .commit()?;
+
+        write_dreamer_proposal(
+            &vault,
+            entity(0xA1),
+            entity(0xB1),
+            subject,
+            "profile.diet",
+            "keto",
+            "run-stale",
+            10,
+            &[REASON_CEILING],
+        )?;
+
+        // Default exceptions-only dial: no exception classes, nothing
+        // surfaces, so the group stays out of the queue entirely.
+        assert!(vault.inbox_groups(InboxQuery::at(100, 10))?.is_empty());
+
+        vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members.len(), 1);
+        assert_eq!(groups[0].members[0].verb_class, "new_claim");
+        assert!(groups[0].members[0].exception_classes.is_empty());
+        assert_eq!(groups[0].new_claim_count, 1);
+        assert_eq!(groups[0].update_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_rows_keep_exception_surfacing() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let subject = entity(0xC1);
+        let original = entity(0xA1);
+        let duplicate = entity(0xA2);
+        // The owner row is a plain non-exception ask; the later duplicate is
+        // manifest-critical. The collapse must not hide the exception.
+        write_dreamer_proposal(
+            &vault,
+            original,
+            entity(0xB1),
+            subject,
+            "profile.diet",
+            "vegan",
+            "run-early",
+            10,
+            &[REASON_CEILING],
+        )?;
+        write_dreamer_proposal(
+            &vault,
+            duplicate,
+            entity(0xB2),
+            subject,
+            "profile.diet",
+            "vegan",
+            "run-late",
+            20,
+            &[REASON_CRITICAL],
+        )?;
+
+        // Default exceptions-only dial: the owner row surfaces because the
+        // collapsed duplicate carries a manifest-critical hold.
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups.len(), 2);
+        let early = &groups[0];
+        assert_eq!(early.run_id, "run-early");
+        assert_eq!(early.members.len(), 1);
+        assert_eq!(early.members[0].claim_id, original.to_hex());
+        assert_eq!(
+            early.members[0].duplicate_claim_ids,
+            vec![duplicate.to_hex()]
+        );
+        assert!(
+            early.members[0]
+                .exception_classes
+                .contains(&InboxExceptionClass::ManifestCritical)
+        );
+        let late = &groups[1];
+        assert_eq!(late.pointer_rows.len(), 1);
+        assert!(late.members.is_empty());
+
+        // The dial can never waive a manifest-critical row, duplicate or not.
+        vault.set_inbox_review_dial(InboxReviewDial::ApproveAll)?;
+        let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+        assert_eq!(groups[0].members.len(), 1);
+        assert_eq!(groups[0].members[0].claim_id, original.to_hex());
         Ok(())
     }
 }

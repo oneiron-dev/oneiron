@@ -32,7 +32,7 @@ use crate::types::{
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
-const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
+pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
 const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 const FIELD_JOB_REF: &str = "job_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
