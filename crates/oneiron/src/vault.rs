@@ -6904,7 +6904,7 @@ impl Vault {
     }
 }
 
-fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
     matches!(
         entity_type,
         ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG

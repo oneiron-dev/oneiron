@@ -46,6 +46,7 @@ pub(crate) mod limits;
 pub mod linkedin_connector;
 pub mod llm;
 pub mod maintain;
+pub mod off_record;
 pub mod outbound;
 pub mod outbound_grant;
 pub mod persona_snapshot;
@@ -398,6 +399,10 @@ pub use crate::llm::{
     UnsupportedCapability,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
+pub use crate::off_record::{
+    OFF_RECORD_SESSION_MARKER_LINE, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
+    OffRecordPromoteReceipt, OffRecordSessionRecord, off_record_context_marker,
+};
 pub use crate::outbound::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION,
     OUTBOUND_INTENT_SCHEMA_VERSION, OUTBOUND_VERB_FIELD_CONTRACT, OutboundCapabilityManifest,
