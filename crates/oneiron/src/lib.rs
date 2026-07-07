@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod access_grant;
 pub mod affect;
 pub mod analyzer;
+pub mod anchored_annotation;
 pub mod artifact_hosting;
 pub mod authority;
 pub mod batch;
@@ -92,6 +93,13 @@ pub use crate::affect::{
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
     AnalyzerMode, LangPolicy, LanguageHint, NormalizationPolicy, Token, TokenKind,
+};
+pub use crate::anchored_annotation::{
+    A1Range, ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE,
+    ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_LOCATOR_RANGE_MAX_BYTES,
+    ANNOTATION_LOCATOR_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment,
+    AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome, ReanchorSummary,
+    TaskBrief, ThreadState, replay_locator,
 };
 pub use crate::artifact_hosting::{
     ARTIFACT_POINTER_CHANNELS, ARTIFACT_PUBLISH_VERB_FEATURE, ArtifactPointer,
