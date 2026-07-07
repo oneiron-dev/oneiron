@@ -49,6 +49,8 @@ const POLICY_SCOPED_GRANTS_KEY: &str = "scoped_grants";
 const POLICY_SIGNATURE_KEY: &str = "signature";
 const POLICY_SIGNATURES_KEY: &str = "signatures";
 const POLICY_ON_BUDGET_EXHAUSTED_KEY: &str = "on_budget_exhausted";
+pub(crate) const POLICY_LEGAL_FLOOR_ROWS_KEY: &str = "legal_floor_rows";
+pub(crate) const POLICY_OWNER_POLICY_ROWS_KEY: &str = "owner_policy_rows";
 
 const AXIS_CRITICALITY_KEY: &str = "criticality";
 const AXIS_SENSITIVITY_KEY: &str = "sensitivity";
@@ -85,6 +87,14 @@ const SIGNATURE_ALG_KEY: &str = "alg";
 const SIGNATURE_KEY_ID_KEY: &str = "key_id";
 const SIGNATURE_SIG_KEY: &str = "sig";
 const SIGNATURE_SIGNATURE_KEY: &str = "signature";
+pub(crate) const POLICY_ROW_REF_KEY: &str = "row_ref";
+pub(crate) const POLICY_ROW_TEXT_KEY: &str = "text";
+pub(crate) const POLICY_ROW_ACTIVE_KEY: &str = "active";
+pub(crate) const POLICY_ROW_CATEGORY_KEY: &str = "category";
+pub(crate) const POLICY_ROW_SUBCATEGORY_KEY: &str = "subcategory";
+pub(crate) const POLICY_ROW_ACTION_KEY: &str = "action";
+pub(crate) const POLICY_ROW_WORLD_REF_KEY: &str = "world_ref";
+pub(crate) const POLICY_ROW_BLOCK_KEY: &str = "block";
 // Legacy generic claim puts do not carry an actor-bound handle yet. Treat
 // those local storage doors as first-party engine writes until a future
 // actor-bound generic claim API can supply per-caller Gate inputs.
@@ -708,6 +718,25 @@ pub(crate) struct PolicyScopedGrant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PolicyLegalFloorRow {
+    pub(crate) row_ref: String,
+    pub(crate) category: String,
+    pub(crate) subcategory: String,
+    pub(crate) action: String,
+    pub(crate) text: String,
+    pub(crate) active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PolicyOwnerPolicyRow {
+    pub(crate) row_ref: String,
+    pub(crate) text: String,
+    pub(crate) active: bool,
+    pub(crate) world_ref: Option<String>,
+    pub(crate) block: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PolicySignature {
     pub(crate) alg: String,
     pub(crate) key_id: Option<String>,
@@ -834,6 +863,9 @@ pub(crate) struct PolicyManifestResolution {
     actor_ceilings: Vec<ActorCeiling>,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
+    legal_floor_rows: Vec<PolicyLegalFloorRow>,
+    owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    owner_policy_rows_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
 }
@@ -961,6 +993,51 @@ impl PolicyManifestResolution {
         } else {
             &self.scoped_grants
         }
+    }
+
+    #[must_use]
+    pub(crate) fn legal_floor_rows(&self) -> &[PolicyLegalFloorRow] {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            &[]
+        } else {
+            &self.legal_floor_rows
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn active_owner_policy_rows(
+        &self,
+        world_ref: Option<&str>,
+    ) -> Vec<&PolicyOwnerPolicyRow> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
+            return Vec::new();
+        }
+
+        let scoped_refs: Vec<&str> = match world_ref {
+            Some(world_ref) => self
+                .owner_policy_rows
+                .iter()
+                .filter(|row| row.active && row.world_ref.as_deref() == Some(world_ref))
+                .map(|row| row.row_ref.as_str())
+                .collect(),
+            None => Vec::new(),
+        };
+
+        self.owner_policy_rows
+            .iter()
+            .filter(|row| row.active)
+            .filter(|row| match (world_ref, row.world_ref.as_deref()) {
+                (Some(world_ref), Some(row_world)) => row_world == world_ref,
+                (Some(_), None) => !scoped_refs.contains(&row.row_ref.as_str()),
+                (None, None) => true,
+                (None, Some(_)) => false,
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub(crate) fn owner_policy_rows_dropped(&self) -> bool {
+        self.owner_policy_rows_dropped
     }
 
     #[must_use]
@@ -1463,6 +1540,17 @@ fn hash_policy_frontier_v0(
         hash_bool(hasher, grant.receipt_required);
     }
 
+    hash_len(hasher, resolution.legal_floor_rows.len());
+    for row in &resolution.legal_floor_rows {
+        hash_legal_floor_row(hasher, row);
+    }
+
+    hash_bool(hasher, resolution.owner_policy_rows_dropped);
+    hash_len(hasher, resolution.owner_policy_rows.len());
+    for row in &resolution.owner_policy_rows {
+        hash_owner_policy_row(hasher, row);
+    }
+
     hash_len(hasher, resolution.signatures.len());
     for signature in &resolution.signatures {
         hash_str(hasher, &signature.alg);
@@ -1505,6 +1593,23 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     hash_opt_u8(hasher, row.max_auto_sensitivity);
     hash_bool(hasher, row.receipted);
     hash_bool(hasher, row.warned);
+}
+
+fn hash_legal_floor_row(hasher: &mut Sha256, row: &PolicyLegalFloorRow) {
+    hash_str(hasher, &row.row_ref);
+    hash_str(hasher, &row.category);
+    hash_str(hasher, &row.subcategory);
+    hash_str(hasher, &row.action);
+    hash_str(hasher, &row.text);
+    hash_bool(hasher, row.active);
+}
+
+fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
+    hash_str(hasher, &row.row_ref);
+    hash_str(hasher, &row.text);
+    hash_bool(hasher, row.active);
+    hash_opt_str(hasher, row.world_ref.as_deref());
+    hash_bool(hasher, row.block);
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {
@@ -1621,6 +1726,9 @@ struct DecodedPolicyManifest {
     actor_ceilings: Vec<ActorCeiling>,
     source_trust: SourceTrustCeiling,
     scoped_grants: Vec<PolicyScopedGrant>,
+    legal_floor_rows: Vec<PolicyLegalFloorRow>,
+    owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    owner_policy_rows_dropped: bool,
     signatures: Vec<PolicySignature>,
     on_budget_exhausted: Option<BudgetExhaustionPolicy>,
     unsupported_schema: bool,
@@ -1745,6 +1853,119 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from("suspend"),
         ),
         (
+            Value::from(POLICY_LEGAL_FLOOR_ROWS_KEY),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (
+                        Value::from(POLICY_ROW_REF_KEY),
+                        Value::from("universal:minor-sexualization"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_CATEGORY_KEY),
+                        Value::from("legal_floor"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
+                        Value::from("minor_sexualization"),
+                    ),
+                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
+                    (
+                        Value::from(POLICY_ROW_TEXT_KEY),
+                        Value::from(
+                            "Block sexual content involving minors or realistic depictions of real minors.",
+                        ),
+                    ),
+                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(POLICY_ROW_REF_KEY),
+                        Value::from("universal:ncii"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_CATEGORY_KEY),
+                        Value::from("legal_floor"),
+                    ),
+                    (Value::from(POLICY_ROW_SUBCATEGORY_KEY), Value::from("ncii")),
+                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
+                    (
+                        Value::from(POLICY_ROW_TEXT_KEY),
+                        Value::from(
+                            "Block non-consensual intimate imagery or deepfakes of a real person.",
+                        ),
+                    ),
+                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(POLICY_ROW_REF_KEY),
+                        Value::from("universal:serious-crime"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_CATEGORY_KEY),
+                        Value::from("legal_floor"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
+                        Value::from("serious_crime"),
+                    ),
+                    (Value::from(POLICY_ROW_ACTION_KEY), Value::from("block")),
+                    (
+                        Value::from(POLICY_ROW_TEXT_KEY),
+                        Value::from(
+                            "Block credible facilitation of serious violence, weapons, explosives, or mass harm.",
+                        ),
+                    ),
+                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(POLICY_ROW_REF_KEY),
+                        Value::from("universal:self-harm"),
+                    ),
+                    (Value::from(POLICY_ROW_CATEGORY_KEY), Value::from("crisis")),
+                    (
+                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
+                        Value::from("self_harm"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_ACTION_KEY),
+                        Value::from("route_to_help"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_TEXT_KEY),
+                        Value::from("Route credible imminent self-harm or suicide risk to help."),
+                    ),
+                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
+                ]),
+                Value::Map(vec![
+                    (
+                        Value::from(POLICY_ROW_REF_KEY),
+                        Value::from("universal:adult-content-age-gate"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_CATEGORY_KEY),
+                        Value::from("age_gate"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_SUBCATEGORY_KEY),
+                        Value::from("adult_content"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_ACTION_KEY),
+                        Value::from("reword_retry"),
+                    ),
+                    (
+                        Value::from(POLICY_ROW_TEXT_KEY),
+                        Value::from(
+                            "Reword adult or NSFW output when the account age tier does not permit it.",
+                        ),
+                    ),
+                    (Value::from(POLICY_ROW_ACTIVE_KEY), Value::Boolean(true)),
+                ]),
+            ]),
+        ),
+        (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![
                 (Value::from(SIGNATURE_ALG_KEY), Value::from("ed25519")),
@@ -1800,6 +2021,11 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
+                resolution.legal_floor_rows.extend(decoded.legal_floor_rows);
+                resolution
+                    .owner_policy_rows
+                    .extend(decoded.owner_policy_rows);
+                resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
                 resolution.signatures.extend(decoded.signatures);
                 if let Some(on_budget_exhausted) = decoded.on_budget_exhausted {
                     match resolution.on_budget_exhausted {
@@ -2670,6 +2896,20 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_scoped_grants(value)?,
     };
+    let legal_floor_rows = match single_map_value(&entries, POLICY_LEGAL_FLOOR_ROWS_KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_legal_floor_rows(value)?,
+    };
+    let (owner_policy_rows, owner_policy_rows_dropped) =
+        match single_map_value(&entries, POLICY_OWNER_POLICY_ROWS_KEY) {
+            MapValue::Missing => (Vec::new(), false),
+            MapValue::Duplicate => (Vec::new(), true),
+            MapValue::Present(value) => match parse_owner_policy_rows(value) {
+                Some(rows) => (rows, false),
+                None => (Vec::new(), true),
+            },
+        };
     let mut signatures = match single_map_value(&entries, POLICY_SIGNATURE_KEY) {
         MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
@@ -2700,6 +2940,9 @@ fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPolicyManifest> {
         actor_ceilings,
         source_trust,
         scoped_grants,
+        legal_floor_rows,
+        owner_policy_rows,
+        owner_policy_rows_dropped,
         signatures,
         on_budget_exhausted,
         unsupported_schema,
@@ -2925,6 +3168,98 @@ fn parse_scoped_grants(value: &Value) -> Option<Vec<PolicyScopedGrant>> {
         });
     }
     Some(grants)
+}
+
+fn parse_legal_floor_rows(value: &Value) -> Option<Vec<PolicyLegalFloorRow>> {
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    let mut parsed = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Value::Map(entries) = row else {
+            return None;
+        };
+        let row_ref = required_nonempty_string(entries, POLICY_ROW_REF_KEY)?;
+        let category = required_nonempty_string(entries, POLICY_ROW_CATEGORY_KEY)?;
+        let subcategory = required_nonempty_string(entries, POLICY_ROW_SUBCATEGORY_KEY)?;
+        let action = required_nonempty_string(entries, POLICY_ROW_ACTION_KEY)?;
+        if !is_supported_policy_floor_action(&action) {
+            return None;
+        }
+        let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
+        let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
+        parsed.push(PolicyLegalFloorRow {
+            row_ref,
+            category,
+            subcategory,
+            action,
+            text,
+            active,
+        });
+    }
+    Some(parsed)
+}
+
+fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    let mut parsed = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Value::Map(entries) = row else {
+            return None;
+        };
+        let row_ref = required_nonempty_string(entries, POLICY_ROW_REF_KEY)?;
+        let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
+        let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
+        let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
+        let action = optional_string(entries, POLICY_ROW_ACTION_KEY)?;
+        if action
+            .as_deref()
+            .is_some_and(|action| !is_supported_owner_policy_action(action))
+        {
+            return None;
+        }
+        let block = match single_map_value(entries, POLICY_ROW_BLOCK_KEY) {
+            MapValue::Missing => action.as_deref() == Some("block"),
+            MapValue::Duplicate => return None,
+            MapValue::Present(Value::Boolean(value)) => *value,
+            MapValue::Present(_) => return None,
+        };
+        parsed.push(PolicyOwnerPolicyRow {
+            row_ref,
+            text,
+            active,
+            world_ref,
+            block,
+        });
+    }
+    Some(parsed)
+}
+
+fn is_supported_policy_floor_action(action: &str) -> bool {
+    matches!(
+        action,
+        "block" | "route_to_help" | "route-to-help" | "reword_retry" | "reword-retry"
+    )
+}
+
+fn is_supported_owner_policy_action(action: &str) -> bool {
+    matches!(action, "block" | "reword_retry" | "reword-retry")
+}
+
+fn required_nonempty_string(entries: &[(Value, Value)], key: &str) -> Option<String> {
+    let value = required_string(entries, key)?;
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn optional_bool_default(entries: &[(Value, Value)], key: &str, default: bool) -> Option<bool> {
+    match single_map_value(entries, key) {
+        MapValue::Missing => Some(default),
+        MapValue::Duplicate => None,
+        MapValue::Present(Value::Boolean(value)) => Some(*value),
+        MapValue::Present(_) => None,
+    }
 }
 
 fn parse_signatures(value: &Value) -> Option<Vec<PolicySignature>> {

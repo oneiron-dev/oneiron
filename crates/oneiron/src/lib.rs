@@ -44,6 +44,7 @@ pub mod maintain;
 pub mod outbound;
 pub mod outbound_grant;
 pub mod pipeline;
+pub mod policy_model;
 pub(crate) mod ppr;
 pub mod prompt;
 pub mod provenance;
@@ -342,12 +343,14 @@ pub use crate::llm::{
     BudgetAdmission, BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent,
     BudgetLease, BudgetPromptTemplate, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel,
     BudgetSteeringSignal, BudgetThreshold, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    DEFAULT_BUDGET_RESERVE_UNITS, DeterministicFallback, FatalLlmError, FinishReason, ImageContent,
-    LlmBackend, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture,
-    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
-    LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError,
-    ModelLocality, ModelTierRef, ReasoningEffort, ResponseFormat, RetryableLlmError,
-    TierPrecedence, UnsupportedCapability,
+    DEFAULT_BUDGET_RESERVE_UNITS, DEFAULT_ON_DEVICE_SAFEGUARD_TIER,
+    DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback, FatalLlmError, FinishReason,
+    ImageContent, LlmBackend, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage,
+    ModelId, ModelIdError, ModelLocality, ModelTierRef, ReasoningEffort, ResponseFormat,
+    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, TierPrecedence,
+    UnsupportedCapability,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::outbound::{
@@ -366,6 +369,12 @@ pub use crate::outbound_grant::{
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
     RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
+};
+pub use crate::policy_model::{
+    AgeGateSubclass, CrisisSubclass, LegalFloorSubclass, PolicyAgeTier, PolicyClassifyDecision,
+    PolicyClassifyPrompt, PolicyClassifyRequest, PolicyClassifySubject, PolicyClassifyVerdict,
+    PolicyConfidence, PolicyContentBinding, PolicyHedgeBucket, PolicyModelConfig,
+    PolicyRubricLayer, PolicyRubricRow, PolicyVerdictCategory,
 };
 pub use crate::prompt::{
     DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH, EIRI_V3_PROMPT_RELATIVE_PATH,

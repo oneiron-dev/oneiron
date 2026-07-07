@@ -643,6 +643,212 @@ pub enum ModelLocality {
     ThirdParty,
 }
 
+pub const DEFAULT_SAFEGUARD_MODEL_BINDING: &str = "gpt-oss-safeguard-20b";
+pub const DEFAULT_ON_DEVICE_SAFEGUARD_TIER: &str = "qwen3guard-stream-0.6b";
+
+/// Config selector for OF-333 safeguard-class classifiers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub enum SafeguardModelBinding {
+    #[default]
+    GptOssSafeguard20b,
+    OpenRouter {
+        model: String,
+    },
+    Endpoint {
+        url: String,
+    },
+    OnDevice {
+        tier: String,
+    },
+}
+
+impl SafeguardModelBinding {
+    pub fn parse(value: &str) -> std::result::Result<Self, SafeguardModelBindingError> {
+        value.parse()
+    }
+
+    #[must_use]
+    pub fn selector(&self) -> String {
+        match self {
+            Self::GptOssSafeguard20b => DEFAULT_SAFEGUARD_MODEL_BINDING.to_owned(),
+            Self::OpenRouter { model } => format!("openrouter:{model}"),
+            Self::Endpoint { url } => format!("endpoint:{url}"),
+            Self::OnDevice { tier } => format!("on-device:{tier}"),
+        }
+    }
+
+    #[must_use]
+    pub fn locality(&self) -> ModelLocality {
+        match self {
+            Self::GptOssSafeguard20b | Self::OpenRouter { .. } => ModelLocality::ThirdParty,
+            Self::Endpoint { .. } => ModelLocality::OwnServer,
+            Self::OnDevice { .. } => ModelLocality::OnDevice,
+        }
+    }
+
+    #[must_use]
+    pub fn tier_ref(&self) -> ModelTierRef {
+        ModelTierRef(self.selector())
+    }
+
+    #[must_use]
+    pub fn llm_model_id(&self) -> ModelId {
+        match self {
+            Self::GptOssSafeguard20b => {
+                validated_static_model_id("oneiron/gpt-oss-safeguard-20b@default")
+            }
+            Self::OpenRouter { model } => {
+                dynamic_model_id("openrouter", sanitize_model_id_segment(model), "configured")
+            }
+            Self::Endpoint { url } => dynamic_model_id(
+                "endpoint",
+                sanitize_model_id_segment(&endpoint_model_identity(url)),
+                "configured",
+            ),
+            Self::OnDevice { tier } => {
+                dynamic_model_id("on-device", sanitize_model_id_segment(tier), "configured")
+            }
+        }
+    }
+}
+
+fn dynamic_model_id(provider: &str, name: String, revision: &str) -> ModelId {
+    ModelId::new(format!("{provider}/{name}@{revision}"))
+        .expect("sanitized safeguard model binding produces a valid model id")
+}
+
+fn sanitize_model_id_segment(value: &str) -> String {
+    let sanitized = value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
+                byte as char
+            } else {
+                '.'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_owned();
+    if sanitized.is_empty() {
+        "configured".to_owned()
+    } else {
+        sanitized
+    }
+}
+
+fn endpoint_model_identity(url: &str) -> String {
+    let without_scheme = url
+        .split_once("://")
+        .map_or(url, |(_, remainder)| remainder);
+    let without_fragment = without_scheme
+        .split_once('#')
+        .map_or(without_scheme, |(head, _)| head);
+    let without_query = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(head, _)| head);
+    let slash_index = without_query.find('/').unwrap_or(without_query.len());
+    let (authority, path) = without_query.split_at(slash_index);
+    let authority_without_credentials = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{authority_without_credentials}{path}")
+}
+
+impl fmt::Display for SafeguardModelBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.selector())
+    }
+}
+
+impl FromStr for SafeguardModelBinding {
+    type Err = SafeguardModelBindingError;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let trimmed = value.trim();
+        if trimmed == DEFAULT_SAFEGUARD_MODEL_BINDING {
+            return Ok(Self::GptOssSafeguard20b);
+        }
+        if let Some(model) = trimmed.strip_prefix("openrouter:") {
+            if model.trim().is_empty() {
+                return Err(SafeguardModelBindingError::EmptySelector {
+                    prefix: "openrouter",
+                });
+            }
+            return Ok(Self::OpenRouter {
+                model: model.trim().to_owned(),
+            });
+        }
+        if let Some(url) = trimmed.strip_prefix("endpoint:") {
+            if url.trim().is_empty() {
+                return Err(SafeguardModelBindingError::EmptySelector { prefix: "endpoint" });
+            }
+            return Ok(Self::Endpoint {
+                url: url.trim().to_owned(),
+            });
+        }
+        if trimmed == "on-device" {
+            return Ok(Self::OnDevice {
+                tier: DEFAULT_ON_DEVICE_SAFEGUARD_TIER.to_owned(),
+            });
+        }
+        if let Some(tier) = trimmed.strip_prefix("on-device:") {
+            if tier.trim().is_empty() {
+                return Err(SafeguardModelBindingError::EmptySelector {
+                    prefix: "on-device",
+                });
+            }
+            return Ok(Self::OnDevice {
+                tier: tier.trim().to_owned(),
+            });
+        }
+        Err(SafeguardModelBindingError::UnknownSelector)
+    }
+}
+
+impl Serialize for SafeguardModelBinding {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.selector())
+    }
+}
+
+impl<'de> Deserialize<'de> for SafeguardModelBinding {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct BindingVisitor;
+
+        impl Visitor<'_> for BindingVisitor {
+            type Value = SafeguardModelBinding;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a safeguard binding selector")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                value.parse().map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(BindingVisitor)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SafeguardModelBindingError {
+    #[error("unknown safeguard model binding selector")]
+    UnknownSelector,
+    #[error("{prefix} safeguard model binding selector is empty")]
+    EmptySelector { prefix: &'static str },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmToolSpec {
     pub name: String,
