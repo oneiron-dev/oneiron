@@ -17,6 +17,8 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
+#[cfg(feature = "sync")]
+use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
 use crate::job_queue::JobState;
@@ -2037,7 +2039,7 @@ fn decode_dreamer_job_status(record: JobRecord) -> Result<DreamerJobStatus> {
 
 #[cfg(feature = "sync")]
 fn dreamer_progress_error(error: TransportError) -> Error {
-    Error::SyncProtocolError(error.to_string())
+    Error::sync_engine(SyncEngineContext::DreamerProgressTransport, error)
 }
 
 #[cfg(feature = "sync")]

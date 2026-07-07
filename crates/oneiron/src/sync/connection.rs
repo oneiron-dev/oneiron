@@ -699,7 +699,10 @@ impl SyncConnection {
         client
             .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())
             .map_err(|e| {
-                crate::error::Error::SyncProtocolError(format!("re-bootstrap encode failed: {e}"))
+                crate::error::Error::sync_engine(
+                    crate::error::SyncEngineContext::RebootstrapEncode,
+                    e,
+                )
             })
     }
 
