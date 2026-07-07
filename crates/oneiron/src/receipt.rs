@@ -91,6 +91,13 @@ pub enum ReceiptKind {
     ScopedRead,
     /// Share/federation receipt.
     Share,
+    /// Retained-output settle receipt: an [`EditProposal`] was selected into a
+    /// new artifact version or discarded (OF-368 D6, ARTL-4). Projects from the
+    /// blob-artifact settlement substrate, so it is a floor receipt (persists
+    /// through its own store, never rides the session-local emit log).
+    ///
+    /// [`EditProposal`]: crate::edit_roundtrip::EditProposal
+    ArtifactSettle,
 }
 
 impl ReceiptKind {
@@ -103,6 +110,7 @@ impl ReceiptKind {
             Self::IdentityLifecycle => "identity_lifecycle",
             Self::ScopedRead => "scoped_read",
             Self::Share => "share",
+            Self::ArtifactSettle => "artifact_settle",
         }
     }
 
@@ -115,6 +123,7 @@ impl ReceiptKind {
             "identity_lifecycle" => Some(Self::IdentityLifecycle),
             "scoped_read" => Some(Self::ScopedRead),
             "share" => Some(Self::Share),
+            "artifact_settle" => Some(Self::ArtifactSettle),
             _ => None,
         }
     }
@@ -1601,6 +1610,16 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
 
     if query.includes_kind(ReceiptKind::IdentityLifecycle) {
         records.extend(channel_identity_lifecycle_receipts(vault, query)?);
+    }
+
+    // The settle projection opens its own read txn, so it runs before the shared
+    // `rtxn` below to avoid a nested read transaction on this thread.
+    if query.includes_kind(ReceiptKind::ArtifactSettle) {
+        for receipt in crate::edit_settle::settle_receipts(vault, MAX_RECEIPT_QUERY_SCAN)? {
+            if query.matches(&receipt) {
+                records.push(receipt);
+            }
+        }
     }
 
     let rtxn = vault.store.env.read_txn()?;

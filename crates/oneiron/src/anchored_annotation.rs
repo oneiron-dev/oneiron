@@ -51,6 +51,7 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
+use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
 use crate::error::{Error, Result};
 use crate::types::{
     ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_TASK, EdgeActorClass, EdgeKind, EntityId, TaskRole,
@@ -387,15 +388,22 @@ pub struct TaskBrief {
 
 /// A minimal edit operation the re-anchor replay understands.
 ///
-/// # Reconciliation seam (ARTL-3 / ONE-1553)
+/// # Reconciliation with ARTL-3 (ONE-1553 / ONE-1554)
 ///
 /// The canonical `EditManifest` type belongs to ARTL-3's edit-manifest
 /// producer. This enum is deliberately NOT that type: it is the minimal subset
-/// re-anchoring needs — whole row/column insert/delete, a rectangular range
-/// move, and a cell-write marker. When ARTL-3 lands, reconcile by adding a
-/// `From<EditManifestOp>` (or a thin adapter) that lowers its ops into these
-/// variants, rather than duplicating the manifest shape here. Rows and columns
-/// are 1-based; `count` is a positive unit count.
+/// re-anchoring needs. ARTL-3 exposes [`crate::edit_roundtrip::AnchorEffect`]
+/// as its self-contained reconciliation surface (one per structural op), and
+/// ARTL-4 (settle, ONE-1554) lowers a manifest's anchor effects onto these
+/// variants through [`From<&crate::edit_roundtrip::AnchorEffect>`], rather than
+/// duplicating the manifest shape here. Rows and columns are 1-based; `count`
+/// is a positive unit count.
+///
+/// The row/column/move variants were the original minimal subset; the two
+/// sheet-level variants ([`ReanchorOp::RenameSheet`] /
+/// [`ReanchorOp::RemoveSheet`]) were added with the ARTL-4 lowering so a
+/// manifest that renames or deletes a sheet re-maps or drifts anchors on that
+/// sheet rather than silently leaving them pinned to a stale sheet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReanchorOp {
     /// Insert `count` rows above `at_row` on `sheet`.
@@ -450,9 +458,23 @@ pub enum ReanchorOp {
         /// The written range.
         range: A1Range,
     },
+    /// Rename `from` to `to`. Anchors on `from` follow to the new sheet name.
+    RenameSheet {
+        /// The sheet name before the rename (the op's target).
+        from: String,
+        /// The sheet name after the rename.
+        to: String,
+    },
+    /// Remove `sheet`. Anchors on it are destroyed and drift.
+    RemoveSheet {
+        /// The removed sheet (the op's target).
+        sheet: String,
+    },
 }
 
 impl ReanchorOp {
+    /// The sheet an op targets — the name replay matches against the anchor's
+    /// current sheet. For a rename this is the pre-rename (`from`) name.
     fn sheet(&self) -> &str {
         match self {
             Self::InsertRows { sheet, .. }
@@ -460,9 +482,99 @@ impl ReanchorOp {
             | Self::InsertCols { sheet, .. }
             | Self::DeleteCols { sheet, .. }
             | Self::MoveRange { sheet, .. }
-            | Self::WriteCells { sheet, .. } => sheet,
+            | Self::WriteCells { sheet, .. }
+            | Self::RemoveSheet { sheet } => sheet,
+            Self::RenameSheet { from, .. } => from,
         }
     }
+}
+
+/// Lowers an ARTL-3 [`AnchorEffect`] — the self-contained reconciliation surface
+/// the edit manifest exposes, one per structural op — onto the minimal
+/// [`ReanchorOp`] the replay understands (ONE-1554). This is the reconciliation
+/// the module docs call for: ARTL-4 (settle) replays a manifest's anchor effects
+/// onto the artifact's threads by mapping each through here.
+impl From<&AnchorEffect> for ReanchorOp {
+    fn from(effect: &AnchorEffect) -> Self {
+        match effect {
+            AnchorEffect::Shift(shift) => shift_to_reanchor_op(shift),
+            AnchorEffect::RangeMoved { sheet, from, to } => Self::MoveRange {
+                sheet: sheet.clone(),
+                from: range_ref_to_a1(from),
+                to: move_dest_to_a1(from, *to),
+            },
+            AnchorEffect::SheetRenamed { from, to } => Self::RenameSheet {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            AnchorEffect::SheetRemoved { name } => Self::RemoveSheet {
+                sheet: name.clone(),
+            },
+        }
+    }
+}
+
+/// A positive-magnitude row/column shift becomes an insert; a negative one a
+/// delete. A zero delta maps to a zero-`count` insert, which the replay skips.
+fn shift_to_reanchor_op(shift: &StructuralShift) -> ReanchorOp {
+    let sheet = shift.sheet.clone();
+    let at = shift.at;
+    // Saturate rather than panic on a pathological magnitude; a saturated count
+    // that overflows the grid drifts the anchor, the safe outcome.
+    let count = u32::try_from(shift.delta.unsigned_abs()).unwrap_or(u32::MAX);
+    match (shift.axis, shift.delta >= 0) {
+        (Axis::Row, true) => ReanchorOp::InsertRows {
+            sheet,
+            at_row: at,
+            count,
+        },
+        (Axis::Row, false) => ReanchorOp::DeleteRows {
+            sheet,
+            at_row: at,
+            count,
+        },
+        (Axis::Column, true) => ReanchorOp::InsertCols {
+            sheet,
+            at_col: at,
+            count,
+        },
+        (Axis::Column, false) => ReanchorOp::DeleteCols {
+            sheet,
+            at_col: at,
+            count,
+        },
+    }
+}
+
+/// The 1x1 A1 fallback used when a manifest corner is degenerate — unreachable
+/// for a validated manifest (ARTL-3 rejects 0-indexed and inverted ranges), but
+/// keeps the lowering total and panic-free.
+fn a1_unit() -> A1Range {
+    A1Range::new(1, 1, 1, 1).expect("A1 is a valid 1x1 range")
+}
+
+fn range_ref_to_a1(range: &RangeRef) -> A1Range {
+    A1Range::new(
+        range.start.col,
+        range.end.col,
+        range.start.row,
+        range.end.row,
+    )
+    .unwrap_or_else(a1_unit)
+}
+
+/// The destination range a move lands on: the source range's shape translated so
+/// its top-left corner sits at `to`.
+fn move_dest_to_a1(from: &RangeRef, to: CellRef) -> A1Range {
+    let width = from.end.col.saturating_sub(from.start.col);
+    let height = from.end.row.saturating_sub(from.start.row);
+    A1Range::new(
+        to.col,
+        to.col.saturating_add(width),
+        to.row,
+        to.row.saturating_add(height),
+    )
+    .unwrap_or_else(a1_unit)
 }
 
 /// The outcome of replaying an edit manifest against one locator.
@@ -478,6 +590,11 @@ pub enum ReanchorOutcome {
 /// or [`ReanchorOutcome::Drifted`] when the anchored region is destroyed or
 /// becomes ambiguous. Ops on a different sheet leave the locator untouched.
 ///
+/// A [`ReanchorOp::RenameSheet`] retargets the locator's sheet name so later
+/// ops in the same replay still match it; a [`ReanchorOp::RemoveSheet`] on the
+/// anchor's sheet destroys it and drifts, never leaving a thread pinned to a
+/// stale sheet name.
+///
 /// Only xlsx locators are replayed in P1; any other locator format is treated
 /// as non-mappable so the thread pins to its origin version rather than being
 /// silently repositioned.
@@ -487,8 +604,11 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
         return ReanchorOutcome::Drifted;
     };
     let mut cur = *range;
+    // The anchor's sheet name is mutable across the replay: a rename retargets
+    // it so subsequent ops still match, and the final Mapped carries it.
+    let mut cur_sheet = sheet.clone();
     for op in ops {
-        if op.sheet() != sheet {
+        if op.sheet() != cur_sheet.as_str() {
             continue;
         }
         match op {
@@ -554,10 +674,14 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                 }
             }
             ReanchorOp::WriteCells { .. } => {}
+            ReanchorOp::RenameSheet { to, .. } => {
+                cur_sheet = to.clone();
+            }
+            ReanchorOp::RemoveSheet { .. } => return ReanchorOutcome::Drifted,
         }
     }
     ReanchorOutcome::Mapped(Locator::Xlsx {
-        sheet: sheet.clone(),
+        sheet: cur_sheet,
         range: cur,
     })
 }
@@ -700,7 +824,7 @@ fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
     Ok(())
 }
 
-fn encode_locator(locator: &Locator) -> Value {
+pub(crate) fn encode_locator(locator: &Locator) -> Value {
     match locator {
         Locator::Xlsx { sheet, range } => Value::Map(vec![
             (Value::from(KEY_FORMAT), Value::from(FORMAT_XLSX)),
@@ -725,7 +849,7 @@ fn encode_locator(locator: &Locator) -> Value {
     }
 }
 
-fn decode_locator(value: &Value) -> Result<Locator> {
+pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
     let format = map_str(value, KEY_FORMAT)?;
     match format {
         FORMAT_XLSX => {
@@ -1746,6 +1870,112 @@ mod tests {
         // Non-xlsx locators are non-mappable under the xlsx replay.
         let docx = Locator::docx("body/p[3]", 0, 12).expect("docx");
         assert_eq!(replay_locator(&docx, &[]), ReanchorOutcome::Drifted);
+    }
+
+    #[test]
+    fn replay_follows_sheet_rename_and_drifts_on_remove() {
+        let locator = Locator::xlsx("Sheet1", "B2:C4").expect("locator");
+        // A rename retargets the anchor's sheet name; the range is unchanged and
+        // a later same-sheet op still matches under the NEW name.
+        let renamed = replay_locator(
+            &locator,
+            &[
+                ReanchorOp::RenameSheet {
+                    from: "Sheet1".to_owned(),
+                    to: "Q3".to_owned(),
+                },
+                ReanchorOp::InsertRows {
+                    sheet: "Q3".to_owned(),
+                    at_row: 1,
+                    count: 1,
+                },
+            ],
+        );
+        assert_eq!(
+            renamed,
+            ReanchorOutcome::Mapped(Locator::xlsx("Q3", "B3:C5").expect("locator"))
+        );
+        // Removing the anchor's sheet destroys the region.
+        let removed = replay_locator(
+            &locator,
+            &[ReanchorOp::RemoveSheet {
+                sheet: "Sheet1".to_owned(),
+            }],
+        );
+        assert_eq!(removed, ReanchorOutcome::Drifted);
+        // A rename/remove of a DIFFERENT sheet leaves the anchor untouched.
+        let untouched = replay_locator(
+            &locator,
+            &[ReanchorOp::RemoveSheet {
+                sheet: "Other".to_owned(),
+            }],
+        );
+        assert_eq!(untouched, ReanchorOutcome::Mapped(locator));
+    }
+
+    #[test]
+    fn anchor_effect_lowers_to_reanchor_op() {
+        use crate::edit_roundtrip::{CellRef, RangeRef};
+
+        // A row shift lowers to an insert/delete of matching magnitude.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::Shift(StructuralShift {
+                sheet: "Sheet1".to_owned(),
+                axis: Axis::Row,
+                at: 3,
+                delta: 2,
+            })),
+            ReanchorOp::InsertRows {
+                sheet: "Sheet1".to_owned(),
+                at_row: 3,
+                count: 2,
+            }
+        );
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::Shift(StructuralShift {
+                sheet: "Sheet1".to_owned(),
+                axis: Axis::Column,
+                at: 4,
+                delta: -1,
+            })),
+            ReanchorOp::DeleteCols {
+                sheet: "Sheet1".to_owned(),
+                at_col: 4,
+                count: 1,
+            }
+        );
+        // A range move lowers to the same-shape destination range.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::RangeMoved {
+                sheet: "Sheet1".to_owned(),
+                from: RangeRef::new(CellRef::new(1, 1), CellRef::new(2, 3)),
+                to: CellRef::new(5, 10),
+            }),
+            ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::new(1, 2, 1, 3).expect("from"),
+                to: A1Range::new(5, 6, 10, 12).expect("to"),
+            }
+        );
+        // Sheet-level effects lower to the sheet-level ops.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::SheetRenamed {
+                from: "A".to_owned(),
+                to: "B".to_owned(),
+            }),
+            ReanchorOp::RenameSheet {
+                from: "A".to_owned(),
+                to: "B".to_owned(),
+            }
+        );
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::SheetRemoved {
+                name: "Gone".to_owned(),
+            }),
+            ReanchorOp::RemoveSheet {
+                sheet: "Gone".to_owned(),
+            }
+        );
     }
 
     // Acceptance test 1: a thread is engine memory, not viewer state — it

@@ -192,6 +192,8 @@ pub enum ErrorKind {
     AnnotationThreadNotFound,
     InvalidEditManifest,
     EditRoundtripFailed,
+    EditProposalAlreadySettled,
+    SettleNotAuthorized,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -802,6 +804,18 @@ pub enum Error {
     /// are never mutated.
     #[error("edit round-trip failed: {0}")]
     EditRoundtripFailed(&'static str),
+    /// An ARTL-4 settle (select or discard) targeted an `EditProposal` that was
+    /// already settled — settlement is consume-once (OF-368 D5/D6): exactly one
+    /// of select or discard consumes a retained output, and a second settle of
+    /// any kind is refused. The prior outcome (`selected` / `discarded`) is
+    /// reported. Nothing was written.
+    #[error("edit proposal already settled: prior outcome was {outcome}")]
+    EditProposalAlreadySettled { outcome: &'static str },
+    /// An ARTL-4 settle was not authorized: standing-grant consent found no
+    /// covering brief×verb-class bundle grant (OF-368 D6). Fail-closed —
+    /// nothing was written.
+    #[error("settle not authorized: {0}")]
+    SettleNotAuthorized(&'static str),
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -1404,6 +1418,8 @@ impl Error {
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
+            Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
+            Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
