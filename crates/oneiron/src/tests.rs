@@ -31,6 +31,8 @@ use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
+#[cfg(feature = "sync")]
+use crate::error::SyncRollbackError;
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
@@ -2526,6 +2528,56 @@ fn error_kind_and_retryable_classify_validation_errors() {
     let timeout = Error::Io(std::io::Error::from(std::io::ErrorKind::TimedOut));
     assert_eq!(timeout.kind(), ErrorKind::Io);
     assert!(timeout.is_retryable());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn sync_protocol_errors_carry_typed_context_and_engine_source() {
+    let protocol = Error::sync_protocol(SyncProtocolValidation::Selector {
+        reason: SyncSelectorValidation::ForeignWorldId,
+    });
+    assert_eq!(protocol.kind(), ErrorKind::SyncProtocolError);
+    assert_matches!(
+        protocol,
+        Error::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: SyncSelectorValidation::ForeignWorldId
+            }
+        }
+    );
+
+    let source = std::io::Error::from(std::io::ErrorKind::TimedOut);
+    let engine = Error::sync_engine(SyncEngineContext::LoroExportUpdates, source);
+    assert_eq!(engine.kind(), ErrorKind::SyncEngineError);
+    assert_matches!(
+        &engine,
+        Error::SyncEngineError {
+            context: SyncEngineContext::LoroExportUpdates,
+            source
+        } if source.downcast_ref::<std::io::Error>().is_some()
+    );
+
+    let rollback = Error::sync_engine_rollback(
+        SyncEngineContext::LoroRevert,
+        std::io::Error::other("root txn failed"),
+        std::io::Error::other("root revert failed"),
+    );
+    assert_eq!(rollback.kind(), ErrorKind::SyncEngineError);
+    assert!(rollback.to_string().contains("root txn failed"));
+    assert!(rollback.to_string().contains("root revert failed"));
+    assert_matches!(
+        &rollback,
+        Error::SyncEngineError {
+            context: SyncEngineContext::LoroRevert,
+            source
+        } if {
+            let rollback = source
+                .downcast_ref::<SyncRollbackError>()
+                .expect("sync rollback source should preserve both errors");
+            rollback.operation().to_string().contains("root txn failed")
+                && rollback.rollback().to_string().contains("root revert failed")
+        }
+    );
 }
 
 #[test]

@@ -302,6 +302,11 @@ pub use crate::engine_executor::{
     JsCodeModeStepOutcome,
 };
 pub use crate::error::{Error, ErrorKind, Result};
+#[cfg(feature = "sync")]
+pub use crate::error::{
+    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
+    SyncSelectorValidation,
+};
 pub use crate::extraction_eval::{
     OF360_AR3_METRIC_TIER_INTERFACE_VERSION, OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION,
     OF360_METRIC_DEFINITION_SET_ID, OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION,

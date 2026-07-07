@@ -48,7 +48,7 @@ use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
 
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncConfigField, SyncEngineContext, SyncProtocolValidation};
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
@@ -57,8 +57,8 @@ use crate::sync::manager::WindowManager;
 use crate::sync::quarantine;
 use crate::sync::schema::{create_window_doc, read_window_list};
 use crate::sync::selector::{
-    FEDERATED_TOMBSTONE_ADMISSION_ERROR, FederationAdmissionRole, SyncSelector,
-    admit_federated_window_update, encode_selector_vv_request,
+    FederationAdmissionRole, SyncSelector, admit_federated_window_update,
+    encode_selector_vv_request,
 };
 use crate::sync::transport::{
     self, LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_BULK_TRANSFER,
@@ -202,8 +202,10 @@ impl SyncClient {
         config: SyncClientConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<SyncEvent>)> {
         if config.ephemeral_timeout_ms <= 0 {
-            return Err(Error::SyncProtocolError(
-                "ephemeral_timeout_ms must be positive".to_owned(),
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::InvalidConfig {
+                    field: SyncConfigField::EphemeralTimeoutMs,
+                },
             ));
         }
 
@@ -221,7 +223,7 @@ impl SyncClient {
         // — CRDT corruption. Revisit with VV/convergence (M4-11/12).
         root_doc
             .set_peer_id(client_id)
-            .map_err(|e| Error::SyncProtocolError(format!("set root doc peer id: {e}")))?;
+            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroSetPeerId, e))?;
 
         let ephemeral_store = EphemeralStore::new(config.ephemeral_timeout_ms);
         let ephemeral_event_tx = event_tx.clone();
@@ -1156,9 +1158,11 @@ impl SyncClient {
             Ok(())
         }) {
             if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
-                return Err(Error::SyncProtocolError(format!(
-                    "root revert after root txn failure: {revert_err}; original txn failure: {err}"
-                )));
+                return Err(Error::sync_engine_rollback(
+                    SyncEngineContext::LoroRevert,
+                    err,
+                    revert_err,
+                ));
             }
             return Err(err);
         }
@@ -1216,11 +1220,9 @@ fn map_federated_admission_err(e: crate::error::Error) -> TransportError {
         } => TransportError::Storage(format!(
             "federated admission rejected: outcome={outcome}, reasons={reason_codes:?}"
         )),
-        crate::error::Error::SyncProtocolError(message)
-            if message == FEDERATED_TOMBSTONE_ADMISSION_ERROR =>
-        {
-            TransportError::InvalidPayload("federated tombstone update rejected")
-        }
+        crate::error::Error::SyncProtocolError {
+            context: SyncProtocolValidation::FederatedTombstoneAdmission,
+        } => TransportError::InvalidPayload("federated tombstone update rejected"),
         e if is_local_federated_admission_failure(&e) => {
             TransportError::Storage(format!("federated admission failed: {e}"))
         }
@@ -2597,9 +2599,12 @@ mod tests {
         );
 
         match result {
-            Err(Error::SyncProtocolError(msg)) => {
-                assert!(msg.contains("ephemeral_timeout_ms must be positive"));
-            }
+            Err(Error::SyncProtocolError {
+                context:
+                    SyncProtocolValidation::InvalidConfig {
+                        field: SyncConfigField::EphemeralTimeoutMs,
+                    },
+            }) => {}
             Ok(_) => panic!("client construction must reject non-positive ephemeral timeout"),
             Err(err) => panic!("unexpected error: {err}"),
         }

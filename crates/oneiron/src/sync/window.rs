@@ -25,7 +25,7 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::store::Store;
 use crate::types::{
     CompanionExportClassification, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_COMPANION_REGISTER,
@@ -246,9 +246,11 @@ pub(crate) fn prune_subsumed_window_updates_in_txn(
     let prefix = format!("u:w:{key}:");
     for update_key in subsumed_update_keys {
         if !update_key.starts_with(&prefix) {
-            return Err(Error::SyncProtocolError(format!(
-                "u:w: prune scoped to {prefix}* refused foreign key {update_key}"
-            )));
+            return Err(Error::sync_protocol(SyncProtocolValidation::ScopedPrune {
+                scope: SyncProtocolPruneScope::WindowUpdateRows,
+                prefix,
+                key: update_key.clone(),
+            }));
         }
     }
     for update_key in subsumed_update_keys {
@@ -638,11 +640,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 map_delete(&entities_map, &hex_id)?;
                 wrote_doc = true;
             }
-            if delete_edges_touching_entities(
-                &edges_map,
-                &HashSet::from([*id]),
-                "pm replay local companion edge remove",
-            )? {
+            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 wrote_doc = true;
             }
             if wrote_doc {
@@ -702,8 +700,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                     edge.vad,
                     edge.provenance,
                 )?;
-                map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
-                    .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
+                map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
                 wrote_edges = true;
             }
             if wrote_edges {
@@ -728,8 +725,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             })?;
             continue;
         }
-        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())
-            .map_err(|e| Error::SyncProtocolError(format!("pm replay entity insert: {e}")))?;
+        map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
 
         let edges_out = vault.edges_out(id)?;
         for edge in &edges_out {
@@ -746,8 +742,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 edge.vad,
                 edge.provenance,
             )?;
-            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
-                .map_err(|e| Error::SyncProtocolError(format!("pm replay edge insert: {e}")))?;
+            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
         }
 
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
@@ -1222,16 +1217,10 @@ pub fn forward_rematerialize(
         if !local_only_companion_entity_keys.is_empty() {
             let mut wrote_doc = false;
             for key in &local_only_companion_entity_keys {
-                map_delete(&entities_map, key).map_err(|err| {
-                    Error::SyncProtocolError(format!("forward remat local companion remove: {err}"))
-                })?;
+                map_delete(&entities_map, key)?;
                 wrote_doc = true;
             }
-            if delete_edges_touching_entities(
-                &edges_map,
-                &local_only_companion_entity_ids,
-                "forward remat local companion edge remove",
-            )? {
+            if delete_edges_touching_entities(&edges_map, &local_only_companion_entity_ids)? {
                 wrote_doc = true;
             }
             if wrote_doc {
@@ -1664,16 +1653,10 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         if skip_companion_register_sync_mirror(&raw)? {
             let mut removed = false;
             if map_contains_binary(&entities_map, &hex_id) {
-                map_delete(&entities_map, &hex_id).map_err(|e| {
-                    Error::SyncProtocolError(format!("reverse remat local companion remove: {e}"))
-                })?;
+                map_delete(&entities_map, &hex_id)?;
                 removed = true;
             }
-            if delete_edges_touching_entities(
-                &edges_map,
-                &HashSet::from([*id]),
-                "reverse remat local companion edge remove",
-            )? {
+            if delete_edges_touching_entities(&edges_map, &HashSet::from([*id]))? {
                 removed = true;
             }
             wrote_any |= removed;
@@ -1683,9 +1666,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         if !map_contains_binary(&entities_map, &hex_id)
             && !reverse_remat_skip_redaction_receipt_mirror(&raw)
         {
-            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice()).map_err(|e| {
-                Error::SyncProtocolError(format!("reverse remat entity insert: {e}"))
-            })?;
+            map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
             wrote_any = true;
             count += 1;
         }
@@ -1715,8 +1696,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
                 edge.vad,
                 edge.provenance,
             )?;
-            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)
-                .map_err(|e| Error::SyncProtocolError(format!("reverse remat edge insert: {e}")))?;
+            map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
             wrote_any = true;
         }
     }
@@ -1747,11 +1727,7 @@ fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<
     skip_companion_register_sync_mirror(&raw)
 }
 
-fn delete_edges_touching_entities(
-    edges_map: &LoroMap,
-    ids: &HashSet<EntityId>,
-    context: &str,
-) -> Result<bool> {
+fn delete_edges_touching_entities(edges_map: &LoroMap, ids: &HashSet<EntityId>) -> Result<bool> {
     if ids.is_empty() {
         return Ok(false);
     }
@@ -1765,8 +1741,7 @@ fn delete_edges_touching_entities(
         }
     });
     for key in &edge_keys {
-        map_delete(edges_map, key)
-            .map_err(|err| Error::SyncProtocolError(format!("{context}: {err}")))?;
+        map_delete(edges_map, key)?;
     }
     Ok(!edge_keys.is_empty())
 }
@@ -2529,7 +2504,12 @@ mod tests {
             .with_write_txn(|wtxn| prune_subsumed_window_updates_in_txn(&vault, wtxn, &key, &keys))
             .expect_err("a foreign key must fail the prune closed");
         assert!(
-            matches!(err, Error::SyncProtocolError(_)),
+            matches!(
+                err,
+                Error::SyncProtocolError {
+                    context: SyncProtocolValidation::ScopedPrune { .. }
+                }
+            ),
             "typed error, got: {err:?}"
         );
         assert_eq!(

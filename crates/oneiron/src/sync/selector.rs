@@ -22,7 +22,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
 };
-use crate::error::{Error, Result};
+use crate::error::{
+    Error, Result, SyncEngineContext, SyncProtocolValidation,
+    SyncSelectorValidation as SelectorError,
+};
 use crate::federation::{
     FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, decode_federation_grant_body,
     sign_guest_share_envelope,
@@ -65,8 +68,6 @@ const WORLD_KIND_BASE: &str = "base";
 const WORLD_KIND_WORLD: &str = "world";
 
 const SELECTOR_VV_PREFIX_LEN: usize = 4;
-pub(crate) const FEDERATED_TOMBSTONE_ADMISSION_ERROR: &str =
-    "federated tombstone updates require delete admission";
 
 /// World component of a closed-subgraph selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +158,7 @@ pub struct SelectorVvRequest {
 pub fn encode_selector_vv_request(selector: &SyncSelector, remote_vv: &[u8]) -> Result<Vec<u8>> {
     let selector_bytes = encode_sync_selector(selector)?;
     let selector_len =
-        u32::try_from(selector_bytes.len()).map_err(|_| selector_err("sync selector too large"))?;
+        u32::try_from(selector_bytes.len()).map_err(|_| selector_err(SelectorError::TooLarge))?;
     let mut out =
         Vec::with_capacity(SELECTOR_VV_PREFIX_LEN + selector_bytes.len() + remote_vv.len());
     out.extend_from_slice(&selector_len.to_be_bytes());
@@ -169,18 +170,18 @@ pub fn encode_selector_vv_request(selector: &SyncSelector, remote_vv: &[u8]) -> 
 /// Decodes `[selector_len:4BE][selector_msgpack][remote_vv]`.
 pub fn decode_selector_vv_request(bytes: &[u8]) -> Result<SelectorVvRequest> {
     if bytes.len() < SELECTOR_VV_PREFIX_LEN {
-        return Err(selector_err("sync selector request too short"));
+        return Err(selector_err(SelectorError::RequestTooShort));
     }
     let selector_len = u32::from_be_bytes(
         bytes[..SELECTOR_VV_PREFIX_LEN]
             .try_into()
-            .map_err(|_| selector_err("sync selector length"))?,
+            .map_err(|_| selector_err(SelectorError::Length))?,
     ) as usize;
     let selector_end = SELECTOR_VV_PREFIX_LEN
         .checked_add(selector_len)
-        .ok_or_else(|| selector_err("sync selector length overflow"))?;
+        .ok_or_else(|| selector_err(SelectorError::LengthOverflow))?;
     if selector_len == 0 || bytes.len() < selector_end {
-        return Err(selector_err("sync selector request truncated"));
+        return Err(selector_err(SelectorError::RequestTruncated));
     }
     let selector = decode_sync_selector(&bytes[SELECTOR_VV_PREFIX_LEN..selector_end])?;
     Ok(SelectorVvRequest {
@@ -229,7 +230,7 @@ pub fn encode_sync_selector(selector: &SyncSelector) -> Result<Vec<u8>> {
 
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
-        .map_err(|_| selector_err("sync selector MessagePack encode failed"))?;
+        .map_err(|_| selector_err(SelectorError::MessagePackEncode))?;
     Ok(out)
 }
 
@@ -237,9 +238,9 @@ pub fn encode_sync_selector(selector: &SyncSelector) -> Result<Vec<u8>> {
 pub fn decode_sync_selector(bytes: &[u8]) -> Result<SyncSelector> {
     let mut cursor = Cursor::new(bytes);
     let value =
-        rmpv::decode::read_value(&mut cursor).map_err(|_| selector_err("sync selector decode"))?;
+        rmpv::decode::read_value(&mut cursor).map_err(|_| selector_err(SelectorError::Decode))?;
     if cursor.position() != bytes.len() as u64 {
-        return Err(selector_err("sync selector trailing bytes"));
+        return Err(selector_err(SelectorError::TrailingBytes));
     }
     decode_selector_value(&value)
 }
@@ -289,7 +290,7 @@ pub fn guest_share_envelope_body(
     let stripped = strip_guest_share_metadata(&filtered, key)?;
     let update = stripped
         .export(ExportMode::all_updates())
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))?;
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
     let selector_bytes = encode_sync_selector(selector)?;
     Ok(GuestShareEnvelopeBody::new(
         grant_scope,
@@ -351,7 +352,7 @@ pub fn admit_federated_window_update(
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
     admitted
         .export(ExportMode::all_updates())
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
 }
 
 #[cfg(feature = "sync")]
@@ -362,7 +363,7 @@ fn create_admission_doc(
 ) -> Result<LoroDoc> {
     let doc = LoroDoc::new();
     doc.set_peer_id(federated_admission_peer_id(key, update, role))
-        .map_err(|e| Error::SyncProtocolError(e.to_string()))?;
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroSetPeerId, e))?;
     let _entities = doc.get_map("entities");
     let _edges = doc.get_map("edges");
     let _tombstones = doc.get_map("tombstones");
@@ -425,11 +426,11 @@ pub fn put_selector_test_federation_grant(
 
 fn decode_selector_value(value: &Value) -> Result<SyncSelector> {
     let Value::Map(entries) = value else {
-        return Err(selector_err("sync selector must be a map"));
+        return Err(selector_err(SelectorError::MustBeMap));
     };
     validate_selector_keys(entries)?;
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(SYNC_SELECTOR_SCHEMA_VERSION) {
-        return Err(selector_err("sync selector unsupported schema version"));
+        return Err(selector_err(SelectorError::UnsupportedSchemaVersion));
     }
 
     let grant_id = decode_entity_hex(required_value(entries, KEY_GRANT_ID)?)?;
@@ -545,8 +546,8 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
         has_tombstone = true;
     });
     if has_tombstone {
-        return Err(Error::SyncProtocolError(
-            FEDERATED_TOMBSTONE_ADMISSION_ERROR.to_string(),
+        return Err(Error::sync_protocol(
+            SyncProtocolValidation::FederatedTombstoneAdmission,
         ));
     }
     Ok(())
@@ -560,19 +561,19 @@ pub fn authorize_sync_selector(
 ) -> Result<()> {
     let raw = vault
         .get_raw(&selector.grant_id)?
-        .ok_or_else(|| selector_err("sync selector grant not found"))?;
+        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
     let header = EntityMetadataHeader::parse(&raw)
-        .ok_or_else(|| selector_err("sync selector grant header"))?;
+        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
     if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err("sync selector grant wrong type"));
+        return Err(selector_err(SelectorError::GrantWrongType));
     }
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if grant.scope != grant_scope {
-        return Err(selector_err("sync selector grant scope mismatch"));
+        return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
     if grant.member_ref != selector.member_ref {
-        return Err(selector_err("sync selector member not granted"));
+        return Err(selector_err(SelectorError::MemberNotGranted));
     }
     Ok(())
 }
@@ -926,21 +927,21 @@ fn encode_world(world: SyncSelectorWorld) -> Value {
 
 fn decode_world(value: &Value) -> Result<SyncSelectorWorld> {
     let Value::Map(entries) = value else {
-        return Err(selector_err("sync selector world must be a map"));
+        return Err(selector_err(SelectorError::WorldMustBeMap));
     };
     let kind = required_value(entries, WORLD_KEYS[0])?
         .as_str()
-        .ok_or_else(|| selector_err("sync selector world kind"))?;
+        .ok_or_else(|| selector_err(SelectorError::WorldKind))?;
     match kind {
         WORLD_KIND_ALL => {
             if entries.len() != 1 {
-                return Err(selector_err("sync selector all world has extra fields"));
+                return Err(selector_err(SelectorError::AllWorldHasExtraFields));
             }
             Ok(SyncSelectorWorld::All)
         }
         WORLD_KIND_BASE => {
             if entries.len() != 1 {
-                return Err(selector_err("sync selector base world has extra fields"));
+                return Err(selector_err(SelectorError::BaseWorldHasExtraFields));
             }
             Ok(SyncSelectorWorld::Base)
         }
@@ -948,10 +949,10 @@ fn decode_world(value: &Value) -> Result<SyncSelectorWorld> {
             validate_world_keys(entries)?;
             let world = decode_entity_hex(required_value(entries, WORLD_KEYS[1])?)?;
             let local_world = LocalWorldId::try_from(world)
-                .map_err(|_| selector_err("sync selector foreign world id"))?;
+                .map_err(|_| selector_err(SelectorError::ForeignWorldId))?;
             Ok(SyncSelectorWorld::World(local_world))
         }
-        _ => Err(selector_err("sync selector unknown world kind")),
+        _ => Err(selector_err(SelectorError::UnknownWorldKind)),
     }
 }
 
@@ -960,19 +961,19 @@ fn validate_selector_keys(entries: &[(Value, Value)]) -> Result<()> {
     for (key, _) in entries {
         let key = key
             .as_str()
-            .ok_or_else(|| selector_err("sync selector key must be string"))?;
+            .ok_or_else(|| selector_err(SelectorError::KeyMustBeString))?;
         let Some(index) = SELECTOR_KEYS.iter().position(|expected| *expected == key) else {
-            return Err(selector_err("sync selector unknown key"));
+            return Err(selector_err(SelectorError::UnknownKey));
         };
         if seen[index] {
-            return Err(selector_err("sync selector duplicate key"));
+            return Err(selector_err(SelectorError::DuplicateKey));
         }
         seen[index] = true;
     }
     if seen.iter().all(|present| *present) {
         Ok(())
     } else {
-        Err(selector_err("sync selector missing key"))
+        Err(selector_err(SelectorError::MissingKey))
     }
 }
 
@@ -981,19 +982,19 @@ fn validate_world_keys(entries: &[(Value, Value)]) -> Result<()> {
     for (key, _) in entries {
         let key = key
             .as_str()
-            .ok_or_else(|| selector_err("sync selector world key"))?;
+            .ok_or_else(|| selector_err(SelectorError::WorldKey))?;
         let Some(index) = WORLD_KEYS.iter().position(|expected| *expected == key) else {
-            return Err(selector_err("sync selector world unknown key"));
+            return Err(selector_err(SelectorError::WorldUnknownKey));
         };
         if seen[index] {
-            return Err(selector_err("sync selector world duplicate key"));
+            return Err(selector_err(SelectorError::WorldDuplicateKey));
         }
         seen[index] = true;
     }
     if seen.iter().all(|present| *present) {
         Ok(())
     } else {
-        Err(selector_err("sync selector world missing key"))
+        Err(selector_err(SelectorError::WorldMissingKey))
     }
 }
 
@@ -1001,26 +1002,26 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
     entries
         .iter()
         .find_map(|(entry_key, value)| (entry_key.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| selector_err("sync selector missing required value"))
+        .ok_or_else(|| selector_err(SelectorError::MissingRequiredValue))
 }
 
 fn decode_entity_hex(value: &Value) -> Result<EntityId> {
     let hex = value
         .as_str()
-        .ok_or_else(|| selector_err("sync selector entity id must be hex"))?;
-    EntityId::from_hex(hex).map_err(|_| selector_err("sync selector invalid entity id"))
+        .ok_or_else(|| selector_err(SelectorError::EntityIdMustBeHex))?;
+    EntityId::from_hex(hex).map_err(|_| selector_err(SelectorError::InvalidEntityId))
 }
 
 fn decode_entity_array(value: &Value) -> Result<Vec<EntityId>> {
     let Value::Array(values) = value else {
-        return Err(selector_err("sync selector entity list must be array"));
+        return Err(selector_err(SelectorError::EntityListMustBeArray));
     };
     values.iter().map(decode_entity_hex).collect()
 }
 
 fn decode_band_array(value: &Value) -> Result<Vec<TypeByteBand>> {
     let Value::Array(values) = value else {
-        return Err(selector_err("sync selector bands must be array"));
+        return Err(selector_err(SelectorError::BandsMustBeArray));
     };
     values.iter().map(decode_band).collect()
 }
@@ -1028,7 +1029,7 @@ fn decode_band_array(value: &Value) -> Result<Vec<TypeByteBand>> {
 fn decode_band(value: &Value) -> Result<TypeByteBand> {
     let band = value
         .as_str()
-        .ok_or_else(|| selector_err("sync selector band must be string"))?;
+        .ok_or_else(|| selector_err(SelectorError::BandMustBeString))?;
     match band {
         "semantic" => Ok(TypeByteBand::Semantic),
         "core" => Ok(TypeByteBand::Core),
@@ -1036,7 +1037,7 @@ fn decode_band(value: &Value) -> Result<TypeByteBand> {
         "productivity" => Ok(TypeByteBand::Productivity),
         "crm" => Ok(TypeByteBand::Crm),
         "maintenance" => Ok(TypeByteBand::InducedDynamicMaintenance),
-        _ => Err(selector_err("sync selector unknown band")),
+        _ => Err(selector_err(SelectorError::UnknownBand)),
     }
 }
 
@@ -1051,8 +1052,8 @@ fn band_to_wire(band: TypeByteBand) -> &'static str {
     }
 }
 
-fn selector_err(msg: &'static str) -> Error {
-    Error::SyncProtocolError(msg.to_owned())
+fn selector_err(reason: SelectorError) -> Error {
+    Error::sync_protocol(SyncProtocolValidation::Selector { reason })
 }
 
 #[cfg(test)]
@@ -1547,9 +1548,14 @@ mod tests {
 
         let err = decode_sync_selector(&bytes).expect_err("foreign world id must be rejected");
 
-        assert!(
-            matches!(err, Error::SyncProtocolError(message) if message == "sync selector foreign world id")
-        );
+        assert!(matches!(
+            err,
+            Error::SyncProtocolError {
+                context: SyncProtocolValidation::Selector {
+                    reason: SelectorError::ForeignWorldId
+                }
+            }
+        ));
     }
 
     #[test]
