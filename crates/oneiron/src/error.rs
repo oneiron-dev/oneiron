@@ -232,6 +232,7 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    UpstreamToolFailure,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -1113,6 +1114,10 @@ pub enum Error {
     /// transitive Sudachi/jieba/lindera error types into the public surface.
     #[error("analyzer error: {0}")]
     AnalyzerError(String),
+    /// An upstream tool or connector call failed outside local config
+    /// validation. The code is caller-safe and pre-sanitized by the adapter.
+    #[error("upstream tool failure: tool={tool}, code={code}")]
+    UpstreamToolFailure { tool: &'static str, code: String },
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
     #[error("crdt decode error ({context}): {source}")]
@@ -1427,6 +1432,7 @@ impl Error {
             Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
+            Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             #[cfg(feature = "sync")]
             Self::CrdtDecodeError { .. } => ErrorKind::CrdtDecodeError,
             #[cfg(feature = "sync")]
@@ -1463,6 +1469,7 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::ConcurrentWrite(_) => true,
+            Self::UpstreamToolFailure { .. } => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]
