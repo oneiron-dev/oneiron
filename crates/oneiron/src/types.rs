@@ -972,6 +972,10 @@ impl ClaimCandidate {
         self.subject
     }
 
+    pub(crate) fn value_str(&self) -> Option<&str> {
+        self.value.as_str()
+    }
+
     pub(crate) fn into_claim_body(self, envelope: &WriteEnvelope) -> ClaimBody {
         let mut body = ClaimBody::new(
             self.predicate,
