@@ -9,10 +9,11 @@ use crate::types::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_EVENT,
     ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
     ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_ORG, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
-    ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile, PackFormat, PackItemTokenStats,
-    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBundle, Signal, TokenAllocation,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PLACE, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD, FieldProfile,
+    PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats, PackTokenStats, ResumeBundle,
+    Signal, TokenAllocation,
 };
 
 const GROUP_ORDER: &[u8] = &[
@@ -2340,6 +2341,11 @@ fn known_group_labels(entity_type: u8) -> Option<GroupLabels> {
             name: "PSYCH_PROFILES",
             title: "Psych Profiles",
         }),
+        ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT => Some(GroupLabels {
+            key: "persona_snapshot_exports",
+            name: "PERSONA_SNAPSHOT_EXPORTS",
+            title: "Persona Snapshot Exports",
+        }),
         _ => None,
     }
 }
@@ -2463,6 +2469,15 @@ fn fields_for_profile(entity_type: u8, profile: FieldProfile) -> &'static [&'sta
         }
         (ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Full) => {
             crate::types::psych_profile::PSYCH_PROFILE_FIELDS_FULL
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Minimal) => {
+            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Standard) => {
+            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD
+        }
+        (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, FieldProfile::Full) => {
+            crate::persona_snapshot::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL
         }
         (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Minimal) => &["kind", "scope", "subject"],
         (ENTITY_TYPE_COMPANION_REGISTER, FieldProfile::Standard) => {
