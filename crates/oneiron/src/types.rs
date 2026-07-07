@@ -111,6 +111,11 @@ pub const ENTITY_TYPE_COUNTERPARTY_CONTACT: u8 = 132;
 /// OF-367 StandingOutboundGrant entity. Engine-authored maintenance kind for
 /// ask-card and bundle-approval outbound consent grants.
 pub const ENTITY_TYPE_OUTBOUND_GRANT: u8 = 133;
+/// OF-325 PersonaSnapshotExport entity. Engine-authored maintenance kind
+/// recording each consent-gated persona snapshot export (mode A artifact);
+/// projects into the receipt family as a Share receipt carrying the
+/// persona_compile_stamp.
+pub const ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT: u8 = 134;
 
 pub(crate) const TASK_BODY_ROLE_KEY: &str = "role";
 
@@ -585,6 +590,13 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "OUTBOUND_GRANT",
         type_byte: ENTITY_TYPE_OUTBOUND_GRANT,
+        short_id_prefix: None,
+        classification: EntityClassification::Maintenance,
+        band: TypeByteBand::InducedDynamicMaintenance,
+    },
+    EntityTypeRegistryEntry {
+        kind: "PERSONA_SNAPSHOT_EXPORT",
+        type_byte: ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
         short_id_prefix: None,
         classification: EntityClassification::Maintenance,
         band: TypeByteBand::InducedDynamicMaintenance,

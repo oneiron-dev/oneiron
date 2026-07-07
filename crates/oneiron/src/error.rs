@@ -182,6 +182,8 @@ pub enum ErrorKind {
     InvalidFacet,
     InvalidClaimBody,
     InvalidPsychProfileBody,
+    InvalidPersonaSnapshot,
+    PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
     InvalidSkillBody,
@@ -461,6 +463,23 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid psych profile body: {0}")]
     InvalidPsychProfileBody(&'static str),
+    /// A persona snapshot compile/export input (OF-325) failed pinned
+    /// validation — malformed export record body, blank consent grantor,
+    /// blank agent-take attribution, or a strike-list that names unknown
+    /// rows. Nothing was written.
+    #[error("invalid persona snapshot: {0}")]
+    InvalidPersonaSnapshot(&'static str),
+    /// A persona snapshot export presented consent bound to a different
+    /// compile stamp than the compile being exported (OF-325: consent is
+    /// content-addressed to the previewed compile; a recompile invalidates
+    /// prior consent). Nothing was written.
+    #[error(
+        "persona snapshot export consent is stale: consent bound to {consent_stamp}, compile stamp is {compile_stamp}"
+    )]
+    PersonaSnapshotConsentStale {
+        consent_stamp: String,
+        compile_stamp: String,
+    },
     /// A CODE_ARTIFACT entity body failed the pinned replay-key validation.
     /// Nothing was written.
     #[error("invalid CODE artifact body: {0}")]
@@ -988,6 +1007,8 @@ impl Error {
             Self::InvalidFacet { .. } => ErrorKind::InvalidFacet,
             Self::InvalidClaimBody(_) => ErrorKind::InvalidClaimBody,
             Self::InvalidPsychProfileBody(_) => ErrorKind::InvalidPsychProfileBody,
+            Self::InvalidPersonaSnapshot(_) => ErrorKind::InvalidPersonaSnapshot,
+            Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
