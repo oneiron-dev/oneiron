@@ -1,14 +1,18 @@
+use std::collections::BTreeMap;
+
 use oneiron::{
-    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState, EntityId,
-    InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY,
-    LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
-    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
-    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
-    LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB, LinkedInAccountRiskLimits,
-    LinkedInMcpConnectorAdapter, LinkedInPasswordCustody, LinkedInSandboxHostConfig,
-    LinkedInSandboxHostHarness, LinkedInSandboxRuntime, LinkedInSeatDispatchState,
-    LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy, OutboundPermissionState, Result,
-    SurfaceCounterpartyStamp, Vault, VaultConfig, linkedin_connect_consent_screen_copy,
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState,
+    EnqueueOutcome, EntityId, InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL,
+    LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_CONNECT_REQUEST_VERB,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
+    LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
+    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
+    LinkedInAccountRiskLimits, LinkedInInboxSyncConfig, LinkedInInboxSyncRunner,
+    LinkedInMcpConnectorAdapter, LinkedInMcpInboxSyncTransport, LinkedInPasswordCustody,
+    LinkedInSandboxHostConfig, LinkedInSandboxHostHarness, LinkedInSandboxRuntime,
+    LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy,
+    OutboundPermissionState, Result, SurfaceCounterpartyStamp, Vault, VaultConfig,
+    linkedin_connect_consent_screen_copy, linkedin_inbox_sync_provenance_rows,
     outbound_capability_manifest, outbound_verb_contract, run_linkedin_kill_switch,
 };
 use serde_json::{Value, json};
@@ -61,6 +65,52 @@ fn sandbox_host() -> Result<LinkedInSandboxHostConfig> {
         "browser-profile:linkedin:yura",
         "vault-secret:linkedin:yura:session-cookie",
     )
+}
+
+#[derive(Clone)]
+struct ScriptedInboxTransport {
+    inbox: Value,
+    conversations: BTreeMap<String, Value>,
+}
+
+impl ScriptedInboxTransport {
+    fn new(inbox: Value, conversations: impl IntoIterator<Item = (String, Value)>) -> Self {
+        Self {
+            inbox,
+            conversations: conversations.into_iter().collect(),
+        }
+    }
+}
+
+impl LinkedInMcpInboxSyncTransport for ScriptedInboxTransport {
+    fn get_inbox(&mut self) -> std::result::Result<Value, String> {
+        Ok(self.inbox.clone())
+    }
+
+    fn get_conversation(&mut self, thread_id: &str) -> std::result::Result<Value, String> {
+        self.conversations
+            .get(thread_id)
+            .cloned()
+            .ok_or_else(|| format!("missing conversation {thread_id}"))
+    }
+}
+
+fn active_linkedin_identity(
+    vault: &Vault,
+    adapter: &LinkedInMcpConnectorAdapter,
+) -> Result<(EntityId, EntityId)> {
+    let identity_id = entity(0x51);
+    let agent_ref = entity(0xA1);
+    let mut identity = ChannelIdentity::requested(
+        LINKEDIN_CHANNEL,
+        adapter.receiving_address_or_handle(),
+        ChannelIdentityShape::DedicatedHandle,
+        ChannelIdentityBinding::agent(agent_ref),
+        1_800_000_000,
+    );
+    identity.state = ChannelIdentityState::Active;
+    vault.create_channel_identity(&identity_id, &identity)?;
+    Ok((identity_id, agent_ref))
 }
 
 #[test]
@@ -368,6 +418,148 @@ fn linkedin_get_inbox_fixture_normalizes_each_thread_and_routes() -> Result<()> 
         surface_event.payload_ref.as_deref(),
         events[0].payload_ref.as_deref()
     );
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_double_poll_routes_no_duplicates_and_imported_external_provenance()
+-> Result<()> {
+    let adapter = adapter()?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity(&vault, &adapter)?;
+
+    let config =
+        LinkedInInboxSyncConfig::from_adapter(&adapter).with_backfill_window_secs(3_600)?;
+    let EnqueueOutcome::Enqueued(_) =
+        adapter.enqueue_inbox_sync_poll(&vault, config.clone(), 1_800_000_020)?
+    else {
+        panic!("first scheduled poll should enqueue");
+    };
+    let EnqueueOutcome::Existing(_) =
+        adapter.enqueue_inbox_sync_poll(&vault, config.clone(), 1_800_000_021)?
+    else {
+        panic!("second scheduled poll should reuse dedupe row");
+    };
+
+    let inbox = json!({
+        "url": "https://www.linkedin.com/messaging/",
+        "sections": {
+            "inbox": "Messaging\nJane Doe\nThanks for reaching out about the pilot."
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-jane-doe-abc/",
+                    "context": "inbox",
+                    "text": "Jane Doe"
+                }
+            ]
+        }
+    });
+    let conversation = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-jane-doe-abc/",
+        "messages": [
+            {
+                "id": "msg-1",
+                "text": "Thanks for reaching out about the pilot.",
+                "occurred_at": 1_800_000_010_u64
+            },
+            {
+                "id": "msg-2",
+                "text": "Happy to share more details.",
+                "occurred_at": 1_800_000_015_u64
+            }
+        ]
+    });
+    let transport =
+        ScriptedInboxTransport::new(inbox, [("2-jane-doe-abc".to_owned(), conversation)]);
+
+    let mut first_runner =
+        LinkedInInboxSyncRunner::new(&vault, adapter.clone(), transport.clone(), config.clone());
+    let first = first_runner.run_once(1_800_000_020)?;
+    assert_eq!(first.threads_seen, 1);
+    assert_eq!(first.messages_seen, 2);
+    assert_eq!(first.new_messages, 2);
+    assert_eq!(first.duplicate_messages, 0);
+    assert_eq!(first.receipts.len(), 2);
+    assert!(
+        first
+            .receipts
+            .iter()
+            .all(|receipt| receipt.outcome == InboundSurfaceRouteOutcome::Routed)
+    );
+
+    let rows = linkedin_inbox_sync_provenance_rows(&vault)?;
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.source == "imported"));
+    assert!(rows.iter().all(|row| row.tier == "external"));
+    assert!(
+        rows.iter()
+            .all(|row| row.thread_id == "2-jane-doe-abc" && row.channel == LINKEDIN_CHANNEL)
+    );
+
+    let mut second_runner = LinkedInInboxSyncRunner::new(&vault, adapter, transport, config);
+    let second = second_runner.run_once(1_800_000_020)?;
+    assert_eq!(second.threads_seen, 1);
+    assert_eq!(second.messages_seen, 2);
+    assert_eq!(second.new_messages, 0);
+    assert_eq!(second.duplicate_messages, 2);
+    assert!(second.receipts.is_empty());
+    assert_eq!(linkedin_inbox_sync_provenance_rows(&vault)?.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_backfill_window_is_configurable() -> Result<()> {
+    let adapter = adapter()?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity(&vault, &adapter)?;
+    let config = LinkedInInboxSyncConfig::from_adapter(&adapter).with_backfill_window_secs(60)?;
+    let inbox = json!({
+        "sections": {
+            "inbox": "Messaging\nKenji Mori\nCan you send the overview?"
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-kenji-mori-def/",
+                    "context": "inbox",
+                    "text": "Kenji Mori"
+                }
+            ]
+        }
+    });
+    let conversation = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-kenji-mori-def/",
+        "messages": [
+            {
+                "id": "old-msg",
+                "text": "Older than configured backfill.",
+                "occurred_at": 1_799_999_000_u64
+            },
+            {
+                "id": "fresh-msg",
+                "text": "Can you send the overview?",
+                "occurred_at": 1_800_000_019_u64
+            }
+        ]
+    });
+    let transport =
+        ScriptedInboxTransport::new(inbox, [("2-kenji-mori-def".to_owned(), conversation)]);
+
+    let mut runner = LinkedInInboxSyncRunner::new(&vault, adapter, transport, config);
+    let report = runner.run_once(1_800_000_020)?;
+    assert_eq!(report.messages_seen, 2);
+    assert_eq!(report.backfill_skipped_messages, 1);
+    assert_eq!(report.new_messages, 1);
+    let rows = linkedin_inbox_sync_provenance_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].message_id, "fresh-msg");
+    assert_eq!(rows[0].source, "imported");
+    assert_eq!(rows[0].tier, "external");
     Ok(())
 }
 

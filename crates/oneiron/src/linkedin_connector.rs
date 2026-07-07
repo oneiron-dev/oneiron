@@ -12,9 +12,14 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::Vault;
 use crate::error::{Error, Result};
+use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
-use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
+use crate::surface_event::{
+    InboundSurfaceEventInput, InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt,
+    SurfaceCounterpartyStamp,
+};
 
 /// Stable Oneiron channel key for LinkedIn.
 pub const LINKEDIN_CHANNEL: &str = "linkedin";
@@ -51,9 +56,24 @@ pub const LINKEDIN_CONNECT_CONSENT_BODY: &str = "LinkedIn does not officially su
 
 const LINKEDIN_SEAT_VERB_CATALOG: &[&str] = &[LINKEDIN_SEND_DM_VERB, LINKEDIN_CONNECT_REQUEST_VERB];
 
+/// Durable job kind used by the scheduled LinkedIn inbox poller.
+pub const LINKEDIN_INBOX_SYNC_JOB_KIND: &str = "linkedin_inbox_sync";
+
+/// Default initial lookback for timestamped LinkedIn messages.
+pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
+
+const LINKEDIN_MCP_GET_INBOX_TOOL: &str = "get_inbox";
+const LINKEDIN_MCP_GET_CONVERSATION_TOOL: &str = "get_conversation";
+const LINKEDIN_INBOX_SYNC_SEEN_PREFIX: &str = "linkedin:inbox_sync:seen:v1:";
+const LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX: &str = "linkedin:inbox_sync:provenance:v1:";
+const LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX: &str = "linkedin:inbox_sync:";
+const LINKEDIN_INBOX_SYNC_SOURCE: &str = "imported";
+const LINKEDIN_INBOX_SYNC_TIER: &str = "external";
+
 const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
 const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
 const MAX_LINKEDIN_THREAD_ID_BYTES: usize = 256;
+const MAX_LINKEDIN_MESSAGE_ID_BYTES: usize = 512;
 const MAX_LINKEDIN_EVENT_ID_BYTES: usize = 384;
 const MAX_LINKEDIN_PAYLOAD_REF_BYTES: usize = 384;
 const MAX_LINKEDIN_COUNTERPARTY_KEY_BYTES: usize = 320;
@@ -61,6 +81,9 @@ const MAX_LINKEDIN_RECIPIENT_KEY_BYTES: usize = 512;
 const MAX_LINKEDIN_MESSAGE_TEXT_BYTES: usize = 16 * 1024;
 const MAX_LINKEDIN_INTENT_REF_BYTES: usize = 512;
 const MAX_LINKEDIN_ERROR_CODE_BYTES: usize = 96;
+const MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 366 * 24 * 60 * 60;
+const MAX_LINKEDIN_INBOX_THREADS_PER_POLL: usize = 250;
+const MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_THREAD: usize = 1_000;
 const DEFAULT_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 3;
 const MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 25;
 const LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS: u64 = 25;
@@ -667,6 +690,157 @@ pub struct LinkedInMcpConnectorAdapter {
     session_ref: Option<String>,
 }
 
+/// Config persisted in each scheduled LinkedIn inbox-sync job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedInInboxSyncConfig {
+    pub receiving_address_or_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<String>,
+    pub backfill_window_secs: u64,
+}
+
+impl LinkedInInboxSyncConfig {
+    pub fn new(receiving_address_or_handle: impl Into<String>) -> Result<Self> {
+        let receiving_address_or_handle = normalize_non_blank(
+            receiving_address_or_handle.into(),
+            MAX_LINKEDIN_ADDRESS_BYTES,
+            "LinkedIn receiving identity must be non-empty",
+            "LinkedIn receiving identity exceeds maximum length",
+        )?;
+        Ok(Self {
+            receiving_address_or_handle,
+            session_ref: None,
+            backfill_window_secs: DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS,
+        })
+    }
+
+    pub fn from_adapter(adapter: &LinkedInMcpConnectorAdapter) -> Self {
+        Self {
+            receiving_address_or_handle: adapter.receiving_address_or_handle.clone(),
+            session_ref: adapter.session_ref.clone(),
+            backfill_window_secs: DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS,
+        }
+    }
+
+    pub fn with_session_ref(mut self, session_ref: impl Into<String>) -> Result<Self> {
+        self.session_ref = Some(normalize_non_blank(
+            session_ref.into(),
+            MAX_LINKEDIN_SESSION_REF_BYTES,
+            "LinkedIn session ref must be non-empty",
+            "LinkedIn session ref exceeds maximum length",
+        )?);
+        Ok(self)
+    }
+
+    pub fn with_backfill_window_secs(mut self, backfill_window_secs: u64) -> Result<Self> {
+        if backfill_window_secs > MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
+            return Err(Error::InvalidConfig(
+                "LinkedIn inbox backfill window exceeds maximum length".to_owned(),
+            ));
+        }
+        self.backfill_window_secs = backfill_window_secs;
+        Ok(self)
+    }
+
+    fn adapter(&self) -> Result<LinkedInMcpConnectorAdapter> {
+        let adapter = LinkedInMcpConnectorAdapter::new(self.receiving_address_or_handle.clone())?;
+        if let Some(session_ref) = &self.session_ref {
+            adapter.with_session_ref(session_ref.clone())
+        } else {
+            Ok(adapter)
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        Self::new(self.receiving_address_or_handle.clone())?;
+        if let Some(session_ref) = &self.session_ref {
+            normalize_non_blank(
+                session_ref.clone(),
+                MAX_LINKEDIN_SESSION_REF_BYTES,
+                "LinkedIn session ref must be non-empty",
+                "LinkedIn session ref exceeds maximum length",
+            )?;
+        }
+        if self.backfill_window_secs > MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
+            return Err(Error::InvalidConfig(
+                "LinkedIn inbox backfill window exceeds maximum length".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One normalized LinkedIn conversation message selected by the inbox sync job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedInConversationMessage {
+    pub thread_id: String,
+    pub message_id: String,
+    pub occurred_at: Option<u64>,
+    pub text: Option<String>,
+}
+
+/// Message plus the SurfaceEvent input that will be routed if not yet seen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedInConversationMessageEvent {
+    pub message: LinkedInConversationMessage,
+    pub event_input: InboundSurfaceEventInput,
+}
+
+/// Stable provenance marker persisted beside each seen LinkedIn message row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedInInboxSyncProvenanceRow {
+    pub schema_version: u64,
+    pub source: String,
+    pub tier: String,
+    pub channel: String,
+    pub thread_id: String,
+    pub message_id: String,
+    pub surface_event_id: String,
+    pub payload_ref: Option<String>,
+    pub received_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<u64>,
+}
+
+/// Result of one LinkedIn inbox sync execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedInInboxSyncReport {
+    pub threads_seen: usize,
+    pub messages_seen: usize,
+    pub new_messages: usize,
+    pub duplicate_messages: usize,
+    pub backfill_skipped_messages: usize,
+    pub receipts: Vec<InboundSurfaceRouteReceipt>,
+}
+
+impl LinkedInInboxSyncReport {
+    fn empty() -> Self {
+        Self {
+            threads_seen: 0,
+            messages_seen: 0,
+            new_messages: 0,
+            duplicate_messages: 0,
+            backfill_skipped_messages: 0,
+            receipts: Vec::new(),
+        }
+    }
+}
+
+/// Minimal host transport for scheduled LinkedIn inbox sync.
+pub trait LinkedInMcpInboxSyncTransport {
+    fn get_inbox(&mut self) -> std::result::Result<Value, String>;
+
+    fn get_conversation(&mut self, thread_id: &str) -> std::result::Result<Value, String>;
+}
+
+/// Engine-side scheduled inbox sync runner.
+pub struct LinkedInInboxSyncRunner<'a, T> {
+    vault: &'a Vault,
+    adapter: LinkedInMcpConnectorAdapter,
+    transport: T,
+    config: LinkedInInboxSyncConfig,
+}
+
 impl LinkedInMcpConnectorAdapter {
     /// Builds a LinkedIn adapter for one authenticated member/session identity.
     pub fn new(receiving_address_or_handle: impl Into<String>) -> Result<Self> {
@@ -697,6 +871,33 @@ impl LinkedInMcpConnectorAdapter {
     #[must_use]
     pub fn receiving_address_or_handle(&self) -> &str {
         &self.receiving_address_or_handle
+    }
+
+    /// Returns the session/sandbox ref stamped into LinkedIn inbound events.
+    #[must_use]
+    pub fn session_ref(&self) -> Option<&str> {
+        self.session_ref.as_deref()
+    }
+
+    /// Enqueues one scheduled inbox poll for this LinkedIn seat/session.
+    pub fn enqueue_inbox_sync_poll(
+        &self,
+        vault: &Vault,
+        config: LinkedInInboxSyncConfig,
+        now: u64,
+    ) -> Result<EnqueueOutcome> {
+        config.validate()?;
+        validate_inbox_sync_config_matches_adapter(self, &config)?;
+        let payload = serde_json::to_vec(&config).map_err(|err| {
+            Error::InvalidConfig(format!("LinkedIn inbox sync config did not encode: {err}"))
+        })?;
+        JobQueue::new(vault).enqueue(EnqueueJob {
+            kind: LINKEDIN_INBOX_SYNC_JOB_KIND.to_owned(),
+            payload,
+            dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
+            run_id: None,
+            now,
+        })
     }
 
     /// Returns the supported OF-327 verb keys advertised for this connector.
@@ -758,6 +959,35 @@ impl LinkedInMcpConnectorAdapter {
         Ok(events)
     }
 
+    /// Extracts deduplicated conversation thread ids from `get_inbox` output.
+    pub fn inbox_thread_ids_from_tool_output(&self, output: &Value) -> Result<Vec<String>> {
+        let payload = mcp_payload(output)?;
+        let Some(inbox_text) = optional_section_text(&payload, "inbox")? else {
+            return Ok(Vec::new());
+        };
+        if inbox_text.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut thread_ids = Vec::new();
+        let mut seen_thread_ids = HashSet::new();
+        for reference in section_references(&payload, "inbox") {
+            if !reference_kind_is(reference, "conversation") {
+                continue;
+            }
+            let Some(thread_id) = thread_id_from_reference(reference)? else {
+                continue;
+            };
+            if seen_thread_ids.insert(thread_id.clone()) {
+                thread_ids.push(thread_id);
+            }
+            if thread_ids.len() > MAX_LINKEDIN_INBOX_THREADS_PER_POLL {
+                return Err(Error::IndexOverflow("LinkedIn inbox threads"));
+            }
+        }
+        Ok(thread_ids)
+    }
+
     /// Normalizes a recorded `get_conversation` MCP result into SurfaceEvent input.
     pub fn normalize_get_conversation_tool_output(
         &self,
@@ -788,6 +1018,46 @@ impl LinkedInMcpConnectorAdapter {
             format!("linkedin:mcp:get_conversation:{thread_id}:{hash}"),
             received_at,
         )?])
+    }
+
+    /// Normalizes a `get_conversation` MCP result into message-level events.
+    pub fn normalize_get_conversation_message_events(
+        &self,
+        output: &Value,
+        received_at: u64,
+        backfill_window_secs: u64,
+    ) -> Result<Vec<LinkedInConversationMessageEvent>> {
+        if backfill_window_secs > MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
+            return Err(Error::InvalidConfig(
+                "LinkedIn inbox backfill window exceeds maximum length".to_owned(),
+            ));
+        }
+        let messages = conversation_messages_from_tool_output(output)?;
+        let mut events = Vec::new();
+        for message in messages {
+            if !message_in_backfill_window(&message, received_at, backfill_window_secs) {
+                continue;
+            }
+            let message_hash =
+                event_hash([message.thread_id.as_str(), message.message_id.as_str()].as_slice());
+            let event_input = self.surface_event_input(
+                format!(
+                    "linkedin:conversation:{}:message:{message_hash}",
+                    message.thread_id
+                ),
+                counterparty_key(&message.thread_id),
+                format!(
+                    "linkedin:mcp:get_conversation:{}:message:{message_hash}",
+                    message.thread_id
+                ),
+                received_at,
+            )?;
+            events.push(LinkedInConversationMessageEvent {
+                message,
+                event_input,
+            });
+        }
+        Ok(events)
     }
 
     fn surface_event_input(
@@ -827,6 +1097,116 @@ impl LinkedInMcpConnectorAdapter {
             Ok(input)
         }
     }
+}
+
+impl<'a, T> LinkedInInboxSyncRunner<'a, T> {
+    #[must_use]
+    pub fn new(
+        vault: &'a Vault,
+        adapter: LinkedInMcpConnectorAdapter,
+        transport: T,
+        config: LinkedInInboxSyncConfig,
+    ) -> Self {
+        Self {
+            vault,
+            adapter,
+            transport,
+            config,
+        }
+    }
+
+    #[must_use]
+    pub const fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    #[must_use]
+    pub const fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+}
+
+impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
+    /// Executes one scheduled inbox poll.
+    pub fn run_once(&mut self, now: u64) -> Result<LinkedInInboxSyncReport> {
+        self.config.validate()?;
+        validate_inbox_sync_config_matches_adapter(&self.adapter, &self.config)?;
+        let inbox_output = self.transport.get_inbox().map_err(|err| {
+            Error::InvalidConfig(format!(
+                "LinkedIn {LINKEDIN_MCP_GET_INBOX_TOOL} failed: {}",
+                receipt_error_code(&err)
+            ))
+        })?;
+        let thread_ids = self
+            .adapter
+            .inbox_thread_ids_from_tool_output(&inbox_output)?;
+        let mut report = LinkedInInboxSyncReport::empty();
+        report.threads_seen = thread_ids.len();
+
+        for thread_id in thread_ids {
+            let conversation_output =
+                self.transport.get_conversation(&thread_id).map_err(|err| {
+                    Error::InvalidConfig(format!(
+                        "LinkedIn {LINKEDIN_MCP_GET_CONVERSATION_TOOL} failed: {}",
+                        receipt_error_code(&err)
+                    ))
+                })?;
+            let all_message_count =
+                conversation_messages_from_tool_output(&conversation_output)?.len();
+            let events = self.adapter.normalize_get_conversation_message_events(
+                &conversation_output,
+                now,
+                self.config.backfill_window_secs,
+            )?;
+            report.messages_seen = report.messages_seen.saturating_add(all_message_count);
+            report.backfill_skipped_messages = report
+                .backfill_skipped_messages
+                .saturating_add(all_message_count.saturating_sub(events.len()));
+
+            for event in events {
+                if linkedin_inbox_message_seen(self.vault, &event.message)? {
+                    report.duplicate_messages = report.duplicate_messages.saturating_add(1);
+                    continue;
+                }
+
+                let receipt = self
+                    .vault
+                    .route_inbound_surface_event(event.event_input.clone())?;
+                if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
+                    if persist_linkedin_inbox_seen_message(
+                        self.vault,
+                        &event.message,
+                        &event.event_input,
+                    )? {
+                        report.new_messages = report.new_messages.saturating_add(1);
+                    } else {
+                        report.duplicate_messages = report.duplicate_messages.saturating_add(1);
+                    }
+                }
+                report.receipts.push(receipt);
+            }
+        }
+
+        Ok(report)
+    }
+}
+
+/// Builds a runner from a scheduled job payload.
+pub fn linkedin_inbox_sync_runner_from_job<'a, T>(
+    vault: &'a Vault,
+    payload: &[u8],
+    transport: T,
+) -> Result<LinkedInInboxSyncRunner<'a, T>> {
+    let config: LinkedInInboxSyncConfig = serde_json::from_slice(payload).map_err(|err| {
+        Error::InvalidConfig(format!(
+            "LinkedIn inbox sync job payload did not decode: {err}"
+        ))
+    })?;
+    config.validate()?;
+    let adapter = config.adapter()?;
+    Ok(LinkedInInboxSyncRunner::new(
+        vault, adapter, transport, config,
+    ))
 }
 
 /// Host-resolved plan for one `linkedin.send_dm` intent.
@@ -1225,6 +1605,14 @@ fn mcp_payload(output: &Value) -> Result<Value> {
     if output.get("sections").is_some() {
         return Ok(output.clone());
     }
+    if let Some(messages) = output.get("messages") {
+        if !messages.is_array() {
+            return Err(Error::InvalidConfig(
+                "LinkedIn MCP messages must be an array".to_owned(),
+            ));
+        }
+        return Ok(output.clone());
+    }
     if let Some(structured) = output.get("structuredContent") {
         return Ok(structured.clone());
     }
@@ -1243,6 +1631,310 @@ fn mcp_payload(output: &Value) -> Result<Value> {
     Err(Error::InvalidConfig(
         "LinkedIn MCP output did not match a recognized shape".to_owned(),
     ))
+}
+
+fn validate_inbox_sync_config_matches_adapter(
+    adapter: &LinkedInMcpConnectorAdapter,
+    config: &LinkedInInboxSyncConfig,
+) -> Result<()> {
+    if adapter.receiving_address_or_handle != config.receiving_address_or_handle {
+        return Err(Error::InvalidConfig(
+            "LinkedIn inbox sync config does not match adapter receiving identity".to_owned(),
+        ));
+    }
+    if adapter.session_ref != config.session_ref {
+        return Err(Error::InvalidConfig(
+            "LinkedIn inbox sync config does not match adapter session ref".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn conversation_messages_from_tool_output(
+    output: &Value,
+) -> Result<Vec<LinkedInConversationMessage>> {
+    let payload = mcp_payload(output)?;
+    let conversation_references = section_references(&payload, "conversation");
+    let thread_id = match thread_id_from_payload_url(&payload)? {
+        Some(thread_id) => thread_id,
+        None => first_conversation_thread_id(&conversation_references)?.ok_or_else(|| {
+            Error::InvalidConfig(
+                "LinkedIn get_conversation output did not include a thread id".to_owned(),
+            )
+        })?,
+    };
+
+    let mut messages =
+        if let Some(message_values) = payload.get("messages").and_then(Value::as_array) {
+            explicit_conversation_messages(&thread_id, message_values)?
+        } else {
+            Vec::new()
+        };
+    if messages.is_empty()
+        && let Some(conversation_text) = optional_section_text(&payload, "conversation")?
+    {
+        messages = fallback_conversation_messages(&thread_id, conversation_text)?;
+    }
+    if messages.len() > MAX_LINKEDIN_CONVERSATION_MESSAGES_PER_THREAD {
+        return Err(Error::IndexOverflow("LinkedIn conversation messages"));
+    }
+    Ok(messages)
+}
+
+fn explicit_conversation_messages(
+    thread_id: &str,
+    message_values: &[Value],
+) -> Result<Vec<LinkedInConversationMessage>> {
+    let mut messages = Vec::new();
+    let mut seen_message_ids = HashSet::new();
+    for value in message_values {
+        let Some(object) = value.as_object() else {
+            return Err(Error::InvalidConfig(
+                "LinkedIn conversation messages must be objects".to_owned(),
+            ));
+        };
+        let Some(message_id) = first_string_field(
+            object,
+            &["id", "message_id", "messageId", "urn", "entity_urn"],
+        ) else {
+            continue;
+        };
+        let message_id = normalize_message_id(message_id)?;
+        if !seen_message_ids.insert(message_id.clone()) {
+            continue;
+        }
+        let text = first_string_field(object, &["text", "body", "content", "message"])
+            .map(normalize_whitespace)
+            .filter(|text| !text.is_empty());
+        let occurred_at = first_u64_field(
+            object,
+            &["occurred_at", "timestamp", "created_at", "sent_at"],
+        );
+        messages.push(LinkedInConversationMessage {
+            thread_id: thread_id.to_owned(),
+            message_id,
+            occurred_at,
+            text,
+        });
+    }
+    Ok(messages)
+}
+
+fn fallback_conversation_messages(
+    thread_id: &str,
+    conversation_text: &str,
+) -> Result<Vec<LinkedInConversationMessage>> {
+    let lines = conversation_text
+        .lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut start = 0;
+    if lines.len() >= 3 && lines[0] == lines[1] && looks_like_linkedin_time(&lines[2]) {
+        start = 1;
+    }
+
+    let mut messages = Vec::new();
+    let mut index = start;
+    while index < lines.len() {
+        if index + 2 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
+            let author = &lines[index];
+            let timestamp = &lines[index + 1];
+            index += 2;
+            let body_start = index;
+            while index < lines.len() {
+                if index + 1 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
+                    break;
+                }
+                index += 1;
+            }
+            let body = lines[body_start..index].join(" ");
+            if !body.is_empty() {
+                messages.push(fallback_message(
+                    thread_id,
+                    messages.len(),
+                    [author.as_str(), timestamp.as_str(), body.as_str()].as_slice(),
+                    Some(body.clone()),
+                )?);
+            }
+            continue;
+        }
+
+        let body = lines[index].clone();
+        messages.push(fallback_message(
+            thread_id,
+            messages.len(),
+            [body.as_str()].as_slice(),
+            Some(body.clone()),
+        )?);
+        index += 1;
+    }
+    Ok(messages)
+}
+
+fn fallback_message(
+    thread_id: &str,
+    ordinal: usize,
+    hash_parts: &[&str],
+    text: Option<String>,
+) -> Result<LinkedInConversationMessage> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(thread_id.as_bytes());
+    hasher.update(&[0]);
+    hasher.update(ordinal.to_string().as_bytes());
+    for part in hash_parts {
+        hasher.update(&[0]);
+        hasher.update(part.as_bytes());
+    }
+    let digest = hasher.finalize().to_hex().to_string();
+    Ok(LinkedInConversationMessage {
+        thread_id: thread_id.to_owned(),
+        message_id: normalize_message_id(&format!("fallback-{ordinal}-{}", &digest[..16]))?,
+        occurred_at: None,
+        text,
+    })
+}
+
+fn first_string_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn first_u64_field(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_u64))
+}
+
+fn looks_like_linkedin_time(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    if lower.contains(':') && (lower.ends_with("am") || lower.ends_with("pm")) {
+        return true;
+    }
+    lower == "today" || lower == "yesterday" || lower.contains(" ago")
+}
+
+fn message_in_backfill_window(
+    message: &LinkedInConversationMessage,
+    now: u64,
+    backfill_window_secs: u64,
+) -> bool {
+    let Some(occurred_at) = message.occurred_at else {
+        return true;
+    };
+    occurred_at.saturating_add(backfill_window_secs) >= now
+}
+
+fn linkedin_inbox_message_seen(
+    vault: &Vault,
+    message: &LinkedInConversationMessage,
+) -> Result<bool> {
+    let key = linkedin_inbox_seen_key(message);
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(vault.store.sync_state.get(&rtxn, &key)?.is_some())
+}
+
+fn persist_linkedin_inbox_seen_message(
+    vault: &Vault,
+    message: &LinkedInConversationMessage,
+    event_input: &InboundSurfaceEventInput,
+) -> Result<bool> {
+    let seen_key = linkedin_inbox_seen_key(message);
+    let provenance_key = linkedin_inbox_provenance_key(message);
+    let row = LinkedInInboxSyncProvenanceRow {
+        schema_version: 1,
+        source: LINKEDIN_INBOX_SYNC_SOURCE.to_owned(),
+        tier: LINKEDIN_INBOX_SYNC_TIER.to_owned(),
+        channel: LINKEDIN_CHANNEL.to_owned(),
+        thread_id: message.thread_id.clone(),
+        message_id: message.message_id.clone(),
+        surface_event_id: event_input.event_id.clone(),
+        payload_ref: event_input.payload_ref.clone(),
+        received_at: event_input.received_at,
+        occurred_at: message.occurred_at,
+    };
+    let encoded = serde_json::to_vec(&row).map_err(|err| {
+        Error::InvalidConfig(format!(
+            "LinkedIn inbox sync provenance row did not encode: {err}"
+        ))
+    })?;
+
+    vault.with_write_txn(|wtxn| {
+        if vault.store.sync_state.get(wtxn, &seen_key)?.is_some() {
+            return Ok(false);
+        }
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &seen_key, event_input.event_id.as_bytes())?;
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &provenance_key, &encoded)?;
+        Ok(true)
+    })
+}
+
+/// Reads durable LinkedIn inbox-sync provenance rows for diagnostics/tests.
+pub fn linkedin_inbox_sync_provenance_rows(
+    vault: &Vault,
+) -> Result<Vec<LinkedInInboxSyncProvenanceRow>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for row in vault
+        .store
+        .sync_state
+        .prefix_iter(&rtxn, LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX)?
+    {
+        let (_, value) = row?;
+        let decoded: LinkedInInboxSyncProvenanceRow =
+            serde_json::from_slice(value).map_err(|err| {
+                Error::CorruptedIndex(match err.classify() {
+                    serde_json::error::Category::Io => "LinkedIn inbox provenance io",
+                    serde_json::error::Category::Syntax => "LinkedIn inbox provenance syntax",
+                    serde_json::error::Category::Data => "LinkedIn inbox provenance data",
+                    serde_json::error::Category::Eof => "LinkedIn inbox provenance eof",
+                })
+            })?;
+        rows.push(decoded);
+    }
+    rows.sort_by(|a, b| {
+        a.thread_id
+            .cmp(&b.thread_id)
+            .then_with(|| a.message_id.cmp(&b.message_id))
+    });
+    Ok(rows)
+}
+
+fn linkedin_inbox_seen_key(message: &LinkedInConversationMessage) -> String {
+    format!(
+        "{LINKEDIN_INBOX_SYNC_SEEN_PREFIX}{}",
+        event_hash([message.thread_id.as_str(), message.message_id.as_str()].as_slice())
+    )
+}
+
+fn linkedin_inbox_provenance_key(message: &LinkedInConversationMessage) -> String {
+    format!(
+        "{LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX}{}",
+        event_hash([message.thread_id.as_str(), message.message_id.as_str()].as_slice())
+    )
+}
+
+fn linkedin_inbox_sync_dedupe_key(config: &LinkedInInboxSyncConfig) -> String {
+    let session_ref = config.session_ref.as_deref().unwrap_or("no-session");
+    format!(
+        "{LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX}{}:{}",
+        event_hash([&config.receiving_address_or_handle, session_ref].as_slice()),
+        config.backfill_window_secs
+    )
 }
 
 fn optional_section_text<'a>(payload: &'a Value, section: &str) -> Result<Option<&'a str>> {
@@ -1334,6 +2026,21 @@ fn normalize_thread_id(thread_id: &str) -> Result<String> {
         ));
     }
     Ok(thread_id.to_owned())
+}
+
+fn normalize_message_id(message_id: &str) -> Result<String> {
+    let message_id = message_id.trim();
+    if message_id.is_empty() {
+        return Err(Error::InvalidConfig(
+            "LinkedIn message id must be non-empty".to_owned(),
+        ));
+    }
+    if message_id.len() > MAX_LINKEDIN_MESSAGE_ID_BYTES {
+        return Err(Error::InvalidConfig(
+            "LinkedIn message id exceeds maximum length".to_owned(),
+        ));
+    }
+    Ok(message_id.to_owned())
 }
 
 fn counterparty_key(thread_id: &str) -> String {
