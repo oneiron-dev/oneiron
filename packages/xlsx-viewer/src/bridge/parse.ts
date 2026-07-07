@@ -48,14 +48,24 @@ export interface SheetMeta {
   readonly name: string;
 }
 
-/** Deterministic, collision-resistant sheet id derived from the sheet name. */
-export function sheetId(name: string): string {
-  // Univer keys sheets by id; the source name is stable within a workbook.
-  let hash = 5381;
-  for (let i = 0; i < name.length; i += 1) {
-    hash = ((hash << 5) + hash + name.charCodeAt(i)) >>> 0;
+/** Base64url of a UTF-8 string. Browser- and worker-safe (uses global `btoa`). */
+function base64url(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]!);
   }
-  return `sheet-${hash.toString(16)}-${name.length}`;
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Collision-free sheet id derived from the sheet name. Univer keys sheets by
+ * id, and xlsx sheet names are unique within a workbook, so base64url of the
+ * full name is a deterministic bijection — no hash collisions can make one
+ * sheet overwrite another in `workbook.sheets`.
+ */
+export function sheetId(name: string): string {
+  return `sheet-${base64url(name)}`;
 }
 
 function emptyWorkbook(id: string, name: string): IWorkbookData {
@@ -105,29 +115,42 @@ export function readSheetMetas(bytes: Uint8Array): SheetMeta[] {
 
 function toCellData(cell: XLSX.CellObject, includeFormula: boolean): ICellData | undefined {
   // `t`: 'n' number, 's'/'str' string, 'b' boolean, 'd' date, 'e' error.
+  const NUMBER = CELL_TYPE.NUMBER as unknown as CellValueType;
+  const STRING = CELL_TYPE.STRING as unknown as CellValueType;
+  const BOOLEAN = CELL_TYPE.BOOLEAN as unknown as CellValueType;
   let value: string | number | boolean | undefined;
   let type: CellValueType | undefined;
   switch (cell.t) {
     case "n":
-      value = typeof cell.v === "number" ? cell.v : Number(cell.v);
-      type = CELL_TYPE.NUMBER as unknown as CellValueType;
+      // A formula cell may carry `f` but no cached `v`; never emit NaN.
+      if (typeof cell.v === "number" && Number.isFinite(cell.v)) {
+        value = cell.v;
+        type = NUMBER;
+      }
       break;
     case "b":
-      value = Boolean(cell.v);
-      type = CELL_TYPE.BOOLEAN as unknown as CellValueType;
+      // Univer BOOLEAN cells expect a 0|1 value, not a JS boolean.
+      value = cell.v ? 1 : 0;
+      type = BOOLEAN;
       break;
     case "d":
       // View-only: show the formatted date text; no client-side date math.
-      value = cell.w ?? (cell.v instanceof Date ? cell.v.toISOString() : String(cell.v ?? ""));
-      type = CELL_TYPE.STRING as unknown as CellValueType;
+      value = cell.w ?? (cell.v instanceof Date ? cell.v.toISOString() : undefined);
+      if (value !== undefined) {
+        type = STRING;
+      }
       break;
     case "e":
-      value = cell.w ?? String(cell.v ?? "#ERR");
-      type = CELL_TYPE.STRING as unknown as CellValueType;
+      value = cell.w ?? (cell.v === undefined || cell.v === null ? undefined : String(cell.v));
+      if (value !== undefined) {
+        type = STRING;
+      }
       break;
     default: // 's' | 'str' | undefined
-      value = cell.v === undefined || cell.v === null ? "" : String(cell.v);
-      type = CELL_TYPE.STRING as unknown as CellValueType;
+      if (cell.v !== undefined && cell.v !== null) {
+        value = String(cell.v);
+        type = STRING;
+      }
       break;
   }
 
@@ -135,7 +158,13 @@ function toCellData(cell: XLSX.CellObject, includeFormula: boolean): ICellData |
   if (value === undefined && !hasFormula) {
     return undefined;
   }
-  const data: ICellData = { v: value ?? "", t: type };
+  const data: ICellData = {};
+  if (value !== undefined) {
+    data.v = value;
+    if (type !== undefined) {
+      data.t = type;
+    }
+  }
   if (hasFormula) {
     // Formula text only, NEVER `f` — the engine must not recalculate.
     data.custom = { oneironFormula: cell.f!.startsWith("=") ? cell.f! : `=${cell.f!}` };
@@ -163,30 +192,49 @@ export function readSheet(
   });
   const ws = wb.Sheets[sheetName];
   const sid = sheetId(sheetName);
-  if (!ws || !ws["!ref"]) {
+  if (!ws) {
     return { id: sid, name: sheetName, rowCount: 0, columnCount: 0, cellData: {} };
   }
-  const range = XLSX.utils.decode_range(ws["!ref"]);
+  return { id: sid, name: sheetName, ...worksheetToCellData(ws, includeFormula) };
+}
+
+/**
+ * Convert a parsed SheetJS worksheet to Univer cell data + dimensions.
+ *
+ * Iterates the sheet's ACTUAL cell keys, never the full `!ref` rectangle: a
+ * file whose stored dimension is inflated (e.g. `A1:XFD1048576`) but holds a
+ * couple of far-apart cells must not spin billions of iterations. Dimensions
+ * come from `!ref`; if it is absent they fall back to the observed extent.
+ */
+export function worksheetToCellData(
+  ws: XLSX.WorkSheet,
+  includeFormula: boolean,
+): { rowCount: number; columnCount: number; cellData: IWorksheetData["cellData"] } {
   const cellData: Record<number, Record<number, ICellData>> = {};
-  for (let r = range.s.r; r <= range.e.r; r += 1) {
-    for (let c = range.s.c; c <= range.e.c; c += 1) {
-      const addr = XLSX.utils.encode_cell({ r, c });
-      const raw = ws[addr] as XLSX.CellObject | undefined;
-      if (!raw) {
-        continue;
-      }
-      const cell = toCellData(raw, includeFormula);
-      if (cell === undefined) {
-        continue;
-      }
-      (cellData[r] ??= {})[c] = cell;
+  let maxRow = 0;
+  let maxCol = 0;
+  for (const addr of Object.keys(ws)) {
+    if (addr.startsWith("!")) {
+      continue; // `!ref`, `!merges`, `!cols`, ... metadata keys
     }
+    const raw = ws[addr] as XLSX.CellObject | undefined;
+    if (!raw) {
+      continue;
+    }
+    const { r, c } = XLSX.utils.decode_cell(addr);
+    if (r > maxRow) maxRow = r;
+    if (c > maxCol) maxCol = c;
+    const cell = toCellData(raw, includeFormula);
+    if (cell === undefined) {
+      continue;
+    }
+    (cellData[r] ??= {})[c] = cell;
   }
+  const ref = ws["!ref"];
+  const range = ref ? XLSX.utils.decode_range(ref) : undefined;
   return {
-    id: sid,
-    name: sheetName,
-    rowCount: range.e.r + 1,
-    columnCount: range.e.c + 1,
+    rowCount: range ? range.e.r + 1 : maxRow + 1,
+    columnCount: range ? range.e.c + 1 : maxCol + 1,
     cellData: cellData as IWorksheetData["cellData"],
   };
 }

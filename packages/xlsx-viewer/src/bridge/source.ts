@@ -5,10 +5,10 @@
  * and loads the rest on demand, so a >25MB workbook never sits fully parsed in
  * memory.
  */
-import { handleParseRequest } from "./handler";
+import { ParseSessionStore } from "./handler";
 import { readSheet, readWorkbookOutline } from "./parse";
 import type { ParseOptions } from "./parse";
-import type { OutlineResponse, ParseRequest, ParseResponse, SheetResponse } from "./protocol";
+import type { InitResponse, ParseRequest, ParseResponse, SheetResponse } from "./protocol";
 import type { IWorkbookData, IWorksheetData } from "@univerjs/core";
 
 export interface WorkbookSource {
@@ -51,18 +51,29 @@ export function createLocalWorkbookSource(
   };
 }
 
+type ParseMessageListener = (event: { data: ParseResponse }) => void;
+type ParseErrorListener = (event: { message?: string }) => void;
+
 /** Minimal Worker surface we depend on (keeps this testable without the DOM). */
 export interface ParseWorkerLike {
-  postMessage(message: ParseRequest): void;
-  addEventListener(type: "message", listener: (event: { data: ParseResponse }) => void): void;
-  removeEventListener(type: "message", listener: (event: { data: ParseResponse }) => void): void;
+  postMessage(message: ParseRequest, transfer?: Transferable[]): void;
+  addEventListener(type: "message", listener: ParseMessageListener): void;
+  addEventListener(type: "error", listener: ParseErrorListener): void;
+  removeEventListener(type: "message", listener: ParseMessageListener): void;
+  removeEventListener(type: "error", listener: ParseErrorListener): void;
   terminate(): void;
 }
+
+let sessionCounter = 0;
 
 /**
  * Parses in a Web Worker. `workerFactory` builds the worker (in app code:
  * `() => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" })`),
  * injected so this stays testable with a fake worker.
+ *
+ * Bytes are transferred to the worker exactly ONCE (on first use); subsequent
+ * sheet requests carry only the session id. In-flight requests are tracked so
+ * `dispose()` (or a worker error) rejects them instead of hanging.
  */
 export function createWorkerWorkbookSource(
   bytes: Uint8Array,
@@ -71,45 +82,97 @@ export function createWorkerWorkbookSource(
 ): WorkbookSource {
   const { name = "workbook", ...parseOptions } = options;
   const worker = workerFactory();
+  const session = `xlsx-${(sessionCounter += 1)}-${Date.now().toString(36)}`;
   const cache = new Map<string, Partial<IWorksheetData>>();
+  const pending = new Map<number, { resolve: (res: ParseResponse) => void; reject: (err: Error) => void }>();
   let nextId = 1;
+  let disposed = false;
+  let initPromise: Promise<IWorkbookData> | null = null;
 
-  function request<T extends ParseResponse>(message: ParseRequest, wantKind: T["kind"]): Promise<T> {
+  const onMessage: ParseMessageListener = (event) => {
+    const res = event.data;
+    const entry = pending.get(res.id);
+    if (!entry) {
+      return;
+    }
+    pending.delete(res.id);
+    if (res.kind === "error") {
+      entry.reject(new Error(res.message));
+    } else {
+      entry.resolve(res);
+    }
+  };
+  const onError: ParseErrorListener = (event) => {
+    rejectAll(new Error(`parse worker error: ${event.message ?? "unknown"}`));
+  };
+
+  function rejectAll(err: Error): void {
+    for (const entry of pending.values()) {
+      entry.reject(err);
+    }
+    pending.clear();
+  }
+
+  worker.addEventListener("message", onMessage);
+  worker.addEventListener("error", onError);
+
+  function send<T extends ParseResponse>(
+    build: (id: number) => ParseRequest,
+    wantKind: T["kind"],
+    transfer?: Transferable[],
+  ): Promise<T> {
+    if (disposed) {
+      return Promise.reject(new Error("workbook source disposed"));
+    }
+    const id = (nextId += 1);
+    const message = build(id);
     return new Promise<T>((resolve, reject) => {
-      const listener = (event: { data: ParseResponse }) => {
-        const res = event.data;
-        if (res.id !== message.id) {
-          return;
-        }
-        worker.removeEventListener("message", listener);
-        if (res.kind === "error") {
-          reject(new Error(res.message));
-        } else if (res.kind === wantKind) {
-          resolve(res as T);
+      pending.set(id, {
+        resolve: (res) =>
+          res.kind === wantKind
+            ? resolve(res as T)
+            : reject(new Error(`unexpected response kind ${res.kind} for ${message.kind}`)),
+        reject,
+      });
+      try {
+        if (transfer) {
+          worker.postMessage(message, transfer);
         } else {
-          reject(new Error(`unexpected response kind ${res.kind} for request ${message.kind}`));
+          worker.postMessage(message);
         }
-      };
-      worker.addEventListener("message", listener);
-      worker.postMessage(message);
+      } catch (err) {
+        pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
+  function ensureInit(): Promise<IWorkbookData> {
+    if (!initPromise) {
+      // Transfer a COPY so the caller's `bytes` are not detached; the workbook
+      // crosses the wire exactly once, never per request.
+      const copy = bytes.slice();
+      initPromise = send<InitResponse>(
+        (id) => ({ kind: "init", id, session, bytes: copy, name }),
+        "init",
+        [copy.buffer],
+      ).then((res) => res.workbook);
+    }
+    return initPromise;
+  }
+
   return {
-    async outline() {
-      const res = await request<OutlineResponse>(
-        { kind: "outline", id: nextId++, bytes, name },
-        "outline",
-      );
-      return res.workbook;
+    outline() {
+      return ensureInit();
     },
     async sheet(sheetName: string) {
       const cached = cache.get(sheetName);
       if (cached) {
         return cached;
       }
-      const res = await request<SheetResponse>(
-        { kind: "sheet", id: nextId++, bytes, sheetName, options: parseOptions },
+      await ensureInit();
+      const res = await send<SheetResponse>(
+        (id) => ({ kind: "sheet", id, session, sheetName, options: parseOptions }),
         "sheet",
       );
       cache.set(sheetName, res.sheet);
@@ -119,6 +182,18 @@ export function createWorkerWorkbookSource(
       return [...cache.keys()];
     },
     dispose() {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      rejectAll(new Error("workbook source disposed"));
+      try {
+        worker.postMessage({ kind: "dispose", session });
+      } catch {
+        // worker may already be gone; nothing to free
+      }
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
       cache.clear();
       worker.terminate();
     },
@@ -126,29 +201,37 @@ export function createWorkerWorkbookSource(
 }
 
 /**
- * In-process worker stand-in that runs {@link handleParseRequest} synchronously
- * behind the async message API. Lets tests drive the exact worker code path
- * (and the app fall back) without a real Worker.
+ * In-process worker stand-in backed by a real {@link ParseSessionStore}. Lets
+ * tests drive the exact worker code path (and the app fall back) without a real
+ * Worker. Transfers are ignored (same process); `error` events never fire.
  */
 export function createInlineParseWorker(): ParseWorkerLike {
-  const listeners = new Set<(event: { data: ParseResponse }) => void>();
+  const store = new ParseSessionStore();
+  const messageListeners = new Set<ParseMessageListener>();
   return {
-    postMessage(message: ParseRequest) {
-      const response = handleParseRequest(message);
+    postMessage(message: ParseRequest, _transfer?: Transferable[]) {
+      const response = store.handle(message);
+      if (response === null) {
+        return;
+      }
       queueMicrotask(() => {
-        for (const listener of listeners) {
+        for (const listener of messageListeners) {
           listener({ data: response });
         }
       });
     },
-    addEventListener(_type, listener) {
-      listeners.add(listener);
+    addEventListener(type: "message" | "error", listener: ParseMessageListener | ParseErrorListener) {
+      if (type === "message") {
+        messageListeners.add(listener as ParseMessageListener);
+      }
     },
-    removeEventListener(_type, listener) {
-      listeners.delete(listener);
+    removeEventListener(type: "message" | "error", listener: ParseMessageListener | ParseErrorListener) {
+      if (type === "message") {
+        messageListeners.delete(listener as ParseMessageListener);
+      }
     },
     terminate() {
-      listeners.clear();
+      messageListeners.clear();
     },
   };
 }

@@ -51,9 +51,16 @@ export interface AnnotationClient {
   ): Promise<TaskBrief>;
 }
 
-/** There is no native "list at version" call — filter heads client-side. */
+/**
+ * There is no native "list at version" call — filter heads client-side.
+ * A drifted thread keeps `anchor.version` at its ORIGIN, so a naive equality
+ * check would hide it from the very version it drifted at. Include threads
+ * whose `drift.driftedAtVersion` matches too, so the drift marker still renders.
+ */
 export function threadsAtVersion(threads: AnnotationThread[], version: number): AnnotationThread[] {
-  return threads.filter((t) => t.anchor.version === version);
+  return threads.filter(
+    (t) => t.anchor.version === version || t.drift?.driftedAtVersion === version,
+  );
 }
 
 function assertCommentFits(text: string): void {

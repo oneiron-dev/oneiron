@@ -1,30 +1,43 @@
 /**
  * Message protocol between the main thread and the parse worker.
- * The worker only ever moves plain data (bytes in, `IWorkbookData` fragments
- * out), so it carries no Univer runtime and no viewer state.
+ *
+ * Bytes cross the wire EXACTLY ONCE: an `init` seeds a session with the
+ * workbook bytes (transferred, not cloned) and returns the cheap outline;
+ * subsequent `sheet` requests carry only the session id, so visiting a tab
+ * never re-clones a 30MB workbook. The worker owns the bytes for the session's
+ * lifetime and frees them on `dispose`.
  */
 import type { IWorkbookData, IWorksheetData } from "@univerjs/core";
 import type { ParseOptions } from "./parse";
 
-export interface OutlineRequest {
-  readonly kind: "outline";
+/** Seed a session with the workbook bytes; response is the outline. */
+export interface InitRequest {
+  readonly kind: "init";
   readonly id: number;
+  readonly session: string;
   readonly bytes: Uint8Array;
   readonly name?: string;
 }
 
+/** Parse one sheet in an already-initialised session (bytes NOT re-sent). */
 export interface SheetRequest {
   readonly kind: "sheet";
   readonly id: number;
-  readonly bytes: Uint8Array;
+  readonly session: string;
   readonly sheetName: string;
   readonly options?: ParseOptions;
 }
 
-export type ParseRequest = OutlineRequest | SheetRequest;
+/** Release a session's bytes and caches. Fire-and-forget (no response). */
+export interface DisposeRequest {
+  readonly kind: "dispose";
+  readonly session: string;
+}
 
-export interface OutlineResponse {
-  readonly kind: "outline";
+export type ParseRequest = InitRequest | SheetRequest | DisposeRequest;
+
+export interface InitResponse {
+  readonly kind: "init";
   readonly id: number;
   readonly workbook: IWorkbookData;
 }
@@ -41,4 +54,4 @@ export interface ErrorResponse {
   readonly message: string;
 }
 
-export type ParseResponse = OutlineResponse | SheetResponse | ErrorResponse;
+export type ParseResponse = InitResponse | SheetResponse | ErrorResponse;

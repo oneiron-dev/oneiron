@@ -20,7 +20,14 @@
  * headless); its gate is `tsc`. The lazy-mount composition it relies on
  * (`assembleWorkbook`) and everything else is covered by the suite.
  */
-import { IUniverInstanceService, LocaleType, LogLevel, Univer, UniverInstanceType } from "@univerjs/core";
+import {
+  ICommandService,
+  IUniverInstanceService,
+  LocaleType,
+  LogLevel,
+  Univer,
+  UniverInstanceType,
+} from "@univerjs/core";
 import { UniverFormulaEnginePlugin } from "@univerjs/engine-formula";
 import { UniverRenderEnginePlugin } from "@univerjs/engine-render";
 import { UniverSheetsPlugin } from "@univerjs/sheets";
@@ -31,10 +38,11 @@ import { UniverSheetsUIPlugin } from "@univerjs/sheets-ui";
 import { UniverThreadCommentPlugin } from "@univerjs/thread-comment";
 import { UniverUIPlugin } from "@univerjs/ui";
 import type { IWorkbookData, IWorksheetData, Workbook } from "@univerjs/core";
-import { assembleWorkbook } from "../bridge/assemble";
 import type { WorkbookSource } from "../bridge/source";
 import type { CommentOverlayController } from "../annotations/overlay";
 import type { VersionScrubber } from "../versions/scrubber";
+import { computeMountPlan } from "./plan";
+import { isEditCommandId } from "./readonly";
 
 export interface XlsxViewerOptions {
   readonly container: HTMLElement;
@@ -73,6 +81,20 @@ function registerViewOnlyPlugins(univer: Univer, container: HTMLElement): void {
 }
 
 /**
+ * Enforce view-only by rejecting any edit command before it executes. Blocks
+ * only mutating commands ({@link isEditCommandId}); navigation, selection, and
+ * active-sheet switching pass through untouched.
+ */
+function registerReadOnlyGuard(univer: Univer): void {
+  const commandService = univer.__getInjector().get(ICommandService);
+  commandService.beforeCommandExecuted((info) => {
+    if (isEditCommandId(info.id)) {
+      throw new Error(`xlsx viewer is read-only: blocked command ${info.id}`);
+    }
+  });
+}
+
+/**
  * Mount the xlsx viewer instrument into `container`. Only the active sheet's
  * cells are parsed up front; other sheets load on {@link XlsxViewerInstance.showSheet}.
  */
@@ -85,6 +107,9 @@ export async function createXlsxViewer(options: XlsxViewerOptions): Promise<Xlsx
     darkMode: darkMode ?? false,
   });
   registerViewOnlyPlugins(univer, container);
+  registerReadOnlyGuard(univer);
+
+  const instanceService = univer.__getInjector().get(IUniverInstanceService);
 
   const outline = await source.outline();
   const loaded = new Map<string, Partial<IWorksheetData>>();
@@ -97,18 +122,28 @@ export async function createXlsxViewer(options: XlsxViewerOptions): Promise<Xlsx
     }
   }
 
-  let active: string | undefined = orderedNames[0];
-  if (active !== undefined) {
-    loaded.set(active, await source.sheet(active));
+  /** (Re)create the workbook unit and activate the requested sheet. */
+  function mountActive(activeName: string): string {
+    const plan = computeMountPlan(outline, loaded, activeName);
+    const unit: Workbook = univer.createUnit<IWorkbookData, Workbook>(
+      UniverInstanceType.UNIVER_SHEET,
+      plan.workbook,
+    );
+    // Univer opens sheetOrder[0] by default; re-activate the requested sheet so
+    // the grid does not silently reopen on the first tab after a remount.
+    const worksheet = unit.getSheetBySheetId(plan.activeSheetId);
+    if (worksheet) {
+      unit.setActiveSheet(worksheet);
+    }
+    return plan.workbook.id;
   }
 
-  const instanceService = univer.__getInjector().get(IUniverInstanceService);
-
-  let workbookData: IWorkbookData = assembleWorkbook(outline, loaded);
-  let unit: Workbook = univer.createUnit<IWorkbookData, Workbook>(
-    UniverInstanceType.UNIVER_SHEET,
-    workbookData,
-  );
+  let active: string | undefined = orderedNames[0];
+  let mountedId: string | undefined;
+  if (active !== undefined) {
+    loaded.set(active, await source.sheet(active));
+    mountedId = mountActive(active);
+  }
 
   return {
     univer,
@@ -128,13 +163,10 @@ export async function createXlsxViewer(options: XlsxViewerOptions): Promise<Xlsx
       active = sheetName;
       // Remount with the newly loaded sheet. Incremental in-place injection is a
       // follow-up optimisation; correctness-first for the MVP.
-      instanceService.disposeUnit(workbookData.id);
-      workbookData = assembleWorkbook(outline, loaded);
-      unit = univer.createUnit<IWorkbookData, Workbook>(
-        UniverInstanceType.UNIVER_SHEET,
-        workbookData,
-      );
-      void unit;
+      if (mountedId !== undefined) {
+        instanceService.disposeUnit(mountedId);
+      }
+      mountedId = mountActive(sheetName);
     },
     dispose() {
       source.dispose();

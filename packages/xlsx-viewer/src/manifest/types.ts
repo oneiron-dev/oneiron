@@ -84,7 +84,14 @@ export type EditOp =
   | { readonly remove_sheet: { name: string } }
   | { readonly rename_sheet: { from: string; to: string } };
 
-export type EditOpTag = keyof EditOp extends never ? never : Extract<keyof EditOp, string>;
+/**
+ * The variant tags of `EditOp`. `keyof` over a union intersects its members'
+ * keys (→ `never` here, since each variant has a distinct single key), so the
+ * derivation must DISTRIBUTE over the union. Distribution requires a naked type
+ * PARAMETER as the checked type, hence the `TagOf` helper.
+ */
+type TagOf<T> = T extends unknown ? keyof T & string : never;
+export type EditOpTag = TagOf<EditOp>;
 
 /** ARTL-3 `EditManifest` top-level. Version-agnostic and self-contained. */
 export interface EditManifest {

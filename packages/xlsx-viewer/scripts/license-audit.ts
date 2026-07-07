@@ -121,13 +121,21 @@ function readManifest(dir: string): PackageManifest | null {
   }
 }
 
-function packageDirs(nodeModules: string): string[] {
-  const dirs: string[] = [];
+/**
+ * Every package directory reachable from a `node_modules`, RECURSING into each
+ * package's own nested `node_modules` so non-hoisted transitive deps are audited
+ * too. `seen` guards against symlink cycles.
+ */
+function packageDirs(nodeModules: string, seen = new Set<string>(), out: string[] = []): string[] {
+  if (seen.has(nodeModules)) {
+    return out;
+  }
+  seen.add(nodeModules);
   let entries: string[];
   try {
     entries = readdirSync(nodeModules);
   } catch {
-    return dirs;
+    return out;
   }
   for (const entry of entries) {
     if (entry === ".bin" || entry === ".cache") {
@@ -143,19 +151,32 @@ function packageDirs(nodeModules: string): string[] {
         continue;
       }
       for (const child of scoped) {
-        dirs.push(join(full, child));
+        collectPackage(join(full, child), seen, out);
       }
     } else {
-      try {
-        if (statSync(full).isDirectory()) {
-          dirs.push(full);
-        }
-      } catch {
-        /* ignore */
-      }
+      collectPackage(full, seen, out);
     }
   }
-  return dirs;
+  return out;
+}
+
+function collectPackage(dir: string, seen: Set<string>, out: string[]): void {
+  try {
+    if (!statSync(dir).isDirectory()) {
+      return;
+    }
+  } catch {
+    return;
+  }
+  out.push(dir);
+  const nested = join(dir, "node_modules");
+  try {
+    if (statSync(nested).isDirectory()) {
+      packageDirs(nested, seen, out);
+    }
+  } catch {
+    /* no nested node_modules */
+  }
 }
 
 export function auditLicenses(packageRoot: string): LicenseAuditResult {

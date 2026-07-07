@@ -17,6 +17,7 @@ export {
   readWorkbookOutline,
   readSheet,
   readSheetMetas,
+  worksheetToCellData,
   sheetId,
   type ParseOptions,
   type SheetMeta,
@@ -29,13 +30,14 @@ export {
   type ParseWorkerLike,
 } from "./bridge/source";
 export { assembleWorkbook, loadedSheetCount } from "./bridge/assemble";
-export { handleParseRequest } from "./bridge/handler";
+export { ParseSessionStore } from "./bridge/handler";
 export type {
   ParseRequest,
   ParseResponse,
-  OutlineRequest,
+  InitRequest,
   SheetRequest,
-  OutlineResponse,
+  DisposeRequest,
+  InitResponse,
   SheetResponse,
   ErrorResponse,
 } from "./bridge/protocol";
@@ -76,3 +78,5 @@ export {
   type XlsxViewerOptions,
   type XlsxViewerInstance,
 } from "./univer/mount";
+export { computeMountPlan, type MountPlan } from "./univer/plan";
+export { isEditCommandId } from "./univer/readonly";
