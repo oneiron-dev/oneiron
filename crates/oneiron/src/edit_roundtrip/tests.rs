@@ -236,20 +236,29 @@ fn recalc_stage_updates_cached_values_via_seam() {
         "recalc must refresh the cached value through the seam"
     );
 
-    // A session image without a recalc backend records Unsupported and never
-    // rewrites the cached value.
+    // A session image without a recalc backend must refuse a value-affecting
+    // edit: proposing with stale cached formula values would be silent
+    // corruption, so the round-trip fails closed instead.
     let no_recalc = FixtureSession {
         mode: MockMode::Faithful,
         supports_recalc: false,
     };
-    let proposal = propose(&no_recalc, &input, &plan, "run:no-recalc");
-    assert_eq!(proposal.recalc, RecalcStatus::Unsupported);
-    let sheet = opc::read(&proposal.new_bytes)
-        .unwrap()
-        .part(SHEET_PART)
-        .unwrap()
-        .to_vec();
-    assert!(!String::from_utf8_lossy(&sheet).contains("recalc"));
+    let err = run_edit_roundtrip(
+        &no_recalc,
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:no-recalc",
+    )
+    .expect_err("recalc-incapable session must refuse a value-affecting edit");
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
+
+    // But when nothing needs recalc, the same session proposes normally.
+    let add_sheet = EditPlan::new(vec![EditOp::AddSheet {
+        name: "Extra".to_owned(),
+    }]);
+    let proposal = propose(&no_recalc, &input, &add_sheet, "run:no-recalc-notneeded");
+    assert_eq!(proposal.recalc, RecalcStatus::NotNeeded);
 }
 
 // -- Acceptance test 5 ------------------------------------------------------
@@ -430,4 +439,210 @@ fn agent_run_provenance_carries_run_ref() {
             run_ref: "run:prov#7".to_owned(),
         }
     );
+}
+
+// -- Format gating (docx/pptx) ----------------------------------------------
+
+#[test]
+fn docx_and_pptx_are_refused_at_the_pipeline() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![set_a1(10.0)]);
+    for format in [OfficeFormat::Docx, OfficeFormat::Pptx] {
+        let err = run_edit_roundtrip(
+            &FixtureSession::faithful(),
+            &input,
+            format,
+            &plan,
+            "run:doc",
+        )
+        .expect_err("non-spreadsheet formats are unsupported");
+        assert!(
+            matches!(err, Error::InvalidEditManifest(_)),
+            "expected InvalidEditManifest, got {err:?}"
+        );
+    }
+}
+
+// -- 1-based address validation ---------------------------------------------
+
+#[test]
+fn zero_index_cell_is_rejected() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::SetCell {
+        sheet: "Sheet1".to_owned(),
+        cell: CellRef::new(0, 1),
+        before: None,
+        after: CellValue::Number(1.0),
+    }]);
+    let err = run_edit_roundtrip(
+        &FixtureSession::faithful(),
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:badcell",
+    )
+    .expect_err("a 0 column must be rejected");
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
+}
+
+#[test]
+fn inverted_range_is_rejected() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::SetRange {
+        sheet: "Sheet1".to_owned(),
+        range: RangeRef::new(CellRef::new(3, 3), CellRef::new(1, 1)),
+        writes: Vec::new(),
+    }]);
+    let err = run_edit_roundtrip(
+        &FixtureSession::faithful(),
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:inverted",
+    )
+    .expect_err("an inverted range must be rejected");
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
+}
+
+// -- Cross-sheet scan: rels-resolved names + shared formulas ----------------
+
+#[test]
+fn cross_sheet_scan_resolves_names_via_workbook_rels() {
+    // The workbook lists Summary (rId1) then Data (rId2), but rId1 targets
+    // sheet2.xml and rId2 targets sheet1.xml — so the positional heuristic
+    // would mislabel them. Only the rels join yields the right names. The
+    // dependency also lives inside a shared-formula element (`<f t="shared">`).
+    let parts: Vec<(&str, &[u8])> = vec![
+        (opc::CONTENT_TYPES_PART, b"<Types/>" as &[u8]),
+        (
+            "xl/workbook.xml",
+            b"<workbook><sheets><sheet name=\"Summary\" sheetId=\"1\" r:id=\"rId1\"/><sheet name=\"Data\" sheetId=\"2\" r:id=\"rId2\"/></sheets></workbook>",
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            b"<Relationships><Relationship Id=\"rId1\" Target=\"worksheets/sheet2.xml\"/><Relationship Id=\"rId2\" Target=\"worksheets/sheet1.xml\"/></Relationships>",
+        ),
+        (
+            "xl/worksheets/sheet2.xml",
+            b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><f t=\"shared\" ref=\"A1:A2\" si=\"0\">Data!A1+1</f><v>2</v></c></row></sheetData></worksheet>",
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><v>1</v></c></row></sheetData></worksheet>",
+        ),
+    ];
+    let pkg = opc::read(&xlsx_bytes(&parts)).unwrap();
+    let summary = inspect(&pkg, OfficeFormat::Xlsx);
+    assert_eq!(
+        summary.cross_sheet_dependencies,
+        vec![CrossSheetDep {
+            from_sheet: "Summary".to_owned(),
+            to_sheet: "Data".to_owned(),
+        }]
+    );
+}
+
+// -- Referential-integrity gate ---------------------------------------------
+
+#[test]
+fn resolve_part_path_collapses_relative_segments() {
+    assert_eq!(
+        resolve_part_path("xl/", "worksheets/sheet1.xml").as_deref(),
+        Some("xl/worksheets/sheet1.xml")
+    );
+    assert_eq!(
+        resolve_part_path("xl/worksheets/", "../drawings/drawing1.xml").as_deref(),
+        Some("xl/drawings/drawing1.xml")
+    );
+    assert_eq!(
+        resolve_part_path("xl/", "/docProps/core.xml").as_deref(),
+        Some("docProps/core.xml")
+    );
+    assert_eq!(resolve_part_path("xl/", "../../..").as_deref(), None);
+}
+
+#[test]
+fn referential_integrity_gate_flags_dropped_referenced_part() {
+    let rels = b"<Relationships><Relationship Id=\"rId1\" Target=\"worksheets/sheet1.xml\"/></Relationships>" as &[u8];
+    let full: Vec<(&str, &[u8])> = vec![
+        (opc::CONTENT_TYPES_PART, b"<Types/>" as &[u8]),
+        ("xl/workbook.xml", b"<workbook/>"),
+        ("xl/_rels/workbook.xml.rels", rels),
+        ("xl/worksheets/sheet1.xml", b"<worksheet/>"),
+    ];
+    let before = opc::read(&xlsx_bytes(&full)).unwrap();
+    // Output keeps the rels but drops the worksheet it points at.
+    let dropped: Vec<(&str, &[u8])> = vec![
+        (opc::CONTENT_TYPES_PART, b"<Types/>" as &[u8]),
+        ("xl/workbook.xml", b"<workbook/>"),
+        ("xl/_rels/workbook.xml.rels", rels),
+    ];
+    let after = opc::read(&xlsx_bytes(&dropped)).unwrap();
+
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(!report.ok);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "referential_integrity" && !c.passed),
+        "a dangling .rels target must fail the referential-integrity check: {report:?}"
+    );
+
+    // The intact package passes the same gate.
+    let intact = validate(&before, &before, OfficeFormat::Xlsx);
+    assert!(
+        intact
+            .checks
+            .iter()
+            .any(|c| c.name == "referential_integrity" && c.passed)
+    );
+}
+
+#[test]
+fn referential_integrity_gate_flags_missing_content_type_override() {
+    let content_types =
+        b"<Types><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"x\"/></Types>"
+            as &[u8];
+    let after = opc::read(&xlsx_bytes(&[
+        (opc::CONTENT_TYPES_PART, content_types),
+        ("xl/workbook.xml", b"<workbook/>" as &[u8]),
+    ]))
+    .unwrap();
+    let report = validate(&after, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "referential_integrity" && !c.passed),
+        "an override naming a missing part must fail: {report:?}"
+    );
+}
+
+// -- Minimal-mutation structural-op refusal ---------------------------------
+
+#[test]
+fn minimal_mutation_mode_refuses_structural_ops() {
+    // A pivot workbook forces minimal-mutation mode; an InsertRows there would
+    // leave the preserved pivot part stale against a shifted grid.
+    let input = xlsx_bytes(&pivot_parts());
+    let structural = EditPlan::new(vec![EditOp::InsertRows {
+        sheet: "Sheet1".to_owned(),
+        at: 2,
+        count: 1,
+    }]);
+    let err = run_edit_roundtrip(
+        &FixtureSession::faithful(),
+        &input,
+        OfficeFormat::Xlsx,
+        &structural,
+        "run:struct",
+    )
+    .expect_err("structural op in minimal mode must be refused");
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
+
+    // A cell-level op on the same pivot workbook is still allowed.
+    let cell = EditPlan::new(vec![set_a1(10.0)]);
+    let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
+    assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
 }

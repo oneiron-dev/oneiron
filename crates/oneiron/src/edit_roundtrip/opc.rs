@@ -12,14 +12,21 @@
 //! central directory, and write STORED entries. We never re-compress a
 //! session's output — the pipeline reads the session bytes to verify and diff
 //! them, it does not repackage them. Writing exists only to build the copy
-//! handed to a session and to construct test fixtures. ZIP64 and encrypted
-//! entries are out of scope and are reported as corruption rather than
-//! silently mishandled.
+//! handed to a session and to construct test fixtures.
+//!
+//! Every entry is bounded and verified before it is trusted: the reader
+//! rejects a declared uncompressed size over a per-entry or per-package cap
+//! before inflating (a zip bomb), inflates against that bound, and checks the
+//! resulting length and CRC-32 against the central directory. Duplicate part
+//! names, multi-disk archives, ZIP64 sentinels, encrypted entries, and
+//! compression methods other than STORED/DEFLATE are rejected as corruption
+//! rather than silently mishandled.
 //!
 //! This is original code written against the published ZIP appnote and the
 //! ECMA-376 OPC part-naming conventions (facts, not expression); it copies no
 //! source from any packaging library.
 
+use std::collections::BTreeSet;
 use std::io::Read;
 
 use crate::error::{Error, Result};
@@ -32,6 +39,15 @@ const CENTRAL_DIR_MIN_LEN: usize = 46;
 const LOCAL_FILE_MIN_LEN: usize = 30;
 const ZIP_STORED: u16 = 0;
 const ZIP_DEFLATE: u16 = 8;
+
+/// Per-entry ceiling on a central-directory *declared* uncompressed size. An
+/// OPC part advertising more than this is rejected before inflation, bounding a
+/// single zip-bomb entry (this pipeline reasons over spreadsheet XML, not
+/// arbitrary archives).
+const MAX_ENTRY_UNCOMPRESSED: u64 = 256 * 1024 * 1024;
+/// Whole-package ceiling on the sum of every entry's declared uncompressed
+/// size, bounding an archive of many individually-modest entries.
+const MAX_PACKAGE_UNCOMPRESSED: u64 = 1024 * 1024 * 1024;
 
 /// The OPC content-type manifest present in every well-formed package.
 pub(crate) const CONTENT_TYPES_PART: &str = "[Content_Types].xml";
@@ -110,26 +126,102 @@ impl OpcPackage {
 /// rely on this failing loudly rather than guessing.
 pub(crate) fn read(bytes: &[u8]) -> Result<OpcPackage> {
     let eocd = locate_eocd(bytes)?;
-    let entry_count = read_u16(bytes, eocd + 10)? as usize;
-    let cd_offset = read_u32(bytes, eocd + 16)? as usize;
+
+    // Multi-disk / spanned archives are out of scope: OPC packages are single
+    // files. A non-zero disk number means the central directory this reader
+    // walks is only part of the archive, so reject rather than reason over a
+    // partial view.
+    if read_u16(bytes, eocd + 4)? != 0 || read_u16(bytes, eocd + 6)? != 0 {
+        return Err(Error::EditRoundtripFailed(
+            "opc archive spans multiple disks (unsupported)",
+        ));
+    }
+
+    let entry_count = read_u16(bytes, eocd + 10)?;
+    let cd_offset = read_u32(bytes, eocd + 16)?;
+    // ZIP64 marks an overflowed 16/32-bit EOCD field with all-ones and moves
+    // the real value into a ZIP64 record this reader does not parse. Reject the
+    // sentinels loudly instead of truncating a 64-bit archive to 32 bits.
+    if entry_count == u16::MAX || cd_offset == u32::MAX {
+        return Err(Error::EditRoundtripFailed(
+            "opc archive uses zip64 sentinels (unsupported)",
+        ));
+    }
+    let entry_count = entry_count as usize;
 
     let mut parts = Vec::with_capacity(entry_count);
-    let mut cursor = cd_offset;
+    let mut seen_names = BTreeSet::new();
+    let mut total_declared: u64 = 0;
+    let mut cursor = cd_offset as usize;
     for _ in 0..entry_count {
         if read_u32(bytes, cursor)? != CENTRAL_DIR_SIGNATURE {
             return Err(Error::EditRoundtripFailed(
                 "opc central directory header signature mismatch",
             ));
         }
+        let flags = read_u16(bytes, cursor + 8)?;
+        // General-purpose bit 0 marks an encrypted entry; we can neither verify
+        // nor pass ciphertext through under the fidelity law.
+        if flags & 0x0001 != 0 {
+            return Err(Error::EditRoundtripFailed(
+                "opc entry is encrypted (unsupported)",
+            ));
+        }
         let method = read_u16(bytes, cursor + 10)?;
-        let comp_size = read_u32(bytes, cursor + 20)? as usize;
+        let expected_crc = read_u32(bytes, cursor + 16)?;
+        let comp_size = read_u32(bytes, cursor + 20)?;
+        let declared_size = read_u32(bytes, cursor + 24)?;
         let name_len = read_u16(bytes, cursor + 28)? as usize;
         let extra_len = read_u16(bytes, cursor + 30)? as usize;
         let comment_len = read_u16(bytes, cursor + 32)? as usize;
-        let local_offset = read_u32(bytes, cursor + 42)? as usize;
-        let name = read_name(bytes, cursor + CENTRAL_DIR_MIN_LEN, name_len)?;
+        let disk_start = read_u16(bytes, cursor + 34)?;
+        let local_offset = read_u32(bytes, cursor + 42)?;
 
-        let data = read_local_entry(bytes, local_offset, method, comp_size)?;
+        if disk_start != 0 {
+            return Err(Error::EditRoundtripFailed(
+                "opc entry lives on another disk (unsupported)",
+            ));
+        }
+        if comp_size == u32::MAX || declared_size == u32::MAX || local_offset == u32::MAX {
+            return Err(Error::EditRoundtripFailed(
+                "opc entry uses zip64 sentinels (unsupported)",
+            ));
+        }
+
+        // Zip-bomb bound: reject before inflating any entry whose declared
+        // uncompressed size exceeds the per-entry cap, and any package whose
+        // declared sizes sum past the whole-package cap.
+        let declared_size = u64::from(declared_size);
+        if declared_size > MAX_ENTRY_UNCOMPRESSED {
+            return Err(Error::EditRoundtripFailed(
+                "opc entry declares an uncompressed size over the per-entry cap",
+            ));
+        }
+        total_declared = total_declared.saturating_add(declared_size);
+        if total_declared > MAX_PACKAGE_UNCOMPRESSED {
+            return Err(Error::EditRoundtripFailed(
+                "opc package declares an uncompressed size over the package cap",
+            ));
+        }
+
+        let name = read_name(bytes, cursor + CENTRAL_DIR_MIN_LEN, name_len)?;
+        // OPC part names must be unique; with a duplicate, which of the two
+        // same-named parts is authoritative is undefined, so the passthrough
+        // law cannot be enforced. Treat it as corruption.
+        if !seen_names.insert(name.clone()) {
+            return Err(Error::EditRoundtripFailed(
+                "opc package has duplicate part names",
+            ));
+        }
+
+        let data = read_local_entry(
+            bytes,
+            local_offset as usize,
+            method,
+            comp_size as usize,
+            declared_size,
+            expected_crc,
+        )?;
         parts.push(OpcPart { name, data });
 
         cursor = cursor
@@ -279,6 +371,8 @@ fn read_local_entry(
     local_offset: usize,
     method: u16,
     comp_size: usize,
+    declared_size: u64,
+    expected_crc: u32,
 ) -> Result<Vec<u8>> {
     if read_u32(bytes, local_offset)? != LOCAL_FILE_SIGNATURE {
         return Err(Error::EditRoundtripFailed(
@@ -297,25 +391,45 @@ fn read_local_entry(
         .get(data_start..data_end)
         .ok_or(Error::EditRoundtripFailed("opc entry data truncated"))?;
 
-    match method {
-        ZIP_STORED => Ok(raw.to_vec()),
-        ZIP_DEFLATE => inflate(raw),
-        _ => Err(Error::EditRoundtripFailed(
-            "opc entry uses an unsupported compression method",
-        )),
+    let data = match method {
+        ZIP_STORED => raw.to_vec(),
+        ZIP_DEFLATE => inflate(raw, declared_size)?,
+        _ => {
+            return Err(Error::EditRoundtripFailed(
+                "opc entry uses an unsupported compression method",
+            ));
+        }
+    };
+
+    // Verify the produced bytes against the central-directory declaration. The
+    // gate never trusts a length or checksum it did not recompute from the
+    // actual bytes: a mismatch is corruption (or a bomb capped by `inflate`).
+    if data.len() as u64 != declared_size {
+        return Err(Error::EditRoundtripFailed(
+            "opc entry size does not match its declared uncompressed size",
+        ));
     }
+    if crc32(&data) != expected_crc {
+        return Err(Error::EditRoundtripFailed(
+            "opc entry crc-32 does not match its central-directory checksum",
+        ));
+    }
+    Ok(data)
 }
 
-fn inflate(raw: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = flate2::read::DeflateDecoder::new(raw);
+fn inflate(raw: &[u8], declared_size: u64) -> Result<Vec<u8>> {
+    // Bound the decompressor at declared+1 bytes: a well-formed entry inflates
+    // to exactly `declared_size`, so reading one extra byte is enough for the
+    // caller's length check to catch a stream that expands past its declaration
+    // (a zip bomb) without ever buffering the full expansion.
     let mut out = Vec::new();
-    decoder
+    flate2::read::DeflateDecoder::new(raw)
+        .take(declared_size.saturating_add(1))
         .read_to_end(&mut out)
         .map_err(|_| Error::EditRoundtripFailed("opc deflate entry failed to inflate"))?;
     Ok(out)
 }
 
-#[cfg(test)]
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = flate2::Crc::new();
     crc.update(data);
@@ -430,5 +544,237 @@ mod tests {
             pkg.names().collect::<Vec<_>>(),
             vec!["a.xml", "b.xml", "c.xml"]
         );
+    }
+
+    /// A raw ZIP entry with every central-directory/local field independently
+    /// settable, so a test can force one specific corruption (bad CRC, a lying
+    /// size, a ZIP64 sentinel, an encryption flag, ...).
+    struct RawEntry {
+        name: String,
+        flags: u16,
+        method: u16,
+        crc: u32,
+        comp_size: u32,
+        uncomp_size: u32,
+        disk_start: u16,
+        payload: Vec<u8>,
+    }
+
+    impl RawEntry {
+        /// A STORED entry with self-consistent crc and sizes.
+        fn stored(name: &str, data: &[u8]) -> Self {
+            Self {
+                name: name.to_owned(),
+                flags: 0,
+                method: ZIP_STORED,
+                crc: crc32(data),
+                comp_size: data.len() as u32,
+                uncomp_size: data.len() as u32,
+                disk_start: 0,
+                payload: data.to_vec(),
+            }
+        }
+
+        /// A DEFLATE entry with self-consistent crc and sizes.
+        fn deflated(name: &str, data: &[u8]) -> Self {
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, data).unwrap();
+            let payload = encoder.finish().unwrap();
+            Self {
+                name: name.to_owned(),
+                flags: 0,
+                method: ZIP_DEFLATE,
+                crc: crc32(data),
+                comp_size: payload.len() as u32,
+                uncomp_size: data.len() as u32,
+                disk_start: 0,
+                payload,
+            }
+        }
+    }
+
+    /// Assembles raw entries into a ZIP. The EOCD disk fields and total entry
+    /// count are overridable so tests can exercise the multi-disk / zip64
+    /// rejections that the fixture-focused `write` never emits.
+    fn build_zip(
+        entries: &[RawEntry],
+        eocd_disk: u16,
+        cd_disk: u16,
+        count_override: Option<u16>,
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for entry in entries {
+            let local_offset = out.len() as u32;
+            out.extend_from_slice(&LOCAL_FILE_SIGNATURE.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            out.extend_from_slice(&entry.flags.to_le_bytes());
+            out.extend_from_slice(&entry.method.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+            out.extend_from_slice(&0u16.to_le_bytes()); // mod date
+            out.extend_from_slice(&entry.crc.to_le_bytes());
+            out.extend_from_slice(&entry.comp_size.to_le_bytes());
+            out.extend_from_slice(&entry.uncomp_size.to_le_bytes());
+            out.extend_from_slice(&(entry.name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // extra len
+            out.extend_from_slice(entry.name.as_bytes());
+            out.extend_from_slice(&entry.payload);
+
+            central.extend_from_slice(&CENTRAL_DIR_SIGNATURE.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes()); // version made by
+            central.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            central.extend_from_slice(&entry.flags.to_le_bytes());
+            central.extend_from_slice(&entry.method.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes()); // mod time
+            central.extend_from_slice(&0u16.to_le_bytes()); // mod date
+            central.extend_from_slice(&entry.crc.to_le_bytes());
+            central.extend_from_slice(&entry.comp_size.to_le_bytes());
+            central.extend_from_slice(&entry.uncomp_size.to_le_bytes());
+            central.extend_from_slice(&(entry.name.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes()); // extra len
+            central.extend_from_slice(&0u16.to_le_bytes()); // comment len
+            central.extend_from_slice(&entry.disk_start.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+            central.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+            central.extend_from_slice(&local_offset.to_le_bytes());
+            central.extend_from_slice(entry.name.as_bytes());
+        }
+
+        let cd_offset = out.len() as u32;
+        let cd_size = central.len() as u32;
+        let count = count_override.unwrap_or(entries.len() as u16);
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&EOCD_SIGNATURE.to_le_bytes());
+        out.extend_from_slice(&eocd_disk.to_le_bytes());
+        out.extend_from_slice(&cd_disk.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes()); // entries this disk
+        out.extend_from_slice(&count.to_le_bytes()); // entries total
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        out
+    }
+
+    #[test]
+    fn read_round_trips_deflate_entries() {
+        let body = b"<worksheet>deflate me byte for byte</worksheet>".repeat(64);
+        let zip = build_zip(
+            &[RawEntry::deflated("xl/worksheets/sheet1.xml", &body)],
+            0,
+            0,
+            None,
+        );
+        let pkg = read(&zip).expect("deflate entry parses");
+        assert_eq!(pkg.part("xl/worksheets/sheet1.xml"), Some(body.as_slice()));
+    }
+
+    #[test]
+    fn read_rejects_crc_mismatch() {
+        let mut entry = RawEntry::stored("a.xml", b"hello");
+        entry.crc ^= 0xFFFF_FFFF;
+        let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("bad crc must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_declared_size_mismatch() {
+        // The stored bytes are 5 long but the entry declares 4.
+        let mut entry = RawEntry::stored("a.xml", b"hello");
+        entry.uncomp_size = 4;
+        let err =
+            read(&build_zip(&[entry], 0, 0, None)).expect_err("declared-size mismatch must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_zip_bomb_declared_size() {
+        // A tiny stored entry that lies about a ~4 GiB uncompressed size is
+        // rejected before any allocation.
+        let mut entry = RawEntry::stored("a.xml", b"tiny");
+        entry.uncomp_size = u32::MAX - 1;
+        let err = read(&build_zip(&[entry], 0, 0, None))
+            .expect_err("declared size over the per-entry cap must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_inflation_past_declaration() {
+        // A valid deflate stream whose entry under-declares its size: the
+        // decompressor is capped and the length check catches the overrun.
+        let mut entry = RawEntry::deflated("a.xml", &b"A".repeat(64));
+        entry.uncomp_size = 4;
+        let err = read(&build_zip(&[entry], 0, 0, None))
+            .expect_err("inflation past the declaration must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_zip64_uncompressed_sentinel() {
+        let mut entry = RawEntry::stored("a.xml", b"hi");
+        entry.uncomp_size = u32::MAX;
+        let err =
+            read(&build_zip(&[entry], 0, 0, None)).expect_err("zip64 size sentinel must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_duplicate_part_names() {
+        let zip = build_zip(
+            &[
+                RawEntry::stored("dup.xml", b"one"),
+                RawEntry::stored("dup.xml", b"two"),
+            ],
+            0,
+            0,
+            None,
+        );
+        let err = read(&zip).expect_err("duplicate part names must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_encrypted_entry() {
+        let mut entry = RawEntry::stored("a.xml", b"secret");
+        entry.flags |= 0x0001; // encryption bit
+        let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("encrypted entry must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_multi_disk_archive() {
+        let err = read(&build_zip(&[RawEntry::stored("a.xml", b"x")], 1, 0, None))
+            .expect_err("multi-disk archive must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_zip64_entry_count_sentinel() {
+        let err = read(&build_zip(
+            &[RawEntry::stored("a.xml", b"x")],
+            0,
+            0,
+            Some(u16::MAX),
+        ))
+        .expect_err("zip64 entry-count sentinel must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_entry_on_another_disk() {
+        let mut entry = RawEntry::stored("a.xml", b"x");
+        entry.disk_start = 3;
+        let err =
+            read(&build_zip(&[entry], 0, 0, None)).expect_err("entry on another disk must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
+    }
+
+    #[test]
+    fn read_rejects_unsupported_compression_method() {
+        let mut entry = RawEntry::stored("a.xml", b"x");
+        entry.method = 12; // bzip2 — unsupported
+        let err = read(&build_zip(&[entry], 0, 0, None))
+            .expect_err("unsupported compression method must fail");
+        assert!(matches!(err, Error::EditRoundtripFailed(_)));
     }
 }

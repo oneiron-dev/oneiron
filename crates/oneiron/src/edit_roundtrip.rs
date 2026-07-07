@@ -56,7 +56,7 @@
 
 mod opc;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -199,17 +199,16 @@ impl RangeRef {
 }
 
 fn column_to_letters(mut index: u32) -> String {
-    if index == 0 {
-        return String::from("?");
-    }
+    // `index` is a validated 1-based column (see `validate_ops`), so 0 never
+    // reaches the renderer and no placeholder is emitted.
+    debug_assert!(index >= 1, "column index must be 1-based");
     let mut letters = Vec::new();
     while index > 0 {
         let rem = ((index - 1) % 26) as u8;
-        letters.push(b'A' + rem);
+        letters.push((b'A' + rem) as char);
         index = (index - 1) / 26;
     }
-    letters.reverse();
-    String::from_utf8(letters).unwrap_or_else(|_| String::from("?"))
+    letters.iter().rev().collect()
 }
 
 fn letters_to_column(letters: &str) -> Result<u32> {
@@ -230,6 +229,62 @@ fn letters_to_column(letters: &str) -> Result<u32> {
             .ok_or(Error::EditRoundtripFailed("column reference overflow"))?;
     }
     Ok(col)
+}
+
+/// Enforces the 1-based cell/range/axis invariant across a plan's ops before
+/// any of them reaches a session or the renderer. [`CellRef::new`] and
+/// [`RangeRef::new`] are unchecked constructors, so a caller can build an op
+/// addressing column/row 0 or an inverted range; such an op names a
+/// non-existent cell and would render a bogus address, so it is rejected as an
+/// invalid manifest here rather than acted on.
+fn validate_ops(ops: &[EditOp]) -> Result<()> {
+    for op in ops {
+        match op {
+            EditOp::SetCell { cell, .. } => check_cell(*cell)?,
+            EditOp::SetRange { range, writes, .. } => {
+                check_range(*range)?;
+                for write in writes {
+                    check_cell(write.cell)?;
+                }
+            }
+            EditOp::AddFormulaColumn { column, .. } => ensure_one_based(*column)?,
+            EditOp::InsertRows { at, .. }
+            | EditOp::DeleteRows { at, .. }
+            | EditOp::InsertColumns { at, .. }
+            | EditOp::DeleteColumns { at, .. } => ensure_one_based(*at)?,
+            EditOp::MoveRange { from, to, .. } => {
+                check_range(*from)?;
+                check_cell(*to)?;
+            }
+            EditOp::AddSheet { .. } | EditOp::RemoveSheet { .. } | EditOp::RenameSheet { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_cell(cell: CellRef) -> Result<()> {
+    ensure_one_based(cell.col)?;
+    ensure_one_based(cell.row)
+}
+
+fn check_range(range: RangeRef) -> Result<()> {
+    check_cell(range.start)?;
+    check_cell(range.end)?;
+    if range.start.col > range.end.col || range.start.row > range.end.row {
+        return Err(Error::InvalidEditManifest(
+            "edit op range is inverted; start must be at or above-left of end",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_one_based(index: u32) -> Result<()> {
+    if index == 0 {
+        return Err(Error::InvalidEditManifest(
+            "edit op uses a 0 index; cells, ranges, and axis positions are 1-based",
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +401,25 @@ impl EditOp {
     #[must_use]
     pub const fn may_affect_values(&self) -> bool {
         !matches!(self, Self::AddSheet { .. })
+    }
+
+    /// Whether this op changes package structure (row/column/sheet topology)
+    /// rather than only cell contents. Structural ops are refused in
+    /// minimal-mutation mode, where preserved pivot/chart/macro parts index
+    /// into a grid the op would shift out from under them. Mirrors the ops that
+    /// carry an [`EditOp::anchor_effect`].
+    #[must_use]
+    pub const fn is_structural(&self) -> bool {
+        matches!(
+            self,
+            Self::InsertRows { .. }
+                | Self::DeleteRows { .. }
+                | Self::InsertColumns { .. }
+                | Self::DeleteColumns { .. }
+                | Self::MoveRange { .. }
+                | Self::RemoveSheet { .. }
+                | Self::RenameSheet { .. }
+        )
     }
 
     /// The anchor-remapping effect ARTL-2 replays, when this op moves content.
@@ -701,33 +775,83 @@ fn scan_defined_names(package: &OpcPackage) -> Vec<String> {
 }
 
 fn scan_cross_sheet_deps(package: &OpcPackage, sheets: &[SheetSummary]) -> Vec<CrossSheetDep> {
-    let mut deps: Vec<CrossSheetDep> = Vec::new();
+    let name_by_part = worksheet_name_by_part(package);
+    // BTreeSet dedupes (replacing the O(n) `Vec::contains`) and yields a stable
+    // ordering regardless of part iteration order.
+    let mut deps: BTreeSet<(String, String)> = BTreeSet::new();
     for part in package.parts() {
-        let Some(ordinal) = worksheet_ordinal(&part.name) else {
-            continue;
-        };
-        let Some(from) = sheets.iter().find(|s| s.index == ordinal) else {
+        // Resolve this worksheet part to its sheet name via the workbook
+        // relationships; fall back to the positional `sheetN.xml == Nth sheet`
+        // heuristic only when the rels join did not cover it (e.g. rels absent).
+        let Some(from_name) = name_by_part
+            .get(&part.name)
+            .map(String::as_str)
+            .or_else(|| {
+                worksheet_ordinal(&part.name)
+                    .and_then(|ordinal| sheets.iter().find(|sheet| sheet.index == ordinal))
+                    .map(|sheet| sheet.name.as_str())
+            })
+        else {
             continue;
         };
         let xml = String::from_utf8_lossy(&part.data);
-        for formula in extract_between(&xml, "<f>", "</f>") {
+        for formula in extract_formulas(&xml) {
+            // A cross-sheet reference always contains '!'; skip the common
+            // same-sheet formula before the O(sheets) comparison.
+            if !formula.contains('!') {
+                continue;
+            }
             for other in sheets {
-                if other.name == from.name {
+                if other.name == from_name {
                     continue;
                 }
                 if formula_references_sheet(&formula, &other.name) {
-                    let dep = CrossSheetDep {
-                        from_sheet: from.name.clone(),
-                        to_sheet: other.name.clone(),
-                    };
-                    if !deps.contains(&dep) {
-                        deps.push(dep);
-                    }
+                    deps.insert((from_name.to_owned(), other.name.clone()));
                 }
             }
         }
     }
-    deps
+    deps.into_iter()
+        .map(|(from_sheet, to_sheet)| CrossSheetDep {
+            from_sheet,
+            to_sheet,
+        })
+        .collect()
+}
+
+/// Maps each worksheet part path to its workbook sheet name by joining
+/// `xl/_rels/workbook.xml.rels` (relationship id -> Target) with
+/// `xl/workbook.xml`'s `<sheet name=.. r:id=..>` entries — the authoritative
+/// binding, since sheet part names need not match workbook order. Empty when
+/// either part is absent, so the caller falls back to the positional heuristic.
+fn worksheet_name_by_part(package: &OpcPackage) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let (Some(workbook), Some(rels)) = (
+        package.part("xl/workbook.xml"),
+        package.part("xl/_rels/workbook.xml.rels"),
+    ) else {
+        return out;
+    };
+    let rels_xml = String::from_utf8_lossy(rels);
+    let id_to_target: HashMap<String, String> =
+        scan_tag_attr_pairs(&rels_xml, "<Relationship", "Id", "Target")
+            .into_iter()
+            .collect();
+    let workbook_xml = String::from_utf8_lossy(workbook);
+    for (name, rid) in scan_tag_attr_pairs(&workbook_xml, "<sheet", "name", "r:id") {
+        if let Some(target) = id_to_target.get(&rid) {
+            out.insert(join_xl_target(target), name);
+        }
+    }
+    out
+}
+
+/// Resolves a `xl/_rels/workbook.xml.rels` Target (relative to `xl/`, or
+/// absolute from the package root) to a full part path.
+fn join_xl_target(target: &str) -> String {
+    target
+        .strip_prefix('/')
+        .map_or_else(|| format!("xl/{target}"), str::to_owned)
 }
 
 fn worksheet_ordinal(name: &str) -> Option<u32> {
@@ -741,6 +865,43 @@ fn formula_references_sheet(formula: &str, sheet: &str) -> bool {
     formula.contains(&format!("{sheet}!")) || formula.contains(&format!("'{sheet}'!"))
 }
 
+/// Extracts the inline expression from every `<f>` / `<f ...attrs>` element.
+/// Shared and array formulas carry attributes (`<f t="shared" si="0">`), so we
+/// match the tag prefix, skip to the end of the open tag, then read to `</f>`.
+/// A self-closing `<f .../>` (a shared-formula reference with no inline text)
+/// yields nothing.
+fn extract_formulas(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(idx) = rest.find("<f") {
+        let after = &rest[idx + 2..];
+        // The char after "<f" must end the tag name, so `<font>`/`<fill>` and
+        // similar are not mistaken for a formula element.
+        let is_f_element = after
+            .chars()
+            .next()
+            .is_none_or(|c| c == '>' || c == '/' || c.is_ascii_whitespace());
+        if !is_f_element {
+            rest = after;
+            continue;
+        }
+        let Some(open_end) = after.find('>') else {
+            break;
+        };
+        if after[..open_end].ends_with('/') {
+            rest = &after[open_end + 1..];
+            continue;
+        }
+        let content = &after[open_end + 1..];
+        let Some(close) = content.find("</f>") else {
+            break;
+        };
+        out.push(content[..close].to_owned());
+        rest = &content[close + "</f>".len()..];
+    }
+    out
+}
+
 fn scan_tag_attr(xml: &str, tag: &str, attr: &str) -> Vec<String> {
     let needle = format!("{attr}=\"");
     let mut out = Vec::new();
@@ -749,29 +910,39 @@ fn scan_tag_attr(xml: &str, tag: &str, attr: &str) -> Vec<String> {
         let after_tag = &rest[pos + tag.len()..];
         let tag_end = after_tag.find('>').unwrap_or(after_tag.len());
         let body = &after_tag[..tag_end];
-        if let Some(apos) = body.find(&needle) {
-            let value_start = apos + needle.len();
-            if let Some(vend) = body[value_start..].find('"') {
-                out.push(body[value_start..value_start + vend].to_owned());
-            }
+        if let Some(value) = attr_value(body, &needle) {
+            out.push(value);
         }
         rest = &after_tag[tag_end..];
     }
     out
 }
 
-fn extract_between(text: &str, open: &str, close: &str) -> Vec<String> {
+/// Like [`scan_tag_attr`] but reads two attributes from the same tag, keeping
+/// only tags that carry both (order-independent).
+fn scan_tag_attr_pairs(xml: &str, tag: &str, attr1: &str, attr2: &str) -> Vec<(String, String)> {
+    let needle1 = format!("{attr1}=\"");
+    let needle2 = format!("{attr2}=\"");
     let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find(open) {
-        let after = &rest[start + open.len()..];
-        let Some(end) = after.find(close) else {
-            break;
-        };
-        out.push(after[..end].to_owned());
-        rest = &after[end + close.len()..];
+    let mut rest = xml;
+    while let Some(pos) = rest.find(tag) {
+        let after_tag = &rest[pos + tag.len()..];
+        let tag_end = after_tag.find('>').unwrap_or(after_tag.len());
+        let body = &after_tag[..tag_end];
+        if let (Some(v1), Some(v2)) = (attr_value(body, &needle1), attr_value(body, &needle2)) {
+            out.push((v1, v2));
+        }
+        rest = &after_tag[tag_end..];
     }
     out
+}
+
+/// Reads a double-quoted attribute value from a tag body given the search
+/// needle `name="` (already including the opening quote).
+fn attr_value(tag_body: &str, needle: &str) -> Option<String> {
+    let start = tag_body.find(needle)? + needle.len();
+    let end = tag_body[start..].find('"')?;
+    Some(tag_body[start..start + end].to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +1089,18 @@ fn validate(before: &OpcPackage, after: &OpcPackage, format: OfficeFormat) -> Va
         },
     });
 
+    let referential = referential_integrity_violations(after);
+    let referential_ok = referential.is_empty();
+    checks.push(ValidationCheck {
+        name: "referential_integrity",
+        passed: referential_ok,
+        detail: if referential_ok {
+            "every relationship target and content-type override resolves to a part".to_owned()
+        } else {
+            format!("dangling references: {}", referential.join(", "))
+        },
+    });
+
     let passthrough = passthrough_violations(before, after);
     let passthrough_ok = passthrough.is_empty();
     checks.push(ValidationCheck {
@@ -959,6 +1142,94 @@ fn passthrough_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<String
     violations
 }
 
+/// Output-package references that no longer resolve to a part: a `.rels`
+/// relationship Target or a `[Content_Types].xml` Override PartName whose part
+/// was dropped. Office rejects such a package outright, so a dangling reference
+/// is corruption even when the dropped part itself was editable.
+fn referential_integrity_violations(after: &OpcPackage) -> Vec<String> {
+    let mut violations = Vec::new();
+    for part in after.parts() {
+        if !part.name.ends_with(".rels") {
+            continue;
+        }
+        let Some(base) = rels_base_dir(&part.name) else {
+            continue;
+        };
+        let xml = String::from_utf8_lossy(&part.data);
+        for (target, mode) in relationship_targets(&xml) {
+            // External targets name a URI, not a package part.
+            if mode.as_deref() == Some("External") {
+                continue;
+            }
+            match resolve_part_path(&base, &target) {
+                Some(resolved) if after.contains(&resolved) => {}
+                Some(resolved) => {
+                    violations.push(format!("{} -> missing part {resolved}", part.name));
+                }
+                None => {
+                    violations.push(format!("{} -> unresolvable target {target}", part.name));
+                }
+            }
+        }
+    }
+    if let Some(content_types) = after.part(opc::CONTENT_TYPES_PART) {
+        let xml = String::from_utf8_lossy(content_types);
+        for part_name in scan_tag_attr(&xml, "<Override", "PartName") {
+            let resolved = part_name.strip_prefix('/').unwrap_or(&part_name);
+            if !after.contains(resolved) {
+                violations.push(format!(
+                    "[Content_Types].xml override -> missing part {resolved}"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+/// The directory a `.rels` part's targets resolve against: for
+/// `<dir>/_rels/<name>.rels` that is `<dir>/`, and for the package-root
+/// `_rels/.rels` it is the empty string.
+fn rels_base_dir(rels_name: &str) -> Option<String> {
+    let idx = rels_name.rfind("_rels/")?;
+    Some(rels_name[..idx].to_owned())
+}
+
+/// Resolves an OPC relationship Target against a base directory, collapsing
+/// `.`/`..` segments. Returns `None` when `..` escapes the package root.
+fn resolve_part_path(base_dir: &str, target: &str) -> Option<String> {
+    let combined = target
+        .strip_prefix('/')
+        .map_or_else(|| format!("{base_dir}{target}"), str::to_owned);
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in combined.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    Some(segments.join("/"))
+}
+
+/// Extracts `(Target, TargetMode?)` from every `<Relationship>` in a `.rels`
+/// part.
+fn relationship_targets(xml: &str) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(pos) = rest.find("<Relationship") {
+        let after_tag = &rest[pos + "<Relationship".len()..];
+        let tag_end = after_tag.find('>').unwrap_or(after_tag.len());
+        let body = &after_tag[..tag_end];
+        if let Some(target) = attr_value(body, "Target=\"") {
+            out.push((target, attr_value(body, "TargetMode=\"")));
+        }
+        rest = &after_tag[tag_end..];
+    }
+    out
+}
+
 fn diff_parts(before: &OpcPackage, after: &OpcPackage) -> BTreeSet<String> {
     let mut touched = BTreeSet::new();
     for part in after.parts() {
@@ -989,8 +1260,6 @@ pub enum RecalcStatus {
     Performed,
     /// Edited bytes could not be reparsed before recalc; the gate will reject.
     Skipped,
-    /// The session image has no recalc backend.
-    Unsupported,
 }
 
 /// The retained-output proposal: the new bytes plus everything a settlement
@@ -1044,6 +1313,21 @@ pub fn run_edit_roundtrip<S: EditSession>(
         return Err(Error::EditRoundtripFailed("run_ref must be non-empty"));
     }
 
+    // The op vocabulary and inspection are spreadsheet-specific, and `classify`
+    // marks `word/` and `ppt/` parts Supported — so the passthrough gate would
+    // not protect a docx/pptx from a mangling session and the fidelity law
+    // would be vacuous. Until format-appropriate pipelines exist, accept only
+    // xlsx/xlsm; a docx/pptx artifact is an unsupported-media-type refusal.
+    if !matches!(format, OfficeFormat::Xlsx) {
+        return Err(Error::InvalidEditManifest(
+            "edit round-trip supports only xlsx/xlsm; docx and pptx are not yet supported",
+        ));
+    }
+
+    // Reject a malformed plan before it can reach a session: cells, ranges, and
+    // axis positions are 1-based, but the unchecked constructors let 0 through.
+    validate_ops(&plan.ops)?;
+
     // Stage 0: decompose the input. A bad input is a hard error (the caller
     // handed us a broken blob), distinct from a session producing bad output.
     let before = opc::read(input_bytes)?;
@@ -1053,24 +1337,38 @@ pub fn run_edit_roundtrip<S: EditSession>(
     let inspection = inspect(&before, format);
     let (mutation_mode, mut warnings) = mutation_mode_for(&inspection);
 
+    // Minimal-mutation mode preserves pivot/chart/macro parts byte-for-byte,
+    // and those parts index into the grid by absolute address. A structural op
+    // would shift that grid and leave the preserved parts stale, so refuse it
+    // here rather than emit a silently-wrong file; cell-level ops stay allowed.
+    if mutation_mode == MutationMode::Minimal && plan.ops.iter().any(EditOp::is_structural) {
+        return Err(Error::InvalidEditManifest(
+            "minimal-mutation mode refuses structural ops: preserved pivot/chart/macro parts would go stale against the shifted grid",
+        ));
+    }
+
     // Stage 2: targeted edit through the seam.
     let applied = session.apply_edits(&doc_before, plan)?;
     let mut current = applied.bytes;
     warnings.extend(applied.warnings);
 
-    // Stage 3: recalc when inputs changed and the image supports it.
+    // Stage 3: recalc when inputs changed. Fail closed if the edit may change
+    // formula values but this session image cannot recalc: retaining stale
+    // cached formula values in the output is silent data corruption, so refuse
+    // and let the caller route to a recalc-capable session rather than propose.
     let recalc = if plan.needs_recalc(&applied.applied_ops) {
-        if session.supports_recalc() {
-            match opc::read(&current) {
-                Ok(package) => {
-                    let edited = OfficeDoc::new(format, current.clone(), package);
-                    current = session.recalc(&edited)?;
-                    RecalcStatus::Performed
-                }
-                Err(_) => RecalcStatus::Skipped,
+        if !session.supports_recalc() {
+            return Err(Error::EditRoundtripFailed(
+                "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
+            ));
+        }
+        match opc::read(&current) {
+            Ok(package) => {
+                let edited = OfficeDoc::new(format, current.clone(), package);
+                current = session.recalc(&edited)?;
+                RecalcStatus::Performed
             }
-        } else {
-            RecalcStatus::Unsupported
+            Err(_) => RecalcStatus::Skipped,
         }
     } else {
         RecalcStatus::NotNeeded
