@@ -541,3 +541,40 @@ fn stale_base_select_is_refused_atomically() -> Result<()> {
     );
     Ok(())
 }
+
+// Rider 7: a discard on a nonexistent (or wrong-type) artifact is refused and
+// lands no durable ledger row.
+#[test]
+fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let actor = put_actor(&vault, 10);
+    let bogus = EntityId::now(); // never created as a BLOB_ARTIFACT
+    let prop = proposal("run:bogus", b"v2 bytes", Vec::new());
+
+    let err = vault
+        .settle_discard_edit_proposal(&bogus, &prop, &owner(), actor, "no", 11)
+        .expect_err("discard on a nonexistent artifact must refuse");
+    assert_eq!(err.kind(), crate::error::ErrorKind::EntityNotFound);
+    assert!(
+        vault
+            .blob_artifact_settlement(&bogus, "run:bogus")?
+            .is_none()
+    );
+    Ok(())
+}
+
+// Rider 6: a discard validates the proposal ref (the same bar select applies)
+// before persisting a ledger row — a blank ref is refused.
+#[test]
+fn discard_validates_proposal_ref() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let prop = proposal("   ", b"v2 bytes", Vec::new());
+
+    let err = vault
+        .settle_discard_edit_proposal(&artifact, &prop, &owner(), actor, "no", 11)
+        .expect_err("a blank proposal ref must be refused");
+    assert_eq!(err.kind(), crate::error::ErrorKind::EditRoundtripFailed);
+    Ok(())
+}
