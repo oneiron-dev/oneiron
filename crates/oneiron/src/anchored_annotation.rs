@@ -50,9 +50,7 @@
 use rmpv::Value;
 
 use crate::Vault;
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::error::{Error, Result};
 use crate::types::{
     ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_TASK, EdgeActorClass, EdgeKind, EntityId, TaskRole,
@@ -87,6 +85,7 @@ const KEY_AT: &str = "at";
 const KEY_TASK_ID: &str = "task_id";
 const KEY_BRIEF_REF: &str = "brief_ref";
 const KEY_ASSIGNEE: &str = "assignee";
+const KEY_TRANSCRIPT: &str = "transcript";
 
 const KEY_FORMAT: &str = "format";
 const KEY_SHEET: &str = "sheet";
@@ -497,9 +496,13 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                 if *count == 0 || *at_row == 0 {
                     continue;
                 }
-                let (start, end) = axis_insert(cur.row_start, cur.row_end, *at_row, *count);
-                cur.row_start = start;
-                cur.row_end = end;
+                match axis_insert(cur.row_start, cur.row_end, *at_row, *count) {
+                    Some((start, end)) => {
+                        cur.row_start = start;
+                        cur.row_end = end;
+                    }
+                    None => return ReanchorOutcome::Drifted,
+                }
             }
             ReanchorOp::DeleteRows { at_row, count, .. } => {
                 if *count == 0 || *at_row == 0 {
@@ -517,9 +520,13 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                 if *count == 0 || *at_col == 0 {
                     continue;
                 }
-                let (start, end) = axis_insert(cur.col_start, cur.col_end, *at_col, *count);
-                cur.col_start = start;
-                cur.col_end = end;
+                match axis_insert(cur.col_start, cur.col_end, *at_col, *count) {
+                    Some((start, end)) => {
+                        cur.col_start = start;
+                        cur.col_end = end;
+                    }
+                    None => return ReanchorOutcome::Drifted,
+                }
             }
             ReanchorOp::DeleteCols { at_col, count, .. } => {
                 if *count == 0 || *at_col == 0 {
@@ -566,16 +573,28 @@ pub struct ReanchorSummary {
 }
 
 // Axis transforms shared by the row and column cases. Bounds are 1-based.
+// Arithmetic is checked: an anchor sitting near `u32::MAX` that a large insert
+// (or delete-band) would push past the grid is non-mappable, so these return
+// `None` and the caller drifts the thread rather than wrapping (release) or
+// panicking (debug) into a corrupt locator.
 
-fn axis_insert(start: u32, end: u32, at: u32, count: u32) -> (u32, u32) {
-    let new_start = if start >= at { start + count } else { start };
-    let new_end = if end >= at { end + count } else { end };
-    (new_start, new_end)
+fn axis_insert(start: u32, end: u32, at: u32, count: u32) -> Option<(u32, u32)> {
+    let new_start = if start >= at {
+        start.checked_add(count)?
+    } else {
+        start
+    };
+    let new_end = if end >= at {
+        end.checked_add(count)?
+    } else {
+        end
+    };
+    Some((new_start, new_end))
 }
 
 fn axis_delete(start: u32, end: u32, at: u32, count: u32) -> Option<(u32, u32)> {
     let del_start = at;
-    let del_end = at + count - 1;
+    let del_end = at.checked_add(count)?.checked_sub(1)?;
     let new_start = if start < del_start {
         start
     } else if start > del_end {
@@ -814,6 +833,16 @@ fn encode_comment_value(thread_id: &EntityId, author: &EntityId, text: &str, at:
     ])
 }
 
+fn decode_comment(value: &Value, claim_id: EntityId) -> Result<AnnotationComment> {
+    Ok(AnnotationComment {
+        thread_id: map_entity(value, KEY_THREAD_ID)?,
+        author: map_entity(value, KEY_AUTHOR)?,
+        text: map_str(value, KEY_TEXT)?.to_owned(),
+        at: map_u64(value, KEY_AT)?,
+        claim_id,
+    })
+}
+
 fn encode_brief_value(
     thread_id: &EntityId,
     task_id: &EntityId,
@@ -821,6 +850,7 @@ fn encode_brief_value(
     anchor_version: u64,
     locator: &Locator,
     assignee: Option<&EntityId>,
+    transcript: &str,
 ) -> Value {
     Value::Map(vec![
         (
@@ -838,7 +868,36 @@ fn encode_brief_value(
             Value::from(KEY_ASSIGNEE),
             assignee.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
+        (Value::from(KEY_TRANSCRIPT), Value::from(transcript)),
     ])
+}
+
+fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result<TaskBrief> {
+    let thread_id = map_entity(value, KEY_THREAD_ID)?;
+    let task_id = map_entity(value, KEY_TASK_ID)?;
+    let brief_ref = map_str(value, KEY_BRIEF_REF)?.to_owned();
+    let anchor_version = map_u64(value, KEY_ANCHOR_VERSION)?;
+    let locator = decode_locator(
+        map_get(value, KEY_LOCATOR).ok_or(Error::InvalidAnchor("brief missing locator"))?,
+    )?;
+    let assignee = match map_get(value, KEY_ASSIGNEE) {
+        None | Some(Value::Nil) => None,
+        Some(_) => Some(map_entity(value, KEY_ASSIGNEE)?),
+    };
+    let thread_text = map_str(value, KEY_TRANSCRIPT)?.to_owned();
+    Ok(TaskBrief {
+        brief_ref,
+        task_id,
+        thread_id,
+        anchor: Anchor {
+            artifact_id,
+            version: anchor_version,
+            locator,
+        },
+        artifact_version: anchor_version,
+        thread_text,
+        assignee,
+    })
 }
 
 fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -1023,6 +1082,12 @@ impl Vault {
 
     /// Transitions a thread's lifecycle state (open ⇄ resolved) by superseding
     /// its head with an updated head claim.
+    ///
+    /// The new head write and the old head supersession share ONE write
+    /// transaction, so if the supersession's fail-closed guards reject (e.g. an
+    /// agent claim trying to supersede human-stated truth) nothing persists —
+    /// the original head stays the single live head and no orphan claim is left
+    /// behind.
     pub fn set_annotation_thread_state(
         &self,
         artifact_id: &EntityId,
@@ -1043,9 +1108,19 @@ impl Vault {
             locator: thread.anchor.locator.clone(),
             drift: thread.drift,
         };
-        let new_head_id =
-            self.write_thread_head(artifact_id, &head, actor, "set_state", occurred, learned_at)?;
-        self.supersede_claim(&new_head_id, &thread.head_claim_id, learned_at)?;
+        let new_head_id = self.with_write_txn(|wtxn| {
+            let new_head_id = self.write_thread_head_in_txn(
+                wtxn,
+                artifact_id,
+                &head,
+                actor,
+                "set_state",
+                occurred,
+                learned_at,
+            )?;
+            self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
+            Ok(new_head_id)
+        })?;
         Ok(AnnotationThread {
             thread_id: *thread_id,
             anchor: thread.anchor,
@@ -1068,7 +1143,13 @@ impl Vault {
             if body.predicate != ANNOTATION_THREAD_PREDICATE {
                 continue;
             }
-            let head = decode_thread_head(&body.value)?;
+            let head = match decode_thread_head(&body.value) {
+                Ok(head) => head,
+                Err(err) => {
+                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                    continue;
+                }
+            };
             if head.thread_id != *thread_id {
                 continue;
             }
@@ -1092,7 +1173,13 @@ impl Vault {
             if body.predicate != ANNOTATION_THREAD_PREDICATE {
                 continue;
             }
-            let head = decode_thread_head(&body.value)?;
+            let head = match decode_thread_head(&body.value) {
+                Ok(head) => head,
+                Err(err) => {
+                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                    continue;
+                }
+            };
             match heads.iter_mut().find(|(tid, _, _)| *tid == head.thread_id) {
                 Some((_, existing_id, existing_head)) if claim_id > *existing_id => {
                     *existing_id = claim_id;
@@ -1121,17 +1208,17 @@ impl Vault {
             if body.predicate != ANNOTATION_COMMENT_PREDICATE {
                 continue;
             }
-            let comment_thread = map_entity(&body.value, KEY_THREAD_ID)?;
-            if comment_thread != *thread_id {
+            let comment = match decode_comment(&body.value, claim_id) {
+                Ok(comment) => comment,
+                Err(err) => {
+                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                    continue;
+                }
+            };
+            if comment.thread_id != *thread_id {
                 continue;
             }
-            comments.push(AnnotationComment {
-                thread_id: *thread_id,
-                author: map_entity(&body.value, KEY_AUTHOR)?,
-                text: map_str(&body.value, KEY_TEXT)?.to_owned(),
-                at: map_u64(&body.value, KEY_AT)?,
-                claim_id,
-            });
+            comments.push(comment);
         }
         comments.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.claim_id.cmp(&b.claim_id)));
         Ok(comments)
@@ -1143,7 +1230,14 @@ impl Vault {
     ///
     /// A mappable anchor advances to `to_version` with its new locator; a
     /// non-mappable one is marked DRIFTED and stays pinned to `from_version`,
-    /// never silently repositioned. Each change supersedes the old head.
+    /// never silently repositioned. Each change writes the new head and
+    /// supersedes the old one in ONE write transaction, so a rejected
+    /// supersession leaves that thread's original head live with no orphan.
+    ///
+    /// `to_version` must resolve to a real version in the artifact's chain
+    /// (the same guard thread-open applies), so a replay against a not-yet-
+    /// appended or bogus version writes no heads pointing at nonexistent
+    /// versions.
     #[expect(clippy::too_many_arguments)]
     pub fn reanchor_annotation_threads(
         &self,
@@ -1155,6 +1249,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<ReanchorSummary> {
+        self.require_anchor_version(artifact_id, to_version)?;
         let mut summary = ReanchorSummary::default();
         for thread in self.annotation_threads_for_artifact(artifact_id)? {
             if thread.is_drifted() || thread.anchor.version != from_version {
@@ -1187,15 +1282,19 @@ impl Vault {
                     true,
                 ),
             };
-            let new_head_id = self.write_thread_head(
-                artifact_id,
-                &head,
-                actor,
-                "reanchor",
-                occurred,
-                learned_at,
-            )?;
-            self.supersede_claim(&new_head_id, &thread.head_claim_id, learned_at)?;
+            let new_head_id = self.with_write_txn(|wtxn| {
+                let new_head_id = self.write_thread_head_in_txn(
+                    wtxn,
+                    artifact_id,
+                    &head,
+                    actor,
+                    "reanchor",
+                    occurred,
+                    learned_at,
+                )?;
+                self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
+                Ok(new_head_id)
+            })?;
             let updated = thread_from_head(*artifact_id, new_head_id, head);
             if drifted {
                 summary.drifted.push(updated);
@@ -1212,6 +1311,11 @@ impl Vault {
     /// linking the thread to that task with the anchor payload, and — when an
     /// assignee is supplied — an `AssignedTo` edge. Returns the assembled brief
     /// carrying the anchor, the thread transcript, and the `artifact@version`.
+    ///
+    /// The transcript snapshot taken at assignment time is persisted IN the
+    /// brief claim value, so the handed-off brief is stable: comments appended
+    /// after the assignment do not change what
+    /// [`Vault::annotation_brief_for_thread`] reconstructs.
     pub fn assign_annotation_thread_to_brief(
         &self,
         artifact_id: &EntityId,
@@ -1243,6 +1347,7 @@ impl Vault {
             thread.anchor.version,
             &thread.anchor.locator,
             assignee.as_ref(),
+            &thread_text,
         );
 
         self.with_write_txn(|wtxn| {
@@ -1284,8 +1389,49 @@ impl Vault {
         })
     }
 
-    fn write_thread_head(
+    /// Reconstructs the durable brief for `thread_id` from its persisted
+    /// `annotation.brief` claim, or `None` if the thread was never assigned.
+    ///
+    /// The returned brief carries the transcript snapshot captured at
+    /// assignment time (stored in the claim value), so it is stable against
+    /// comments appended after the assignment — the handed-off ask does not
+    /// silently rewrite itself. When a thread was assigned more than once the
+    /// newest brief (by UUIDv7 claim id) wins.
+    pub fn annotation_brief_for_thread(
         &self,
+        artifact_id: &EntityId,
+        thread_id: &EntityId,
+    ) -> Result<Option<TaskBrief>> {
+        let mut best: Option<(EntityId, TaskBrief)> = None;
+        for (claim_id, body) in self.active_annotation_claims(artifact_id)? {
+            if body.predicate != ANNOTATION_BRIEF_PREDICATE {
+                continue;
+            }
+            let brief = match decode_brief_value(&body.value, *artifact_id) {
+                Ok(brief) => brief,
+                Err(err) => {
+                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                    continue;
+                }
+            };
+            if brief.thread_id != *thread_id {
+                continue;
+            }
+            if best.as_ref().is_none_or(|(id, _)| claim_id > *id) {
+                best = Some((claim_id, brief));
+            }
+        }
+        Ok(best.map(|(_, brief)| brief))
+    }
+
+    /// Writes a fresh thread-head claim inside the caller's write transaction
+    /// and returns its id. Kept txn-composable (rather than opening its own
+    /// txn) so the head write and the paired [`Vault::supersede_claim_in_txn`]
+    /// of the old head commit or roll back together.
+    #[expect(clippy::too_many_arguments)]
+    fn write_thread_head_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
         artifact_id: &EntityId,
         head: &ThreadHead,
         actor: WriteActor,
@@ -1296,22 +1442,20 @@ impl Vault {
         let claim_id = EntityId::now();
         let envelope = annotation_envelope(actor, op)?;
         let value = encode_thread_head_value(head);
-        self.with_write_txn(|wtxn| {
-            self.batch_in()
-                .claim_candidate(
-                    &claim_id,
-                    ClaimCandidate::new(
-                        ANNOTATION_THREAD_PREDICATE,
-                        ClaimSubject::Entity(*artifact_id),
-                        value,
-                        1.0,
-                    ),
-                    &envelope,
-                    occurred,
-                    learned_at,
-                )
-                .apply(wtxn)
-        })?;
+        self.batch_in()
+            .claim_candidate(
+                &claim_id,
+                ClaimCandidate::new(
+                    ANNOTATION_THREAD_PREDICATE,
+                    ClaimSubject::Entity(*artifact_id),
+                    value,
+                    1.0,
+                ),
+                &envelope,
+                occurred,
+                learned_at,
+            )
+            .apply(wtxn)?;
         Ok(claim_id)
     }
 
@@ -1330,6 +1474,17 @@ impl Vault {
         Ok(())
     }
 
+    /// The live-read cohort of annotation claims on `artifact_id`: only claims
+    /// that pass the engine's standard read gate
+    /// ([`crate::claim::claim_surfaceable`] — `appr ∈ {auto, approved}`,
+    /// `life = active`, not stale).
+    ///
+    /// Gating here (rather than on bare `life = active`) keeps agent-authored
+    /// `Proposed` heads and stale claims out of every live read that flows
+    /// through this helper — thread + comment reads, brief assignment, and
+    /// newest-head selection — so a non-admitted head can never override an
+    /// admitted one on read. History / consent-review still goes through the
+    /// ungated [`crate::Vault::get_claim`] door.
     fn active_annotation_claims(
         &self,
         artifact_id: &EntityId,
@@ -1339,14 +1494,28 @@ impl Vault {
             let Some(body) = self.get_claim(&claim_id)? else {
                 continue;
             };
-            if body.lifecycle == ClaimLifecycleStatus::Active
-                && is_annotation_predicate(&body.predicate)
-            {
+            if crate::claim::claim_surfaceable(&body) && is_annotation_predicate(&body.predicate) {
                 out.push((claim_id, body));
             }
         }
         Ok(out)
     }
+}
+
+/// Quarantines a single malformed annotation claim value on a read path.
+///
+/// Annotation predicates ride the generic CLAIM band, so a malformed value can
+/// be written through the generic claim API. Failing the whole listing on one
+/// such value would let a single garbage claim take down every thread/comment
+/// read for the artifact, so the read helpers skip the bad value (tracing it)
+/// and keep serving the well-formed claims.
+fn warn_malformed_annotation_claim(claim_id: EntityId, predicate: &str, err: &Error) {
+    tracing::warn!(
+        claim_id = %claim_id.to_hex(),
+        predicate,
+        error = ?err,
+        "skipping malformed annotation claim value on read",
+    );
 }
 
 fn is_annotation_predicate(predicate: &str) -> bool {
@@ -1426,6 +1595,14 @@ mod tests {
         WriteActor::new(actor_id, EdgeActorClass::Human)
     }
 
+    fn put_agent_actor(vault: &Vault, at: u64) -> WriteActor {
+        let actor_id = EntityId::now();
+        vault
+            .put_entity(&actor_id, ENTITY_TYPE_PERSON, test_time(at), at, b"agent")
+            .expect("put agent actor");
+        WriteActor::new(actor_id, EdgeActorClass::Agent)
+    }
+
     fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
         let artifact_id = EntityId::now();
         vault
@@ -1458,6 +1635,27 @@ mod tests {
             version,
             Locator::xlsx(sheet, range).expect("xlsx locator"),
         )
+    }
+
+    /// The ids of every LIVE (`life = active`) thread-head claim on the
+    /// artifact, regardless of approval — the ungated cohort, so tests can
+    /// prove the read gate reduces it and that no orphan head leaked.
+    fn live_thread_head_claim_ids(vault: &Vault, artifact_id: &EntityId) -> Vec<EntityId> {
+        let mut ids = Vec::new();
+        for claim_id in vault
+            .claims_for_subject(artifact_id)
+            .expect("claims for subject")
+        {
+            let Some(body) = vault.get_claim(&claim_id).expect("get claim") else {
+                continue;
+            };
+            if body.predicate == ANNOTATION_THREAD_PREDICATE
+                && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+            {
+                ids.push(claim_id);
+            }
+        }
+        ids
     }
 
     #[test]
@@ -1815,5 +2013,291 @@ mod tests {
             )
             .expect_err("anchor beyond head must fail");
         assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+    }
+
+    // PR #397 fix 1: the live-read gate ([`claim_surfaceable`]) hides an
+    // agent-authored (Proposed) head, so it can never override an admitted
+    // human head via newest-UUID-wins selection.
+    #[test]
+    fn agent_proposed_head_does_not_override_human_head() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let human = put_actor(&vault, 10);
+        let agent = put_agent_actor(&vault, 10);
+        let artifact_id = put_workbook(&vault, human, 10);
+        let thread = vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "B2:C4"),
+            human,
+            "Human-opened, stays Open.",
+            test_time(11),
+            11,
+        )?;
+
+        // An agent writes a SECOND live head for the same thread, flipping the
+        // state to Resolved. It lands `Active` but only `Proposed`.
+        let agent_head = ThreadHead {
+            thread_id: thread.thread_id,
+            origin_version: thread.origin_version,
+            anchor_version: thread.anchor.version,
+            state: ThreadState::Resolved,
+            locator: thread.anchor.locator.clone(),
+            drift: thread.drift,
+        };
+        let agent_head_id = vault.with_write_txn(|wtxn| {
+            vault.write_thread_head_in_txn(
+                wtxn,
+                &artifact_id,
+                &agent_head,
+                agent,
+                "set_state",
+                test_time(12),
+                12,
+            )
+        })?;
+        // The agent head really is a live-but-unadmitted second head.
+        let agent_body = vault.get_claim(&agent_head_id)?.expect("agent head claim");
+        assert_eq!(
+            agent_body.lifecycle,
+            crate::claim::ClaimLifecycleStatus::Active
+        );
+        assert_eq!(agent_body.approval, ClaimApprovalStatus::Proposed);
+        // Both heads are live (ungated); the gate must pick only the human one.
+        assert_eq!(live_thread_head_claim_ids(&vault, &artifact_id).len(), 2);
+
+        let read = vault
+            .get_annotation_thread(&artifact_id, &thread.thread_id)?
+            .expect("thread");
+        assert_eq!(read.state, ThreadState::Open);
+        assert_eq!(read.head_claim_id, thread.head_claim_id);
+        let listed = vault.annotation_threads_for_artifact(&artifact_id)?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].state, ThreadState::Open);
+        assert_eq!(listed[0].head_claim_id, thread.head_claim_id);
+        Ok(())
+    }
+
+    // PR #397 fix 2: the new-head write and the old-head supersession share one
+    // txn, so a supersession the source-trust guard rejects (an agent claim
+    // superseding human-stated truth) persists NOTHING — the original head
+    // stays the single live head and no orphan claim is left behind.
+    #[test]
+    fn agent_supersede_rejected_leaves_original_head_live() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let human = put_actor(&vault, 10);
+        let agent = put_agent_actor(&vault, 10);
+        let artifact_id = put_workbook(&vault, human, 10);
+        let thread = vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "A1"),
+            human,
+            "Human truth.",
+            test_time(11),
+            11,
+        )?;
+
+        // An agent resolving the human-opened thread supersedes human-stated
+        // truth: the guard rejects and the whole txn rolls back.
+        let err = vault
+            .set_annotation_thread_state(
+                &artifact_id,
+                &thread.thread_id,
+                ThreadState::Resolved,
+                agent,
+                test_time(12),
+                12,
+            )
+            .expect_err("agent cannot supersede human-stated head");
+        assert!(matches!(err, Error::InvalidClaimBody(_)));
+
+        // Original head still live and single; the rejected head left no orphan.
+        assert_eq!(
+            live_thread_head_claim_ids(&vault, &artifact_id),
+            vec![thread.head_claim_id]
+        );
+        let read = vault
+            .get_annotation_thread(&artifact_id, &thread.thread_id)?
+            .expect("thread");
+        assert_eq!(read.state, ThreadState::Open);
+        assert_eq!(read.head_claim_id, thread.head_claim_id);
+        Ok(())
+    }
+
+    // PR #397 fix 3: reanchor axis math is checked — an anchor near u32::MAX
+    // that an insert (or delete band) would push past the grid drifts rather
+    // than wrapping (release) or panicking (debug) into a corrupt locator.
+    #[test]
+    fn reanchor_math_drifts_near_u32_max_instead_of_wrapping() {
+        let near_max = format!("B{}:B{}", u32::MAX - 5, u32::MAX);
+        let locator = Locator::xlsx("Sheet1", &near_max).expect("locator");
+        // Inserting rows below the anchor would shift it past u32::MAX.
+        let insert_overflow = replay_locator(
+            &locator,
+            &[ReanchorOp::InsertRows {
+                sheet: "Sheet1".to_owned(),
+                at_row: 1,
+                count: 10,
+            }],
+        );
+        assert_eq!(insert_overflow, ReanchorOutcome::Drifted);
+        // A delete band whose `at + count - 1` overflows is also non-mappable.
+        let delete_overflow = replay_locator(
+            &locator,
+            &[ReanchorOp::DeleteRows {
+                sheet: "Sheet1".to_owned(),
+                at_row: u32::MAX,
+                count: 10,
+            }],
+        );
+        assert_eq!(delete_overflow, ReanchorOutcome::Drifted);
+    }
+
+    // PR #397 fix 4: reanchor validates `to_version` against the artifact's
+    // version chain (the same guard thread-open applies) before writing any
+    // head, so a replay against a not-yet-appended version writes nothing.
+    #[test]
+    fn reanchor_to_nonexistent_version_errors_and_writes_no_head() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let actor = put_actor(&vault, 10);
+        let artifact_id = put_workbook(&vault, actor, 10);
+        let thread = vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "B5:D8"),
+            actor,
+            "Anchor me.",
+            test_time(11),
+            11,
+        )?;
+
+        // v2 was never appended (head is still v1): reanchoring 1 -> 2 must fail.
+        let err = vault
+            .reanchor_annotation_threads(
+                &artifact_id,
+                1,
+                2,
+                &[ReanchorOp::InsertRows {
+                    sheet: "Sheet1".to_owned(),
+                    at_row: 1,
+                    count: 2,
+                }],
+                actor,
+                test_time(12),
+                12,
+            )
+            .expect_err("reanchor to nonexistent version must fail");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+
+        // No replacement head was written; the original head is untouched.
+        assert_eq!(
+            live_thread_head_claim_ids(&vault, &artifact_id),
+            vec![thread.head_claim_id]
+        );
+        let unchanged = vault
+            .get_annotation_thread(&artifact_id, &thread.thread_id)?
+            .expect("thread");
+        assert_eq!(unchanged.anchor.version, 1);
+        assert_eq!(unchanged.head_claim_id, thread.head_claim_id);
+        assert!(!unchanged.is_drifted());
+        Ok(())
+    }
+
+    // PR #397 fix 5: one malformed annotation.thread claim (writable through
+    // the generic claim API) is skipped on read instead of taking down the
+    // whole listing.
+    #[test]
+    fn malformed_thread_claim_is_skipped_on_listing() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let actor = put_actor(&vault, 10);
+        let artifact_id = put_workbook(&vault, actor, 10);
+        let thread = vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "B2:C4"),
+            actor,
+            "A well-formed thread.",
+            test_time(11),
+            11,
+        )?;
+
+        // A garbage annotation.thread claim whose value is not a decodable head.
+        let garbage_id = EntityId::now();
+        let envelope = annotation_envelope(actor, "open_thread")?;
+        vault.with_write_txn(|wtxn| {
+            vault
+                .batch_in()
+                .claim_candidate(
+                    &garbage_id,
+                    ClaimCandidate::new(
+                        ANNOTATION_THREAD_PREDICATE,
+                        ClaimSubject::Entity(artifact_id),
+                        Value::from("not a thread head"),
+                        1.0,
+                    ),
+                    &envelope,
+                    test_time(12),
+                    12,
+                )
+                .apply(wtxn)
+        })?;
+        // The garbage really is a live annotation.thread claim on the artifact.
+        assert_eq!(live_thread_head_claim_ids(&vault, &artifact_id).len(), 2);
+
+        // The listing skips the garbage and still serves the valid thread.
+        let threads = vault.annotation_threads_for_artifact(&artifact_id)?;
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].thread_id, thread.thread_id);
+        assert!(
+            vault
+                .get_annotation_thread(&artifact_id, &thread.thread_id)?
+                .is_some()
+        );
+        Ok(())
+    }
+
+    // PR #397 fix 6: the transcript snapshot is persisted in the brief claim,
+    // so a comment appended after assignment does not rewrite the handed-off
+    // transcript that `annotation_brief_for_thread` reconstructs.
+    #[test]
+    fn persisted_brief_transcript_is_stable_after_later_comment() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let actor = put_actor(&vault, 10);
+        let artifact_id = put_workbook(&vault, actor, 10);
+        let thread = vault.open_annotation_thread(
+            &xlsx_anchor(artifact_id, 1, "Sheet1", "B2:C4"),
+            actor,
+            "First note.",
+            test_time(11),
+            11,
+        )?;
+
+        let brief = vault.assign_annotation_thread_to_brief(
+            &artifact_id,
+            &thread.thread_id,
+            None,
+            actor,
+            test_time(12),
+            12,
+        )?;
+        assert_eq!(brief.thread_text, "First note.");
+
+        // A comment added AFTER assignment must not change the durable brief.
+        vault.add_annotation_comment(
+            &artifact_id,
+            &thread.thread_id,
+            actor,
+            "Later addendum.",
+            test_time(13),
+            13,
+        )?;
+        let persisted = vault
+            .annotation_brief_for_thread(&artifact_id, &thread.thread_id)?
+            .expect("persisted brief");
+        assert_eq!(persisted.thread_text, "First note.");
+        assert_eq!(persisted.brief_ref, brief.brief_ref);
+        assert_eq!(persisted.task_id, brief.task_id);
+        assert_eq!(persisted.anchor.version, 1);
+        assert_eq!(persisted.anchor.locator, thread.anchor.locator);
+        // The live thread does carry the new comment; only the snapshot froze.
+        assert_eq!(
+            vault
+                .annotation_thread_comments(&artifact_id, &thread.thread_id)?
+                .len(),
+            2
+        );
+        Ok(())
     }
 }
