@@ -1375,6 +1375,14 @@ impl<'a> PipelineBuilder<'a> {
             if before_status_gate > 0 && scores.is_empty() {
                 empty_reason = Some(EmptyReason::AllActivated);
             }
+            // OF-326 THE FENCE, first application: like the claim status
+            // gate above, this runs BEFORE `blend_allowed_ids` and the
+            // expand_ppr implicit seed selection below, so a fenced
+            // off-record turn can neither seed graph expansion (pulling its
+            // on-record neighbors into the results) nor ride the blended
+            // candidate set. The late per-candidate filter remains as
+            // defense-in-depth.
+            apply_off_record_fence(&mut scores, &self.vault.store, &rtxn)?;
             let mut blend_allowed_ids = score_id_set(&scores);
 
             if let Some((explicit_seeds, depth)) = &self.ppr_expand {
@@ -1433,6 +1441,10 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         &mut claim_gate,
                     )?;
+                    // OF-326 THE FENCE, second application: expansion can
+                    // pull a fenced off-record entity back in as a
+                    // neighbor — drop it before the expansion list fuses.
+                    apply_off_record_fence(&mut ppr_results, &self.vault.store, &rtxn)?;
                     add_signal_score_components(
                         &mut signal_components,
                         RetrievalSignal::Ppr,
@@ -3345,6 +3357,25 @@ fn boost_contiguity(
         scores[idx].score *= 1.0 + 0.2 * contiguity;
     }
 
+    Ok(())
+}
+
+/// OF-326 THE FENCE as a candidate-list sweep: drops entities carrying an
+/// off-record fence row. Applied to the fused scores BEFORE expand_ppr seed
+/// selection and to the PPR expansion list before it fuses, mirroring the
+/// two claim-status-gate applications.
+fn apply_off_record_fence(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<()> {
+    let mut kept = Vec::with_capacity(scores.len());
+    for scored in scores.iter().copied() {
+        if !crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            kept.push(scored);
+        }
+    }
+    *scores = kept;
     Ok(())
 }
 

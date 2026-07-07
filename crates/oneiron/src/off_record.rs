@@ -269,16 +269,18 @@ fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
 
 /// THE FENCE probe consulted by the retrieval/extraction candidate filter:
 /// `true` means the entity is tagged off-record and must never surface,
-/// regardless of the owning session's current mode.
+/// regardless of the owning session's current mode. Hot path — the key is
+/// built on the stack (no per-candidate heap allocation).
 pub(crate) fn off_record_fence_active(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(rtxn, &off_record_fence_key(id))?
-        .is_some())
+    const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
+    let mut key = [0_u8; PREFIX_LEN + 16];
+    key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
+    key[PREFIX_LEN..].copy_from_slice(id.as_bytes());
+    Ok(store.vault_meta.get(rtxn, &key)?.is_some())
 }
 
 fn session_record_in_txn(
@@ -356,8 +358,15 @@ impl Vault {
         Ok(record)
     }
 
-    /// Reads the off-record session record for `session_ref`, if any.
+    /// Reads the off-record session record for `session_ref`, if any. A ref
+    /// that fails [`vet_off_record_session_ref`] cannot name a session
+    /// (enter enforces the same bound), so it reads as `None` without
+    /// building a key — arbitrary caller-supplied refs never drive
+    /// allocation size.
     pub fn off_record_session(&self, session_ref: &str) -> Result<Option<OffRecordSessionRecord>> {
+        if vet_off_record_session_ref(session_ref).is_err() {
+            return Ok(None);
+        }
         let rtxn = self.store.env.read_txn()?;
         session_record_in_txn(&self.store, &rtxn, session_ref)
     }
@@ -370,6 +379,7 @@ impl Vault {
         session_ref: &str,
         mode: OffRecordMode,
     ) -> Result<OffRecordSessionRecord> {
+        vet_off_record_session_ref(session_ref)?;
         self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             record.mode = mode;
@@ -389,11 +399,19 @@ impl Vault {
     /// tagging BEFORE the turn write closes the race against a concurrent
     /// extraction pass. Idempotent for a turn already fenced by this session.
     pub fn tag_turn_off_record(&self, session_ref: &str, turn_id: &EntityId) -> Result<()> {
+        vet_off_record_session_ref(session_ref)?;
         self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             if record.mode != OffRecordMode::OffRecord {
                 return Err(Error::InvariantViolation(
                     "off-record tag requires the session to be in off-record mode",
+                ));
+            }
+            // A promoted turn's durable receipt pins its survival past
+            // close; silently re-fencing it would let close delete it.
+            if record.promoted_turns.contains(turn_id.as_bytes()) {
+                return Err(Error::InvariantViolation(
+                    "off-record tag targeted a promoted turn",
                 ));
             }
             // Fail early on entity kinds the close-path PolicyDelete would
@@ -446,8 +464,18 @@ impl Vault {
         session_ref: &str,
         run_id: RetrievalRunId,
     ) -> Result<()> {
+        vet_off_record_session_ref(session_ref)?;
         self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
+            // Mirrors the tag mode-check: after a flip back on-record the
+            // session's retrieval runs belong to on-record turns whose
+            // receipts must persist — registering them for delete-at-close
+            // would erase the audit trail of surviving emits.
+            if record.mode != OffRecordMode::OffRecord {
+                return Err(Error::InvariantViolation(
+                    "off-record context receipt requires the session to be in off-record mode",
+                ));
+            }
             if record.context_receipt_runs.contains(&run_id) {
                 return Ok(());
             }
@@ -475,6 +503,7 @@ impl Vault {
         session_ref: &str,
         turn_id: &EntityId,
     ) -> Result<OffRecordPromoteReceipt> {
+        vet_off_record_session_ref(session_ref)?;
         self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             let position = record
@@ -537,6 +566,7 @@ impl Vault {
     /// off-record log is dropped at close (over-deletion is the safe
     /// direction).
     pub fn off_record_receipt_log(&self, session_ref: &str) -> Result<SessionLocalReceiptLog> {
+        vet_off_record_session_ref(session_ref)?;
         if self.off_record_session(session_ref)?.is_none() {
             return Err(Error::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
@@ -575,6 +605,7 @@ impl Vault {
         session_ref: &str,
         receipt_log: SessionLocalReceiptLog,
     ) -> Result<OffRecordCloseOutcome> {
+        vet_off_record_session_ref(session_ref)?;
         if receipt_log.session_ref() != session_ref {
             return Err(Error::InvariantViolation(
                 "off-record close given another session's receipt log",
@@ -690,7 +721,9 @@ mod tests {
     };
     use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
     use crate::store::{GateDecisionId, GateDecisionRecord};
-    use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, TimeRange, VaultConfig};
+    use crate::types::{
+        ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeKind, TimeRange, VaultConfig,
+    };
 
     fn temp_vault() -> (tempfile::TempDir, Vault) {
         let tmp = tempfile::tempdir().expect("temp dir");
@@ -854,6 +887,12 @@ mod tests {
         vault
             .tag_turn_off_record("sess-fence", &post_flip)
             .expect_err("tagging requires off-record mode");
+        // Post-flip retrieval runs belong to on-record turns whose context
+        // receipts must persist — registering one for delete-at-close is
+        // rejected the same way tagging is.
+        vault
+            .note_off_record_context_receipt("sess-fence", crate::store::RetrievalRunId::now())
+            .expect_err("context receipt registration requires off-record mode");
     }
 
     #[test]
@@ -1038,6 +1077,13 @@ mod tests {
             .expect_err("promote lifts one live fence");
         assert_eq!(repromote.kind(), ErrorKind::OffRecordTurnNotFenced);
 
+        // Re-fencing a promoted turn would let close delete a turn whose
+        // durable promote receipt pins its survival — rejected.
+        let refence = vault
+            .tag_turn_off_record("sess-promote", &kept)
+            .expect_err("re-tag of a promoted turn");
+        assert_eq!(refence.kind(), ErrorKind::InvariantViolation);
+
         let receipt_log = vault
             .off_record_receipt_log("sess-promote")
             .expect("mint receipt log");
@@ -1173,5 +1219,116 @@ mod tests {
             "late-landing fenced turn must not rejoin retrieval"
         );
         assert!(dreamer_working_set_turns(&vault).is_empty());
+    }
+
+    #[test]
+    fn off_record_session_ref_bounds_are_enforced_everywhere() {
+        let (_tmp, vault) = temp_vault();
+        let oversized = "x".repeat(300);
+        let turn = seed_turn(&vault, 1000);
+
+        let enter = vault
+            .enter_off_record_session(&oversized, OffRecordBackendClass::Local)
+            .expect_err("oversized enter");
+        assert_eq!(enter.kind(), ErrorKind::InvalidConfig);
+        // A ref that cannot pass enter cannot name a session: reads as None.
+        assert!(
+            vault
+                .off_record_session(&oversized)
+                .expect("probe")
+                .is_none()
+        );
+        let tag = vault
+            .tag_turn_off_record(&oversized, &turn)
+            .expect_err("oversized tag");
+        assert_eq!(tag.kind(), ErrorKind::InvalidConfig);
+        let flip = vault
+            .set_off_record_session_mode(&oversized, OffRecordMode::OnRecord)
+            .expect_err("oversized flip");
+        assert_eq!(flip.kind(), ErrorKind::InvalidConfig);
+        let note = vault
+            .note_off_record_context_receipt(&oversized, crate::store::RetrievalRunId::now())
+            .expect_err("oversized note");
+        assert_eq!(note.kind(), ErrorKind::InvalidConfig);
+        let promote = vault
+            .promote_off_record_turn(&oversized, &turn)
+            .expect_err("oversized promote");
+        assert_eq!(promote.kind(), ErrorKind::InvalidConfig);
+        let log = vault
+            .off_record_receipt_log(&oversized)
+            .expect_err("oversized log");
+        assert_eq!(log.kind(), ErrorKind::InvalidConfig);
+        let close = vault
+            .close_off_record_session(
+                &oversized,
+                SessionLocalReceiptLog::off_record(oversized.clone()),
+            )
+            .expect_err("oversized close");
+        assert_eq!(close.kind(), ErrorKind::InvalidConfig);
+    }
+
+    /// A fenced turn must neither seed PPR expansion (pulling its on-record
+    /// neighbors into results) nor be exposed by context-pack edge lists or
+    /// hop-1 neighbor hydration.
+    #[test]
+    fn off_record_fence_blocks_ppr_expansion_and_context_pack_edges() {
+        let (_tmp, vault) = temp_vault();
+        // Fenced turn F in the temporal window; its neighbor N far outside
+        // the temporal scan radius (only reachable through F's edges).
+        // On-record result R in-window with an edge pointing AT F.
+        let fenced = seed_turn(&vault, 1000);
+        let neighbor = seed_turn(&vault, 100_000_000);
+        let on_record = seed_turn(&vault, 1001);
+        vault
+            .put_edge(&fenced, EdgeKind::Mentions, &neighbor, 0.9)
+            .expect("edge F->N");
+        vault
+            .put_edge(&on_record, EdgeKind::Mentions, &fenced, 0.9)
+            .expect("edge R->F");
+        vault
+            .enter_off_record_session("sess-graph", OffRecordBackendClass::Local)
+            .expect("enter");
+        vault
+            .tag_turn_off_record("sess-graph", &fenced)
+            .expect("tag");
+
+        let expanded: Vec<EntityId> = vault
+            .query()
+            .search_temporal(900, 1100, 16)
+            .expand_ppr(&[], 1)
+            .limit(16)
+            .run()
+            .expect("ppr run")
+            .into_iter()
+            .map(|scored| scored.id)
+            .collect();
+        assert!(expanded.contains(&on_record));
+        assert!(!expanded.contains(&fenced), "fenced turn surfaced");
+        assert!(
+            !expanded.contains(&neighbor),
+            "fenced turn must not seed expansion toward its neighbors"
+        );
+
+        let pack = vault
+            .context_pack()
+            .search_temporal(900, 1100, 16)
+            .include_edges(true)
+            .edge_hop(1)
+            .run()
+            .expect("context pack");
+        assert!(pack.results.iter().any(|entity| entity.id == on_record));
+        assert!(pack.results.iter().all(|entity| entity.id != fenced));
+        assert!(
+            pack.neighbors.iter().all(|entity| entity.id != fenced),
+            "fenced turn hydrated as a context-pack neighbor"
+        );
+        for entity in pack.results.iter().chain(pack.neighbors.iter()) {
+            if let Some(edges) = &entity.edges {
+                assert!(
+                    edges.iter().all(|edge| edge.target != fenced),
+                    "edge list exposed the fenced target id"
+                );
+            }
+        }
     }
 }
