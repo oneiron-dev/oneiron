@@ -386,10 +386,19 @@ pub use crate::lens::{
     TwoClocksAtom, VadBadge, VoiceLineAtom,
 };
 pub use crate::linkedin_connector::{
-    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
-    LINKEDIN_MCP_CONNECTOR_KEY, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
-    LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport,
-    LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_CONNECT_REQUEST_VERB,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
+    LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
+    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LINKEDIN_MCP_CONNECTOR_KEY,
+    LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB, LinkedInAccountRiskLimits,
+    LinkedInConsentScreenCopy, LinkedInEscalationConfig, LinkedInLoginHandoff,
+    LinkedInManagedTransport, LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest,
+    LinkedInMcpSendTransport, LinkedInMcpServerHarness, LinkedInMcpVerifiedSendSink,
+    LinkedInNetworkRoute, LinkedInPasswordCustody, LinkedInSandboxHostConfig,
+    LinkedInSandboxHostHarness, LinkedInSandboxRuntime, LinkedInSeatDispatchState,
+    LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
+    LinkedInSelectorDriver, LinkedInVerifiedSendPlan, linkedin_connect_consent_screen_copy,
+    run_linkedin_kill_switch,
 };
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,

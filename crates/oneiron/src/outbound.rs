@@ -23,6 +23,7 @@ use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
+use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy};
 use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
 use crate::types::EntityId;
 
@@ -343,6 +344,11 @@ pub struct OutboundDispatchRequest {
     /// (commitment-timer and gap-queue wakes, pre-field-set callers) have
     /// no board or persona compile to record and dispatch unstamped.
     pub context_receipt: Option<ContextReceiptFields>,
+    /// Per-seat LinkedIn host/account-risk policy supplied by the host. The
+    /// dispatch engine consumes it before connector execution so caps,
+    /// cadence, sweep bans, and kill-switch state cannot be bypassed by an
+    /// adapter.
+    pub linkedin_sandbox_policy: Option<LinkedInSeatSandboxPolicy>,
 }
 
 impl OutboundDispatchRequest {
@@ -375,6 +381,7 @@ impl OutboundDispatchRequest {
             delivery_window_degrade_to: None,
             delivery_window_apns_interruption_level: None,
             context_receipt: None,
+            linkedin_sandbox_policy: None,
         }
     }
 
@@ -470,6 +477,12 @@ impl OutboundDispatchRequest {
         level: DeliveryWindowApnsInterruptionLevel,
     ) -> Self {
         self.delivery_window_apns_interruption_level = Some(level);
+        self
+    }
+
+    #[must_use]
+    pub fn linkedin_sandbox_policy(mut self, policy: LinkedInSeatSandboxPolicy) -> Self {
+        self.linkedin_sandbox_policy = Some(policy);
         self
     }
 }
@@ -863,26 +876,37 @@ impl OutboundDispatchPipeline {
             .iter()
             .map(|reason| (*reason).to_owned())
             .collect::<Vec<_>>();
+        let mut engine_receipt_fields = BTreeMap::new();
+        let mut engine_policy_trace = Vec::new();
 
         let (outcome, execution) = match gate_outcome_kind {
             GateOutcome::Allow => match &window_decision {
                 OutboundDeliveryWindowDecision::DeliverNow
                 | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
-                    let execution_request = OutboundExecutionRequest {
-                        intent_ref: &request.intent_ref,
-                        intent: &request.intent,
-                        verb_contract,
-                        channel_identity_ref: request.channel_identity_ref,
-                        counterparty_ref: request.counterparty_ref.as_deref(),
-                    };
-                    let execution = sink.execute(&execution_request);
-                    let outcome = match execution.kind {
-                        OutboundExecutionOutcomeKind::DeliveredToChannel => {
-                            OutboundDispatchOutcome::DeliveredToChannel
+                    if let Some(policy) = request.linkedin_sandbox_policy.as_ref() {
+                        let decision = policy.evaluate_outbound(
+                            &request.intent.channel,
+                            &verb_contract.kind,
+                            request.occurred_at,
+                        );
+                        engine_receipt_fields.extend(decision.receipt_fields);
+                        engine_policy_trace.extend(decision.policy_trace);
+                        match decision.action {
+                            LinkedInSeatPolicyAction::Allow => {
+                                let (outcome, execution) =
+                                    execute_outbound_request(&request, verb_contract, sink);
+                                (outcome, Some(execution))
+                            }
+                            LinkedInSeatPolicyAction::Hold => (OutboundDispatchOutcome::Held, None),
+                            LinkedInSeatPolicyAction::Suppress => {
+                                (OutboundDispatchOutcome::Suppressed, None)
+                            }
                         }
-                        OutboundExecutionOutcomeKind::Failed => OutboundDispatchOutcome::Failed,
-                    };
-                    (outcome, Some(execution))
+                    } else {
+                        let (outcome, execution) =
+                            execute_outbound_request(&request, verb_contract, sink);
+                        (outcome, Some(execution))
+                    }
                 }
                 OutboundDeliveryWindowDecision::Hold { .. } => {
                     (OutboundDispatchOutcome::Held, None)
@@ -912,6 +936,7 @@ impl OutboundDispatchPipeline {
             .policy_trace
             .extend(gate_receipt_reasons.iter().cloned());
         receipt.policy_trace.push(window_decision.policy_trace());
+        receipt.policy_trace.extend(engine_policy_trace);
         let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
         receipt
             .fields
@@ -954,6 +979,9 @@ impl OutboundDispatchPipeline {
             }
             .to_owned(),
         );
+        for (key, value) in engine_receipt_fields {
+            receipt.fields.insert(key, value);
+        }
         append_optional_receipt_field(
             &mut receipt,
             "content_ref",
@@ -1025,6 +1053,28 @@ impl Vault {
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         OutboundDispatchPipeline.dispatch(self, request, sink)
     }
+}
+
+fn execute_outbound_request<S: OutboundExecutionSink>(
+    request: &OutboundDispatchRequest,
+    verb_contract: &'static OutboundVerbContract,
+    sink: &mut S,
+) -> (OutboundDispatchOutcome, OutboundExecutionOutcome) {
+    let execution_request = OutboundExecutionRequest {
+        intent_ref: &request.intent_ref,
+        intent: &request.intent,
+        verb_contract,
+        channel_identity_ref: request.channel_identity_ref,
+        counterparty_ref: request.counterparty_ref.as_deref(),
+    };
+    let execution = sink.execute(&execution_request);
+    let outcome = match execution.kind {
+        OutboundExecutionOutcomeKind::DeliveredToChannel => {
+            OutboundDispatchOutcome::DeliveredToChannel
+        }
+        OutboundExecutionOutcomeKind::Failed => OutboundDispatchOutcome::Failed,
+    };
+    (outcome, execution)
 }
 
 fn outbound_dispatch_policy_risk(
@@ -1777,7 +1827,8 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                         "profile_urn": "optional fsd_profile URN handle from get_person_profile",
                         "message": "string resolved from content_ref",
                         "confirm_send": "true only after OF-327 grant/gate approval",
-                        "verify_after_send": "send_message return is never trusted; re-read get_conversation and content-match before delivered receipt"
+                        "verify_after_send": "send_message return is never trusted; re-read get_conversation and content-match before delivered receipt",
+                        "engine_side_safety": "per-seat sandbox policy enforces kill-switch, <=15/day default cap, active-session cadence, and no sweeps before connector transport"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
@@ -1792,7 +1843,8 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
                     "connect_with_person",
                     json!({
                         "linkedin_username": "recipient vanity name or profile key",
-                        "note": "optional connection note resolved from content_ref"
+                        "note": "optional connection note resolved from content_ref",
+                        "engine_side_safety": "per-seat sandbox policy revokes this verb when the kill switch is engaged"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
@@ -1927,7 +1979,9 @@ mod tests {
     };
     use crate::linkedin_connector::{
         LINKEDIN_CHANNEL, LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest,
-        LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
+        LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink, LinkedInSandboxHostConfig,
+        LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatSandboxPolicy,
+        LinkedInVerifiedSendPlan, run_linkedin_kill_switch,
     };
     use crate::store::Store;
     use crate::types::{
@@ -2107,9 +2161,41 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingLinkedInSandboxHarness {
+        destroyed: Vec<String>,
+        revoked: Vec<String>,
+    }
+
+    impl LinkedInSandboxHostHarness for RecordingLinkedInSandboxHarness {
+        fn destroy_sandbox(&mut self, host: &LinkedInSandboxHostConfig) -> crate::Result<()> {
+            self.destroyed.push(host.sandbox_ref.clone());
+            Ok(())
+        }
+
+        fn revoke_verb_catalog(&mut self, seat_ref: &str) -> crate::Result<()> {
+            self.revoked.push(seat_ref.to_owned());
+            Ok(())
+        }
+    }
+
     fn linkedin_adapter() -> crate::Result<LinkedInMcpConnectorAdapter> {
         LinkedInMcpConnectorAdapter::new("linkedin:member:yura")?
             .with_session_ref("linkedin:session:yura:tokyo-sandbox")
+    }
+
+    fn linkedin_sandbox_host() -> crate::Result<LinkedInSandboxHostConfig> {
+        LinkedInSandboxHostConfig::new(
+            "linkedin:seat:yura",
+            "sandbox:tokyo:yura",
+            "browser-profile:linkedin:yura",
+            "vault-secret:linkedin:yura:session-cookie",
+        )
+    }
+
+    fn active_linkedin_policy() -> crate::Result<LinkedInSeatSandboxPolicy> {
+        Ok(LinkedInSeatSandboxPolicy::active(linkedin_sandbox_host()?)
+            .with_state(LinkedInSeatDispatchState::active()))
     }
 
     fn linkedin_conversation(thread_id: &str, conversation: &str) -> serde_json::Value {
@@ -2756,6 +2842,213 @@ mod tests {
                 .get("linkedin_send_verification")
                 .map(String::as_str),
             Some("content_observed")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_kill_switch_suppresses_before_mcp_transport()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xC1));
+        allow_linkedin_send(&vault, &actor)?;
+
+        let policy = active_linkedin_policy()?;
+        let mut harness = RecordingLinkedInSandboxHarness::default();
+        let killed = run_linkedin_kill_switch(
+            policy,
+            &mut harness,
+            1_090,
+            "consent:owner-disabled-linkedin",
+        )?;
+        assert_eq!(harness.destroyed, vec!["sandbox:tokyo:yura"]);
+        assert_eq!(harness.revoked, vec!["linkedin:seat:yura"]);
+        assert!(killed.verb_catalog().is_empty());
+
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![]),
+        );
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-kill-switch",
+                "intent:linkedin-kill-switch",
+            )
+            .linkedin_sandbox_policy(killed),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+        assert!(sink.transport().send_calls.is_empty());
+        assert!(sink.transport().get_calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_policy_enforced_engine_side")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.kill_switch_engaged")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_sandbox_destroyed")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_verb_catalog_revoked")
+                .map(String::as_str),
+            Some("true")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_daily_dm_cap_holds_before_mcp_transport()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xC2));
+        allow_linkedin_send(&vault, &actor)?;
+        let policy = active_linkedin_policy()?
+            .with_state(LinkedInSeatDispatchState::active().with_dm_sends_today(15));
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![]),
+        );
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(actor, "outbound:intent:linkedin-cap", "intent:linkedin-cap")
+                .linkedin_sandbox_policy(policy),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(sink.transport().send_calls.is_empty());
+        assert!(sink.transport().get_calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.daily_dm_cap")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_daily_dm_cap")
+                .map(String::as_str),
+            Some("15")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_dm_sends_today")
+                .map(String::as_str),
+            Some("15")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_cadence_holds_before_mcp_transport()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xC3));
+        allow_linkedin_send(&vault, &actor)?;
+        let policy = active_linkedin_policy()?
+            .with_state(LinkedInSeatDispatchState::active().with_next_send_not_before(1_500));
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![]),
+        );
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-cadence",
+                "intent:linkedin-cadence",
+            )
+            .linkedin_sandbox_policy(policy),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(sink.transport().send_calls.is_empty());
+        assert!(sink.transport().get_calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.cadence_not_ready")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_next_send_not_before")
+                .map(String::as_str),
+            Some("1500")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn linkedin_sweeps_are_suppressed_before_mcp_transport()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let actor = OutboundDispatchActor::agent(entity(0xC4));
+        allow_linkedin_send(&vault, &actor)?;
+        let policy =
+            active_linkedin_policy()?.with_state(LinkedInSeatDispatchState::active().as_sweep());
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![]),
+        );
+        let result = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                actor,
+                "outbound:intent:linkedin-sweep",
+                "intent:linkedin-sweep",
+            )
+            .linkedin_sandbox_policy(policy),
+            &mut sink,
+        )?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+        assert!(sink.transport().send_calls.is_empty());
+        assert!(sink.transport().get_calls.is_empty());
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.no_sweeps")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_sweeps_allowed")
+                .map(String::as_str),
+            Some("false")
         );
         Ok(())
     }
