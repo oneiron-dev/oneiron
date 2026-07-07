@@ -1301,7 +1301,7 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
     Ok(receipts)
 }
 
-fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
+pub(crate) fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
     let mut fields = BTreeMap::new();
     fields.insert("actor_class".to_owned(), record.actor_class.clone());
     fields.insert("content_kind".to_owned(), record.content_kind.clone());
@@ -1325,6 +1325,11 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
     }
     if let Some(grant_ref) = record.grant_ref.as_ref() {
         fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
+        // OF-234 bundle-consent rows reference their bundle through the grant
+        // ref; surfacing it as `bundle_ref` joins them into the RS4 bundle lane.
+        if grant_ref.starts_with("bundle:") {
+            fields.insert(FIELD_BUNDLE_REF.to_owned(), grant_ref.clone());
+        }
     }
     if let Some(notice) = select_gate_system_notice_for_receipt(&record.system_notices) {
         fields.insert("system_notice_type".to_owned(), notice.notice_type.clone());
@@ -1356,7 +1361,16 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
         job_ref: None,
         trigger_ref: record
             .claim_id
-            .map(|id| format!("claim:{}", hex_lower(&id))),
+            .map(|id| format!("claim:{}", hex_lower(&id)))
+            .or_else(|| {
+                // A bundle-level row (no claim id) opens its dreamer run: the
+                // RS3 door on the bundle receipt reopens the inbox group.
+                record
+                    .grant_ref
+                    .as_deref()
+                    .and_then(|grant_ref| grant_ref.strip_prefix("bundle:"))
+                    .map(str::to_owned)
+            }),
         policy_trace,
         fields,
     }
@@ -1894,7 +1908,7 @@ fn append_federation_scope_fields(
     }
 }
 
-fn hex_lower(bytes: &[u8]) -> String {
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

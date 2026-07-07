@@ -236,7 +236,7 @@ const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
 const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
-const GATE_DECISION_LEDGER_VERSION: u8 = 0;
+pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
@@ -1607,6 +1607,30 @@ impl Store {
         claim_id: &EntityId,
         created_at: u64,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.close_pending_gate_consent_in_txn(
+            wtxn,
+            claim_id,
+            created_at,
+            "let_go",
+            vec!["gate.pending.gap_decayed".to_owned()],
+            None,
+        )
+    }
+
+    /// Closes one pending gate consent with an explicit resolution outcome:
+    /// appends a decision-ledger row derived from the original pending
+    /// decision, then removes the tray row. `let_go` (lapse) and the OF-234
+    /// inbox bundle verbs (`approved`/`rejected`) share this path so every
+    /// resolution leaves a per-item receipt.
+    pub(crate) fn close_pending_gate_consent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        created_at: u64,
+        outcome: &str,
+        reason_codes: Vec<String>,
+        grant_ref: Option<String>,
+    ) -> Result<Option<GateDecisionRecord>> {
         let Some(pending) = self.pending_gate_consent_in_txn(wtxn, claim_id)? else {
             return Ok(None);
         };
@@ -1624,8 +1648,8 @@ impl Store {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id: GateDecisionId::now(),
             created_at,
-            outcome: "let_go".to_owned(),
-            reason_codes: vec!["gate.pending.gap_decayed".to_owned()],
+            outcome: outcome.to_owned(),
+            reason_codes,
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
             actor_class: original.actor_class,
@@ -1633,7 +1657,7 @@ impl Store {
             content_kind: original.content_kind,
             policy_manifest_version: original.policy_manifest_version,
             claim_id: Some(pending.claim_id),
-            grant_ref: None,
+            grant_ref,
             diff_handle: pending.diff_handle,
             read_frontier_hash: pending.read_frontier_hash,
         };

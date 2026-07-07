@@ -36,6 +36,7 @@ pub mod graph_fs;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod identity_reputation;
+pub mod inbox;
 pub mod ingest;
 pub mod job_queue;
 pub mod lens;
@@ -316,6 +317,12 @@ pub use crate::identity_reputation::{
     PREDICATE_IDENTITY_REPUTATION_SPAM_LABEL_OBSERVATIONS,
     PREDICATE_IDENTITY_REPUTATION_UPDATED_AT, PREDICATE_IDENTITY_REPUTATION_WARMUP_STAGE,
     WARMUP_COLD_DAILY_CAP, WARMUP_WARMING_DAILY_CAP, is_identity_reputation_claim_predicate,
+};
+pub use crate::inbox::{
+    INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
+    INBOX_SUBCLUSTER_MIN_MEMBERS, InboxBulkVerb, InboxBundleResolution, InboxExceptionClass,
+    InboxGroup, InboxGroupMember, InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial,
+    InboxSubCluster,
 };
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
