@@ -10333,6 +10333,15 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         ErrorKind::ClaimAlreadyClosed | ErrorKind::ProvenanceClaimAlreadyClosed => {
             ApiError::invalid_state(Some("memory_lifecycle_closed"))
         }
+        ErrorKind::HostedMediaHashMatchKnownMatch => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("hosted_media_hash_match_known_match".to_owned()),
+            },
+            [
+                "Remove public access, preserve evidence, and follow the known-CSAM hosted media runbook.",
+            ],
+        ),
         ErrorKind::GateWriteRejected => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
@@ -18741,6 +18750,31 @@ mod tests {
             error.message().contains("unsupported temporal expression"),
             "message should expose the temporal parse failure"
         );
+    }
+
+    #[test]
+    fn core_engine_error_maps_hosted_media_known_match_to_invalid_state() {
+        let error = core_engine_error(
+            "core ingest failed",
+            oneiron::Error::HostedMediaHashMatchKnownMatch {
+                provider: "unit-provider".into(),
+                reference: "case-123".into(),
+                path: "assets/known.bin".into(),
+                content_hash: Box::new([0xAB; 32]),
+            },
+        );
+
+        assert_eq!(error.status(), StatusCode::CONFLICT);
+        assert_eq!(error.code(), ErrorCode::InvalidState);
+        assert_eq!(
+            error.details(),
+            &ApiErrorDetails::InvalidState {
+                state: Some("hosted_media_hash_match_known_match".to_owned()),
+            }
+        );
+        assert!(error.message().contains("unit-provider"));
+        assert!(error.message().contains("case-123"));
+        assert!(error.message().contains("assets/known.bin"));
     }
 
     #[test]

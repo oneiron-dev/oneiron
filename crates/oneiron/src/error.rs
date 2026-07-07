@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::claim::ClaimLifecycleStatus;
 use crate::types::{
     ENTITY_TYPE_FACET, EntityId, TemporalExpressionParseError, TypeByteBand, VadComponent,
+    bytes_to_hex_lower,
 };
 
 /// Result type used throughout the crate.
@@ -186,6 +187,7 @@ pub enum ErrorKind {
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
+    HostedMediaHashMatchKnownMatch,
     InvalidCodeSymbolManifestBody,
     InvalidRepoMutationRecord,
     RepoMutationFailed,
@@ -499,6 +501,18 @@ pub enum Error {
     /// validation. Nothing was written.
     #[error("invalid codebase snapshot body: {0}")]
     InvalidCodebaseSnapshotBody(&'static str),
+    /// A hosted-media hash-match provider reported a known match. Nothing was
+    /// written; provider metadata is preserved for incident handling.
+    #[error(
+        "hosted media hash-match known match: provider={provider:?}, reference={reference:?}, path={path:?}, content_hash={}",
+        bytes_to_hex_lower(content_hash.as_ref())
+    )]
+    HostedMediaHashMatchKnownMatch {
+        provider: Box<str>,
+        reference: Box<str>,
+        path: Box<str>,
+        content_hash: Box<[u8; 32]>,
+    },
     /// A CODE_ARTIFACT symbol/chunk sidecar failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid code symbol manifest body: {0}")]
@@ -965,6 +979,9 @@ impl Error {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
             }
             Self::InvalidCodebaseSnapshotBody(_) => ErrorKind::InvalidCodebaseSnapshotBody,
+            Self::HostedMediaHashMatchKnownMatch { .. } => {
+                ErrorKind::HostedMediaHashMatchKnownMatch
+            }
             Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
             Self::InvalidRepoMutationRecord(_) => ErrorKind::InvalidRepoMutationRecord,
             Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,

@@ -192,8 +192,9 @@ pub use crate::codebase::{
     CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
     CODEBASE_REPO_REF_MAX_BYTES, CODEBASE_SCOPE_KEY_LEN, CODEBASE_SNAPSHOT_BODY_KEYS,
     CODEBASE_SNAPSHOT_MAX_FILES, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
-    CodebaseSnapshot, RepoIngestConfig, RepoIngestResult, RepoRef, decode_codebase_snapshot,
-    encode_codebase_snapshot,
+    CodebaseSnapshot, HostedMediaHashMatchDecision, HostedMediaHashMatchInput,
+    HostedMediaHashMatchProvider, NoopHostedMediaHashMatchProvider, RepoIngestConfig,
+    RepoIngestResult, RepoRef, decode_codebase_snapshot, encode_codebase_snapshot,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
 pub use crate::counterparty_contact::{

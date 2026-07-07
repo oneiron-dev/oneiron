@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 use gix::bstr::ByteSlice;
@@ -13,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, EntityId, TimeRange,
+    bytes_to_hex_lower,
 };
 
 pub const CODEBASE_REPO_REF_MAX_BYTES: usize = 1024;
@@ -234,6 +236,56 @@ pub struct RepoIngestResult {
     pub snapshot: CodebaseSnapshot,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HostedMediaHashMatchInput<'a> {
+    pub project_id: &'a str,
+    pub path: &'a str,
+    pub media_type: &'static str,
+    pub content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
+    pub size_bytes: u64,
+    pub bytes: &'a [u8],
+}
+
+impl fmt::Debug for HostedMediaHashMatchInput<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HostedMediaHashMatchInput")
+            .field("project_id", &self.project_id)
+            .field("path", &self.path)
+            .field("media_type", &self.media_type)
+            .field("content_hash", &bytes_to_hex_lower(&self.content_hash))
+            .field("size_bytes", &self.size_bytes)
+            .field("bytes", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostedMediaHashMatchDecision {
+    NoMatch,
+    KnownMatch { provider: String, reference: String },
+}
+
+pub trait HostedMediaHashMatchProvider {
+    fn check_hosted_media(
+        &self,
+        input: HostedMediaHashMatchInput<'_>,
+    ) -> Result<HostedMediaHashMatchDecision>;
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoopHostedMediaHashMatchProvider;
+
+impl HostedMediaHashMatchProvider for NoopHostedMediaHashMatchProvider {
+    fn check_hosted_media(
+        &self,
+        _input: HostedMediaHashMatchInput<'_>,
+    ) -> Result<HostedMediaHashMatchDecision> {
+        Ok(HostedMediaHashMatchDecision::NoMatch)
+    }
+}
+
 pub struct CodebaseSnapshotMount<'a> {
     vault: &'a Vault,
     code_artifact_id: EntityId,
@@ -439,6 +491,21 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<RepoIngestResult> {
+        let provider = NoopHostedMediaHashMatchProvider;
+        self.ingest_local_repo_at_commit_with_hosted_media_hash_match_provider(
+            project_id, config, commit_ref, occurred, learned_at, &provider,
+        )
+    }
+
+    pub fn ingest_local_repo_at_commit_with_hosted_media_hash_match_provider(
+        &self,
+        project_id: impl Into<String>,
+        config: &RepoIngestConfig,
+        commit_ref: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+        hash_match_provider: &(impl HostedMediaHashMatchProvider + ?Sized),
+    ) -> Result<RepoIngestResult> {
         let project_id = project_id.into();
         validate_project_id(&project_id)?;
         if commit_ref.trim().is_empty() || commit_ref.chars().any(char::is_control) {
@@ -474,15 +541,15 @@ impl Vault {
         let mut blobs = Vec::<RepoIngestBlob>::new();
         collect_repo_blobs(&tree, "", &mut blobs)?;
         blobs.sort_by(|a, b| a.path.cmp(&b.path));
+        check_hosted_media_hash_matches(&project_id, &blobs, hash_match_provider)?;
 
         let files = blobs
             .iter()
             .map(|blob| {
                 Ok(CodebaseFileEntry::new(
                     blob.path.clone(),
-                    *blake3::hash(&blob.data).as_bytes(),
-                    u64::try_from(blob.data.len())
-                        .map_err(|_| Error::ArithmeticOverflow("codebase blob length overflow"))?,
+                    blob.content_hash,
+                    blob.size_bytes,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -502,8 +569,7 @@ impl Vault {
 
         let mut batch = self.batch();
         for blob in &blobs {
-            let content_hash = *blake3::hash(&blob.data).as_bytes();
-            let asset_id = codebase_asset_entity_id(&content_hash)?;
+            let asset_id = codebase_asset_entity_id(&blob.content_hash)?;
             batch = batch.put(
                 &asset_id,
                 ENTITY_TYPE_ASSET,
@@ -939,7 +1005,123 @@ fn write_hash_len(hasher: &mut blake3::Hasher, value: usize) -> Result<()> {
 
 struct RepoIngestBlob {
     path: String,
+    content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
+    size_bytes: u64,
     data: Vec<u8>,
+}
+
+fn check_hosted_media_hash_matches(
+    project_id: &str,
+    blobs: &[RepoIngestBlob],
+    provider: &(impl HostedMediaHashMatchProvider + ?Sized),
+) -> Result<()> {
+    for blob in blobs {
+        let Some(media_type) = hosted_media_type_for_blob(&blob.path, &blob.data) else {
+            continue;
+        };
+        let decision = provider.check_hosted_media(HostedMediaHashMatchInput {
+            project_id,
+            path: &blob.path,
+            media_type,
+            content_hash: blob.content_hash,
+            size_bytes: blob.size_bytes,
+            bytes: &blob.data,
+        })?;
+        match decision {
+            HostedMediaHashMatchDecision::NoMatch => {}
+            HostedMediaHashMatchDecision::KnownMatch {
+                provider,
+                reference,
+            } => {
+                return Err(Error::HostedMediaHashMatchKnownMatch {
+                    provider: provider.into_boxed_str(),
+                    reference: reference.into_boxed_str(),
+                    path: blob.path.clone().into_boxed_str(),
+                    content_hash: Box::new(blob.content_hash),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hosted_media_type_for_blob(path: &str, bytes: &[u8]) -> Option<&'static str> {
+    sniff_hosted_media_type(bytes).or_else(|| hosted_media_type_for_path(path))
+}
+
+fn hosted_media_type_for_path(path: &str) -> Option<&'static str> {
+    let (_, extension) = path.rsplit_once('.')?;
+    if extension.eq_ignore_ascii_case("png") {
+        Some("image/png")
+    } else if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") {
+        Some("image/jpeg")
+    } else if extension.eq_ignore_ascii_case("gif") {
+        Some("image/gif")
+    } else if extension.eq_ignore_ascii_case("webp") {
+        Some("image/webp")
+    } else if extension.eq_ignore_ascii_case("avif") {
+        Some("image/avif")
+    } else if extension.eq_ignore_ascii_case("heic") {
+        Some("image/heic")
+    } else if extension.eq_ignore_ascii_case("heif") {
+        Some("image/heif")
+    } else if extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("m4v") {
+        Some("video/mp4")
+    } else if extension.eq_ignore_ascii_case("mov") {
+        Some("video/quicktime")
+    } else if extension.eq_ignore_ascii_case("webm") {
+        Some("video/webm")
+    } else {
+        None
+    }
+}
+
+fn sniff_hosted_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.len() >= 3 && bytes[0..3] == [0xff, 0xd8, 0xff] {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if let Some(media_type) = sniff_iso_bmff_media_type(bytes) {
+        Some(media_type)
+    } else if bytes.starts_with(b"\x1a\x45\xdf\xa3")
+        && bytes[..bytes.len().min(64)]
+            .windows(4)
+            .any(|w| w == b"webm")
+    {
+        Some("video/webm")
+    } else {
+        None
+    }
+}
+
+fn sniff_iso_bmff_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 12 || &bytes[4..8] != b"ftyp" {
+        return None;
+    }
+    let box_len = u32::from_be_bytes(bytes[0..4].try_into().ok()?) as usize;
+    if box_len < 12 {
+        return None;
+    }
+    let scan_len = box_len.min(bytes.len()).min(128);
+    let brands = bytes[8..scan_len].chunks_exact(4);
+    let mut fallback_video = false;
+    for brand in brands {
+        match brand {
+            b"avif" | b"avis" => return Some("image/avif"),
+            b"heic" | b"heix" | b"hevc" | b"hevx" => return Some("image/heic"),
+            b"heif" | b"mif1" | b"msf1" => return Some("image/heif"),
+            b"qt  " => return Some("video/quicktime"),
+            b"isom" | b"iso2" | b"mp41" | b"mp42" | b"m4v " | b"M4V " | b"avc1" | b"dash" => {
+                fallback_video = true;
+            }
+            _ => {}
+        }
+    }
+    fallback_video.then_some("video/mp4")
 }
 
 fn collect_repo_blobs(
@@ -979,9 +1161,15 @@ fn collect_repo_blobs(
                 let mut blob = blob_object.try_into_blob().map_err(|_| {
                     Error::InvalidCodebaseSnapshotBody("Git blob object could not be read")
                 })?;
+                let data = blob.take_data();
+                let content_hash = *blake3::hash(&data).as_bytes();
+                let size_bytes = u64::try_from(data.len())
+                    .map_err(|_| Error::ArithmeticOverflow("codebase blob length overflow"))?;
                 out.push(RepoIngestBlob {
                     path,
-                    data: blob.take_data(),
+                    content_hash,
+                    size_bytes,
+                    data,
                 });
             }
             EntryKind::Commit => {}
@@ -1368,6 +1556,7 @@ mod tests {
         EdgeActorClass, EdgeKind, HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange,
         VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
     };
+    use std::cell::RefCell;
     use std::fs;
     use std::path::Path;
     use std::process::{Command, Stdio};
@@ -1542,6 +1731,97 @@ mod tests {
         run_git(repo_dir.path(), &["add", "."])?;
         run_git(repo_dir.path(), &["commit", "-m", "initial"])?;
         Ok(repo_dir)
+    }
+
+    fn commit_test_file(repo_dir: &Path, path: &str, bytes: &[u8], message: &str) -> Result<()> {
+        let full_path = repo_dir.join(path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(full_path, bytes)?;
+        run_git(repo_dir, &["add", path])?;
+        run_git(repo_dir, &["commit", "-m", message])
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct HashMatchCall {
+        project_id: String,
+        path: String,
+        media_type: &'static str,
+        content_hash: [u8; CODEBASE_CONTENT_HASH_LEN],
+        size_bytes: u64,
+        bytes: Vec<u8>,
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingHashMatchProvider {
+        calls: RefCell<Vec<HashMatchCall>>,
+    }
+
+    impl HostedMediaHashMatchProvider for RecordingHashMatchProvider {
+        fn check_hosted_media(
+            &self,
+            input: HostedMediaHashMatchInput<'_>,
+        ) -> Result<HostedMediaHashMatchDecision> {
+            self.calls.borrow_mut().push(HashMatchCall {
+                project_id: input.project_id.to_owned(),
+                path: input.path.to_owned(),
+                media_type: input.media_type,
+                content_hash: input.content_hash,
+                size_bytes: input.size_bytes,
+                bytes: input.bytes.to_vec(),
+            });
+            Ok(HostedMediaHashMatchDecision::NoMatch)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct KnownMatchProvider;
+
+    impl HostedMediaHashMatchProvider for KnownMatchProvider {
+        fn check_hosted_media(
+            &self,
+            _input: HostedMediaHashMatchInput<'_>,
+        ) -> Result<HostedMediaHashMatchDecision> {
+            Ok(HostedMediaHashMatchDecision::KnownMatch {
+                provider: "unit-provider".to_owned(),
+                reference: "case-123".to_owned(),
+            })
+        }
+    }
+
+    #[test]
+    fn noop_hosted_media_hash_match_provider_reports_no_match() -> Result<()> {
+        let bytes = b"secret-media-bytes";
+        let input = HostedMediaHashMatchInput {
+            project_id: "project.alpha",
+            path: "portrait.JPG",
+            media_type: "image/jpeg",
+            content_hash: *blake3::hash(bytes).as_bytes(),
+            size_bytes: u64::try_from(bytes.len())
+                .map_err(|_| Error::ArithmeticOverflow("test bytes"))?,
+            bytes,
+        };
+
+        let provider = NoopHostedMediaHashMatchProvider;
+        assert_eq!(
+            provider.check_hosted_media(input)?,
+            HostedMediaHashMatchDecision::NoMatch
+        );
+        assert_eq!(
+            hosted_media_type_for_blob("payload.bin", b"\xff\xd8\xff\xe0jpeg-body"),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            hosted_media_type_for_blob("portrait.JPG", b"extension-only-candidate"),
+            Some("image/jpeg")
+        );
+        assert_eq!(hosted_media_type_for_blob("README.md", b"plain text"), None);
+
+        let debug = format!("{input:?}");
+        assert!(debug.contains("bytes: \"<redacted>\""));
+        assert!(!debug.contains("secret-media-bytes"));
+        Ok(())
     }
 
     #[test]
@@ -1989,6 +2269,105 @@ mod tests {
             EdgeKind::PartOf,
             &first.code_artifact_id
         )?);
+        Ok(())
+    }
+
+    #[test]
+    fn local_repo_ingest_calls_hash_match_provider_for_hosted_media_candidates() -> Result<()> {
+        let repo_dir = create_test_repo()?;
+        let media_bytes = b"not-a-real-image-but-route-media-by-extension";
+        let renamed_media_bytes = b"\x89PNG\r\n\x1a\nmisnamed-png-body";
+        commit_test_file(
+            repo_dir.path(),
+            "assets/payload.bin",
+            renamed_media_bytes,
+            "add renamed media",
+        )?;
+        commit_test_file(
+            repo_dir.path(),
+            "assets/portrait.jpg",
+            media_bytes,
+            "add media",
+        )?;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+        let provider = RecordingHashMatchProvider::default();
+
+        vault.ingest_local_repo_at_commit_with_hosted_media_hash_match_provider(
+            "project.alpha",
+            &config,
+            "HEAD",
+            TimeRange { start: 10, end: 10 },
+            11,
+            &provider,
+        )?;
+
+        let calls = provider.calls.borrow();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls.as_slice(),
+            &[
+                HashMatchCall {
+                    project_id: "project.alpha".to_owned(),
+                    path: "assets/payload.bin".to_owned(),
+                    media_type: "image/png",
+                    content_hash: *blake3::hash(renamed_media_bytes).as_bytes(),
+                    size_bytes: u64::try_from(renamed_media_bytes.len())
+                        .map_err(|_| Error::ArithmeticOverflow("test renamed media bytes"))?,
+                    bytes: renamed_media_bytes.to_vec(),
+                },
+                HashMatchCall {
+                    project_id: "project.alpha".to_owned(),
+                    path: "assets/portrait.jpg".to_owned(),
+                    media_type: "image/jpeg",
+                    content_hash: *blake3::hash(media_bytes).as_bytes(),
+                    size_bytes: u64::try_from(media_bytes.len())
+                        .map_err(|_| Error::ArithmeticOverflow("test media bytes"))?,
+                    bytes: media_bytes.to_vec(),
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_repo_ingest_preserves_known_match_metadata() -> Result<()> {
+        let repo_dir = create_test_repo()?;
+        let media_bytes = b"\xff\xd8\xff\xe0known-jpeg";
+        commit_test_file(
+            repo_dir.path(),
+            "assets/known.bin",
+            media_bytes,
+            "add known media",
+        )?;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+
+        let error = vault
+            .ingest_local_repo_at_commit_with_hosted_media_hash_match_provider(
+                "project.alpha",
+                &config,
+                "HEAD",
+                TimeRange { start: 10, end: 10 },
+                11,
+                &KnownMatchProvider,
+            )
+            .unwrap_err();
+
+        match error {
+            Error::HostedMediaHashMatchKnownMatch {
+                provider,
+                reference,
+                path,
+                content_hash,
+            } => {
+                assert_eq!(&*provider, "unit-provider");
+                assert_eq!(&*reference, "case-123");
+                assert_eq!(&*path, "assets/known.bin");
+                assert_eq!(*content_hash, *blake3::hash(media_bytes).as_bytes());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
         Ok(())
     }
 
