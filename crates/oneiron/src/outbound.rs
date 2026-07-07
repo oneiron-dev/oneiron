@@ -1458,6 +1458,45 @@ fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
             ],
         ),
         manifest(
+            "linkedin",
+            "professional_network",
+            "LinkedIn session content is foreign platform content; normalize inbound text through the LinkedIn connector before claims are proposed.",
+            vec![
+                verb(
+                    "send_dm",
+                    "send_message",
+                    json!({
+                        "linkedin_username": "recipient vanity name or profile key",
+                        "profile_urn": "optional fsd_profile URN handle from get_person_profile",
+                        "message": "string resolved from content_ref",
+                        "confirm_send": "true only after OF-327 grant/gate approval"
+                    }),
+                    OutboundInterruptionClass::Interrupt,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundPermissionState::Conditional,
+                    true,
+                    "Wraps stickerdaniel/linkedin-mcp-server send_message; account-risk and principal-session consent remain permission gates.",
+                ),
+                verb(
+                    "connect_request",
+                    "connect_with_person",
+                    json!({
+                        "linkedin_username": "recipient vanity name or profile key",
+                        "note": "optional connection note resolved from content_ref"
+                    }),
+                    OutboundInterruptionClass::Interrupt,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundPermissionState::Conditional,
+                    true,
+                    "Wraps stickerdaniel/linkedin-mcp-server connect_with_person with optional note; cold outreach and account-risk walls remain permission gates.",
+                ),
+            ],
+        ),
+        manifest(
             "email",
             "email",
             "SMTP/provider email schema; deliverability and recipient consent are permissions, not raw capability.",
@@ -2538,6 +2577,20 @@ mod tests {
             !COMMON_OUTBOUND_VERB_KINDS.contains(&mfb_invite.kind.as_str()),
             "connector-specific verbs should not expand the common vocabulary"
         );
+
+        let linkedin_dm =
+            outbound_verb_contract("linkedin", "send-dm").expect("linkedin send_dm manifest");
+        assert_eq!(linkedin_dm.kind, "send_dm");
+        assert_eq!(linkedin_dm.channel_call, "send_message");
+        assert!(
+            !COMMON_OUTBOUND_VERB_KINDS.contains(&linkedin_dm.kind.as_str()),
+            "LinkedIn-specific DM verbs should stay manifest data"
+        );
+
+        let linkedin_connect = outbound_verb_contract("linkedin", "connect_request")
+            .expect("linkedin connect_request manifest");
+        assert_eq!(linkedin_connect.kind, "connect_request");
+        assert_eq!(linkedin_connect.channel_call, "connect_with_person");
     }
 
     #[test]
