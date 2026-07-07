@@ -28,6 +28,11 @@ postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 p256 = { workspace = true }
 futures-core = { workspace = true }
+# ARTL-3 (OF-368 D5): the edit round-trip decomposes the OPC (ZIP) bytes a
+# code-session produced so the corruption/passthrough gate verifies fidelity
+# independently of the session. rust_backend (miniz_oxide) keeps it pure Rust,
+# and both crates were already resolved transitively, so this adds no new deps.
+flate2 = "1"
 gix = { version = "0.85.0", default-features = false, features = ["revision", "sha1"] }
 tiktoken-rs = "0.12.0"
 sha2 = "0.10"
