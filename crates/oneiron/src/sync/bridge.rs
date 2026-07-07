@@ -174,6 +174,15 @@ impl ObserverAState {
     }
 }
 
+const ERR_OBSERVER_A_U_SEQ_ROW: &str = "observer a u_seq row";
+
+fn decode_observer_u_seq(raw: &[u8]) -> Result<u32> {
+    let bytes: [u8; 4] = raw
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(ERR_OBSERVER_A_U_SEQ_ROW))?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
 /// Persists one window update to `sync_state` in a single write txn:
 /// `u:w:{key}:{seq:08x}` row + `m:u_seq:w:{key}` counter bump +
 /// `svf:w:{key}` staleness flip (the persisted `sv:w:` no longer reflects
@@ -197,8 +206,7 @@ pub(crate) fn persist_window_update(
         // `u:w:{window}:00000001` before the row was corrupted.
         let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
             None => 0,
-            Some(raw) if raw.len() == 4 => u32::from_le_bytes(raw.try_into().unwrap()),
-            Some(_) => return Err(Error::CorruptedIndex("observer a u_seq row")),
+            Some(raw) => decode_observer_u_seq(raw)?,
         };
         // checked_add surfaces overflow as a typed error rather than
         // `wrapping_add`-ing to 0 and silently overwriting update key
@@ -1897,6 +1905,7 @@ mod tests {
         ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_TASK, EdgeActorClass, TimeRange, VaultConfig,
         encode_companion_record_body,
     };
+    use core::assert_matches;
     use ed25519_dalek::{Signer, SigningKey};
     use rmpv::Value;
     use std::sync::Arc;
@@ -1904,6 +1913,19 @@ mod tests {
     fn test_vault() -> Arc<Vault> {
         let dir = tempfile::tempdir().unwrap();
         Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
+    }
+
+    #[test]
+    fn decode_observer_u_seq_accepts_le_u32() {
+        assert_eq!(decode_observer_u_seq(&42u32.to_le_bytes()).unwrap(), 42);
+    }
+
+    #[test]
+    fn decode_observer_u_seq_rejects_bad_lengths_without_panic() {
+        for raw in [&[][..], &[1, 2, 3][..], &[1, 2, 3, 4, 5][..]] {
+            let err = decode_observer_u_seq(raw).expect_err("malformed u_seq row must be rejected");
+            assert_matches!(err, Error::CorruptedIndex(ERR_OBSERVER_A_U_SEQ_ROW));
+        }
     }
 
     fn task_body() -> Vec<u8> {
