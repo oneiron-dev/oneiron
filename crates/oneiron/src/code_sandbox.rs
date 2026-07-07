@@ -47,7 +47,7 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
 
 declare namespace oneiron {
   namespace clock {
-    function nowUnixMs(): number;
+    function now_unix_ms(): number;
   }
 
   namespace random {
@@ -1239,7 +1239,8 @@ mod tests {
         assert!(dts.contains("function askHuman"));
         assert!(dts.contains("function ask_human"));
         assert!(dts.contains("namespace clock"));
-        assert!(dts.contains("function nowUnixMs"));
+        assert!(dts.contains("function now_unix_ms"));
+        assert!(!dts.contains("function nowUnixMs"));
         assert!(dts.contains("namespace random"));
         assert!(dts.contains("function bytes"));
         assert!(!dts.contains("actor"));

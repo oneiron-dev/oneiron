@@ -21,7 +21,7 @@ use crate::{
     LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, SandboxBoundaryContract,
     SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    TierPrecedence, Vault,
+    SelfFailedResult, TierPrecedence, Vault,
 };
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{
@@ -657,23 +657,11 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
         let outcome = match self.gated_write.dispatch(call.clone()) {
             Ok(outcome) => outcome,
             Err(err) => {
-                if let Error::GateWriteRejected {
-                    outcome,
-                    reason_codes,
-                } = &err
-                {
-                    let denied = SelfDispatchOutcome::Denied(SelfDeniedResult {
-                        effect: call.effect(),
-                        outcome: (*outcome).to_owned(),
-                        reason_codes: reason_codes
-                            .iter()
-                            .map(|reason| (*reason).to_owned())
-                            .collect(),
-                    });
+                if let Some(error_outcome) = dispatch_error_outcome(&call, &err) {
                     let row = CodeRunBridgeCall::record(
                         seq,
                         &call,
-                        &denied,
+                        &error_outcome,
                         started_at_ms,
                         started_at_ms,
                     )?;
@@ -692,6 +680,36 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
         self.bridge_calls.push(row);
         Ok(outcome)
     }
+}
+
+fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOutcome> {
+    match err {
+        Error::GateWriteRejected {
+            outcome,
+            reason_codes,
+        } => Some(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: call.effect(),
+            outcome: (*outcome).to_owned(),
+            reason_codes: reason_codes
+                .iter()
+                .map(|reason| (*reason).to_owned())
+                .collect(),
+        })),
+        _ if records_failed_write_trap(call.effect()) => {
+            Some(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: err.to_string(),
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn records_failed_write_trap(effect: SelfEffect) -> bool {
+    matches!(
+        effect,
+        SelfEffect::MemoryPutClaim | SelfEffect::MemorySupersedeClaim | SelfEffect::MemoryPutEdge
+    )
 }
 
 fn executor_boundary_contract() -> EngineExecutorResult<SandboxBoundaryContract> {
@@ -1227,8 +1245,8 @@ mod tests {
         BudgetLease, ClaimCandidate, ClaimSubject, ContentPart, EdgeActorClass, EdgeKind,
         FatalLlmError, FinishReason, HnswConfig, LlmGenerateFuture, LlmResponse, LlmStreamResult,
         LlmUsage, ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect,
-        SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, VaultConfig, WriteActor,
-        types::ENTITY_TYPE_PERSON,
+        SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange,
+        VaultConfig, WriteActor, types::ENTITY_TYPE_PERSON,
     };
 
     use super::*;
@@ -1520,6 +1538,7 @@ mod tests {
             "function put_edge",
             "function askHuman",
             "function ask_human",
+            "function now_unix_ms",
         ] {
             assert!(
                 system.contains(advertised),
@@ -1668,6 +1687,87 @@ mod tests {
         assert_eq!(stored.bridge_calls[0].effect, SelfEffect::MemoryPutEdge);
         assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
         assert_eq!(stored.step_checkpoints.len(), 1);
+
+        let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
+        let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+        let mut retry = EngineNativeExecutor::new(
+            &vault,
+            &retry_backend,
+            &lease,
+            &mut retry_runtime,
+            &gated_write,
+        );
+        let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+        assert_eq!(
+            retry_outcome.status,
+            EngineExecutorStatus::HardStepLimitReached
+        );
+        assert!(retry_runtime.seen.is_empty());
+        assert!(
+            retry_backend
+                .requests
+                .lock()
+                .expect("requests lock")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn executor_persists_bridge_calls_when_audited_write_fails() {
+        let (_dir, vault) = open_test_vault();
+        let backend = FixtureBackend::new(["await self.memory.put_claim(claim);"]);
+        let lease = BudgetLease::for_test("executor-lease");
+        let missing_subject = entity(0xD5);
+        let claim = entity(0xD6);
+        let candidate = ClaimCandidate::new(
+            "profile.favorite_place",
+            ClaimSubject::Entity(missing_subject),
+            Value::from("tea house"),
+            0.8,
+        );
+        let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("unreachable")])
+            .with_calls([vec![SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+                claim,
+                candidate,
+                range(11),
+                12,
+            ))]]);
+        let gated_write = gated_actor_write(&vault, "run-audited-write-failure");
+        let config = executor_config(
+            entity(0x8E),
+            EngineExecutorLimits {
+                soft_steps: 1,
+                hard_steps: 1,
+            },
+        );
+        let before = gate_decision_count(&vault);
+
+        let mut executor =
+            EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+        let err = block_on_ready(executor.run(&config)).expect_err("write failure returned");
+
+        assert!(matches!(
+            err,
+            EngineExecutorError::Engine(Error::EntityNotFound)
+        ));
+        assert_eq!(gate_decision_count(&vault), before + 1);
+        assert!(
+            vault.get_claim(&claim).expect("claim lookup").is_none(),
+            "failed claim write must not commit the claim"
+        );
+        let stored = vault
+            .get_code_run_replay_record(&config.run_id)
+            .expect("load replay")
+            .expect("stored failed-step replay");
+        assert_eq!(stored.bridge_calls.len(), 1);
+        assert_eq!(stored.bridge_calls[0].effect, SelfEffect::MemoryPutClaim);
+        assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "failed");
+        assert_eq!(stored.step_checkpoints.len(), 1);
+        assert!(
+            load_utf8_output(&vault, &stored, &observation_output_path(0))
+                .expect("stored error observation")
+                .contains("entity not found")
+        );
 
         let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
         let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());

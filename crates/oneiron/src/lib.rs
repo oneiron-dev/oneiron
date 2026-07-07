@@ -175,7 +175,7 @@ pub use crate::code_revision::{
 pub use crate::code_run::{
     GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };

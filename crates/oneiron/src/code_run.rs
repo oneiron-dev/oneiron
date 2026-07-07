@@ -15,6 +15,7 @@ use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
     Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    error::{GateDenialOutcome, GateDenialReason},
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -500,7 +501,11 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
 
         let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
         self.next.set(index + 1);
-        Ok(outcome)
+        match outcome {
+            SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
+            SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
+            outcome => Ok(outcome),
+        }
     }
 }
 
@@ -1015,6 +1020,11 @@ fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
                 ),
             ),
         ]),
+        SelfDispatchOutcome::Failed(result) => request_map(vec![
+            ("kind", Value::from("failed")),
+            ("effect", Value::from(result.effect.as_str())),
+            ("error", Value::from(result.error.as_str())),
+        ]),
     }
 }
 
@@ -1056,8 +1066,32 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
             outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
             reason_codes: str_array(map_get(entries, "reason_codes")?)?,
         })),
+        "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+            error: str_value(map_get(entries, "error")?)?.to_owned(),
+        })),
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
+}
+
+fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
+    let outcome = GateDenialOutcome::parse(&result.outcome)
+        .map(GateDenialOutcome::as_str)
+        .unwrap_or("deny");
+    let reason_codes = result
+        .reason_codes
+        .iter()
+        .filter_map(|reason| GateDenialReason::from_code(reason))
+        .map(GateDenialReason::as_str)
+        .collect::<Vec<_>>();
+    Error::GateWriteRejected {
+        outcome,
+        reason_codes,
+    }
+}
+
+fn replay_failed_trap_error(_result: &SelfFailedResult) -> Error {
+    invalid_code_run_replay("replayed failed self trap")
 }
 
 fn decode_scored_entity(value: &Value) -> Result<ScoredEntity> {
@@ -1917,6 +1951,7 @@ pub enum SelfDispatchOutcome {
     MemoryEdgeWrite(SelfMemoryEdgeWriteResult),
     DurableWait(SelfDurableWait),
     Denied(SelfDeniedResult),
+    Failed(SelfFailedResult),
 }
 
 /// Result of a `self.memory.search` fixture dispatch.
@@ -1946,6 +1981,13 @@ pub struct SelfDeniedResult {
     pub effect: SelfEffect,
     pub outcome: String,
     pub reason_codes: Vec<String>,
+}
+
+/// Result of a `self.*` trap that failed after crossing an audited write boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfFailedResult {
+    pub effect: SelfEffect,
+    pub error: String,
 }
 
 /// Durable wait produced for effects that need human/external resolution.
@@ -2347,6 +2389,65 @@ mod tests {
             .dispatch(changed_call)
             .expect_err("replay must reject changed typed trap arguments");
         assert_eq!(changed.consumed(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
+        let run_id = EntityId::from_bytes([0x71; 16]).expect("run id");
+        let src = EntityId::from_bytes([0x72; 16]).expect("src id");
+        let tgt = EntityId::from_bytes([0x73; 16]).expect("tgt id");
+        let determinism = CodeRunDeterminism::new(1_719_000_001_000, [0xAB; 32]);
+        let call = SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::Mentions,
+            tgt,
+            0.7,
+        ));
+
+        let mut denied_record = CodeRunReplayRecord::new(run_id, determinism);
+        denied_record.bridge_calls.push(CodeRunBridgeCall::record(
+            0,
+            &call,
+            &SelfDispatchOutcome::Denied(SelfDeniedResult {
+                effect: SelfEffect::MemoryPutEdge,
+                outcome: "pending".to_owned(),
+                reason_codes: vec!["gate.pending.actor_ceiling".to_owned()],
+            }),
+            determinism.frozen_unix_ms,
+            determinism.frozen_unix_ms,
+        )?);
+        let denied_replay = denied_record.replay_cursor();
+        let err = denied_replay
+            .dispatch(call.clone())
+            .expect_err("denied trap replay must throw");
+        assert!(matches!(
+            err,
+            Error::GateWriteRejected {
+                outcome: "pending",
+                ref reason_codes
+            } if reason_codes == &vec!["gate.pending.actor_ceiling"]
+        ));
+        assert_eq!(denied_replay.consumed(), 1);
+
+        let failed_run = EntityId::from_bytes([0x74; 16]).expect("run id");
+        let mut failed_record = CodeRunReplayRecord::new(failed_run, determinism);
+        failed_record.bridge_calls.push(CodeRunBridgeCall::record(
+            0,
+            &call,
+            &SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::MemoryPutEdge,
+                error: "entity not found".to_owned(),
+            }),
+            determinism.frozen_unix_ms,
+            determinism.frozen_unix_ms,
+        )?);
+        let failed_replay = failed_record.replay_cursor();
+        let err = failed_replay
+            .dispatch(call)
+            .expect_err("failed trap replay must throw");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
+        assert_eq!(failed_replay.consumed(), 1);
         Ok(())
     }
 
