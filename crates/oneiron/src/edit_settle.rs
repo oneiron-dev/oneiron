@@ -5,7 +5,7 @@
 //! is *settled*. Settlement is **consume-once** (D5): exactly one of
 //!
 //! * **settle-select** — the proposal's bytes become a new blob-artifact
-//!   version (provenance [`BlobVersionProvenance::AgentRun`]), the manifest's
+//!   version (provenance [`BlobVersionProvenance::AgentRun`](crate::blob_artifact::BlobVersionProvenance::AgentRun)), the manifest's
 //!   anchor effects are replayed onto the artifact's annotation threads, and a
 //!   select receipt lands; or
 //! * **settle-discard** — the proposal is dropped and a discard receipt records
