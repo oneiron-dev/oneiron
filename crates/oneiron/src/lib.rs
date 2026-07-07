@@ -28,6 +28,7 @@ pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod embed;
+pub mod engine_executor;
 pub mod error;
 pub mod extraction_eval;
 pub mod federation;
@@ -172,11 +173,11 @@ pub use crate::code_revision::{
     encode_code_revision_fork,
 };
 pub use crate::code_run::{
-    HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfDispatcher,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
-    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
-    SelfMemoryWriteResult,
+    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfFailedResult, SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 pub use crate::code_sandbox::{
     FakeSandboxAdapter, PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_MNT_ROOT,
@@ -291,6 +292,13 @@ pub use crate::embed::{
 pub use crate::embed::{
     EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
     EMBED_PRIORITY_SURFACED_HOT, Embedder, EmbedderLocality, PendingEmbeddingInput,
+};
+pub use crate::engine_executor::{
+    ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME,
+    ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig, EngineExecutorError,
+    EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
+    EngineNativeExecutor, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
+    JsCodeModeStepOutcome,
 };
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::extraction_eval::{
