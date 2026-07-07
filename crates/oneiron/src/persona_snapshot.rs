@@ -31,13 +31,13 @@ use rmpv::Value;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead,
-    ScopedReadActorKey, claim_sensitivity_band,
+    ScopedReadActorKey, claim_sensitivity_band, decode_claim_body,
 };
 use crate::error::{Error, Result};
 use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 use crate::types::{
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EntityId, TimeRange,
-    bytes_to_hex_lower,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EntityId,
+    TimeRange, bytes_to_hex_lower,
 };
 
 /// Schema version string carried by every persona snapshot compile stamp.
@@ -116,6 +116,11 @@ const ROW_ID_PREFIX: &str = "row:";
 const ROW_ID_HASH_CHARS: usize = 16;
 const MAX_IDENTITY_LINE_BYTES: usize = 2_048;
 const FINGERPRINT_HEX_LEN: usize = 64;
+
+/// Identity line persisted on the export record when the owner struck the
+/// identity row: the export record is a queryable row, so struck name/role
+/// text must not survive in it either.
+pub const STRUCK_IDENTITY_LINE_PLACEHOLDER: &str = "(identity struck)";
 
 const KEY_SCHEMA_VERSION: &str = "schemaVersion";
 const KEY_SUBJECT_REF: &str = "subjectRef";
@@ -750,8 +755,70 @@ fn compile_fingerprint(
         bytes.extend_from_slice(row.row_id.as_bytes());
         bytes.push(0);
         bytes.push(u8::from(row.struck));
+        // Salience is rendered on the MemoryPack row, so it is consent-bound
+        // content: a salience-only edit must invalidate the stamp identity
+        // even though the row id (the strike handle) stays stable.
+        match row.salience {
+            Some(salience) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&salience.to_bits().to_be_bytes());
+            }
+            None => bytes.push(0),
+        }
     }
     hash_hex(&bytes)
+}
+
+/// Verifies that a compile presented for export still hashes to its own
+/// stamp: every row id must re-derive from the row's content, agent-take
+/// rows must carry attribution, and the whole compile must re-fingerprint
+/// to `stamp.compiled_fingerprint`. `PersonaSnapshotCompile` fields are
+/// public, so consent binding is only real if export re-computes the
+/// content address instead of trusting the caller's stamp string.
+fn verify_compile_against_stamp(compile: &PersonaSnapshotCompile) -> Result<()> {
+    for row in &compile.rows {
+        if row.kind == PersonaSnapshotRowKind::AgentTake
+            && row
+                .attribution
+                .as_deref()
+                .is_none_or(|attribution| attribution.trim().is_empty())
+        {
+            return Err(invalid_snapshot("agent take rows must carry attribution"));
+        }
+        let expected = row_id(
+            row.kind,
+            &row.subject_ref,
+            &row.text,
+            row.attribution.as_deref(),
+            &row.provenance_refs,
+        );
+        if expected != row.row_id {
+            return Err(invalid_snapshot(
+                "compile row does not match its content-derived row id",
+            ));
+        }
+    }
+    if compile.stamp.schema_version != PERSONA_SNAPSHOT_COMPILE_STAMP_SCHEMA_VERSION
+        || compile.stamp.subject_ref != compile.subject_ref
+    {
+        return Err(invalid_snapshot(
+            "compile stamp header does not match the compile",
+        ));
+    }
+    let expected = compile_fingerprint(
+        &compile.subject_ref,
+        &compile.identity_line,
+        compile.audience_ref.as_deref(),
+        compile.takes_included,
+        compile.stale_after_secs,
+        &compile.rows,
+    );
+    if expected != compile.stamp.compiled_fingerprint {
+        return Err(invalid_snapshot(
+            "compile content does not match its stamp fingerprint",
+        ));
+    }
+    Ok(())
 }
 
 struct CandidateClaim {
@@ -782,6 +849,25 @@ fn person_fallback_label(person_ref: &EntityId) -> String {
     format!("person {}", &person_ref.to_hex()[..8])
 }
 
+/// Collapses newline runs to single spaces so vault text can never open a
+/// new markdown block (heading, list item, code fence) inside the card.
+fn markdown_safe_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_break = false;
+    for ch in text.chars() {
+        if ch == '\n' || ch == '\r' {
+            in_break = true;
+            continue;
+        }
+        if in_break {
+            out.push(' ');
+            in_break = false;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 impl crate::Vault {
     /// Compiles the OF-325 persona snapshot preview for `subject_ref`: the
     /// strikeable row list plus the persona compile stamp.
@@ -803,6 +889,11 @@ impl crate::Vault {
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_PERSON {
             return Err(invalid_snapshot("subject must be a PERSON entity"));
+        }
+        // A user_delete soft erase keeps a bodiless header shell; a deleted
+        // person is absent for compilation, never a fallback card.
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN {
+            return Err(Error::EntityNotFound);
         }
 
         let audience_read = options
@@ -1047,6 +1138,7 @@ impl crate::Vault {
                 "export consent granted_by must be non-empty",
             ));
         }
+        verify_compile_against_stamp(compile)?;
         let compile_stamp = compile.stamp.identity();
         if consent.compile_stamp != compile_stamp {
             return Err(Error::PersonaSnapshotConsentStale {
@@ -1095,10 +1187,18 @@ impl crate::Vault {
         artifact_bytes.extend_from_slice(markdown.as_bytes());
         let artifact_fingerprint = hash_hex(&artifact_bytes);
 
+        // A struck identity row means the name/role never leaves the vault:
+        // the export record is itself a queryable row, so it must not retain
+        // the struck text either.
+        let recorded_identity_line = if identity_included {
+            compile.identity_line.clone()
+        } else {
+            STRUCK_IDENTITY_LINE_PLACEHOLDER.to_owned()
+        };
         let record = PersonaSnapshotExportRecord {
             subject_ref: compile.subject_ref,
             audience_ref: compile.audience_ref.clone(),
-            identity_line: compile.identity_line.clone(),
+            identity_line: recorded_identity_line,
             compiled_at_secs: compile.compiled_at_secs,
             stale_after_secs: compile.stale_after_secs,
             compiled_fingerprint: compile.stamp.compiled_fingerprint.clone(),
@@ -1187,9 +1287,22 @@ impl crate::Vault {
     ) -> Result<Vec<CandidateClaim>> {
         let mut candidates = Vec::new();
         for claim_id in self.claims_for_subject(person_ref)? {
-            let Some(body) = self.get_claim(&claim_id)? else {
+            let Some(raw) = self.get_raw(&claim_id)? else {
                 continue;
             };
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let body_bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if body_bytes.is_empty() {
+                // A user_delete soft erase keeps a bodiless claim shell in
+                // the claim_of index; deleted claims are suppressed, never
+                // an error that blocks the whole compile.
+                continue;
+            }
+            let body = decode_claim_body(body_bytes, true)?;
             if body.subject != ClaimSubject::Entity(*person_ref) || !admissible_claim(&body) {
                 continue;
             }
@@ -1222,6 +1335,17 @@ fn render_memory_pack_lite(
     let rows: Vec<serde_json::Value> = included
         .iter()
         .map(|row| {
+            // Relationship rows stay COARSE in the exported artifact: name +
+            // role text only, no third-party entity ids or vault-internal
+            // provenance refs (those exceed the coarse default; claim rows
+            // about others only appear at all via explicit un-strike).
+            if row.kind == PersonaSnapshotRowKind::Relationship {
+                return serde_json::json!({
+                    "row_id": row.row_id,
+                    "kind": row.kind.as_str(),
+                    "text": row.text,
+                });
+            }
             let mut entry = serde_json::json!({
                 "row_id": row.row_id,
                 "kind": row.kind.as_str(),
@@ -1262,7 +1386,10 @@ fn render_markdown_card(
 ) -> String {
     let mut out = String::new();
     if identity_included {
-        out.push_str(&format!("# {}\n", compile.identity_line));
+        out.push_str(&format!(
+            "# {}\n",
+            markdown_safe_line(&compile.identity_line)
+        ));
     } else {
         out.push_str("# Persona snapshot\n");
     }
@@ -1292,19 +1419,24 @@ fn render_markdown_card(
         }
         out.push_str(&format!("\n## {title}\n\n"));
         for row in rows {
-            let provenance = if row.provenance_refs.is_empty() {
+            // Relationship rows stay COARSE in the exported artifact:
+            // name + role text only, no vault-internal provenance refs.
+            let provenance = if row.provenance_refs.is_empty()
+                || row.kind == PersonaSnapshotRowKind::Relationship
+            {
                 String::new()
             } else {
                 format!(" `[{}]`", row.provenance_refs.join(", "))
             };
+            let text = markdown_safe_line(&row.text);
             match &row.attribution {
                 Some(attribution) => {
                     out.push_str(&format!(
-                        "- {attribution} (take): {}{provenance}\n",
-                        row.text
+                        "- {} (take): {text}{provenance}\n",
+                        markdown_safe_line(attribution)
                     ));
                 }
-                None => out.push_str(&format!("- {}{provenance}\n", row.text)),
+                None => out.push_str(&format!("- {text}{provenance}\n")),
             }
         }
     };
@@ -1323,6 +1455,7 @@ fn render_markdown_card(
 mod tests {
     use super::*;
     use crate::claim::ClaimSource;
+    use crate::deletion::DeleteReason;
     use crate::receipt::{ReceiptKind, ReceiptQuery};
     use crate::types::companion::{
         CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
@@ -1841,6 +1974,229 @@ mod tests {
         let err = encode_persona_snapshot_export_body(&overlapping)
             .expect_err("overlapping row id lists must be rejected");
         assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
+        Ok(())
+    }
+
+    #[test]
+    fn soft_deleted_subject_is_absent_for_compile() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+
+        vault.delete_entity_with_reason(&subject, DeleteReason::UserDelete)?;
+
+        let err = vault
+            .compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())
+            .expect_err("a soft-deleted person must be absent, not a fallback card");
+        assert_eq!(err.kind(), ErrorKind::EntityNotFound);
+        Ok(())
+    }
+
+    #[test]
+    fn soft_deleted_claim_shells_are_skipped_in_compile() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+        let deleted = put_claim(
+            &vault,
+            subject,
+            "profile.preference",
+            "prefers tea over coffee",
+            0.8,
+            None,
+        )?;
+        put_claim(&vault, subject, "profile.hobby", "bouldering", 0.7, None)?;
+
+        vault.delete_entity_with_reason(&deleted, DeleteReason::UserDelete)?;
+
+        let compile =
+            vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+        assert!(
+            compile
+                .rows
+                .iter()
+                .all(|row| !row.text.contains("prefers tea over coffee")),
+            "a deleted claim shell must be suppressed, not compiled"
+        );
+        assert!(
+            compile
+                .rows
+                .iter()
+                .any(|row| row.text.contains("bouldering")),
+            "one deleted claim must not block the rest of the compile"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tampered_compile_is_rejected_at_export() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+        put_claim(
+            &vault,
+            subject,
+            "profile.preference",
+            "prefers tea over coffee",
+            0.8,
+            None,
+        )?;
+
+        let compile =
+            vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+
+        let mut text_tampered = compile.clone();
+        let row = text_tampered
+            .rows
+            .iter_mut()
+            .find(|row| row.kind == PersonaSnapshotRowKind::SubjectClaim)
+            .expect("subject claim row");
+        row.text = "prefers coffee over tea".to_owned();
+        let err = vault
+            .export_persona_snapshot(
+                &text_tampered,
+                &PersonaSnapshotStrikeList::default(),
+                &owner_consent(&compile),
+            )
+            .expect_err("mutated row text under a kept stamp must be rejected");
+        assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
+
+        let mut salience_tampered = compile.clone();
+        let row = salience_tampered
+            .rows
+            .iter_mut()
+            .find(|row| row.kind == PersonaSnapshotRowKind::SubjectClaim)
+            .expect("subject claim row");
+        row.salience = Some(0.01);
+        let err = vault
+            .export_persona_snapshot(
+                &salience_tampered,
+                &PersonaSnapshotStrikeList::default(),
+                &owner_consent(&compile),
+            )
+            .expect_err("salience is rendered content, so it is stamp-bound too");
+        assert_eq!(err.kind(), ErrorKind::InvalidPersonaSnapshot);
+        Ok(())
+    }
+
+    #[test]
+    fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        let friend = put_person(&vault, 0xB1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+        put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
+        put_relationship(&vault, subject, friend, "coworker")?;
+
+        let compile =
+            vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+        let artifact = vault.export_persona_snapshot(
+            &compile,
+            &PersonaSnapshotStrikeList::default(),
+            &owner_consent(&compile),
+        )?;
+
+        let pack: serde_json::Value =
+            serde_json::from_str(&artifact.memory_pack_json).expect("valid JSON");
+        let relationship_row = pack["rows"]
+            .as_array()
+            .expect("rows array")
+            .iter()
+            .find(|row| row["kind"] == "relationship")
+            .expect("relationship row in pack");
+        assert_eq!(relationship_row["text"], "Kenji — coworker");
+        assert!(
+            relationship_row.get("subject_ref").is_none(),
+            "coarse relationship rows must not carry third-party entity ids"
+        );
+        assert!(
+            relationship_row.get("provenance_refs").is_none(),
+            "coarse relationship rows must not carry vault-internal refs"
+        );
+        assert!(
+            !artifact.memory_pack_json.contains(&friend.to_hex()),
+            "the third party's entity id must not appear anywhere in the pack"
+        );
+        assert!(
+            !artifact.markdown.contains("companion:"),
+            "the markdown card must not carry companion record refs"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn markdown_render_collapses_multiline_text() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+        put_claim(
+            &vault,
+            subject,
+            "profile.note",
+            "line one\n# forged heading\n- forged bullet",
+            0.8,
+            None,
+        )?;
+
+        let compile =
+            vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+        let artifact = vault.export_persona_snapshot(
+            &compile,
+            &PersonaSnapshotStrikeList::default(),
+            &owner_consent(&compile),
+        )?;
+
+        assert!(
+            !artifact.markdown.contains("\n# forged heading"),
+            "claim text must not open a new markdown block"
+        );
+        assert!(
+            !artifact.markdown.contains("\n- forged bullet"),
+            "claim text must not inject new list items"
+        );
+        assert!(
+            artifact
+                .markdown
+                .contains("line one # forged heading - forged bullet"),
+            "the text itself stays, collapsed onto one line"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let subject = put_person(&vault, 0xA1)?;
+        put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+        put_claim(&vault, subject, "profile.hobby", "bouldering", 0.7, None)?;
+
+        let compile =
+            vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+        let identity_row = compile
+            .rows
+            .iter()
+            .find(|row| row.kind == PersonaSnapshotRowKind::Identity)
+            .expect("identity row")
+            .row_id
+            .clone();
+
+        let strikes = PersonaSnapshotStrikeList {
+            strike: BTreeSet::from([identity_row]),
+            unstrike: BTreeSet::new(),
+        };
+        let artifact =
+            vault.export_persona_snapshot(&compile, &strikes, &owner_consent(&compile))?;
+
+        assert!(!artifact.markdown.contains("Lexi"));
+        assert!(!artifact.memory_pack_json.contains("Lexi"));
+        let record = vault
+            .get_persona_snapshot_export(&artifact.export_id)?
+            .expect("export record persisted");
+        assert_eq!(record.identity_line, STRUCK_IDENTITY_LINE_PLACEHOLDER);
+        assert!(
+            !record.identity_line.contains("Lexi"),
+            "struck identity text must not survive in the queryable export record"
+        );
         Ok(())
     }
 }

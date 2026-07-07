@@ -417,8 +417,8 @@ pub use crate::persona_snapshot::{
     PERSONA_SNAPSHOT_ROLE_PREDICATE, PersonaSnapshotAgentTake, PersonaSnapshotArtifact,
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCompileStamp,
     PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow,
-    PersonaSnapshotRowKind, PersonaSnapshotStrikeList, decode_persona_snapshot_export_body,
-    encode_persona_snapshot_export_body,
+    PersonaSnapshotRowKind, PersonaSnapshotStrikeList, STRUCK_IDENTITY_LINE_PLACEHOLDER,
+    decode_persona_snapshot_export_body, encode_persona_snapshot_export_body,
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
