@@ -28,6 +28,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, Result};
+use crate::ppr;
 use crate::store::Store;
 use crate::types::{
     ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, EntityId,
@@ -63,6 +64,7 @@ const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
 
 const BLOB_ARTIFACT_VERSION_KEY_PREFIX: &[u8] = b"blob_artifact:version:v1:";
 const BLOB_ARTIFACT_HEAD_KEY_PREFIX: &[u8] = b"blob_artifact:head:v1:";
+const BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX: &[u8] = b"blob_artifact:asset_ref:v1:";
 const BLOB_ARTIFACT_ASSET_ID_DOMAIN: &[u8] = b"oneiron:blob-artifact-asset:v1";
 
 const PROVENANCE_USER_UPLOAD: &str = "user_upload";
@@ -298,11 +300,13 @@ impl Vault {
 
     /// Appends one version to the artifact's append-only chain.
     ///
-    /// The bytes are content-hashed (blake3) and stored as a
-    /// content-addressed ASSET entity; a `blob.version` claim — the LEDGER
-    /// event — is written for the version; the version record lands in
-    /// `vault_meta` at head+1. Re-appending the exact bytes of the current
-    /// head is a dedupe no-op that returns the existing head version.
+    /// The whole append is ONE LMDB write transaction: the content-addressed
+    /// ASSET bytes (blake3), the `blob.version` claim — the LEDGER event —
+    /// the version record, the head record, and the asset reference row all
+    /// land together or roll back together, so a failed append can never
+    /// leave an orphan claim or asset asserting a version that does not
+    /// exist. Re-appending the exact bytes of the current head is a dedupe
+    /// no-op that returns the existing head version.
     pub fn append_blob_artifact_version(
         &self,
         artifact_id: &EntityId,
@@ -319,75 +323,69 @@ impl Vault {
             ));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
+        let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
+        let claim_id = EntityId::now();
 
-        let next_version = {
-            let rtxn = self.store.env.read_txn()?;
+        self.with_write_txn(|wtxn| {
             require_entity_type(
                 &self.store,
-                &rtxn,
+                wtxn,
                 artifact_id,
                 ENTITY_TYPE_BLOB_ARTIFACT,
                 "append target must be a BLOB_ARTIFACT entity",
             )?;
-            match read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)? {
+            let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
+            {
                 Some(head) if head.content_hash == content_hash => return Ok(head),
                 Some(head) => head
                     .version
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?,
                 None => 1,
+            };
+            let version_key = blob_artifact_version_key(artifact_id, next_version);
+            if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
+                return Err(Error::InvalidBlobArtifactBody(
+                    "blob artifact version is already recorded",
+                ));
             }
-        };
 
-        let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
-        let claim_id = EntityId::now();
-        let candidate = ClaimCandidate::new(
-            BLOB_VERSION_CLAIM_PREDICATE,
-            ClaimSubject::Entity(*artifact_id),
-            blob_version_claim_value(next_version, &content_hash, provenance),
-            1.0,
-        );
-        let envelope = WriteEnvelope::new(
-            actor,
-            provenance.claim_source(),
-            WriteProvenance::new(write_provenance_value(provenance))?,
-            provenance.approval_status(),
-        );
-        self.batch()
-            .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
-            .commit()?;
+            let candidate = ClaimCandidate::new(
+                BLOB_VERSION_CLAIM_PREDICATE,
+                ClaimSubject::Entity(*artifact_id),
+                blob_version_claim_value(next_version, &content_hash, provenance),
+                1.0,
+            );
+            let envelope = WriteEnvelope::new(
+                actor,
+                provenance.claim_source(),
+                WriteProvenance::new(write_provenance_value(provenance))?,
+                provenance.approval_status(),
+            );
+            self.batch_in()
+                .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
+                .apply(wtxn)?;
 
-        let record = BlobArtifactVersion {
-            version: next_version,
-            content_hash,
-            provenance: provenance.clone(),
-            claim_id,
-            created_at: learned_at,
-        };
-        let encoded = encode_blob_artifact_version_record(&record)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let head = read_blob_artifact_head_in_txn(&self.store, &wtxn, artifact_id)?;
-        let head_version = head.as_ref().map_or(0, |head| head.version);
-        if head_version + 1 != next_version {
-            return Err(Error::InvalidBlobArtifactBody(
-                "blob artifact version chain advanced concurrently",
-            ));
-        }
-        let version_key = blob_artifact_version_key(artifact_id, next_version);
-        if self.store.vault_meta.get(&wtxn, &version_key)?.is_some() {
-            return Err(Error::InvalidBlobArtifactBody(
-                "blob artifact version is already recorded",
-            ));
-        }
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &version_key, &encoded)?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
-        wtxn.commit()?;
-        Ok(record)
+            let record = BlobArtifactVersion {
+                version: next_version,
+                content_hash,
+                provenance: provenance.clone(),
+                claim_id,
+                created_at: learned_at,
+            };
+            let encoded = encode_blob_artifact_version_record(&record)?;
+            self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
+            self.store
+                .vault_meta
+                .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
+            self.store.vault_meta.put(
+                wtxn,
+                &blob_artifact_asset_ref_key(&content_hash, artifact_id),
+                &[],
+            )?;
+            Ok(record)
+        })
     }
 
     pub fn blob_artifact_head(
@@ -450,22 +448,72 @@ impl Vault {
     }
 }
 
+/// Outcome of blob-artifact lifecycle cleanup: index flags and graph
+/// neighbors from any orphaned ASSET entities deleted with the chain, for
+/// the caller to fold into its own deletion accounting.
+#[derive(Debug, Default)]
+pub(crate) struct BlobArtifactLifecycleCleanup {
+    pub(crate) had_vector: bool,
+    pub(crate) had_graph_mutation: bool,
+    pub(crate) neighbors: Vec<EntityId>,
+}
+
+/// Removes an artifact's version chain, head record, and asset-reference
+/// rows, hard-deleting every ASSET entity this chain was the LAST reference
+/// to — version bytes never outlive the last chain that references them.
+/// The refcount is the `blob_artifact:asset_ref:v1:` rows (one per
+/// content-hash × artifact pair, vault-scoped like the dedupe itself).
+/// Runs inside every entity delete path (batch delete, purge, soft erase)
+/// and is a cheap no-op for entities without a version chain. Side-deleted
+/// assets carry no sync tombstone of their own: they are derived
+/// content-addressed storage, and a replay-rematerialized asset is a
+/// harmless orphan that the next last-reference delete removes again.
 pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
-    store.vault_meta.delete(wtxn, &blob_artifact_head_key(id))?;
+) -> Result<BlobArtifactLifecycleCleanup> {
+    let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let prefix = blob_artifact_version_prefix(id);
     let mut keys = Vec::new();
+    let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
     for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
-        let (key, _) = entry?;
+        let (key, raw) = entry?;
+        let record = decode_blob_artifact_version_record(raw)?;
+        if !hashes.contains(&record.content_hash) {
+            hashes.push(record.content_hash);
+        }
         keys.push(key.to_vec());
     }
+    store.vault_meta.delete(wtxn, &blob_artifact_head_key(id))?;
     for key in keys {
         store.vault_meta.delete(wtxn, &key)?;
     }
-    Ok(())
+    for content_hash in hashes {
+        store
+            .vault_meta
+            .delete(wtxn, &blob_artifact_asset_ref_key(&content_hash, id))?;
+        let ref_prefix = blob_artifact_asset_ref_prefix(&content_hash);
+        let still_referenced = store
+            .vault_meta
+            .prefix_iter(wtxn, &ref_prefix)?
+            .next()
+            .transpose()?
+            .is_some();
+        if still_referenced {
+            continue;
+        }
+        let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
+        let (_existed, had_vector, had_graph_mutation, neighbors) =
+            crate::batch::deindex_entity(store, wtxn, &asset_id)?;
+        ppr::invalidate_ppr_for_delete(store, wtxn, &asset_id, &neighbors)?;
+        cleanup.had_vector |= had_vector;
+        cleanup.had_graph_mutation |= had_graph_mutation;
+        cleanup.neighbors.extend(neighbors);
+    }
+    cleanup.neighbors.sort_unstable();
+    cleanup.neighbors.dedup();
+    Ok(cleanup)
 }
 
 fn read_blob_artifact_head_in_txn(
@@ -755,6 +803,24 @@ fn blob_artifact_version_key(artifact_id: &EntityId, version: u64) -> Vec<u8> {
     key
 }
 
+fn blob_artifact_asset_ref_prefix(content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(
+        BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX.len() + BLOB_ARTIFACT_CONTENT_HASH_LEN + ENTITY_ID_LEN,
+    );
+    key.extend_from_slice(BLOB_ARTIFACT_ASSET_REF_KEY_PREFIX);
+    key.extend_from_slice(content_hash);
+    key
+}
+
+fn blob_artifact_asset_ref_key(
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    artifact_id: &EntityId,
+) -> Vec<u8> {
+    let mut key = blob_artifact_asset_ref_prefix(content_hash);
+    key.extend_from_slice(artifact_id.as_bytes());
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,6 +1102,61 @@ mod tests {
                 Some(ENTITY_TYPE_CLAIM)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn blob_artifact_delete_cleans_chain_and_orphaned_assets() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+        let actor = put_actor(&vault, 10)?;
+        let artifact_a = put_artifact(&vault, 10)?;
+        let artifact_b = put_artifact(&vault, 10)?;
+
+        vault.append_blob_artifact_version(
+            &artifact_a,
+            b"shared bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(11),
+            11,
+        )?;
+        let a_only = vault.append_blob_artifact_version(
+            &artifact_a,
+            b"a-only bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(12),
+            12,
+        )?;
+        let shared = vault.append_blob_artifact_version(
+            &artifact_b,
+            b"shared bytes",
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            test_time(13),
+            13,
+        )?;
+        let a_only_asset = blob_artifact_asset_entity_id(&a_only.content_hash)?;
+        let shared_asset = blob_artifact_asset_entity_id(&shared.content_hash)?;
+
+        // Batch-path delete (BatchOp::Delete routes through deindex_entity).
+        vault.batch().delete(&artifact_a).commit()?;
+        assert!(vault.blob_artifact_versions(&artifact_a)?.is_empty());
+        assert_eq!(vault.blob_artifact_head(&artifact_a)?, None);
+        // Bytes only artifact A referenced die with their last reference…
+        assert!(vault.get_raw(&a_only_asset)?.is_none());
+        // …while the shared asset survives because artifact B still holds a
+        // reference, and B's chain stays fully readable.
+        assert!(vault.get_raw(&shared_asset)?.is_some());
+        assert_eq!(
+            vault.read_blob_artifact_version(&artifact_b, 1)?,
+            Some(b"shared bytes".to_vec())
+        );
+
+        // Deleting the LAST referencing artifact removes the shared bytes.
+        vault.delete_entity(&artifact_b)?;
+        assert!(vault.blob_artifact_versions(&artifact_b)?.is_empty());
+        assert!(vault.get_raw(&shared_asset)?.is_none());
         Ok(())
     }
 

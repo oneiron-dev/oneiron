@@ -2213,6 +2213,11 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     delete_from_phonetic_postings(store, wtxn, id)?;
     crate::code_revision::delete_code_revision_lifecycle_in_txn(store, wtxn, id)?;
     crate::codebase::delete_codebase_snapshot_in_txn(store, wtxn, id)?;
+    let blob_cleanup =
+        crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, wtxn, id)?;
+    had_vector |= blob_cleanup.had_vector;
+    had_graph_mutation |= blob_cleanup.had_graph_mutation;
+    neighbors.extend(blob_cleanup.neighbors);
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;

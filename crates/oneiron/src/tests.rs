@@ -6926,6 +6926,56 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 }
 
 #[test]
+fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<()> {
+    use crate::types::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteBand, short_id_prefix};
+
+    let (dir, vault) = open_test_vault();
+    // A vault written by an older engine, where byte 85 was still free for
+    // dynamic registration: raw kind_reg record (v1 wire format) for byte 85
+    // under dynamic prefix "zz". Written raw because the current
+    // register_structural_kind rejects the statically-claimed byte.
+    let mut key = STRUCTURAL_KIND_REGISTRY_KEY_PREFIX.to_vec();
+    key.push(ENTITY_TYPE_BLOB_ARTIFACT);
+    let pack = b"legacy-pack";
+    let mut record = vec![1_u8, ENTITY_TYPE_BLOB_ARTIFACT, 3, 2];
+    record.extend_from_slice(&u16::try_from(pack.len()).expect("pack len").to_le_bytes());
+    record.extend_from_slice(b"zz");
+    record.extend_from_slice(pack);
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(wtxn, &key, &record)?;
+        Ok(())
+    })?;
+    drop(vault);
+
+    // Reopen must tolerate the legacy row instead of failing as corruption.
+    let vault = Vault::open(dir.path(), test_config())?;
+    // The static definition wins: no runtime registration shadows byte 85.
+    assert!(
+        vault
+            .structural_kind_registrations()
+            .iter()
+            .all(|row| row.type_byte != ENTITY_TYPE_BLOB_ARTIFACT)
+    );
+    assert_eq!(short_id_prefix(ENTITY_TYPE_BLOB_ARTIFACT)?, "ba");
+    // The statically-claimed byte stays closed to new dynamic registration…
+    let err = vault
+        .register_structural_kind(
+            ENTITY_TYPE_BLOB_ARTIFACT,
+            "qq",
+            TypeByteBand::Productivity,
+            "new-pack",
+        )
+        .expect_err("static byte must stay closed to dynamic registration");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    // …and the legacy prefix stays reserved for rows minted under it.
+    let err = vault
+        .register_structural_kind(90, "zz", TypeByteBand::Productivity, "new-pack")
+        .expect_err("legacy prefix must stay reserved");
+    assert_eq!(err.kind(), ErrorKind::StructuralKindCollision);
+    Ok(())
+}
+
+#[test]
 fn entity_value_envelope_matches_arch_0002_layout() -> Result<()> {
     use crate::batch::{
         ENTITY_BODY_OFFSET, ENTITY_LEARNED_AT_OFFSET, ENTITY_OCCURRED_END_OFFSET,
