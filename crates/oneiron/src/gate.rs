@@ -1874,35 +1874,34 @@ pub(crate) fn check_claim_policy_for_write(
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = GateDecisionId::now();
+        let created_at = crate::unix_seconds_now();
+        let decision_record = GateDecisionRecord {
+            version: 0,
+            decision_id,
+            created_at,
+            outcome: decision.outcome().as_str().to_owned(),
+            reason_codes: decision
+                .reason_codes()
+                .iter()
+                .map(|code| code.as_str().to_owned())
+                .collect(),
+            receipt_reasons: decision
+                .receipt_reasons()
+                .iter()
+                .map(|reason| (*reason).to_owned())
+                .collect(),
+            actor_class: input.actor.actor_class.clone(),
+            actor_ref: input.actor.actor_ref.clone(),
+            content_kind: input.content_kind.as_str().to_owned(),
+            policy_manifest_version: input.policy_manifest_version,
+            claim_id: Some(*id.as_bytes()),
+            grant_ref: None,
+            diff_handle: binding.diff_handle.clone(),
+            read_frontier_hash: binding.read_frontier_hash,
+        };
 
         if mode.record_decision {
-            store.append_gate_decision_in_txn(
-                wtxn,
-                &GateDecisionRecord {
-                    version: 0,
-                    decision_id,
-                    created_at: crate::unix_seconds_now(),
-                    outcome: decision.outcome().as_str().to_owned(),
-                    reason_codes: decision
-                        .reason_codes()
-                        .iter()
-                        .map(|code| code.as_str().to_owned())
-                        .collect(),
-                    receipt_reasons: decision
-                        .receipt_reasons()
-                        .iter()
-                        .map(|reason| (*reason).to_owned())
-                        .collect(),
-                    actor_class: input.actor.actor_class.clone(),
-                    actor_ref: input.actor.actor_ref.clone(),
-                    content_kind: input.content_kind.as_str().to_owned(),
-                    policy_manifest_version: input.policy_manifest_version,
-                    claim_id: Some(*id.as_bytes()),
-                    grant_ref: None,
-                    diff_handle: binding.diff_handle.clone(),
-                    read_frontier_hash: binding.read_frontier_hash,
-                },
-            )?;
+            store.append_gate_decision_in_txn(wtxn, &decision_record)?;
             record_gate_decision_metrics(&decision);
         }
 
@@ -1910,20 +1909,27 @@ pub(crate) fn check_claim_policy_for_write(
             && decision.outcome() == GateOutcome::Pending
             && body.approval == ClaimApprovalStatus::Proposed
         {
+            let pending_decision = if mode.record_decision {
+                decision_record.clone()
+            } else if let Some(record) =
+                store.matching_gate_decision_in_txn(wtxn, &decision_record)?
+            {
+                record
+            } else {
+                store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+                record_gate_decision_metrics(&decision);
+                decision_record.clone()
+            };
             store.put_pending_gate_consent_in_txn(
                 wtxn,
                 &PendingGateConsentRecord {
                     version: 0,
                     claim_id: *id.as_bytes(),
-                    decision_id,
-                    created_at: crate::unix_seconds_now(),
-                    diff_handle: binding.diff_handle.clone(),
-                    read_frontier_hash: binding.read_frontier_hash,
-                    reason_codes: decision
-                        .reason_codes()
-                        .iter()
-                        .map(|code| code.as_str().to_owned())
-                        .collect(),
+                    decision_id: pending_decision.decision_id,
+                    created_at: pending_decision.created_at,
+                    diff_handle: pending_decision.diff_handle,
+                    read_frontier_hash: pending_decision.read_frontier_hash,
+                    reason_codes: pending_decision.reason_codes,
                     dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
                 },
             )?;
