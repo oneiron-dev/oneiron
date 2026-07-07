@@ -6,7 +6,7 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -19,7 +19,7 @@ use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,
     FinishReason, GatedActorWrite, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
     LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, SandboxBoundaryContract,
-    SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier, SelfCall,
+    SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
     TierPrecedence, Vault,
 };
@@ -337,43 +337,62 @@ impl<'a> EngineNativeExecutor<'a> {
             let step_outcome = match self.runtime.run_step(step, &mut host) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    if !host.bridge_calls.is_empty() {
-                        let error_message = err.to_string();
-                        let failed_outcome = JsCodeModeStepOutcome::pending(format!(
-                            "Runtime error after host bridge calls: {error_message}"
-                        ));
-                        record.bridge_calls.extend(host.bridge_calls);
-                        record_text_output(
-                            self.vault,
+                    let durable_wait = host.durable_wait;
+                    let bridge_calls = host.bridge_calls;
+                    if !bridge_calls.is_empty()
+                        && let Some(status) = self.persist_failed_step_after_bridge_calls(
                             &mut record,
-                            observation_output_path(completed_steps),
-                            &failed_outcome.observation,
-                        )?;
-                        let checkpoint = CodeRunStepCheckpoint::new(
-                            completed_steps,
-                            checkpoint_label(completed_steps),
-                            step_state_hash(
-                                previous_state_hash(&record),
-                                completed_steps,
-                                &request_hash,
-                                &script,
-                                &failed_outcome,
-                                &record.bridge_calls[bridge_start..],
-                            ),
-                            config
-                                .determinism
-                                .frozen_unix_ms
-                                .saturating_add(completed_steps),
-                        )?;
-                        record.step_checkpoints.push(checkpoint);
-                        self.vault.put_code_run_replay_record_if_generation(
-                            &record,
                             expected_generation,
-                        )?;
+                            completed_steps,
+                            &request_hash,
+                            &script,
+                            bridge_start,
+                            bridge_calls,
+                            durable_wait,
+                            format!("Runtime error after host bridge calls: {err}"),
+                            config,
+                        )?
+                    {
+                        return Ok(EngineExecutorOutcome {
+                            status,
+                            steps_run: steps_run + 1,
+                            replay_record: record,
+                        });
                     }
                     return Err(err.into());
                 }
             };
+            let runtime_output_paths =
+                match validate_runtime_outputs(&record, completed_steps, &step_outcome) {
+                    Ok(paths) => paths,
+                    Err(err) => {
+                        let durable_wait = host.durable_wait;
+                        let bridge_calls = host.bridge_calls;
+                        if !bridge_calls.is_empty()
+                            && let Some(status) = self.persist_failed_step_after_bridge_calls(
+                                &mut record,
+                                expected_generation,
+                                completed_steps,
+                                &request_hash,
+                                &script,
+                                bridge_start,
+                                bridge_calls,
+                                durable_wait,
+                                format!(
+                                    "Runtime output recording failed after host bridge calls: {err}"
+                                ),
+                                config,
+                            )?
+                        {
+                            return Ok(EngineExecutorOutcome {
+                                status,
+                                steps_run: steps_run + 1,
+                                replay_record: record,
+                            });
+                        }
+                        return Err(err);
+                    }
+                };
             record.bridge_calls.extend(host.bridge_calls);
             record_text_output(
                 self.vault,
@@ -381,13 +400,11 @@ impl<'a> EngineNativeExecutor<'a> {
                 observation_output_path(completed_steps),
                 &step_outcome.observation,
             )?;
-            for (index, output) in step_outcome.outputs.iter().enumerate() {
-                record_output(
-                    self.vault,
-                    &mut record,
-                    runtime_output_path(completed_steps, index, &output.path),
-                    &output.bytes,
-                )?;
+            for (path, output) in runtime_output_paths
+                .into_iter()
+                .zip(step_outcome.outputs.iter())
+            {
+                record_output(self.vault, &mut record, path, &output.bytes)?;
             }
             let terminal_status = host
                 .durable_wait
@@ -435,6 +452,57 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             expected_generation = Some(next_generation);
         }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "failed REPL step persistence is atomic"
+    )]
+    fn persist_failed_step_after_bridge_calls(
+        &self,
+        record: &mut CodeRunReplayRecord,
+        expected_generation: Option<CodeRunReplayGeneration>,
+        completed_steps: u64,
+        request_hash: &[u8; 32],
+        script: &str,
+        bridge_start: usize,
+        bridge_calls: Vec<CodeRunBridgeCall>,
+        durable_wait: Option<SelfDurableWait>,
+        observation: String,
+        config: &EngineExecutorConfig,
+    ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+        record.bridge_calls.extend(bridge_calls);
+        let failed_outcome = JsCodeModeStepOutcome::pending(observation);
+        record_text_output(
+            self.vault,
+            record,
+            observation_output_path(completed_steps),
+            &failed_outcome.observation,
+        )?;
+        let terminal_status = durable_wait.map(EngineExecutorStatus::Waiting);
+        if let Some(status) = &terminal_status {
+            record_terminal_output(self.vault, record, completed_steps, status)?;
+        }
+        let checkpoint = CodeRunStepCheckpoint::new(
+            completed_steps,
+            checkpoint_label(completed_steps),
+            step_state_hash(
+                previous_state_hash(record),
+                completed_steps,
+                request_hash,
+                script,
+                &failed_outcome,
+                &record.bridge_calls[bridge_start..],
+            ),
+            config
+                .determinism
+                .frozen_unix_ms
+                .saturating_add(completed_steps),
+        )?;
+        record.step_checkpoints.push(checkpoint);
+        self.vault
+            .put_code_run_replay_record_if_generation(record, expected_generation)?;
+        Ok(terminal_status)
     }
 
     fn load_or_create_record(
@@ -586,7 +654,34 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.bridge_calls.push(row);
             return Ok(outcome);
         }
-        let outcome = self.gated_write.dispatch(call.clone())?;
+        let outcome = match self.gated_write.dispatch(call.clone()) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                if let Error::GateWriteRejected {
+                    outcome,
+                    reason_codes,
+                } = &err
+                {
+                    let denied = SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect: call.effect(),
+                        outcome: (*outcome).to_owned(),
+                        reason_codes: reason_codes
+                            .iter()
+                            .map(|reason| (*reason).to_owned())
+                            .collect(),
+                    });
+                    let row = CodeRunBridgeCall::record(
+                        seq,
+                        &call,
+                        &denied,
+                        started_at_ms,
+                        started_at_ms,
+                    )?;
+                    self.bridge_calls.push(row);
+                }
+                return Err(err);
+            }
+        };
         let finished_at_ms = started_at_ms;
         let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
         if self.durable_wait.is_none()
@@ -715,7 +810,6 @@ fn executor_config_hash(config: &EngineExecutorConfig) -> [u8; 32] {
     hash_str(&mut hasher, config.global_tier.as_str());
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
-    hash_u64(&mut hasher, u64::from(config.limits.soft_steps));
     hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
     *hasher.finalize().as_bytes()
 }
@@ -1017,6 +1111,26 @@ fn record_output(
     Ok(())
 }
 
+fn validate_runtime_outputs(
+    record: &CodeRunReplayRecord,
+    seq: u64,
+    outcome: &JsCodeModeStepOutcome,
+) -> EngineExecutorResult<Vec<String>> {
+    let mut output_paths = BTreeSet::new();
+    let mut paths = Vec::with_capacity(outcome.outputs.len());
+    for (index, output) in outcome.outputs.iter().enumerate() {
+        let path = runtime_output_path(seq, index, &output.path);
+        if record.outputs.iter().any(|existing| existing.path == path)
+            || !output_paths.insert(path.clone())
+        {
+            return Err(Error::InvalidClaimBody("duplicate executor output path").into());
+        }
+        let _ = CodeRunRawOutput::from_bytes(path.clone(), &output.bytes)?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
 fn record_text_output(
     vault: &Vault,
     record: &mut CodeRunReplayRecord,
@@ -1177,6 +1291,19 @@ mod tests {
             .gate_decisions(100)
             .expect("gate decisions")
             .len()
+    }
+
+    fn bridge_outcome_kind(call: &CodeRunBridgeCall) -> &str {
+        let Value::Map(entries) = &call.outcome else {
+            panic!("bridge outcome must be a map");
+        };
+        entries
+            .iter()
+            .find_map(|(key, value)| {
+                (key.as_str() == Some("kind"))
+                    .then(|| value.as_str().expect("outcome kind must be a string"))
+            })
+            .expect("bridge outcome kind")
     }
 
     fn model() -> ModelId {
@@ -1509,7 +1636,13 @@ mod tests {
                 0.7,
             ))]]);
         let gated_write = gated_actor_write(&vault, "run-gated-write");
-        let config = executor_config(entity(0x85), EngineExecutorLimits::default());
+        let config = executor_config(
+            entity(0x85),
+            EngineExecutorLimits {
+                soft_steps: 1,
+                hard_steps: 1,
+            },
+        );
         let before = gate_decision_count(&vault);
 
         let mut executor =
@@ -1525,6 +1658,37 @@ mod tests {
             vault
                 .targets(&src, EdgeKind::Mentions, None)
                 .expect("edge targets")
+                .is_empty()
+        );
+        let stored = vault
+            .get_code_run_replay_record(&config.run_id)
+            .expect("load replay")
+            .expect("stored denied-step replay");
+        assert_eq!(stored.bridge_calls.len(), 1);
+        assert_eq!(stored.bridge_calls[0].effect, SelfEffect::MemoryPutEdge);
+        assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
+        assert_eq!(stored.step_checkpoints.len(), 1);
+
+        let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
+        let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+        let mut retry = EngineNativeExecutor::new(
+            &vault,
+            &retry_backend,
+            &lease,
+            &mut retry_runtime,
+            &gated_write,
+        );
+        let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+        assert_eq!(
+            retry_outcome.status,
+            EngineExecutorStatus::HardStepLimitReached
+        );
+        assert!(retry_runtime.seen.is_empty());
+        assert!(
+            retry_backend
+                .requests
+                .lock()
+                .expect("requests lock")
                 .is_empty()
         );
     }
@@ -1612,6 +1776,152 @@ mod tests {
     }
 
     #[test]
+    fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
+        let (_dir, vault) = open_test_vault();
+        let backend = FixtureBackend::new(["await self.memory.write_fixture(claim);"]);
+        let lease = BudgetLease::for_test("executor-lease");
+        let subject = seed_person(&vault, 0xD3);
+        let claim = entity(0xD4);
+        let candidate = ClaimCandidate::new(
+            "profile.favorite_snack",
+            ClaimSubject::Entity(subject),
+            Value::from("senbei"),
+            0.8,
+        );
+        let long_path = format!("{}.txt", "x".repeat(1100));
+        let mut step_outcome = JsCodeModeStepOutcome::complete("done");
+        step_outcome
+            .outputs
+            .push(JsCodeModeOutput::new(long_path, b"unreachable".to_vec()));
+        let mut runtime =
+            FixtureRuntime::new([step_outcome]).with_calls([vec![SelfCall::MemoryWriteFixture(
+                SelfMemoryWriteFixtureCall::new(claim, candidate, range(9), 10),
+            )]]);
+        let gated_write = gated_actor_write(&vault, "run-output-error-after-dispatch");
+        let config = executor_config(
+            entity(0x8C),
+            EngineExecutorLimits {
+                soft_steps: 1,
+                hard_steps: 1,
+            },
+        );
+
+        let mut executor =
+            EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+        let err =
+            block_on_ready(executor.run(&config)).expect_err("output validation error returned");
+
+        assert!(matches!(
+            err,
+            EngineExecutorError::Engine(Error::InvalidCodeArtifactBody("raw output path"))
+        ));
+        assert!(
+            vault
+                .get_claim(&claim)
+                .expect("load committed claim")
+                .is_some(),
+            "host write committed before output recording failed"
+        );
+        let stored = vault
+            .get_code_run_replay_record(&config.run_id)
+            .expect("load replay")
+            .expect("stored failed-step replay");
+        assert_eq!(stored.bridge_calls.len(), 1);
+        assert_eq!(
+            stored.bridge_calls[0].effect,
+            SelfEffect::MemoryWriteFixture
+        );
+        assert_eq!(stored.step_checkpoints.len(), 1);
+        assert!(
+            load_utf8_output(&vault, &stored, &observation_output_path(0))
+                .expect("stored error observation")
+                .contains("Runtime output recording failed after host bridge calls")
+        );
+
+        let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
+        let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+        let mut retry = EngineNativeExecutor::new(
+            &vault,
+            &retry_backend,
+            &lease,
+            &mut retry_runtime,
+            &gated_write,
+        );
+        let retry_outcome = block_on_ready(retry.run(&config)).expect("retry reads checkpoint");
+        assert_eq!(
+            retry_outcome.status,
+            EngineExecutorStatus::HardStepLimitReached
+        );
+        assert!(retry_runtime.seen.is_empty());
+        assert!(
+            retry_backend
+                .requests
+                .lock()
+                .expect("requests lock")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn executor_preserves_durable_wait_when_runtime_errors_after_wait() {
+        let (_dir, vault) = open_test_vault();
+        let backend = FixtureBackend::new(["await self.ask_human('continue?');"]);
+        let lease = BudgetLease::for_test("executor-lease");
+        let mut runtime = ErrorAfterCallsRuntime::new(vec![SelfCall::AskHuman(
+            SelfAskHumanCall::new("continue?"),
+        )]);
+        let gated_write = gated_actor_write(&vault, "run-wait-then-error");
+        let config = executor_config(
+            entity(0x8D),
+            EngineExecutorLimits {
+                soft_steps: 1,
+                hard_steps: 1,
+            },
+        );
+
+        let mut executor =
+            EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+        let outcome = block_on_ready(executor.run(&config)).expect("durable wait persists");
+
+        let EngineExecutorStatus::Waiting(wait) = outcome.status else {
+            panic!("expected durable wait");
+        };
+        assert_eq!(wait.effect, SelfEffect::AskHuman);
+        assert_eq!(wait.reason, SelfDurableWaitReason::HumanInput);
+        assert_eq!(outcome.steps_run, 1);
+        let stored = vault
+            .get_code_run_replay_record(&config.run_id)
+            .expect("load replay")
+            .expect("stored wait replay");
+        assert_eq!(stored.bridge_calls.len(), 1);
+        assert_eq!(stored.step_checkpoints.len(), 1);
+
+        let retry_backend = FixtureBackend::new(std::iter::empty::<&str>());
+        let mut retry_runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
+        let mut retry = EngineNativeExecutor::new(
+            &vault,
+            &retry_backend,
+            &lease,
+            &mut retry_runtime,
+            &gated_write,
+        );
+        let retry_outcome = block_on_ready(retry.run(&config)).expect("retry returns wait");
+        assert!(matches!(
+            retry_outcome.status,
+            EngineExecutorStatus::Waiting(_)
+        ));
+        assert_eq!(retry_outcome.steps_run, 0);
+        assert!(retry_runtime.seen.is_empty());
+        assert!(
+            retry_backend
+                .requests
+                .lock()
+                .expect("requests lock")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn executor_resumes_from_persisted_repl_record() {
         let (_dir, vault) = open_test_vault();
         let lease = BudgetLease::for_test("executor-lease");
@@ -1665,6 +1975,53 @@ mod tests {
             .join("\n");
         assert!(transcript.contains("const first = true;"));
         assert!(transcript.contains("first observation"));
+    }
+
+    #[test]
+    fn executor_allows_resume_with_different_soft_step_budget() {
+        let (_dir, vault) = open_test_vault();
+        let lease = BudgetLease::for_test("executor-lease");
+        let config = executor_config(
+            entity(0x8E),
+            EngineExecutorLimits {
+                soft_steps: 1,
+                hard_steps: 3,
+            },
+        );
+        let gated_write = gated_actor_write(&vault, "run-soft-step-resume");
+
+        let first_backend = FixtureBackend::new(["const first = true;"]);
+        let mut first_runtime =
+            FixtureRuntime::new([JsCodeModeStepOutcome::pending("first observation")]);
+        let mut first = EngineNativeExecutor::new(
+            &vault,
+            &first_backend,
+            &lease,
+            &mut first_runtime,
+            &gated_write,
+        );
+        let first_outcome = block_on_ready(first.run(&config)).expect("first run");
+        assert_eq!(
+            first_outcome.status,
+            EngineExecutorStatus::Yielded { next_step_seq: 1 }
+        );
+
+        let mut resumed_config = config.clone();
+        resumed_config.limits.soft_steps = 2;
+        let second_backend = FixtureBackend::new(["const second = true;"]);
+        let mut second_runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]);
+        let mut second = EngineNativeExecutor::new(
+            &vault,
+            &second_backend,
+            &lease,
+            &mut second_runtime,
+            &gated_write,
+        );
+        let second_outcome = block_on_ready(second.run(&resumed_config)).expect("resume run");
+
+        assert_eq!(second_outcome.status, EngineExecutorStatus::Complete);
+        assert_eq!(second_outcome.replay_record.step_checkpoints.len(), 2);
+        assert_eq!(second_runtime.seen[0].seq, 1);
     }
 
     #[test]

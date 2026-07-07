@@ -173,11 +173,11 @@ pub use crate::code_revision::{
     encode_code_revision_fork,
 };
 pub use crate::code_run::{
-    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatchOutcome,
-    SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
-    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
-    SelfMemoryWriteResult,
+    GatedActorWrite, HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfFixtureEffectCall, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 pub use crate::code_sandbox::{
     FakeSandboxAdapter, PLAIN_JS_HOST_VERB_DTS, SANDBOX_JS_COMPONENT_NAME, SANDBOX_MNT_ROOT,

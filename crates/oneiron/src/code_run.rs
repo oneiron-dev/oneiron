@@ -998,6 +998,21 @@ fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
                     .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
             ),
         ]),
+        SelfDispatchOutcome::Denied(result) => request_map(vec![
+            ("kind", Value::from("denied")),
+            ("effect", Value::from(result.effect.as_str())),
+            ("outcome", Value::from(result.outcome.as_str())),
+            (
+                "reason_codes",
+                Value::Array(
+                    result
+                        .reason_codes
+                        .iter()
+                        .map(|reason| Value::from(reason.as_str()))
+                        .collect(),
+                ),
+            ),
+        ]),
     }
 }
 
@@ -1034,6 +1049,11 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
                 prompt,
             }))
         }
+        "denied" => Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+            outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
+            reason_codes: str_array(map_get(entries, "reason_codes")?)?,
+        })),
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
 }
@@ -1166,6 +1186,16 @@ fn decode_array<T>(value: &Value, decode: fn(&Value) -> Result<T>) -> Result<Vec
         return Err(invalid_code_run_replay("value must be an array"));
     };
     items.iter().map(decode).collect()
+}
+
+fn str_array(value: &Value) -> Result<Vec<String>> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay("value must be an array"));
+    };
+    items
+        .iter()
+        .map(|item| str_value(item).map(str::to_owned))
+        .collect()
 }
 
 fn decode_string_array(value: &Value) -> Result<Vec<String>> {
@@ -1883,6 +1913,7 @@ pub enum SelfDispatchOutcome {
     MemoryWrite(SelfMemoryWriteResult),
     MemoryEdgeWrite(SelfMemoryEdgeWriteResult),
     DurableWait(SelfDurableWait),
+    Denied(SelfDeniedResult),
 }
 
 /// Result of a `self.memory.search` fixture dispatch.
@@ -1904,6 +1935,14 @@ pub struct SelfMemoryEdgeWriteResult {
     pub src: EntityId,
     pub kind: EdgeKind,
     pub tgt: EntityId,
+}
+
+/// Result of a `self.*` trap rejected after the gate recorded an audit row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfDeniedResult {
+    pub effect: SelfEffect,
+    pub outcome: String,
+    pub reason_codes: Vec<String>,
 }
 
 /// Durable wait produced for effects that need human/external resolution.
