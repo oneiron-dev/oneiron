@@ -323,10 +323,16 @@ pub fn build_anthropic_messages_request(
         );
     }
     if let ResponseFormat::Json { schema } = &request.envelope.response_format {
-        body.insert(
-            "response_format".to_owned(),
-            json!({ "type": "json_schema", "schema": schema }),
-        );
+        // The Anthropic Messages API expresses structured output as
+        // `output_config.format`, not OpenAI's top-level `response_format`.
+        // Merge into any caller-supplied output_config (e.g. effort) instead
+        // of clobbering it.
+        let format = json!({ "type": "json_schema", "schema": schema });
+        if let Some(JsonValue::Object(output_config)) = body.get_mut("output_config") {
+            output_config.insert("format".to_owned(), format);
+        } else {
+            body.insert("output_config".to_owned(), json!({ "format": format }));
+        }
     }
 
     Ok(AnthropicMessagesHttpRequest {
@@ -996,6 +1002,50 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn json_response_maps_to_native_output_config_format() {
+        let catalog = catalog_with([LlmCapability::JsonResponse]);
+        let config = AnthropicMessagesConfig::new(catalog);
+        let request = sample_request();
+
+        let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+
+        assert_eq!(
+            wire.body.get("output_config"),
+            Some(&json!({
+                "format": {
+                    "type": "json_schema",
+                    "schema": { "type": "object" },
+                }
+            }))
+        );
+        assert_eq!(wire.body.get("response_format"), None);
+    }
+
+    #[test]
+    fn json_response_merges_into_caller_output_config() {
+        let catalog = catalog_with([LlmCapability::JsonResponse]);
+        let config = AnthropicMessagesConfig::new(catalog);
+        let mut request = sample_request();
+        request
+            .params
+            .insert("output_config".to_owned(), json!({ "effort": "high" }));
+
+        let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+
+        assert_eq!(
+            wire.body.get("output_config"),
+            Some(&json!({
+                "effort": "high",
+                "format": {
+                    "type": "json_schema",
+                    "schema": { "type": "object" },
+                }
+            }))
+        );
+        assert_eq!(wire.body.get("response_format"), None);
     }
 
     #[test]
