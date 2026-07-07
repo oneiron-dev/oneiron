@@ -37,7 +37,7 @@ use crate::types::{
 };
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
-const POLICY_SCHEMA_VERSION: &str = "1.1";
+pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
 const POLICY_PACK_ID_KEY: &str = "pack_id";
 const POLICY_PACK_VERSION_KEY: &str = "pack_version";
 const POLICY_MIN_ENGINE_VERSION_KEY: &str = "min_engine_version";
