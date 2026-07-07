@@ -4222,7 +4222,7 @@ mod tests {
             "element count must match card_start nodeCount"
         );
 
-        let mut missing_state = segments.clone();
+        let mut missing_state = segments;
         missing_state.pop();
         assert!(
             GeneratedUiRender::from_segments(&missing_state).is_err(),
