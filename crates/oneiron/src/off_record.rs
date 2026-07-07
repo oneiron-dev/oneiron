@@ -359,10 +359,9 @@ impl Vault {
     }
 
     /// Reads the off-record session record for `session_ref`, if any. A ref
-    /// that fails [`vet_off_record_session_ref`] cannot name a session
-    /// (enter enforces the same bound), so it reads as `None` without
-    /// building a key — arbitrary caller-supplied refs never drive
-    /// allocation size.
+    /// that fails the session-ref length bound cannot name a session (enter
+    /// enforces the same bound), so it reads as `None` without building a
+    /// key — arbitrary caller-supplied refs never drive allocation size.
     pub fn off_record_session(&self, session_ref: &str) -> Result<Option<OffRecordSessionRecord>> {
         if vet_off_record_session_ref(session_ref).is_err() {
             return Ok(None);
