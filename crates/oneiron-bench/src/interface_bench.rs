@@ -22,6 +22,7 @@ const FULL_TASK_COUNT: usize = 80;
 const SMOKE_TASK_COUNT: usize = 8;
 const OWNER_SPOTCHECK_COUNT: usize = 8;
 const FULL_REP_COUNT: u32 = 2;
+const MAX_FULL_REPS: u32 = 8;
 const TOOL_CALL_CAP: u32 = 25;
 const WALL_CLOCK_CAP_S: u32 = 600;
 const PER_TASK_TOKEN_CEILING: u32 = 10_000;
@@ -581,8 +582,8 @@ fn print_help() {
            --model ID             OpenRouter model id (default {MODEL})\n\
            --provider NAME        single locked provider; fallbacks always stay disabled\n\
                                   (default {DEFAULT_PROVIDER})\n\
-           --reps N               reps per task+arm for full runs (default {FULL_REP_COUNT};\n\
-                                  probe always runs 2 reps)\n\
+           --reps N               reps per task+arm for full runs, 1..={MAX_FULL_REPS}\n\
+                                  (default {FULL_REP_COUNT}; probe always runs 2 reps)\n\
          \n\
          default output dir: {DEFAULT_OUT_DIR}"
     );
@@ -724,8 +725,8 @@ fn parse_run_flags(args: &[String]) -> Result<(PathBuf, RunSettings), String> {
                 let reps = value
                     .parse::<u32>()
                     .map_err(|error| format!("--reps expects an integer: {error}"))?;
-                if reps == 0 {
-                    return Err("--reps must be at least 1".to_owned());
+                if !(1..=MAX_FULL_REPS).contains(&reps) {
+                    return Err(format!("--reps must be between 1 and {MAX_FULL_REPS}"));
                 }
                 settings.full_reps = reps;
                 index += 2;
@@ -2654,6 +2655,21 @@ mod tests {
         assert!(parse_run_flags(&["--model".to_owned(), String::new()]).is_err());
         assert!(parse_run_flags(&["--provider".to_owned(), String::new()]).is_err());
         assert!(parse_run_flags(&["--bogus".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn parse_run_flags_bounds_reps_to_supported_range() {
+        let (_, settings) =
+            parse_run_flags(&["--reps".to_owned(), "8".to_owned()]).expect("max reps parse");
+        assert_eq!(settings.full_reps, MAX_FULL_REPS);
+
+        let error = parse_run_flags(&["--reps".to_owned(), "9".to_owned()])
+            .expect_err("reps above bound should reject");
+        assert!(error.contains("between 1 and 8"));
+
+        let error = parse_run_flags(&["--reps".to_owned(), "0".to_owned()])
+            .expect_err("zero reps should reject");
+        assert!(error.contains("between 1 and 8"));
     }
 
     #[test]
