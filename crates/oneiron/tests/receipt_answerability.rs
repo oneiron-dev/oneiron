@@ -206,7 +206,6 @@ fn answerability_fixture() -> Result<AnswerabilityFixture> {
             fields: &[
                 ("run_ref", "run:commitment-wake"),
                 ("intent_ref", "intent:late-reminder"),
-                ("counterparty_ref", "owner"),
                 ("intent_source", "commitment"),
                 ("local_time", "02:00"),
                 ("verb", "send"),
@@ -389,7 +388,7 @@ fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result
         .filter(|receipt| {
             matches!(
                 receipt.outcome.as_str(),
-                "held" | "degraded" | "suppressed" | "let_go" | "failed"
+                "held" | "degraded" | "suppressed" | "declined" | "let_go" | "failed"
             )
         })
         .collect::<Vec<_>>();
@@ -412,6 +411,26 @@ fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result
                 && field(receipt, "suppression", question) == "dedupe"
                 && field(receipt, "dedupe_key", question) == "party-invite:yuki"),
         "{question}: suppressed(dedupe) receipt is not answerable"
+    );
+    assert!(
+        negative_space
+            .iter()
+            .any(|receipt| receipt.outcome == "degraded"
+                && field(receipt, "degraded_from", question) == "push:time_sensitive"
+                && field(receipt, "degraded_to", question) == "chat:passive"),
+        "{question}: degraded receipt lacks degraded_from/degraded_to explanation"
+    );
+    assert!(
+        negative_space
+            .iter()
+            .any(|receipt| receipt.outcome == "declined"
+                && receipt
+                    .policy_trace
+                    .iter()
+                    .any(|trace| trace == "counterparty.opt_out")
+                && field(receipt, "decline_reason", question) == "counterparty_opt_out"
+                && field(receipt, "opt_out", question) == "true"),
+        "{question}: declined receipt lacks counterparty opt-out explanation"
     );
     assert!(
         negative_space
@@ -528,18 +547,21 @@ fn answerability_test_pack_who_contacted_on_my_behalf_from_counterparty_projecti
         .iter()
         .map(|projection| projection.counterparty_ref.as_str())
         .collect::<BTreeSet<_>>();
-
-    for expected in [
+    let expected_counterparties = BTreeSet::from([
         "person:yuki",
         "person:kenji",
         "person:mika",
         "venue:sakura-hall",
-    ] {
-        assert!(
-            counterparties.contains(expected),
-            "{question}: counterparty projection is missing {expected}"
-        );
-    }
+    ]);
+
+    assert_eq!(
+        counterparties, expected_counterparties,
+        "{question}: counterparty projection should contain exactly the external counterparties"
+    );
+    assert!(
+        !counterparties.contains("owner"),
+        "{question}: counterparty projection should not report the owner as an external contact"
+    );
 
     let mika = projections
         .iter()
