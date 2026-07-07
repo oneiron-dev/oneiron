@@ -19,6 +19,7 @@ use types::{
 const DEFAULT_NAPI_SEARCH_LIMIT: u32 = 10;
 const MAX_NAPI_SEARCH_LIMIT: u32 = 1_000;
 const MAX_NAPI_QUERY_BYTES: usize = 8 * 1024;
+const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_NAPI_BATCH_ENTITIES: usize = 10_000;
 const MAX_NAPI_CODEBASE_FILES: usize = 100_000;
 const MAX_NAPI_DIMENSIONS: usize = 16_384;
@@ -83,6 +84,16 @@ fn validate_query_len(query: &str) -> BoundaryResult<()> {
     if len > MAX_NAPI_QUERY_BYTES {
         return Err(format!(
             "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {len}"
+        ));
+    }
+    Ok(())
+}
+
+/// Validate entity payload size before it crosses into core write paths.
+fn validate_entity_payload_len(len: usize) -> BoundaryResult<()> {
+    if len > MAX_NAPI_ENTITY_PAYLOAD_BYTES {
+        return Err(format!(
+            "entity data payload must be <= {MAX_NAPI_ENTITY_PAYLOAD_BYTES} bytes, got {len}"
         ));
     }
     Ok(())
@@ -368,6 +379,7 @@ impl NapiVault {
     ) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
         let etype = parse_u8(entity_type, "entity_type")?;
+        validate_entity_payload_len(data.len()).map_err(napi::Error::from_reason)?;
         self.vault
             .put_entity(
                 &eid,
@@ -708,6 +720,10 @@ impl NapiVault {
     #[napi]
     pub fn batch_put_entities(&self, entities: Vec<NapiBatchEntity>) -> napi::Result<()> {
         validate_batch_size(entities.len()).map_err(napi::Error::from_reason)?;
+        for e in &entities {
+            validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
+        }
+
         let mut batch = self.vault.batch();
 
         for e in &entities {
@@ -886,6 +902,19 @@ mod tests {
             format!(
                 "query must be <= {MAX_NAPI_QUERY_BYTES} bytes, got {}",
                 MAX_NAPI_QUERY_BYTES + 1
+            )
+        );
+    }
+
+    #[test]
+    fn napi_boundary_rejects_oversized_entity_payload() {
+        assert!(validate_entity_payload_len(MAX_NAPI_ENTITY_PAYLOAD_BYTES).is_ok());
+
+        let len = MAX_NAPI_ENTITY_PAYLOAD_BYTES + 1;
+        assert_eq!(
+            reason(validate_entity_payload_len(len)),
+            format!(
+                "entity data payload must be <= {MAX_NAPI_ENTITY_PAYLOAD_BYTES} bytes, got {len}"
             )
         );
     }

@@ -3093,6 +3093,49 @@ mod tests {
     }
 
     #[test]
+    fn task_role_from_body_bytes_rejects_malformed_bodies() {
+        fn encode(value: &Value) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(&mut bytes, value).expect("encode msgpack test body");
+            bytes
+        }
+
+        let role_byte = TaskRole::Task.role_byte();
+
+        // A map carrying two "role" entries: decoders that resolve first-vs-last
+        // key differently must not silently disagree; this is rejected outright.
+        let duplicate_role = encode(&Value::Map(vec![
+            (Value::from(TASK_BODY_ROLE_KEY), Value::from(role_byte)),
+            (Value::from(TASK_BODY_ROLE_KEY), Value::from(role_byte)),
+        ]));
+        match task_role_from_body_bytes(&duplicate_role) {
+            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+                assert_eq!(msg, "duplicate task role key");
+            }
+            other => panic!("expected duplicate-role-key rejection, got {other:?}"),
+        }
+
+        let non_map = encode(&Value::from(role_byte));
+        match task_role_from_body_bytes(&non_map) {
+            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+                assert_eq!(msg, "body must be a MessagePack map");
+            }
+            other => panic!("expected non-map rejection, got {other:?}"),
+        }
+
+        let non_string_key = encode(&Value::Map(vec![(
+            Value::from(1_u64),
+            Value::from(role_byte),
+        )]));
+        match task_role_from_body_bytes(&non_string_key) {
+            Err(crate::error::Error::InvalidTaskBody(msg)) => {
+                assert_eq!(msg, "body keys must be strings");
+            }
+            other => panic!("expected non-string-key rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn local_world_id_rejects_foreign_range() {
         let local = EntityId::from_bytes([0xEF; 16]).unwrap();
         let foreign = EntityId::from_bytes([FOREIGN_WORLD_ID_RANGE_START_BYTE; 16]).unwrap();
