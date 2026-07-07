@@ -320,6 +320,10 @@ pub struct OutboundDispatchRequest {
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<String>,
     pub window_decision: OutboundDeliveryWindowDecision,
+    /// Session ref of the in-session trigger, when known. OF-326 talk-only:
+    /// dispatch rejects the intent with [`Error::OffRecordTalkOnly`] while
+    /// the referenced session is in off-record mode.
+    pub originating_session_ref: Option<String>,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
     /// recorded onto the emit receipt for every dispatch outcome.
     /// Optional by design: RS9 pins one hook at the assembly seam, not a
@@ -350,8 +354,15 @@ impl OutboundDispatchRequest {
             channel_identity_ref: None,
             counterparty_ref: None,
             window_decision,
+            originating_session_ref: None,
             context_receipt: None,
         }
+    }
+
+    #[must_use]
+    pub fn originating_session(mut self, session_ref: impl Into<String>) -> Self {
+        self.originating_session_ref = Some(session_ref.into());
+        self
     }
 
     #[must_use]
@@ -706,6 +717,20 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        // OF-326 talk-only (ONE-1546): an intent originating from a session
+        // currently in off-record mode is rejected before verb resolution —
+        // the typed error carries the exit-prompt semantics. Intents from a
+        // session flipped back on-record dispatch normally, and the OF-333
+        // floor below still classifies every real egress.
+        if let Some(session_ref) = request.originating_session_ref.as_deref()
+            && let Some(session) = vault.off_record_session(session_ref)?
+            && session.mode == crate::off_record::OffRecordMode::OffRecord
+        {
+            return Err(OutboundDispatchError::Engine(Error::OffRecordTalkOnly {
+                session_ref: session_ref.to_owned(),
+            }));
+        }
+
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
         let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
         let effect = ExternalEffectGateInput {

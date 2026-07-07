@@ -5,9 +5,9 @@ use std::io;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback,
     EIRI_V3_PROMPT_RELATIVE_PATH, LlmMessage, LlmMessageRole, LlmRequest, LlmToolSpec, ModelId,
-    ModelLocality, ModelTierRef, PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, ResponseFormat,
-    SessionPromptParts, TierPrecedence, build_eiri_session_request, resolve_prompt,
-    workspace_prompt_package_root,
+    ModelLocality, ModelTierRef, OffRecordBackendClass, PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION,
+    ResponseFormat, SessionPromptParts, TierPrecedence, build_eiri_session_request,
+    off_record_context_marker, resolve_prompt, workspace_prompt_package_root,
 };
 
 const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
@@ -177,6 +177,7 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
         SessionPromptParts {
             activated_memory: vec!["activated memory alpha".to_owned()],
             history: history.clone(),
+            off_record_marker: None,
         },
     )?;
     let first_system = system_text(&first.request);
@@ -194,6 +195,7 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
         SessionPromptParts {
             activated_memory: vec!["activated memory alpha".to_owned()],
             history,
+            off_record_marker: None,
         },
     )?;
     let second_system = system_text(&second.request);
@@ -229,6 +231,7 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
         SessionPromptParts {
             activated_memory: vec!["activated memory beta".to_owned()],
             history: vec![user_message("history turn")],
+            off_record_marker: None,
         },
     )?;
     let system = system_text(&stamped.request);
@@ -250,6 +253,51 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
     );
     assert!(!stamped.stamp.source_fingerprint.is_empty());
     assert!(!stamped.stamp.resolved_fingerprint.is_empty());
+    Ok(())
+}
+
+#[test]
+fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let package_root = temp.path().join("packages/prompts");
+    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::write(
+        package_root.join(EIRI_V3_PROMPT_RELATIVE_PATH),
+        "soul persona line\n",
+    )?;
+
+    let marker = off_record_context_marker(OffRecordBackendClass::RemoteProvider);
+    let stamped = build_eiri_session_request(
+        sample_request(),
+        &package_root,
+        SessionPromptParts {
+            activated_memory: Vec::new(),
+            history: vec![user_message("history turn")],
+            off_record_marker: Some(marker.clone()),
+        },
+    )?;
+    let system = system_text(&stamped.request);
+    let soul_index = system.find("soul persona line").expect("soul section");
+    let section_index = system
+        .find("# Off-Record Session")
+        .expect("off-record section");
+    assert!(soul_index < section_index);
+    assert!(system.contains(&marker));
+    assert!(
+        system.contains(OffRecordBackendClass::RemoteProvider.disclosure_line()),
+        "backend-relative disclosure line must ride the marker"
+    );
+
+    let plain = build_eiri_session_request(
+        sample_request(),
+        &package_root,
+        SessionPromptParts {
+            activated_memory: Vec::new(),
+            history: Vec::new(),
+            off_record_marker: None,
+        },
+    )?;
+    assert!(!system_text(&plain.request).contains("# Off-Record Session"));
     Ok(())
 }
 

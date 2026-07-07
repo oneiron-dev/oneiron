@@ -1935,11 +1935,20 @@ fn load_entity_edges(
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
 ) -> Result<Vec<EdgeInfo>> {
-    if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
-        Ok(edges.clone())
+    let edges = if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
+        edges.clone()
     } else {
-        scan_edges_for_entity(store, rtxn, id)
+        scan_edges_for_entity(store, rtxn, id)?
+    };
+    // OF-326 THE FENCE: serialized edge lists must not expose fenced
+    // off-record targets — even the bare target id names the room.
+    let mut kept = Vec::with_capacity(edges.len());
+    for edge in edges {
+        if !crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
+            kept.push(edge);
+        }
     }
+    Ok(kept)
 }
 
 /// Scans the outbound edge rows for one entity, failing closed on any
@@ -2022,6 +2031,12 @@ fn walk_edges(
                     continue;
                 }
                 if exclude.contains(&edge.target) || visited.contains(&edge.target) {
+                    continue;
+                }
+                // OF-326 THE FENCE: a fenced off-record entity is never
+                // admitted as a neighbor nor traversed through — an edge
+                // from an on-record result must not hydrate the room.
+                if crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
                     continue;
                 }
                 candidates

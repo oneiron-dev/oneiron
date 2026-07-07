@@ -30,6 +30,10 @@ pub struct ResolvedPrompt {
 pub struct SessionPromptParts {
     pub activated_memory: Vec<String>,
     pub history: Vec<LlmMessage>,
+    /// OF-326: when the session is off-record, the marker (see
+    /// `off_record::off_record_context_marker`) is rendered as its own
+    /// system-prompt section so both parties know the mode is on.
+    pub off_record_marker: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +96,11 @@ pub fn assemble_eiri_session_prompt(
     parts: SessionPromptParts,
 ) -> Result<SessionPromptAssembly, io::Error> {
     let resolved = resolve_eiri_v3_prompt(package_root)?;
-    let system_prompt = assemble_system_prompt(&resolved.text, &parts.activated_memory);
+    let system_prompt = assemble_system_prompt(
+        &resolved.text,
+        parts.off_record_marker.as_deref(),
+        &parts.activated_memory,
+    );
     let mut messages = Vec::with_capacity(parts.history.len() + 1);
     messages.push(LlmMessage {
         role: LlmMessageRole::System,
@@ -203,10 +211,20 @@ fn include_path(line: &str) -> Option<&str> {
         .filter(|path| !path.is_empty())
 }
 
-fn assemble_system_prompt(soul_prompt: &str, activated_memory: &[String]) -> String {
+fn assemble_system_prompt(
+    soul_prompt: &str,
+    off_record_marker: Option<&str>,
+    activated_memory: &[String],
+) -> String {
     let mut prompt = String::new();
     prompt.push_str(soul_prompt.trim_end());
     prompt.push('\n');
+
+    if let Some(marker) = off_record_marker.map(str::trim).filter(|m| !m.is_empty()) {
+        prompt.push_str("\n# Off-Record Session\n\n");
+        prompt.push_str(marker);
+        prompt.push('\n');
+    }
 
     let activated_memory = activated_memory
         .iter()

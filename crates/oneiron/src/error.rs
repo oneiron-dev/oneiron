@@ -241,6 +241,11 @@ pub enum ErrorKind {
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
     InvalidRedactionReceiptBody,
+    OffRecordSessionAlreadyExists,
+    OffRecordSessionNotFound,
+    OffRecordSessionClosing,
+    OffRecordTurnNotFenced,
+    OffRecordTalkOnly,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
@@ -883,6 +888,35 @@ pub enum Error {
     /// family, ONE-1134).
     #[error("invalid redaction audit receipt body: {0}")]
     InvalidRedactionReceiptBody(&'static str),
+    /// Off-record session enter (OF-326) found an existing record for the
+    /// session ref. Enter is explicit and single-shot; the ref frees up when
+    /// the session closes.
+    #[error("off-record session already exists: {session_ref}")]
+    OffRecordSessionAlreadyExists { session_ref: String },
+    /// An off-record session operation (OF-326) targeted a session ref with
+    /// no live record (never entered, or already closed).
+    #[error("off-record session not found: {session_ref}")]
+    OffRecordSessionNotFound { session_ref: String },
+    /// A mutator (tag, promote, note-context-receipt, mode flip) targeted an
+    /// off-record session whose close is in flight — the closing flag froze
+    /// the record so close's multi-transaction deletion pass cannot race a
+    /// mutation. Nothing was written; the session is evaporating.
+    #[error("off-record session {session_ref} is closing: the record is frozen")]
+    OffRecordSessionClosing { session_ref: String },
+    /// Promote (OF-326) targeted a turn that is not fenced by this
+    /// off-record session — promote lifts exactly one live fence.
+    #[error("turn {turn_ref} is not fenced by off-record session {session_ref}")]
+    OffRecordTurnNotFenced {
+        session_ref: String,
+        turn_ref: String,
+    },
+    /// OF-326 talk-only: the intent originated from a session currently in
+    /// off-record mode, where outbound/commitment verbs are disabled. Exit
+    /// prompt semantics — wanting the action means exiting off-record mode.
+    #[error(
+        "off-record session {session_ref} is talk-only: outbound and commitment verbs are disabled; exit off-record mode to take this action"
+    )]
+    OffRecordTalkOnly { session_ref: String },
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
     /// REDACTION_AUDIT receipt id. Receipts are immutable audit records
     /// (contracts.ts `redactionAuditReceipt.immutability`; the ARCH-0023b
@@ -1076,6 +1110,11 @@ impl Error {
                 ErrorKind::MaintenanceIngestQuotaExceeded
             }
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
+            Self::OffRecordSessionAlreadyExists { .. } => ErrorKind::OffRecordSessionAlreadyExists,
+            Self::OffRecordSessionNotFound { .. } => ErrorKind::OffRecordSessionNotFound,
+            Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
+            Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
+            Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
             #[cfg(feature = "sync")]
