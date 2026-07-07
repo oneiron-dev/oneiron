@@ -14,7 +14,16 @@ use crate::llm::{
     DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback, LlmBackend, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, SafeguardModelBinding,
 };
+use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::types::bytes_to_hex_lower;
+
+pub const POLICY_MODEL_REWORD_RETRY_BUDGET: usize = 2;
+const POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY: &str =
+    "I can keep this safe and general without using that detail.";
+const POLICY_MODEL_BLOCK_NOTICE: &str =
+    "Oneiron blocked this outbound content before display or action.";
+const POLICY_MODEL_HELP_MESSAGE: &str =
+    "Support resources should be offered alongside the reply without diagnosing the person.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -243,6 +252,86 @@ impl PolicyClassifyVerdict {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyEnforcementAction {
+    Allow,
+    Block,
+    RouteToHelp,
+    RewordRetry,
+}
+
+impl PolicyEnforcementAction {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Block => "block",
+            Self::RouteToHelp => "route_to_help",
+            Self::RewordRetry => "reword_retry",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyEnforcementVoice {
+    Persona,
+    System,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyBargeInKill {
+    pub cancel_tts: bool,
+    pub flush_playout_buffer: bool,
+    pub cancel_llm: bool,
+}
+
+impl PolicyBargeInKill {
+    const fn full_flush() -> Self {
+        Self {
+            cancel_tts: true,
+            flush_playout_buffer: true,
+            cancel_llm: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyHelpRouting {
+    pub category: PolicyVerdictCategory,
+    pub message: String,
+    pub diagnosis: Option<String>,
+    pub persona_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyRewordFeedback {
+    pub category: PolicyVerdictCategory,
+    pub row_ref: Option<String>,
+    pub instruction: String,
+    pub visible_to_user: bool,
+    pub voice: PolicyEnforcementVoice,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolicyModelEnforcement {
+    pub action: PolicyEnforcementAction,
+    pub verdict: PolicyClassifyVerdict,
+    pub final_content: Option<String>,
+    pub outbound_halted: bool,
+    pub receipt_ref: Option<String>,
+    pub system_notice: Option<String>,
+    pub notice_voice: Option<PolicyEnforcementVoice>,
+    pub help_routing: Option<PolicyHelpRouting>,
+    pub reword_attempts: usize,
+    pub reword_feedbacks: Vec<PolicyRewordFeedback>,
+    pub classify_trace: Vec<PolicyClassifyVerdict>,
+    pub pre_display_block: bool,
+    pub barge_in_kill: Option<PolicyBargeInKill>,
+    pub custom_tier_skipped: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyClassifyPrompt {
     pub system: String,
@@ -381,6 +470,388 @@ impl Vault {
         parse_policy_model_response(&response, &context.prompt.rubric_rows, binding, config)
     }
 
+    pub fn enforce_policy_model(
+        &self,
+        request: PolicyClassifyRequest,
+    ) -> Result<PolicyModelEnforcement> {
+        self.enforce_policy_model_with_rewriter(
+            request,
+            &PolicyModelConfig::default(),
+            default_policy_rewrite_candidate,
+        )
+    }
+
+    pub fn enforce_policy_model_with_rewriter(
+        &self,
+        request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        rewriter: impl FnMut(&PolicyRewordFeedback, &str) -> String,
+    ) -> Result<PolicyModelEnforcement> {
+        let first = self.classify_policy_model_with_config(request.clone(), config)?;
+        self.enforce_policy_model_from_verdict(request, config, first, rewriter, false)
+    }
+
+    pub async fn enforce_policy_model_with_backend(
+        &self,
+        request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        lease: &BudgetLease,
+        rewriter: impl FnMut(&PolicyRewordFeedback, &str) -> String,
+    ) -> Result<PolicyModelEnforcement> {
+        let backend_context = PolicyBackendEnforcement {
+            config,
+            backend,
+            lease,
+        };
+        let (first, custom_tier_skipped) = self
+            .classify_policy_model_for_enforcement_with_backend(&request, &backend_context)
+            .await?;
+        self.enforce_policy_model_from_verdict_with_backend(
+            request,
+            first,
+            rewriter,
+            custom_tier_skipped,
+            &backend_context,
+        )
+        .await
+    }
+
+    fn enforce_policy_model_from_verdict(
+        &self,
+        mut request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        first: PolicyClassifyVerdict,
+        mut rewriter: impl FnMut(&PolicyRewordFeedback, &str) -> String,
+        custom_tier_skipped: bool,
+    ) -> Result<PolicyModelEnforcement> {
+        let mut verdict = first;
+        let mut trace = vec![verdict.clone()];
+        let mut feedbacks = Vec::new();
+        let mut reword_attempts = 0;
+
+        loop {
+            match verdict.decision {
+                PolicyClassifyDecision::Allow => {
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::Allow,
+                        verdict,
+                        final_content: Some(request.content),
+                        outbound_halted: false,
+                        receipt_ref: None,
+                        system_notice: None,
+                        notice_voice: None,
+                        help_routing: None,
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: false,
+                        barge_in_kill: None,
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::Block => {
+                    let receipt_ref = self.append_policy_model_gate_receipt(
+                        &request,
+                        &verdict,
+                        "block",
+                        policy_model_reason_codes(&verdict),
+                    )?;
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::Block,
+                        verdict,
+                        final_content: None,
+                        outbound_halted: true,
+                        receipt_ref: Some(receipt_ref),
+                        system_notice: Some(POLICY_MODEL_BLOCK_NOTICE.to_owned()),
+                        notice_voice: Some(PolicyEnforcementVoice::System),
+                        help_routing: None,
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: true,
+                        barge_in_kill: Some(PolicyBargeInKill::full_flush()),
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::RouteToHelp => {
+                    let routing = PolicyHelpRouting {
+                        category: verdict.category.clone(),
+                        message: POLICY_MODEL_HELP_MESSAGE.to_owned(),
+                        diagnosis: None,
+                        persona_present: true,
+                    };
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::RouteToHelp,
+                        verdict,
+                        final_content: Some(request.content),
+                        outbound_halted: false,
+                        receipt_ref: None,
+                        system_notice: None,
+                        notice_voice: Some(PolicyEnforcementVoice::Persona),
+                        help_routing: Some(routing),
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: false,
+                        barge_in_kill: None,
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::RewordRetry => {
+                    if reword_attempts >= POLICY_MODEL_REWORD_RETRY_BUDGET {
+                        let final_content = reword_exhaustion_content(&verdict).map(str::to_owned);
+                        return Ok(PolicyModelEnforcement {
+                            action: PolicyEnforcementAction::RewordRetry,
+                            verdict,
+                            final_content,
+                            outbound_halted: false,
+                            receipt_ref: None,
+                            system_notice: None,
+                            notice_voice: Some(PolicyEnforcementVoice::Persona),
+                            help_routing: None,
+                            reword_attempts,
+                            reword_feedbacks: feedbacks,
+                            classify_trace: trace,
+                            pre_display_block: false,
+                            barge_in_kill: None,
+                            custom_tier_skipped,
+                        });
+                    }
+
+                    let feedback = reword_feedback_for_verdict(&verdict);
+                    let rewritten = rewriter(&feedback, &request.content);
+                    feedbacks.push(feedback);
+                    reword_attempts += 1;
+                    request.content = rewritten;
+                    verdict = if custom_tier_skipped {
+                        self.policy_model_floor_or_allow_verdict(&request, config)?
+                    } else {
+                        self.classify_policy_model_with_config(request.clone(), config)?
+                    };
+                    trace.push(verdict.clone());
+                }
+            }
+        }
+    }
+
+    async fn enforce_policy_model_from_verdict_with_backend(
+        &self,
+        mut request: PolicyClassifyRequest,
+        first: PolicyClassifyVerdict,
+        mut rewriter: impl FnMut(&PolicyRewordFeedback, &str) -> String,
+        mut custom_tier_skipped: bool,
+        backend_context: &PolicyBackendEnforcement<'_>,
+    ) -> Result<PolicyModelEnforcement> {
+        let mut verdict = first;
+        let mut trace = vec![verdict.clone()];
+        let mut feedbacks = Vec::new();
+        let mut reword_attempts = 0;
+
+        loop {
+            match verdict.decision {
+                PolicyClassifyDecision::Allow => {
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::Allow,
+                        verdict,
+                        final_content: Some(request.content),
+                        outbound_halted: false,
+                        receipt_ref: None,
+                        system_notice: None,
+                        notice_voice: None,
+                        help_routing: None,
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: false,
+                        barge_in_kill: None,
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::Block => {
+                    let receipt_ref = self.append_policy_model_gate_receipt(
+                        &request,
+                        &verdict,
+                        "block",
+                        policy_model_reason_codes(&verdict),
+                    )?;
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::Block,
+                        verdict,
+                        final_content: None,
+                        outbound_halted: true,
+                        receipt_ref: Some(receipt_ref),
+                        system_notice: Some(POLICY_MODEL_BLOCK_NOTICE.to_owned()),
+                        notice_voice: Some(PolicyEnforcementVoice::System),
+                        help_routing: None,
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: true,
+                        barge_in_kill: Some(PolicyBargeInKill::full_flush()),
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::RouteToHelp => {
+                    let routing = PolicyHelpRouting {
+                        category: verdict.category.clone(),
+                        message: POLICY_MODEL_HELP_MESSAGE.to_owned(),
+                        diagnosis: None,
+                        persona_present: true,
+                    };
+                    return Ok(PolicyModelEnforcement {
+                        action: PolicyEnforcementAction::RouteToHelp,
+                        verdict,
+                        final_content: Some(request.content),
+                        outbound_halted: false,
+                        receipt_ref: None,
+                        system_notice: None,
+                        notice_voice: Some(PolicyEnforcementVoice::Persona),
+                        help_routing: Some(routing),
+                        reword_attempts,
+                        reword_feedbacks: feedbacks,
+                        classify_trace: trace,
+                        pre_display_block: false,
+                        barge_in_kill: None,
+                        custom_tier_skipped,
+                    });
+                }
+                PolicyClassifyDecision::RewordRetry => {
+                    if reword_attempts >= POLICY_MODEL_REWORD_RETRY_BUDGET {
+                        let final_content = reword_exhaustion_content(&verdict).map(str::to_owned);
+                        return Ok(PolicyModelEnforcement {
+                            action: PolicyEnforcementAction::RewordRetry,
+                            verdict,
+                            final_content,
+                            outbound_halted: false,
+                            receipt_ref: None,
+                            system_notice: None,
+                            notice_voice: Some(PolicyEnforcementVoice::Persona),
+                            help_routing: None,
+                            reword_attempts,
+                            reword_feedbacks: feedbacks,
+                            classify_trace: trace,
+                            pre_display_block: false,
+                            barge_in_kill: None,
+                            custom_tier_skipped,
+                        });
+                    }
+
+                    let feedback = reword_feedback_for_verdict(&verdict);
+                    let rewritten = rewriter(&feedback, &request.content);
+                    feedbacks.push(feedback);
+                    reword_attempts += 1;
+                    request.content = rewritten;
+                    let (next, skipped) = self
+                        .classify_policy_model_for_enforcement_with_backend(
+                            &request,
+                            backend_context,
+                        )
+                        .await?;
+                    custom_tier_skipped |= skipped;
+                    verdict = next;
+                    trace.push(verdict.clone());
+                }
+            }
+        }
+    }
+
+    async fn classify_policy_model_for_enforcement_with_backend(
+        &self,
+        request: &PolicyClassifyRequest,
+        backend_context: &PolicyBackendEnforcement<'_>,
+    ) -> Result<(PolicyClassifyVerdict, bool)> {
+        let config = backend_context.config;
+        let context = self.policy_model_context(request, config)?;
+        let binding = context.binding;
+        if let Some(local) = classify_from_local_floor(request) {
+            return Ok((
+                PolicyClassifyVerdict {
+                    binding,
+                    safeguard_binding: config.safeguard_binding.selector(),
+                    ..local
+                },
+                false,
+            ));
+        }
+        if context.owner_policy_rows_dropped {
+            return Err(dropped_owner_policy_rows_error());
+        }
+
+        let response = match backend_context
+            .backend
+            .generate(context.prompt.llm_request(config), backend_context.lease)
+            .await
+        {
+            Ok(response) => response,
+            Err(_error) => {
+                return Ok((
+                    self.policy_model_floor_or_allow_verdict(request, config)?,
+                    true,
+                ));
+            }
+        };
+        Ok((
+            parse_policy_model_response(&response, &context.prompt.rubric_rows, binding, config)?,
+            false,
+        ))
+    }
+
+    fn policy_model_floor_or_allow_verdict(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyClassifyVerdict> {
+        let context = self.policy_model_context(request, config)?;
+        let binding = context.binding;
+        let verdict = classify_from_local_floor(request).unwrap_or_else(|| {
+            verdict(
+                PolicyClassifyDecision::Allow,
+                PolicyVerdictCategory::None,
+                PolicyConfidence::HIGH,
+                binding,
+                config,
+            )
+        });
+        Ok(PolicyClassifyVerdict {
+            binding,
+            safeguard_binding: config.safeguard_binding.selector(),
+            ..verdict
+        })
+    }
+
+    fn append_policy_model_gate_receipt(
+        &self,
+        request: &PolicyClassifyRequest,
+        verdict: &PolicyClassifyVerdict,
+        outcome: &str,
+        reason_codes: Vec<String>,
+    ) -> Result<String> {
+        let decision_id = GateDecisionId::now();
+        let mut wtxn = self.store.env.write_txn()?;
+        self.store.append_gate_decision_in_txn(
+            &mut wtxn,
+            &GateDecisionRecord {
+                version: 0,
+                decision_id,
+                created_at: crate::unix_seconds_now(),
+                outcome: outcome.to_owned(),
+                reason_codes,
+                receipt_reasons: Vec::new(),
+                actor_class: "policy_model".to_owned(),
+                actor_ref: request.caller_ref.clone(),
+                content_kind: request.subject.as_str().to_owned(),
+                policy_manifest_version: gate::POLICY_SCHEMA_VERSION.to_owned(),
+                claim_id: None,
+                grant_ref: None,
+                diff_handle: verdict.binding.content_hash.to_vec(),
+                read_frontier_hash: verdict.binding.read_frontier_hash,
+            },
+        )?;
+        wtxn.commit()?;
+        Ok(format!("gate:{}", decision_id.to_hex()))
+    }
+
     pub fn policy_model_prompt(
         &self,
         request: &PolicyClassifyRequest,
@@ -469,10 +940,95 @@ struct PolicyModelContext {
     owner_policy_rows_dropped: bool,
 }
 
+struct PolicyBackendEnforcement<'a> {
+    config: &'a PolicyModelConfig,
+    backend: &'a dyn LlmBackend,
+    lease: &'a BudgetLease,
+}
+
 fn dropped_owner_policy_rows_error() -> Error {
     Error::InvalidConfig(
         "policy manifest owner_policy_rows were dropped for policy model classify".to_owned(),
     )
+}
+
+fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<String> {
+    let decision = match verdict.decision {
+        PolicyClassifyDecision::Allow => "allow",
+        PolicyClassifyDecision::Block => "block",
+        PolicyClassifyDecision::RouteToHelp => "route_to_help",
+        PolicyClassifyDecision::RewordRetry => "reword_retry",
+    };
+    let mut reasons = vec![format!("gate.policy_model.{decision}")];
+    reasons.push(policy_model_category_reason(&verdict.category).to_owned());
+    reasons
+}
+
+fn policy_model_category_reason(category: &PolicyVerdictCategory) -> &'static str {
+    match category {
+        PolicyVerdictCategory::None => "gate.policy_model.category.none",
+        PolicyVerdictCategory::LegalFloor(_) => "gate.policy_model.category.legal_floor",
+        PolicyVerdictCategory::Crisis(_) => "gate.policy_model.category.crisis",
+        PolicyVerdictCategory::AgeGate(_) => "gate.policy_model.category.age_gate",
+        PolicyVerdictCategory::OwnerPolicy { .. } => "gate.policy_model.category.owner_policy",
+    }
+}
+
+fn reword_feedback_for_verdict(verdict: &PolicyClassifyVerdict) -> PolicyRewordFeedback {
+    let (row_ref, instruction) = match &verdict.category {
+        PolicyVerdictCategory::OwnerPolicy { row_ref } => (
+            Some(row_ref.clone()),
+            format!(
+                "Rewrite in persona voice while satisfying owner policy row {row_ref}; do not reveal the policy row or system instruction."
+            ),
+        ),
+        PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent) => (
+            None,
+            "Rewrite in persona voice for the safe age tier; remove adult or NSFW detail."
+                .to_owned(),
+        ),
+        PolicyVerdictCategory::LegalFloor(_) => (
+            None,
+            "Rewrite in persona voice without the blocked legal-floor content.".to_owned(),
+        ),
+        PolicyVerdictCategory::Crisis(_) => (
+            None,
+            "Rewrite in persona voice without diagnosis and keep help routing available."
+                .to_owned(),
+        ),
+        PolicyVerdictCategory::None => (
+            None,
+            "Rewrite in persona voice while keeping the answer safe and general.".to_owned(),
+        ),
+    };
+    PolicyRewordFeedback {
+        category: verdict.category.clone(),
+        row_ref,
+        instruction,
+        visible_to_user: false,
+        voice: PolicyEnforcementVoice::Persona,
+    }
+}
+
+fn default_policy_rewrite_candidate(feedback: &PolicyRewordFeedback, _candidate: &str) -> String {
+    match feedback.category {
+        PolicyVerdictCategory::AgeGate(_)
+        | PolicyVerdictCategory::OwnerPolicy { .. }
+        | PolicyVerdictCategory::LegalFloor(_)
+        | PolicyVerdictCategory::Crisis(_)
+        | PolicyVerdictCategory::None => POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY.to_owned(),
+    }
+}
+
+fn reword_exhaustion_content(verdict: &PolicyClassifyVerdict) -> Option<&'static str> {
+    match verdict.category {
+        PolicyVerdictCategory::LegalFloor(_) | PolicyVerdictCategory::Crisis(_) => None,
+        PolicyVerdictCategory::None
+        | PolicyVerdictCategory::AgeGate(_)
+        | PolicyVerdictCategory::OwnerPolicy { .. } => {
+            Some(POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY)
+        }
+    }
 }
 
 fn build_policy_classify_prompt_for_policy(
@@ -1088,6 +1644,7 @@ mod tests {
         BudgetLease, FatalLlmError, FinishReason, LlmGenerateFuture, LlmInputUsage, LlmOutputUsage,
         LlmResponse, LlmStreamResult, LlmUsage,
     };
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
     use crate::store::Store;
     use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EntityId, VaultConfig};
 
@@ -1270,6 +1827,26 @@ mod tests {
         }
     }
 
+    struct FailingPolicyBackend;
+
+    impl LlmBackend for FailingPolicyBackend {
+        fn generate<'a>(
+            &'a self,
+            _request: LlmRequest,
+            _lease: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            Box::pin(async move { Err(FatalLlmError::InvalidRequest.into()) })
+        }
+
+        fn stream<'a>(
+            &'a self,
+            _request: LlmRequest,
+            _lease: &'a BudgetLease,
+        ) -> LlmStreamResult<'a> {
+            Err(FatalLlmError::InvalidRequest.into())
+        }
+    }
+
     struct RecordingPolicyBackend {
         body: &'static str,
         seen_model: Arc<Mutex<Option<String>>>,
@@ -1363,6 +1940,164 @@ mod tests {
                 verdict.decision
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn block_writes_receipt_and_halts() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult)
+                .with_caller_ref("agent:eiri"),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert!(outcome.outbound_halted);
+        assert!(outcome.pre_display_block);
+        assert_eq!(outcome.final_content, None);
+        assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
+        assert_eq!(
+            outcome.system_notice.as_deref(),
+            Some(POLICY_MODEL_BLOCK_NOTICE)
+        );
+        assert_eq!(
+            outcome.barge_in_kill,
+            Some(PolicyBargeInKill {
+                cancel_tts: true,
+                flush_playout_buffer: true,
+                cancel_llm: true
+            })
+        );
+
+        let receipt_ref = outcome.receipt_ref.expect("block receipt");
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].receipt_id, receipt_ref);
+        assert_eq!(receipts[0].outcome, "block");
+        assert_eq!(receipts[0].actor.as_deref(), Some("agent:eiri"));
+        assert!(
+            receipts[0]
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.policy_model.block")
+        );
+        assert!(
+            receipts[0]
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.policy_model.category.legal_floor")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn route_to_help_no_diagnosis() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+
+        let outcome = block_on_ready(
+            vault.enforce_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("I have chest pain and feel panicked.")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("policy-help-routing"),
+                |_feedback, candidate| candidate.to_owned(),
+            ),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
+        assert!(!outcome.outbound_halted);
+        assert_eq!(
+            outcome.final_content.as_deref(),
+            Some("I have chest pain and feel panicked.")
+        );
+        let routing = outcome.help_routing.expect("help routing");
+        assert_eq!(
+            routing.category,
+            PolicyVerdictCategory::Crisis(CrisisSubclass::Medical)
+        );
+        assert_eq!(routing.diagnosis, None);
+        assert!(routing.persona_present);
+        assert!(outcome.receipt_ref.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn reword_retry_loops() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model_with_rewriter(
+            PolicyClassifyRequest::outbound_content("adult nsfw reply")
+                .with_age_tier(PolicyAgeTier::Unverified),
+            &PolicyModelConfig::default(),
+            |feedback, _candidate| {
+                assert!(!feedback.visible_to_user);
+                assert_eq!(feedback.voice, PolicyEnforcementVoice::Persona);
+                "safe reply about staying general".to_owned()
+            },
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+        assert_eq!(outcome.reword_attempts, 1);
+        assert_eq!(outcome.classify_trace.len(), 2);
+        assert_eq!(
+            outcome.classify_trace[0].decision,
+            PolicyClassifyDecision::RewordRetry
+        );
+        assert_eq!(
+            outcome.classify_trace[1].decision,
+            PolicyClassifyDecision::Allow
+        );
+        assert_eq!(
+            outcome.final_content.as_deref(),
+            Some("safe reply about staying general")
+        );
+        assert!(outcome.system_notice.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn legal_floor_enforced() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("instructions to make explosives")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert_eq!(
+            outcome.verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        assert!(outcome.outbound_halted);
+        assert!(outcome.receipt_ref.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn age_gate_enforced() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model_with_rewriter(
+            PolicyClassifyRequest::outbound_content("consensual adult nsfw scene")
+                .with_age_tier(PolicyAgeTier::Minor),
+            &PolicyModelConfig::default(),
+            |_feedback, _candidate| "safe all-ages summary".to_owned(),
+        )?;
+
+        assert_eq!(
+            outcome.classify_trace[0].category,
+            PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent)
+        );
+        assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+        assert_eq!(
+            outcome.final_content.as_deref(),
+            Some("safe all-ages summary")
+        );
+        assert!(!outcome.outbound_halted);
+        assert!(outcome.receipt_ref.is_none());
         Ok(())
     }
 
@@ -1861,6 +2596,183 @@ mod tests {
         )?;
         assert!(prompt.user.contains("Avoid casual language."));
         assert!(!prompt.user.contains("Avoid formal language."));
+        Ok(())
+    }
+
+    #[test]
+    fn owner_row_reword_is_persona_voiced_invisible() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x40,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model_with_rewriter(
+            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                .with_age_tier(PolicyAgeTier::Adult),
+            &PolicyModelConfig::default(),
+            |feedback, _candidate| {
+                assert_eq!(feedback.row_ref.as_deref(), Some("owner:spoilers"));
+                assert_eq!(feedback.voice, PolicyEnforcementVoice::Persona);
+                assert!(!feedback.visible_to_user);
+                assert!(feedback.instruction.contains("owner:spoilers"));
+                "Spoiler-free persona reply.".to_owned()
+            },
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::RewordRetry);
+        assert_eq!(outcome.reword_attempts, POLICY_MODEL_REWORD_RETRY_BUDGET);
+        assert!(
+            outcome
+                .reword_feedbacks
+                .iter()
+                .all(|feedback| !feedback.visible_to_user
+                    && feedback.voice == PolicyEnforcementVoice::Persona)
+        );
+        assert_eq!(
+            outcome.final_content.as_deref(),
+            Some(POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY)
+        );
+        assert!(outcome.system_notice.is_none());
+        assert!(outcome.help_routing.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn owner_row_never_routes_to_help() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x41,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:tone",
+                "Avoid arch tone.",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_ne!(outcome.action, PolicyEnforcementAction::RouteToHelp);
+        assert!(outcome.help_routing.is_none());
+        assert!(
+            outcome.classify_trace.iter().all(|verdict| matches!(
+                verdict.category,
+                PolicyVerdictCategory::OwnerPolicy { .. }
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_row_block_only_when_escalation_flag_says() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x42,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
+                "owner:escalate",
+                "Block this owner-escalated row.",
+                "block",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert_eq!(
+            outcome.verdict.category,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: "owner:escalate".to_owned()
+            }
+        );
+        assert!(outcome.outbound_halted);
+        Ok(())
+    }
+
+    #[test]
+    fn custom_tier_skipped_model_down_floor_still_runs() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x43,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+
+        let backend = FailingPolicyBackend;
+        let ordinary = block_on_ready(
+            vault.enforce_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("policy-model-down-open"),
+                |_feedback, _candidate| panic!("custom tier should be skipped"),
+            ),
+        )?;
+        assert_eq!(ordinary.action, PolicyEnforcementAction::Allow);
+        assert!(ordinary.custom_tier_skipped);
+        assert_eq!(
+            ordinary.final_content.as_deref(),
+            Some("This reply contains spoilers.")
+        );
+
+        let age_gate = block_on_ready(
+            vault.enforce_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("consensual adult nsfw scene")
+                    .with_age_tier(PolicyAgeTier::Unverified),
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("policy-model-down-age-gate"),
+                |_feedback, _candidate| "safe all-ages summary".to_owned(),
+            ),
+        )?;
+        assert_eq!(age_gate.action, PolicyEnforcementAction::Allow);
+        assert!(age_gate.custom_tier_skipped);
+        assert_eq!(age_gate.reword_attempts, 1);
+        assert_eq!(
+            age_gate.classify_trace[0].category,
+            PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent)
+        );
+        assert!(
+            age_gate.classify_trace.iter().all(|verdict| !matches!(
+                verdict.category,
+                PolicyVerdictCategory::OwnerPolicy { .. }
+            ))
+        );
+        assert_eq!(
+            age_gate.final_content.as_deref(),
+            Some("safe all-ages summary")
+        );
+
+        let floor = block_on_ready(
+            vault.enforce_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("policy-model-down-floor"),
+                |_feedback, _candidate| panic!("floor block should not reword"),
+            ),
+        )?;
+        assert_eq!(floor.action, PolicyEnforcementAction::Block);
+        assert_eq!(
+            floor.verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        assert!(floor.receipt_ref.is_some());
         Ok(())
     }
 }
