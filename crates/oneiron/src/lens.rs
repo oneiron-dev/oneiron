@@ -21,7 +21,7 @@ use crate::{
     types::{ENTITY_TYPE_CLAIM, EdgeActorClass, EntityId},
 };
 
-pub const LENS_ATOM_KIT_VERSION: u16 = 1;
+pub const LENS_ATOM_KIT_VERSION: u16 = 2;
 pub const GENERATED_UI_WIRE_VERSION: u16 = 1;
 pub const GENERATED_UI_SEGMENT_CONTENT_TYPE: &str =
     "application/vnd.oneiron.generated-ui.segment+json";
@@ -587,12 +587,14 @@ impl GeneratedUiRender {
         }));
         segments.extend(self.nodes.iter().cloned().map(|node| {
             GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: self.protocol_version,
                 card_id: self.card_id.clone(),
                 node,
             }))
         }));
         segments.push(GeneratedUiSegment::CardStateUpdate(
             GeneratedUiCardStateUpdate {
+                protocol_version: self.protocol_version,
                 card_id: self.card_id.clone(),
                 data_model: GeneratedUiDataModel {
                     root: self.root.clone(),
@@ -627,8 +629,9 @@ impl GeneratedUiRender {
 
         let mut ids = HashSet::with_capacity(self.nodes.len());
         let mut id_to_index = HashMap::with_capacity(self.nodes.len());
+        let mut budget = LensBudget::default();
         for node in &self.nodes {
-            validate_required_lens_text("generated-ui node fallbackText", &node.fallback_text)?;
+            node.validate_with_budget(&mut budget)?;
             if !ids.insert(node.id.as_str()) {
                 return Err(Error::InvalidConfig(
                     "generated-ui flat nodes must not contain duplicate ids".to_string(),
@@ -642,7 +645,6 @@ impl GeneratedUiRender {
 
         let mut rootless_count = 0usize;
         let mut claimed_parents = HashMap::with_capacity(self.nodes.len().saturating_sub(1));
-        let mut budget = LensBudget::default();
         for node in &self.nodes {
             match node.parent.as_ref() {
                 Some(parent) => {
@@ -694,10 +696,6 @@ impl GeneratedUiRender {
                     ));
                 }
             }
-            node.atom.validate()?;
-            node.atom.count_collection_items(&mut budget)?;
-            budget.add_collection("generated-ui node bindings", node.bindings.len())?;
-            budget.add_collection("generated-ui child refs", node.child_refs.len())?;
         }
         if rootless_count != 1 || self.nodes[root_index].parent.is_some() {
             return Err(Error::InvalidConfig(
@@ -790,7 +788,17 @@ pub struct GeneratedUiNode {
     pub child_refs: Vec<LensAtomId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl GeneratedUiNode {
+    fn validate_with_budget(&self, budget: &mut LensBudget) -> Result<()> {
+        validate_required_lens_text("generated-ui node fallbackText", &self.fallback_text)?;
+        self.atom.validate()?;
+        self.atom.count_collection_items(budget)?;
+        budget.add_collection("generated-ui node bindings", self.bindings.len())?;
+        budget.add_collection("generated-ui child refs", self.child_refs.len())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "segment", content = "payload", rename_all = "snake_case")]
 pub enum GeneratedUiSegment {
     CardStart(GeneratedUiCardStart),
@@ -799,6 +807,14 @@ pub enum GeneratedUiSegment {
 }
 
 impl GeneratedUiSegment {
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::CardStart(payload) => payload.validate(),
+            Self::CardElement(payload) => payload.validate(),
+            Self::CardStateUpdate(payload) => payload.validate(),
+        }
+    }
+
     pub fn to_content_part(&self) -> Result<ContentPart> {
         let text = serde_json::to_string(self).map_err(|error| {
             Error::InvalidConfig(format!(
@@ -809,7 +825,34 @@ impl GeneratedUiSegment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for GeneratedUiSegment {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "segment", content = "payload", rename_all = "snake_case")]
+        enum GeneratedUiSegmentWire {
+            #[serde(rename = "card_start")]
+            Start(GeneratedUiCardStart),
+            #[serde(rename = "card_element")]
+            Element(Box<GeneratedUiCardElement>),
+            #[serde(rename = "card_state_update")]
+            StateUpdate(GeneratedUiCardStateUpdate),
+        }
+
+        let wire = GeneratedUiSegmentWire::deserialize(deserializer)?;
+        let segment = match wire {
+            GeneratedUiSegmentWire::Start(payload) => Self::CardStart(payload),
+            GeneratedUiSegmentWire::Element(payload) => Self::CardElement(payload),
+            GeneratedUiSegmentWire::StateUpdate(payload) => Self::CardStateUpdate(payload),
+        };
+        segment.validate().map_err(de::Error::custom)?;
+        Ok(segment)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiCardStart {
     pub protocol_version: u16,
@@ -820,18 +863,121 @@ pub struct GeneratedUiCardStart {
     pub fallback_text: LensText,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl GeneratedUiCardStart {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        validate_lens_collection_len("generated-ui segment node count", self.node_count)?;
+        validate_required_lens_text("generated-ui segment fallbackText", &self.fallback_text)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardStart {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardStartWire {
+            protocol_version: u16,
+            catalog: GeneratedUiCatalog,
+            card_id: LensRenderId,
+            root: LensAtomId,
+            node_count: usize,
+            fallback_text: LensText,
+        }
+
+        let wire = GeneratedUiCardStartWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            catalog: wire.catalog,
+            card_id: wire.card_id,
+            root: wire.root,
+            node_count: wire.node_count,
+            fallback_text: wire.fallback_text,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiCardElement {
+    pub protocol_version: u16,
     pub card_id: LensRenderId,
     pub node: GeneratedUiNode,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl GeneratedUiCardElement {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        let mut budget = LensBudget::default();
+        self.node.validate_with_budget(&mut budget)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardElement {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardElementWire {
+            protocol_version: u16,
+            card_id: LensRenderId,
+            node: GeneratedUiNode,
+        }
+
+        let wire = GeneratedUiCardElementWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            card_id: wire.card_id,
+            node: wire.node,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiCardStateUpdate {
+    pub protocol_version: u16,
     pub card_id: LensRenderId,
     pub data_model: GeneratedUiDataModel,
+}
+
+impl GeneratedUiCardStateUpdate {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        self.data_model.validate()
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardStateUpdate {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardStateUpdateWire {
+            protocol_version: u16,
+            card_id: LensRenderId,
+            data_model: GeneratedUiDataModel,
+        }
+
+        let wire = GeneratedUiCardStateUpdateWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            card_id: wire.card_id,
+            data_model: wire.data_model,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -840,6 +986,12 @@ pub struct GeneratedUiDataModel {
     pub root: LensAtomId,
     pub node_count: usize,
     pub catalog: GeneratedUiCatalog,
+}
+
+impl GeneratedUiDataModel {
+    fn validate(&self) -> Result<()> {
+        validate_lens_collection_len("generated-ui data model node count", self.node_count)
+    }
 }
 
 struct LensNodeSeed {
@@ -3034,6 +3186,15 @@ fn validate_required_lens_text(context: &str, value: &LensText) -> Result<()> {
     Ok(())
 }
 
+fn validate_generated_ui_protocol_version(protocol_version: u16) -> Result<()> {
+    if protocol_version != GENERATED_UI_WIRE_VERSION {
+        return Err(Error::InvalidConfig(format!(
+            "unsupported generated-ui wire version {protocol_version}"
+        )));
+    }
+    Ok(())
+}
+
 fn fallback_lens_text(kind: &'static str, value: String) -> LensText {
     LensText::new(value).unwrap_or_else(|_| LensText::new(kind).expect("static fallback is valid"))
 }
@@ -3991,6 +4152,38 @@ mod tests {
     }
 
     #[test]
+    fn fallback_text_requirement_bumps_atom_kit_version() {
+        let lens = GeneratedLens::new(LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Throbber(ThrobberAtom {
+                label: text("loading"),
+            }),
+            text("loading"),
+        ))
+        .expect("valid lens");
+        assert_eq!(lens.kit_version(), 2);
+
+        let legacy_v1_without_fallback = json!({
+            "kit_version": 1,
+            "root": {
+                "id": "root",
+                "atom": {
+                    "kind": "throbber",
+                    "props": { "label": "loading" }
+                }
+            }
+        });
+        let error = serde_json::from_value::<GeneratedLens>(legacy_v1_without_fallback)
+            .expect_err("legacy v1 wire shape must not decode as v2");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported generated lens atom kit version 1"),
+            "legacy incompatible node shape must fail by version, not share v2 semantics: {error}"
+        );
+    }
+
+    #[test]
     fn text_block_allows_one_escaped_interpolation_only() {
         let ok = LensAtom::TextBlock(TextBlockAtom {
             spans: vec![
@@ -4028,6 +4221,52 @@ mod tests {
             serde_json::from_value::<GeneratedUiSegment>(unknown_segment).is_err(),
             "segment kind must be a closed enum"
         );
+
+        for segment in [
+            json!({
+                "segment": "card_start",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "catalog": "lens_atom_kit",
+                    "cardId": "card-1",
+                    "root": "root",
+                    "nodeCount": 1,
+                    "fallbackText": "root"
+                }
+            }),
+            json!({
+                "segment": "card_element",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "cardId": "card-1",
+                    "node": {
+                        "id": "root",
+                        "atom": {
+                            "kind": "throbber",
+                            "props": { "label": "loading" }
+                        },
+                        "fallbackText": "loading"
+                    }
+                }
+            }),
+            json!({
+                "segment": "card_state_update",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "cardId": "card-1",
+                    "dataModel": {
+                        "root": "root",
+                        "nodeCount": 1,
+                        "catalog": "lens_atom_kit"
+                    }
+                }
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<GeneratedUiSegment>(segment).is_err(),
+                "segment payloads must reject unsupported generated-ui wire versions"
+            );
+        }
 
         let raw_url_handle = json!({
             "kind": "media",
