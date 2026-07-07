@@ -3373,7 +3373,18 @@ impl Vault {
     /// see closed Claims to compute winner stamps.
     pub fn get_claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        self.get_claim_in_txn(&rtxn, id)
+    }
+
+    /// Transaction-composable [`Vault::get_claim`]: reads and decodes a CLAIM
+    /// body through the caller's txn (so it composes inside a write txn, where a
+    /// nested read txn would be illegal).
+    pub(crate) fn get_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =
@@ -3389,6 +3400,23 @@ impl Vault {
     /// `sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))`.
     pub fn claims_for_subject(&self, subject: &EntityId) -> Result<Vec<EntityId>> {
         self.sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))
+    }
+
+    /// Transaction-composable [`Vault::claims_for_subject`]: resolves inbound
+    /// `claim_of` edges through the caller's txn.
+    pub(crate) fn claims_for_subject_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        self.filtered_edge_peers(
+            rtxn,
+            &self.store.edges_in,
+            subject,
+            EdgeKind::ClaimOf,
+            Some(ENTITY_TYPE_CLAIM),
+            "claims for subject",
+        )
     }
 
     pub(crate) fn claim_bodies_for_subjects_matching(

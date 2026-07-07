@@ -316,6 +316,36 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
+        self.with_write_txn(|wtxn| {
+            self.append_blob_artifact_version_in_txn(
+                wtxn,
+                artifact_id,
+                bytes,
+                provenance,
+                actor,
+                occurred,
+                learned_at,
+            )
+        })
+    }
+
+    /// Transaction-composable body of [`Vault::append_blob_artifact_version`].
+    ///
+    /// ARTL-4 settle-select needs the version append, its re-anchor sweep, and
+    /// the consume-once ledger insert to commit or roll back as one unit, so it
+    /// drives this against a shared `wtxn` rather than the self-contained public
+    /// method's own transaction.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if bytes.is_empty() {
             return Err(Error::InvalidBlobArtifactBody(
@@ -326,66 +356,63 @@ impl Vault {
         let asset_id = blob_artifact_asset_entity_id(&content_hash)?;
         let claim_id = EntityId::now();
 
-        self.with_write_txn(|wtxn| {
-            require_entity_type(
-                &self.store,
-                wtxn,
-                artifact_id,
-                ENTITY_TYPE_BLOB_ARTIFACT,
-                "append target must be a BLOB_ARTIFACT entity",
-            )?;
-            let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
-            {
-                Some(head) if head.content_hash == content_hash => return Ok(head),
-                Some(head) => head
-                    .version
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?,
-                None => 1,
-            };
-            let version_key = blob_artifact_version_key(artifact_id, next_version);
-            if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
-                return Err(Error::InvalidBlobArtifactBody(
-                    "blob artifact version is already recorded",
-                ));
-            }
+        require_entity_type(
+            &self.store,
+            wtxn,
+            artifact_id,
+            ENTITY_TYPE_BLOB_ARTIFACT,
+            "append target must be a BLOB_ARTIFACT entity",
+        )?;
+        let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
+            Some(head) if head.content_hash == content_hash => return Ok(head),
+            Some(head) => head
+                .version
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?,
+            None => 1,
+        };
+        let version_key = blob_artifact_version_key(artifact_id, next_version);
+        if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
+            return Err(Error::InvalidBlobArtifactBody(
+                "blob artifact version is already recorded",
+            ));
+        }
 
-            let candidate = ClaimCandidate::new(
-                BLOB_VERSION_CLAIM_PREDICATE,
-                ClaimSubject::Entity(*artifact_id),
-                blob_version_claim_value(next_version, &content_hash, provenance),
-                1.0,
-            );
-            let envelope = WriteEnvelope::new(
-                actor,
-                provenance.claim_source(),
-                WriteProvenance::new(write_provenance_value(provenance))?,
-                provenance.approval_status(),
-            );
-            self.batch_in()
-                .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
-                .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
-                .apply(wtxn)?;
+        let candidate = ClaimCandidate::new(
+            BLOB_VERSION_CLAIM_PREDICATE,
+            ClaimSubject::Entity(*artifact_id),
+            blob_version_claim_value(next_version, &content_hash, provenance),
+            1.0,
+        );
+        let envelope = WriteEnvelope::new(
+            actor,
+            provenance.claim_source(),
+            WriteProvenance::new(write_provenance_value(provenance))?,
+            provenance.approval_status(),
+        );
+        self.batch_in()
+            .put(&asset_id, ENTITY_TYPE_ASSET, occurred, learned_at, bytes)
+            .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
+            .apply(wtxn)?;
 
-            let record = BlobArtifactVersion {
-                version: next_version,
-                content_hash,
-                provenance: provenance.clone(),
-                claim_id,
-                created_at: learned_at,
-            };
-            let encoded = encode_blob_artifact_version_record(&record)?;
-            self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
-            self.store
-                .vault_meta
-                .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
-            self.store.vault_meta.put(
-                wtxn,
-                &blob_artifact_asset_ref_key(&content_hash, artifact_id),
-                &[],
-            )?;
-            Ok(record)
-        })
+        let record = BlobArtifactVersion {
+            version: next_version,
+            content_hash,
+            provenance: provenance.clone(),
+            claim_id,
+            created_at: learned_at,
+        };
+        let encoded = encode_blob_artifact_version_record(&record)?;
+        self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
+        self.store
+            .vault_meta
+            .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
+        self.store.vault_meta.put(
+            wtxn,
+            &blob_artifact_asset_ref_key(&content_hash, artifact_id),
+            &[],
+        )?;
+        Ok(record)
     }
 
     pub fn blob_artifact_head(
@@ -516,7 +543,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     Ok(cleanup)
 }
 
-fn read_blob_artifact_head_in_txn(
+pub(crate) fn read_blob_artifact_head_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
@@ -551,7 +578,7 @@ fn read_blob_asset(
     Ok(body)
 }
 
-fn require_entity_type(
+pub(crate) fn require_entity_type(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,

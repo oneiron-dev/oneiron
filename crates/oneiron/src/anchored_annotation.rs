@@ -51,6 +51,7 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
+use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
 use crate::error::{Error, Result};
 use crate::types::{
     ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_TASK, EdgeActorClass, EdgeKind, EntityId, TaskRole,
@@ -387,15 +388,22 @@ pub struct TaskBrief {
 
 /// A minimal edit operation the re-anchor replay understands.
 ///
-/// # Reconciliation seam (ARTL-3 / ONE-1553)
+/// # Reconciliation with ARTL-3 (ONE-1553 / ONE-1554)
 ///
 /// The canonical `EditManifest` type belongs to ARTL-3's edit-manifest
 /// producer. This enum is deliberately NOT that type: it is the minimal subset
-/// re-anchoring needs — whole row/column insert/delete, a rectangular range
-/// move, and a cell-write marker. When ARTL-3 lands, reconcile by adding a
-/// `From<EditManifestOp>` (or a thin adapter) that lowers its ops into these
-/// variants, rather than duplicating the manifest shape here. Rows and columns
-/// are 1-based; `count` is a positive unit count.
+/// re-anchoring needs. ARTL-3 exposes [`crate::edit_roundtrip::AnchorEffect`]
+/// as its self-contained reconciliation surface (one per structural op), and
+/// ARTL-4 (settle, ONE-1554) lowers a manifest's anchor effects onto these
+/// variants through [`From<&crate::edit_roundtrip::AnchorEffect>`], rather than
+/// duplicating the manifest shape here. Rows and columns are 1-based; `count`
+/// is a positive unit count.
+///
+/// The row/column/move variants were the original minimal subset; the two
+/// sheet-level variants ([`ReanchorOp::RenameSheet`] /
+/// [`ReanchorOp::RemoveSheet`]) were added with the ARTL-4 lowering so a
+/// manifest that renames or deletes a sheet re-maps or drifts anchors on that
+/// sheet rather than silently leaving them pinned to a stale sheet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReanchorOp {
     /// Insert `count` rows above `at_row` on `sheet`.
@@ -450,9 +458,23 @@ pub enum ReanchorOp {
         /// The written range.
         range: A1Range,
     },
+    /// Rename `from` to `to`. Anchors on `from` follow to the new sheet name.
+    RenameSheet {
+        /// The sheet name before the rename (the op's target).
+        from: String,
+        /// The sheet name after the rename.
+        to: String,
+    },
+    /// Remove `sheet`. Anchors on it are destroyed and drift.
+    RemoveSheet {
+        /// The removed sheet (the op's target).
+        sheet: String,
+    },
 }
 
 impl ReanchorOp {
+    /// The sheet an op targets — the name replay matches against the anchor's
+    /// current sheet. For a rename this is the pre-rename (`from`) name.
     fn sheet(&self) -> &str {
         match self {
             Self::InsertRows { sheet, .. }
@@ -460,9 +482,99 @@ impl ReanchorOp {
             | Self::InsertCols { sheet, .. }
             | Self::DeleteCols { sheet, .. }
             | Self::MoveRange { sheet, .. }
-            | Self::WriteCells { sheet, .. } => sheet,
+            | Self::WriteCells { sheet, .. }
+            | Self::RemoveSheet { sheet } => sheet,
+            Self::RenameSheet { from, .. } => from,
         }
     }
+}
+
+/// Lowers an ARTL-3 [`AnchorEffect`] — the self-contained reconciliation surface
+/// the edit manifest exposes, one per structural op — onto the minimal
+/// [`ReanchorOp`] the replay understands (ONE-1554). This is the reconciliation
+/// the module docs call for: ARTL-4 (settle) replays a manifest's anchor effects
+/// onto the artifact's threads by mapping each through here.
+impl From<&AnchorEffect> for ReanchorOp {
+    fn from(effect: &AnchorEffect) -> Self {
+        match effect {
+            AnchorEffect::Shift(shift) => shift_to_reanchor_op(shift),
+            AnchorEffect::RangeMoved { sheet, from, to } => Self::MoveRange {
+                sheet: sheet.clone(),
+                from: range_ref_to_a1(from),
+                to: move_dest_to_a1(from, *to),
+            },
+            AnchorEffect::SheetRenamed { from, to } => Self::RenameSheet {
+                from: from.clone(),
+                to: to.clone(),
+            },
+            AnchorEffect::SheetRemoved { name } => Self::RemoveSheet {
+                sheet: name.clone(),
+            },
+        }
+    }
+}
+
+/// A positive-magnitude row/column shift becomes an insert; a negative one a
+/// delete. A zero delta maps to a zero-`count` insert, which the replay skips.
+fn shift_to_reanchor_op(shift: &StructuralShift) -> ReanchorOp {
+    let sheet = shift.sheet.clone();
+    let at = shift.at;
+    // Saturate rather than panic on a pathological magnitude; a saturated count
+    // that overflows the grid drifts the anchor, the safe outcome.
+    let count = u32::try_from(shift.delta.unsigned_abs()).unwrap_or(u32::MAX);
+    match (shift.axis, shift.delta >= 0) {
+        (Axis::Row, true) => ReanchorOp::InsertRows {
+            sheet,
+            at_row: at,
+            count,
+        },
+        (Axis::Row, false) => ReanchorOp::DeleteRows {
+            sheet,
+            at_row: at,
+            count,
+        },
+        (Axis::Column, true) => ReanchorOp::InsertCols {
+            sheet,
+            at_col: at,
+            count,
+        },
+        (Axis::Column, false) => ReanchorOp::DeleteCols {
+            sheet,
+            at_col: at,
+            count,
+        },
+    }
+}
+
+/// The 1x1 A1 fallback used when a manifest corner is degenerate — unreachable
+/// for a validated manifest (ARTL-3 rejects 0-indexed and inverted ranges), but
+/// keeps the lowering total and panic-free.
+fn a1_unit() -> A1Range {
+    A1Range::new(1, 1, 1, 1).expect("A1 is a valid 1x1 range")
+}
+
+fn range_ref_to_a1(range: &RangeRef) -> A1Range {
+    A1Range::new(
+        range.start.col,
+        range.end.col,
+        range.start.row,
+        range.end.row,
+    )
+    .unwrap_or_else(a1_unit)
+}
+
+/// The destination range a move lands on: the source range's shape translated so
+/// its top-left corner sits at `to`.
+fn move_dest_to_a1(from: &RangeRef, to: CellRef) -> A1Range {
+    let width = from.end.col.saturating_sub(from.start.col);
+    let height = from.end.row.saturating_sub(from.start.row);
+    A1Range::new(
+        to.col,
+        to.col.saturating_add(width),
+        to.row,
+        to.row.saturating_add(height),
+    )
+    .unwrap_or_else(a1_unit)
 }
 
 /// The outcome of replaying an edit manifest against one locator.
@@ -478,6 +590,11 @@ pub enum ReanchorOutcome {
 /// or [`ReanchorOutcome::Drifted`] when the anchored region is destroyed or
 /// becomes ambiguous. Ops on a different sheet leave the locator untouched.
 ///
+/// A [`ReanchorOp::RenameSheet`] retargets the locator's sheet name so later
+/// ops in the same replay still match it; a [`ReanchorOp::RemoveSheet`] on the
+/// anchor's sheet destroys it and drifts, never leaving a thread pinned to a
+/// stale sheet name.
+///
 /// Only xlsx locators are replayed in P1; any other locator format is treated
 /// as non-mappable so the thread pins to its origin version rather than being
 /// silently repositioned.
@@ -487,8 +604,11 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
         return ReanchorOutcome::Drifted;
     };
     let mut cur = *range;
+    // The anchor's sheet name is mutable across the replay: a rename retargets
+    // it so subsequent ops still match, and the final Mapped carries it.
+    let mut cur_sheet = sheet.clone();
     for op in ops {
-        if op.sheet() != sheet {
+        if op.sheet() != cur_sheet.as_str() {
             continue;
         }
         match op {
@@ -549,15 +669,25 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                         None => return ReanchorOutcome::Drifted,
                     }
                 } else if ranges_overlap(from, &cur) {
-                    // Partial overlap is ambiguous: never guess a position.
+                    // Partial source overlap is ambiguous: never guess a position.
+                    return ReanchorOutcome::Drifted;
+                } else if ranges_overlap(to, &cur) {
+                    // The anchor sits (partly) at the move's DESTINATION but is not
+                    // part of the moved content, so that content was overwritten by
+                    // the move. Its cells no longer hold what the anchor named — drift
+                    // rather than point at replaced content.
                     return ReanchorOutcome::Drifted;
                 }
             }
             ReanchorOp::WriteCells { .. } => {}
+            ReanchorOp::RenameSheet { to, .. } => {
+                cur_sheet = to.clone();
+            }
+            ReanchorOp::RemoveSheet { .. } => return ReanchorOutcome::Drifted,
         }
     }
     ReanchorOutcome::Mapped(Locator::Xlsx {
-        sheet: sheet.clone(),
+        sheet: cur_sheet,
         range: cur,
     })
 }
@@ -700,7 +830,7 @@ fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
     Ok(())
 }
 
-fn encode_locator(locator: &Locator) -> Value {
+pub(crate) fn encode_locator(locator: &Locator) -> Value {
     match locator {
         Locator::Xlsx { sheet, range } => Value::Map(vec![
             (Value::from(KEY_FORMAT), Value::from(FORMAT_XLSX)),
@@ -725,7 +855,7 @@ fn encode_locator(locator: &Locator) -> Value {
     }
 }
 
-fn decode_locator(value: &Value) -> Result<Locator> {
+pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
     let format = map_str(value, KEY_FORMAT)?;
     match format {
         FORMAT_XLSX => {
@@ -1167,34 +1297,23 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
     ) -> Result<Vec<AnnotationThread>> {
-        // Group by thread id, keeping the newest Active head per thread.
-        let mut heads: Vec<(EntityId, EntityId, ThreadHead)> = Vec::new();
-        for (claim_id, body) in self.active_annotation_claims(artifact_id)? {
-            if body.predicate != ANNOTATION_THREAD_PREDICATE {
-                continue;
-            }
-            let head = match decode_thread_head(&body.value) {
-                Ok(head) => head,
-                Err(err) => {
-                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
-                    continue;
-                }
-            };
-            match heads.iter_mut().find(|(tid, _, _)| *tid == head.thread_id) {
-                Some((_, existing_id, existing_head)) if claim_id > *existing_id => {
-                    *existing_id = claim_id;
-                    *existing_head = head;
-                }
-                Some(_) => {}
-                None => heads.push((head.thread_id, claim_id, head)),
-            }
-        }
-        let mut threads: Vec<AnnotationThread> = heads
-            .into_iter()
-            .map(|(_, claim_id, head)| thread_from_head(*artifact_id, claim_id, head))
-            .collect();
-        threads.sort_by_key(|thread| thread.thread_id);
-        Ok(threads)
+        Ok(threads_from_active_claims(
+            *artifact_id,
+            self.active_annotation_claims(artifact_id)?,
+        ))
+    }
+
+    /// Transaction-composable [`Vault::annotation_threads_for_artifact`]: reads
+    /// the live thread heads through the caller's txn (settle's re-anchor sweep).
+    fn annotation_threads_for_artifact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<AnnotationThread>> {
+        Ok(threads_from_active_claims(
+            *artifact_id,
+            self.active_annotation_claims_in_txn(rtxn, artifact_id)?,
+        ))
     }
 
     /// Reads a thread's comments, ordered by authored time then claim id.
@@ -1255,54 +1374,98 @@ impl Vault {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) = match replay_locator(&thread.anchor.locator, ops) {
-                ReanchorOutcome::Mapped(locator) => (
-                    ThreadHead {
-                        thread_id: thread.thread_id,
-                        origin_version: thread.origin_version,
-                        anchor_version: to_version,
-                        state: thread.state,
-                        locator,
-                        drift: None,
-                    },
-                    false,
-                ),
-                ReanchorOutcome::Drifted => (
-                    ThreadHead {
-                        thread_id: thread.thread_id,
-                        origin_version: thread.origin_version,
-                        anchor_version: from_version,
-                        state: thread.state,
-                        locator: thread.anchor.locator.clone(),
-                        drift: Some(DriftMarker {
-                            drifted_at_version: to_version,
-                            pinned_version: from_version,
-                        }),
-                    },
-                    true,
-                ),
-            };
+            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            // Each thread's head write + old-head supersede share ONE txn, so a
+            // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn(|wtxn| {
-                let new_head_id = self.write_thread_head_in_txn(
+                self.apply_reanchor_head_in_txn(
                     wtxn,
                     artifact_id,
+                    &thread,
                     &head,
                     actor,
-                    "reanchor",
                     occurred,
                     learned_at,
-                )?;
-                self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
-                Ok(new_head_id)
+                )
             })?;
-            let updated = thread_from_head(*artifact_id, new_head_id, head);
-            if drifted {
-                summary.drifted.push(updated);
-            } else {
-                summary.remapped.push(updated);
-            }
+            push_reanchor_result(
+                &mut summary,
+                thread_from_head(*artifact_id, new_head_id, head),
+                drifted,
+            );
         }
         Ok(summary)
+    }
+
+    /// Transaction-composable re-anchor sweep: replays `ops` onto every live,
+    /// non-drifted thread at `from_version`, writing all head updates through the
+    /// caller's `wtxn`. ARTL-4 settle-select drives this so the re-anchor commits
+    /// atomically with the version append and the consume-once ledger insert —
+    /// a crash rolls the whole settle back rather than pinning threads to the old
+    /// version. `to_version` is validated against the head visible in `wtxn`, so
+    /// the version the same txn just appended resolves.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn reanchor_annotation_threads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        from_version: u64,
+        to_version: u64,
+        ops: &[ReanchorOp],
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<ReanchorSummary> {
+        self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
+        let mut summary = ReanchorSummary::default();
+        let threads = self.annotation_threads_for_artifact_in_txn(&*wtxn, artifact_id)?;
+        for thread in threads {
+            if thread.is_drifted() || thread.anchor.version != from_version {
+                continue;
+            }
+            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            let new_head_id = self.apply_reanchor_head_in_txn(
+                wtxn,
+                artifact_id,
+                &thread,
+                &head,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+            push_reanchor_result(
+                &mut summary,
+                thread_from_head(*artifact_id, new_head_id, head),
+                drifted,
+            );
+        }
+        Ok(summary)
+    }
+
+    /// Writes one re-anchored head and supersedes the thread's prior head in the
+    /// caller's txn, returning the new head claim id.
+    #[expect(clippy::too_many_arguments)]
+    fn apply_reanchor_head_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        thread: &AnnotationThread,
+        head: &ThreadHead,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let new_head_id = self.write_thread_head_in_txn(
+            wtxn,
+            artifact_id,
+            head,
+            actor,
+            "reanchor",
+            occurred,
+            learned_at,
+        )?;
+        self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
+        Ok(new_head_id)
     }
 
     /// Converts a thread into a task-brief (OF-368 D4).
@@ -1460,12 +1623,25 @@ impl Vault {
     }
 
     fn require_anchor_version(&self, artifact_id: &EntityId, version: u64) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        self.require_anchor_version_in_txn(&rtxn, artifact_id, version)
+    }
+
+    /// Transaction-composable [`Vault::require_anchor_version`]: validates the
+    /// target version against the artifact head read through the caller's txn,
+    /// so settle sees the version it just appended in the same write txn.
+    fn require_anchor_version_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<()> {
         if version == 0 {
             return Err(Error::InvalidAnchor("anchor version must be at least 1"));
         }
-        let head = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::InvalidAnchor("anchor artifact has no versions"))?;
+        let head =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?
+                .ok_or(Error::InvalidAnchor("anchor artifact has no versions"))?;
         if version > head.version {
             return Err(Error::InvalidAnchor(
                 "anchor version is beyond the artifact head",
@@ -1489,9 +1665,21 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.active_annotation_claims_in_txn(&rtxn, artifact_id)
+    }
+
+    /// Transaction-composable [`Vault::active_annotation_claims`]: reads the
+    /// live-read annotation cohort through the caller's txn, so settle can gather
+    /// threads inside the same write txn that appends the version.
+    fn active_annotation_claims_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut out = Vec::new();
-        for claim_id in self.claims_for_subject(artifact_id)? {
-            let Some(body) = self.get_claim(&claim_id)? else {
+        for claim_id in self.claims_for_subject_in_txn(rtxn, artifact_id)? {
+            let Some(body) = self.get_claim_in_txn(rtxn, &claim_id)? else {
                 continue;
             };
             if crate::claim::claim_surfaceable(&body) && is_annotation_predicate(&body.predicate) {
@@ -1523,6 +1711,89 @@ fn is_annotation_predicate(predicate: &str) -> bool {
         predicate,
         ANNOTATION_THREAD_PREDICATE | ANNOTATION_COMMENT_PREDICATE | ANNOTATION_BRIEF_PREDICATE
     )
+}
+
+/// Computes the re-anchored head for one thread across a `from → to` version
+/// bump: a mappable anchor advances to `to_version` with its new locator; a
+/// non-mappable one drifts and stays pinned to `from_version`. Returns the new
+/// head and whether it drifted. Pure — the caller writes it.
+fn plan_reanchored_head(
+    thread: &AnnotationThread,
+    from_version: u64,
+    to_version: u64,
+    ops: &[ReanchorOp],
+) -> (ThreadHead, bool) {
+    match replay_locator(&thread.anchor.locator, ops) {
+        ReanchorOutcome::Mapped(locator) => (
+            ThreadHead {
+                thread_id: thread.thread_id,
+                origin_version: thread.origin_version,
+                anchor_version: to_version,
+                state: thread.state,
+                locator,
+                drift: None,
+            },
+            false,
+        ),
+        ReanchorOutcome::Drifted => (
+            ThreadHead {
+                thread_id: thread.thread_id,
+                origin_version: thread.origin_version,
+                anchor_version: from_version,
+                state: thread.state,
+                locator: thread.anchor.locator.clone(),
+                drift: Some(DriftMarker {
+                    drifted_at_version: to_version,
+                    pinned_version: from_version,
+                }),
+            },
+            true,
+        ),
+    }
+}
+
+fn push_reanchor_result(summary: &mut ReanchorSummary, thread: AnnotationThread, drifted: bool) {
+    if drifted {
+        summary.drifted.push(thread);
+    } else {
+        summary.remapped.push(thread);
+    }
+}
+
+/// Groups a live-read annotation claim cohort into one [`AnnotationThread`] per
+/// thread id (newest Active head wins on a torn supersede), skipping non-thread
+/// predicates and malformed heads. Shared by the own-txn and in-txn listers.
+fn threads_from_active_claims(
+    artifact_id: EntityId,
+    claims: Vec<(EntityId, ClaimBody)>,
+) -> Vec<AnnotationThread> {
+    let mut heads: Vec<(EntityId, EntityId, ThreadHead)> = Vec::new();
+    for (claim_id, body) in claims {
+        if body.predicate != ANNOTATION_THREAD_PREDICATE {
+            continue;
+        }
+        let head = match decode_thread_head(&body.value) {
+            Ok(head) => head,
+            Err(err) => {
+                warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                continue;
+            }
+        };
+        match heads.iter_mut().find(|(tid, _, _)| *tid == head.thread_id) {
+            Some((_, existing_id, existing_head)) if claim_id > *existing_id => {
+                *existing_id = claim_id;
+                *existing_head = head;
+            }
+            Some(_) => {}
+            None => heads.push((head.thread_id, claim_id, head)),
+        }
+    }
+    let mut threads: Vec<AnnotationThread> = heads
+        .into_iter()
+        .map(|(_, claim_id, head)| thread_from_head(artifact_id, claim_id, head))
+        .collect();
+    threads.sort_by_key(|thread| thread.thread_id);
+    threads
 }
 
 fn thread_from_head(
@@ -1746,6 +2017,141 @@ mod tests {
         // Non-xlsx locators are non-mappable under the xlsx replay.
         let docx = Locator::docx("body/p[3]", 0, 12).expect("docx");
         assert_eq!(replay_locator(&docx, &[]), ReanchorOutcome::Drifted);
+    }
+
+    #[test]
+    fn replay_follows_sheet_rename_and_drifts_on_remove() {
+        let locator = Locator::xlsx("Sheet1", "B2:C4").expect("locator");
+        // A rename retargets the anchor's sheet name; the range is unchanged and
+        // a later same-sheet op still matches under the NEW name.
+        let renamed = replay_locator(
+            &locator,
+            &[
+                ReanchorOp::RenameSheet {
+                    from: "Sheet1".to_owned(),
+                    to: "Q3".to_owned(),
+                },
+                ReanchorOp::InsertRows {
+                    sheet: "Q3".to_owned(),
+                    at_row: 1,
+                    count: 1,
+                },
+            ],
+        );
+        assert_eq!(
+            renamed,
+            ReanchorOutcome::Mapped(Locator::xlsx("Q3", "B3:C5").expect("locator"))
+        );
+        // Removing the anchor's sheet destroys the region.
+        let removed = replay_locator(
+            &locator,
+            &[ReanchorOp::RemoveSheet {
+                sheet: "Sheet1".to_owned(),
+            }],
+        );
+        assert_eq!(removed, ReanchorOutcome::Drifted);
+        // A rename/remove of a DIFFERENT sheet leaves the anchor untouched.
+        let untouched = replay_locator(
+            &locator,
+            &[ReanchorOp::RemoveSheet {
+                sheet: "Other".to_owned(),
+            }],
+        );
+        assert_eq!(untouched, ReanchorOutcome::Mapped(locator));
+    }
+
+    #[test]
+    fn replay_drifts_anchor_overwritten_by_move_destination() {
+        // Move A1:B2 to D1:E2. A thread anchored at D1 (in the destination, not
+        // part of the moved source) had its content overwritten by the move, so
+        // it must drift rather than keep pointing at replaced cells.
+        let at_destination = Locator::xlsx("Sheet1", "D1").expect("locator");
+        let overwritten = replay_locator(
+            &at_destination,
+            &[ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::parse("A1:B2").expect("from"),
+                to: A1Range::parse("D1:E2").expect("to"),
+            }],
+        );
+        assert_eq!(overwritten, ReanchorOutcome::Drifted);
+
+        // A thread disjoint from BOTH source and destination is untouched.
+        let elsewhere = Locator::xlsx("Sheet1", "H8").expect("locator");
+        let untouched = replay_locator(
+            &elsewhere,
+            &[ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::parse("A1:B2").expect("from"),
+                to: A1Range::parse("D1:E2").expect("to"),
+            }],
+        );
+        assert_eq!(untouched, ReanchorOutcome::Mapped(elsewhere));
+    }
+
+    #[test]
+    fn anchor_effect_lowers_to_reanchor_op() {
+        use crate::edit_roundtrip::{CellRef, RangeRef};
+
+        // A row shift lowers to an insert/delete of matching magnitude.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::Shift(StructuralShift {
+                sheet: "Sheet1".to_owned(),
+                axis: Axis::Row,
+                at: 3,
+                delta: 2,
+            })),
+            ReanchorOp::InsertRows {
+                sheet: "Sheet1".to_owned(),
+                at_row: 3,
+                count: 2,
+            }
+        );
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::Shift(StructuralShift {
+                sheet: "Sheet1".to_owned(),
+                axis: Axis::Column,
+                at: 4,
+                delta: -1,
+            })),
+            ReanchorOp::DeleteCols {
+                sheet: "Sheet1".to_owned(),
+                at_col: 4,
+                count: 1,
+            }
+        );
+        // A range move lowers to the same-shape destination range.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::RangeMoved {
+                sheet: "Sheet1".to_owned(),
+                from: RangeRef::new(CellRef::new(1, 1), CellRef::new(2, 3)),
+                to: CellRef::new(5, 10),
+            }),
+            ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::new(1, 2, 1, 3).expect("from"),
+                to: A1Range::new(5, 6, 10, 12).expect("to"),
+            }
+        );
+        // Sheet-level effects lower to the sheet-level ops.
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::SheetRenamed {
+                from: "A".to_owned(),
+                to: "B".to_owned(),
+            }),
+            ReanchorOp::RenameSheet {
+                from: "A".to_owned(),
+                to: "B".to_owned(),
+            }
+        );
+        assert_eq!(
+            ReanchorOp::from(&AnchorEffect::SheetRemoved {
+                name: "Gone".to_owned(),
+            }),
+            ReanchorOp::RemoveSheet {
+                sheet: "Gone".to_owned(),
+            }
+        );
     }
 
     // Acceptance test 1: a thread is engine memory, not viewer state — it

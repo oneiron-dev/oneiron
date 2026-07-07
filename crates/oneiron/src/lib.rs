@@ -30,6 +30,7 @@ pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod edit_roundtrip;
+pub mod edit_settle;
 pub mod embed;
 pub mod engine_executor;
 pub mod error;

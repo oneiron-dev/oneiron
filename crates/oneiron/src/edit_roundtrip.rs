@@ -1273,6 +1273,16 @@ pub struct EditProposal {
     pub inspection: StructureSummary,
     pub validation: ValidationReport,
     pub recalc: RecalcStatus,
+    /// The artifact version these bytes were produced FROM, when the proposal
+    /// was run against a blob artifact ([`crate::Vault::propose_blob_artifact_edit`]).
+    /// `None` for a raw [`run_edit_roundtrip`] with no artifact binding. ARTL-4
+    /// settle records it as the receipt's before-version ref.
+    pub base_version: Option<u64>,
+    /// Content hash (blake3) of the base bytes the edit started from. ARTL-4
+    /// settle refuses a stale proposal by requiring this to still equal the
+    /// artifact head's content hash — an intervening edit changes the head hash,
+    /// so committing these bytes would clobber it and replay a stale manifest.
+    pub base_content_hash: [u8; 32],
 }
 
 impl EditProposal {
@@ -1408,6 +1418,10 @@ pub fn run_edit_roundtrip<S: EditSession>(
         inspection,
         validation: report,
         recalc,
+        // The raw round-trip has no artifact/version context; the base is the
+        // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
+        base_version: None,
+        base_content_hash: *blake3::hash(input_bytes).as_bytes(),
     }))
 }
 
@@ -1435,7 +1449,13 @@ impl crate::Vault {
             .get_blob_artifact(artifact_id)?
             .ok_or(Error::EntityNotFound)?;
         let format = OfficeFormat::from_media_type(&body.media_type)?;
-        run_edit_roundtrip(session, &bytes, format, plan, run_ref)
+        let mut outcome = run_edit_roundtrip(session, &bytes, format, plan, run_ref)?;
+        // Bind the proposal to the head it was produced from, so ARTL-4 settle
+        // can refuse it if an intervening edit has moved the head since.
+        if let EditOutcome::Proposed(proposal) = &mut outcome {
+            proposal.base_version = Some(head.version);
+        }
+        Ok(outcome)
     }
 }
 
