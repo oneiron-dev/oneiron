@@ -15,6 +15,7 @@ use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, EdgeActorClass, EdgeKind, EntityId, Error, Result, ScoredEntity, TimeRange,
     Vault, WriteActor, WriteEnvelope, WriteProvenance,
+    error::{GateDenialOutcome, GateDenialReason},
 };
 
 const SELF_SURFACE_NAME: &str = "self.*";
@@ -30,6 +31,8 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
 const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
 
+/// Maximum results a first-party `self.memory.search` call can request.
+pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
@@ -272,6 +275,34 @@ pub struct CodeRunReplayRecord {
     pub abi_layout_checks: Vec<CodeRunAbiLayoutCheck>,
 }
 
+/// Stable replay-row generation used for guarded executor appends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodeRunReplayGeneration {
+    pub bridge_call_count: u64,
+    pub step_checkpoint_count: u64,
+    pub output_count: u64,
+    pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
+}
+
+impl CodeRunReplayGeneration {
+    fn for_record(record: &CodeRunReplayRecord) -> Result<Self> {
+        Ok(Self {
+            bridge_call_count: u64::try_from(record.bridge_calls.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run bridge call count"))?,
+            step_checkpoint_count: u64::try_from(record.step_checkpoints.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run step checkpoint count"))?,
+            output_count: u64::try_from(record.outputs.len())
+                .map_err(|_| Error::ArithmeticOverflow("code-run output count"))?,
+            last_state_hash: record
+                .step_checkpoints
+                .last()
+                .map_or([0; CODE_RUN_REPLAY_HASH_LEN], |checkpoint| {
+                    checkpoint.state_hash
+                }),
+        })
+    }
+}
+
 impl CodeRunReplayRecord {
     #[must_use]
     pub fn new(run_id: EntityId, determinism: CodeRunDeterminism) -> Self {
@@ -288,6 +319,11 @@ impl CodeRunReplayRecord {
     #[must_use]
     pub fn replay_cursor(&self) -> CodeRunReplayCursor<'_> {
         CodeRunReplayCursor::new(self)
+    }
+
+    /// Returns the current replay-row generation fingerprint.
+    pub fn generation(&self) -> Result<CodeRunReplayGeneration> {
+        CodeRunReplayGeneration::for_record(self)
     }
 }
 
@@ -465,7 +501,11 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
 
         let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
         self.next.set(index + 1);
-        Ok(outcome)
+        match outcome {
+            SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
+            SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
+            outcome => Ok(outcome),
+        }
     }
 }
 
@@ -480,6 +520,36 @@ impl Vault {
             &encoded,
         )?;
         wtxn.commit().map_err(Error::from)
+    }
+
+    /// Persists the replay record only if the stored row still matches `expected`.
+    pub fn put_code_run_replay_record_if_generation(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> Result<CodeRunReplayGeneration> {
+        let encoded = encode_code_run_replay_record(record)?;
+        let next_generation = record.generation()?;
+        let key = code_run_replay_record_key(&record.run_id);
+        let mut wtxn = self.store.env.write_txn()?;
+        let current = self
+            .store
+            .vault_meta
+            .get(&wtxn, &key)?
+            .map(decode_code_run_replay_record)
+            .transpose()?;
+        let current_generation = current
+            .as_ref()
+            .map(CodeRunReplayRecord::generation)
+            .transpose()?;
+        if current_generation != expected {
+            return Err(Error::ConcurrentWrite(
+                "code-run replay record changed; retry executor",
+            ));
+        }
+        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
+        wtxn.commit().map_err(Error::from)?;
+        Ok(next_generation)
     }
 
     /// Loads the replay record for `run_id`, if present.
@@ -739,11 +809,11 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
         validate_label(&checkpoint.label, "checkpoint label")?;
     }
 
-    let mut output_handles = HashSet::new();
+    let mut output_paths = HashSet::new();
     for output in &record.outputs {
         validate_raw_output(output)?;
-        if !output_handles.insert(output.handle.as_str()) {
-            return Err(invalid_code_run_replay("duplicate raw output handle"));
+        if !output_paths.insert(output.path.as_str()) {
+            return Err(invalid_code_run_replay("duplicate raw output path"));
         }
     }
 
@@ -935,6 +1005,26 @@ fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
                     .map_or(Value::Nil, |prompt| Value::from(prompt.as_str())),
             ),
         ]),
+        SelfDispatchOutcome::Denied(result) => request_map(vec![
+            ("kind", Value::from("denied")),
+            ("effect", Value::from(result.effect.as_str())),
+            ("outcome", Value::from(result.outcome.as_str())),
+            (
+                "reason_codes",
+                Value::Array(
+                    result
+                        .reason_codes
+                        .iter()
+                        .map(|reason| Value::from(reason.as_str()))
+                        .collect(),
+                ),
+            ),
+        ]),
+        SelfDispatchOutcome::Failed(result) => request_map(vec![
+            ("kind", Value::from("failed")),
+            ("effect", Value::from(result.effect.as_str())),
+            ("error", Value::from(result.error.as_str())),
+        ]),
     }
 }
 
@@ -971,8 +1061,37 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
                 prompt,
             }))
         }
+        "denied" => Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+            effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+            outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
+            reason_codes: str_array(map_get(entries, "reason_codes")?)?,
+        })),
+        "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
+            error: str_value(map_get(entries, "error")?)?.to_owned(),
+        })),
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
+}
+
+fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
+    let outcome = GateDenialOutcome::parse(&result.outcome)
+        .map(GateDenialOutcome::as_str)
+        .unwrap_or("deny");
+    let reason_codes = result
+        .reason_codes
+        .iter()
+        .filter_map(|reason| GateDenialReason::from_code(reason))
+        .map(GateDenialReason::as_str)
+        .collect::<Vec<_>>();
+    Error::GateWriteRejected {
+        outcome,
+        reason_codes,
+    }
+}
+
+fn replay_failed_trap_error(_result: &SelfFailedResult) -> Error {
+    invalid_code_run_replay("replayed failed self trap")
 }
 
 fn decode_scored_entity(value: &Value) -> Result<ScoredEntity> {
@@ -1061,6 +1180,13 @@ fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+pub(crate) fn encode_code_run_replay_value(
+    value: &Value,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    encode_value(value, context)
+}
+
 fn pinned_map<'a, const N: usize>(
     value: &'a Value,
     keys: &[&str; N],
@@ -1103,6 +1229,16 @@ fn decode_array<T>(value: &Value, decode: fn(&Value) -> Result<T>) -> Result<Vec
         return Err(invalid_code_run_replay("value must be an array"));
     };
     items.iter().map(decode).collect()
+}
+
+fn str_array(value: &Value) -> Result<Vec<String>> {
+    let Value::Array(items) = value else {
+        return Err(invalid_code_run_replay("value must be an array"));
+    };
+    items
+        .iter()
+        .map(|item| str_value(item).map(str::to_owned))
+        .collect()
 }
 
 fn decode_string_array(value: &Value) -> Result<Vec<String>> {
@@ -1239,6 +1375,13 @@ pub struct HostSelfDispatcher<'a> {
     run_ref: String,
 }
 
+/// Explicit first-party GatedActorWrite trap surface for engine-native code.
+///
+/// This is a type alias for [`HostSelfDispatcher`], whose public `self.memory.*`
+/// variants stamp host-owned actor/provenance and run per-operation gate checks
+/// before any write commits.
+pub type GatedActorWrite<'a> = HostSelfDispatcher<'a>;
+
 impl<'a> HostSelfDispatcher<'a> {
     /// Creates a dispatcher for a first-party run.
     ///
@@ -1301,7 +1444,8 @@ impl<'a> HostSelfDispatcher<'a> {
     }
 
     fn dispatch_memory_search(&self, call: SelfMemorySearchCall) -> Result<SelfDispatchOutcome> {
-        let results = self.vault.search_text(&call.query, call.limit)?;
+        let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
+        let results = self.vault.search_text(&call.query, limit)?;
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
@@ -1813,6 +1957,8 @@ pub enum SelfDispatchOutcome {
     MemoryWrite(SelfMemoryWriteResult),
     MemoryEdgeWrite(SelfMemoryEdgeWriteResult),
     DurableWait(SelfDurableWait),
+    Denied(SelfDeniedResult),
+    Failed(SelfFailedResult),
 }
 
 /// Result of a `self.memory.search` fixture dispatch.
@@ -1834,6 +1980,21 @@ pub struct SelfMemoryEdgeWriteResult {
     pub src: EntityId,
     pub kind: EdgeKind,
     pub tgt: EntityId,
+}
+
+/// Result of a `self.*` trap rejected after the gate recorded an audit row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfDeniedResult {
+    pub effect: SelfEffect,
+    pub outcome: String,
+    pub reason_codes: Vec<String>,
+}
+
+/// Result of a `self.*` trap that failed after crossing an audited write boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfFailedResult {
+    pub effect: SelfEffect,
+    pub error: String,
 }
 
 /// Durable wait produced for effects that need human/external resolution.
@@ -2239,6 +2400,65 @@ mod tests {
     }
 
     #[test]
+    fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
+        let run_id = EntityId::from_bytes([0x71; 16]).expect("run id");
+        let src = EntityId::from_bytes([0x72; 16]).expect("src id");
+        let tgt = EntityId::from_bytes([0x73; 16]).expect("tgt id");
+        let determinism = CodeRunDeterminism::new(1_719_000_001_000, [0xAB; 32]);
+        let call = SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::Mentions,
+            tgt,
+            0.7,
+        ));
+
+        let mut denied_record = CodeRunReplayRecord::new(run_id, determinism);
+        denied_record.bridge_calls.push(CodeRunBridgeCall::record(
+            0,
+            &call,
+            &SelfDispatchOutcome::Denied(SelfDeniedResult {
+                effect: SelfEffect::MemoryPutEdge,
+                outcome: "pending".to_owned(),
+                reason_codes: vec!["gate.pending.actor_ceiling".to_owned()],
+            }),
+            determinism.frozen_unix_ms,
+            determinism.frozen_unix_ms,
+        )?);
+        let denied_replay = denied_record.replay_cursor();
+        let err = denied_replay
+            .dispatch(call.clone())
+            .expect_err("denied trap replay must throw");
+        assert!(matches!(
+            err,
+            Error::GateWriteRejected {
+                outcome: "pending",
+                ref reason_codes
+            } if reason_codes == &vec!["gate.pending.actor_ceiling"]
+        ));
+        assert_eq!(denied_replay.consumed(), 1);
+
+        let failed_run = EntityId::from_bytes([0x74; 16]).expect("run id");
+        let mut failed_record = CodeRunReplayRecord::new(failed_run, determinism);
+        failed_record.bridge_calls.push(CodeRunBridgeCall::record(
+            0,
+            &call,
+            &SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::MemoryPutEdge,
+                error: "entity not found".to_owned(),
+            }),
+            determinism.frozen_unix_ms,
+            determinism.frozen_unix_ms,
+        )?);
+        let failed_replay = failed_record.replay_cursor();
+        let err = failed_replay
+            .dispatch(call)
+            .expect_err("failed trap replay must throw");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
+        assert_eq!(failed_replay.consumed(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn code_run_replay_large_output_persists_raw_bytes_and_compact_preview() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let run_id = EntityId::from_bytes([0x95; 16]).expect("run id");
@@ -2247,8 +2467,12 @@ mod tests {
             .collect::<String>()
             .into_bytes();
         let output = CodeRunRawOutput::from_bytes("/mnt/outputs/large.txt", &raw)?;
+        let same_raw_other_path =
+            CodeRunRawOutput::from_bytes("/mnt/outputs/large-copy.txt", &raw)?;
 
         assert_eq!(output.raw_len, raw.len() as u64);
+        assert_eq!(output.handle, same_raw_other_path.handle);
+        assert_ne!(output.path, same_raw_other_path.path);
         assert!(output.preview.truncated);
         assert!(
             output.preview.text.chars().count()
@@ -2257,21 +2481,38 @@ mod tests {
         assert!(!output.preview.text.contains("\n\n"));
 
         vault.put_code_run_raw_output(&output, &raw)?;
+        vault.put_code_run_raw_output(&same_raw_other_path, &raw)?;
         let mut record = CodeRunReplayRecord::new(
             run_id,
             CodeRunDeterminism::new(1_719_000_002_000, [0xBC; 32]),
         );
         record.outputs.push(output.clone());
+        record.outputs.push(same_raw_other_path.clone());
         vault.put_code_run_replay_record(&record)?;
 
         let loaded = vault
             .get_code_run_replay_record(&run_id)?
             .expect("stored replay record");
-        assert_eq!(loaded.outputs, vec![output.clone()]);
-        let loaded_raw = vault
-            .get_code_run_raw_output(&output)?
-            .expect("stored raw output");
-        assert_eq!(loaded_raw, raw);
+        assert_eq!(
+            loaded.outputs,
+            vec![output.clone(), same_raw_other_path.clone()]
+        );
+        for stored_output in [&output, &same_raw_other_path] {
+            let loaded_raw = vault
+                .get_code_run_raw_output(stored_output)?
+                .expect("stored raw output");
+            assert_eq!(loaded_raw, raw);
+        }
+
+        let mut duplicate_path = loaded;
+        duplicate_path.outputs.push(CodeRunRawOutput::from_bytes(
+            "/mnt/outputs/large.txt",
+            b"different bytes",
+        )?);
+        let err = vault
+            .put_code_run_replay_record(&duplicate_path)
+            .expect_err("duplicate output path rejected");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidCodeArtifactBody);
         Ok(())
     }
 
@@ -2349,6 +2590,45 @@ mod tests {
         };
         assert_eq!(result.query, "matcha");
         assert!(result.results.iter().any(|hit| hit.id == memory));
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_memory_search_caps_guest_limit() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_person(&vault, 0xA3);
+        for index in 0..(SELF_MEMORY_SEARCH_MAX_RESULTS + 4) {
+            let byte = 0xB0_u8 + u8::try_from(index).expect("test index fits in u8");
+            let timestamp = 2 + u64::try_from(index).expect("test index fits in u64");
+            let memory = EntityId::from_bytes([byte; 16]).expect("memory id");
+            vault
+                .batch()
+                .put(
+                    &memory,
+                    ENTITY_TYPE_PERSON,
+                    range(timestamp),
+                    timestamp,
+                    b"matcha note",
+                )
+                .text(&memory, &[("body", "matcha preference")])
+                .commit()?;
+        }
+
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-search-cap",
+        )?;
+        let outcome = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            "matcha",
+            SELF_MEMORY_SEARCH_MAX_RESULTS + 10_000,
+        )))?;
+
+        let SelfDispatchOutcome::MemorySearch(result) = outcome else {
+            panic!("expected memory search outcome");
+        };
+        assert_eq!(result.query, "matcha");
+        assert_eq!(result.results.len(), SELF_MEMORY_SEARCH_MAX_RESULTS);
         Ok(())
     }
 
