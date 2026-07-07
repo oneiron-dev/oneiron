@@ -1569,6 +1569,63 @@ mod tests {
     }
 
     #[test]
+    fn author_fork_must_match_first_round_sibling_branches() -> Result<()> {
+        let (_dir, vault) = open_vault();
+        let (_actor, subject, envelope) = test_envelope(&vault)?;
+        let catalog = LensCatalog::of366_seed()?;
+        let left = candidate(
+            subject,
+            "fork-left",
+            JobId::now(),
+            EntityId::now(),
+            "Fork left claim.",
+            "seed-a",
+            1,
+        )?;
+        let right = candidate(
+            subject,
+            "fork-right",
+            JobId::now(),
+            EntityId::now(),
+            "Fork right claim.",
+            "seed-b",
+            1,
+        )?;
+        let stray = candidate(
+            subject,
+            "fork-stray",
+            JobId::now(),
+            EntityId::now(),
+            "Fork stray claim.",
+            "seed-c",
+            1,
+        )?;
+        let fork = author_fork("author-seed-mismatch", &[&left, &right])?;
+
+        let run = DreamerTournamentRun::new(
+            "run-fork-mismatch",
+            fork,
+            2,
+            2,
+            vec![DreamerTournamentRound::new(
+                vec![
+                    accept_branch(left, &catalog, "fork_left")?,
+                    accept_branch(stray, &catalog, "fork_stray")?,
+                ],
+                None,
+                vec![DreamerTournamentBordaBallot::new("judge-a", vec![0, 1])?],
+            )?],
+            Vec::new(),
+            envelope,
+            occurred(20),
+            21,
+        );
+
+        assert!(run.is_err());
+        Ok(())
+    }
+
+    #[test]
     fn fixture_corpus_tournament_writes_winner_through_normal_claim_path() -> Result<()> {
         let (_dir, vault) = open_vault();
         let (_actor, subject, envelope) = test_envelope(&vault)?;
