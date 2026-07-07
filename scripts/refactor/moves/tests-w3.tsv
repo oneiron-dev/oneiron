@@ -1,0 +1,18 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+mod	-	tests	-	crates/oneiron/src/settings/model_versioning.rs	crates/oneiron/src/settings/model_versioning/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/llm/budget.rs	crates/oneiron/src/llm/budget/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/edit_roundtrip/opc.rs	crates/oneiron/src/edit_roundtrip/opc/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/analyzer/mod.rs	crates/oneiron/src/analyzer/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/analyzer/japanese.rs	crates/oneiron/src/analyzer/japanese/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/analyzer/script.rs	crates/oneiron/src/analyzer/script/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/bridge.rs	crates/oneiron/src/sync/bridge/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/client.rs	crates/oneiron/src/sync/client/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/connection.rs	crates/oneiron/src/sync/connection/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/lease.rs	crates/oneiron/src/sync/lease/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/manager.rs	crates/oneiron/src/sync/manager/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/quarantine.rs	crates/oneiron/src/sync/quarantine/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/queue.rs	crates/oneiron/src/sync/queue/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/quota.rs	crates/oneiron/src/sync/quota/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/selector.rs	crates/oneiron/src/sync/selector/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/transport.rs	crates/oneiron/src/sync/transport/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/sync/window.rs	crates/oneiron/src/sync/window/tests.rs	no
