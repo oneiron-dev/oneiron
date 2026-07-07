@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "dataset_id": "of360-halumem-gold-subset.v1",
+  "revision": "seed-subset.2026-07-07",
+  "description": "Seeded OF-360 smoke subset for exercising the HaluMem-style extraction-quality harness. This is not the owner-authored 500-point gold corpus.",
+  "completeness": "seed_subset",
+  "seed": 255197185,
+  "target_full_memory_points": 500,
+  "owner_corpus_missing": true,
+  "source_refs": [
+    "Linear ONE-1524",
+    "Linear ONE-198",
+    "OF-366-autoreason-claim-authoring-DESIGN.md AC4"
+  ],
+  "cases": [
+    {
+      "case_id": "of360-seed-001-preference-temporal",
+      "title": "Move plus preference with unsupported profession distractor",
+      "turns": [
+        {
+          "turn_id": "of360-seed-001-t1",
+          "speaker": "user",
+          "timestamp": "2026-02-10T09:00:00Z",
+          "text": "I moved to Kyoto last spring. I prefer morning train rides because the stations are quieter."
+        },
+        {
+          "turn_id": "of360-seed-001-t2",
+          "speaker": "assistant",
+          "timestamp": "2026-02-10T09:00:20Z",
+          "text": "I will remember the Kyoto move and morning-train preference, but not infer your job from that."
+        }
+      ],
+      "gold_memory_points": [
+        {
+          "memory_id": "of360-seed-001-m1",
+          "claim": "User moved to Kyoto in spring 2025.",
+          "kind": "event",
+          "importance": 4,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": true,
+          "valid_from": "2025-03-01",
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-001-t1"]
+        },
+        {
+          "memory_id": "of360-seed-001-m2",
+          "claim": "User prefers morning train rides.",
+          "kind": "preference",
+          "importance": 3,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": false,
+          "valid_from": null,
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-001-t1"]
+        }
+      ],
+      "distractor_memories": [
+        "User works as a rail planner."
+      ]
+    },
+    {
+      "case_id": "of360-seed-002-update-window",
+      "title": "Preference update with stale prior state",
+      "turns": [
+        {
+          "turn_id": "of360-seed-002-t1",
+          "speaker": "user",
+          "timestamp": "2026-01-15T18:30:00Z",
+          "text": "For dinners, I am vegetarian."
+        },
+        {
+          "turn_id": "of360-seed-002-t2",
+          "speaker": "user",
+          "timestamp": "2026-06-03T18:30:00Z",
+          "text": "Update on food: since June I started eating fish, so pescatarian is more accurate now."
+        }
+      ],
+      "gold_memory_points": [
+        {
+          "memory_id": "of360-seed-002-m1",
+          "claim": "User was vegetarian for dinners before June 2026.",
+          "kind": "preference",
+          "importance": 3,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": true,
+          "valid_from": "2026-01-15",
+          "valid_to": "2026-06-01",
+          "evidence_turn_ids": ["of360-seed-002-t1", "of360-seed-002-t2"]
+        },
+        {
+          "memory_id": "of360-seed-002-m2",
+          "claim": "User is pescatarian from June 2026 onward.",
+          "kind": "preference",
+          "importance": 5,
+          "weight": 1.0,
+          "is_update": true,
+          "temporal_required": true,
+          "valid_from": "2026-06-01",
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-002-t2"]
+        }
+      ],
+      "distractor_memories": [
+        "User is currently vegetarian with no qualifier."
+      ]
+    },
+    {
+      "case_id": "of360-seed-003-relationship-event",
+      "title": "Relationship plus dated event with duplicate extraction risk",
+      "turns": [
+        {
+          "turn_id": "of360-seed-003-t1",
+          "speaker": "user",
+          "timestamp": "2026-03-01T12:00:00Z",
+          "text": "My sister Maya is getting married in Denver on September 14, 2026."
+        },
+        {
+          "turn_id": "of360-seed-003-t2",
+          "speaker": "assistant",
+          "timestamp": "2026-03-01T12:00:30Z",
+          "text": "Got it: Maya is your sister, and her wedding is in Denver on September 14, 2026."
+        }
+      ],
+      "gold_memory_points": [
+        {
+          "memory_id": "of360-seed-003-m1",
+          "claim": "Maya is the user's sister.",
+          "kind": "relationship",
+          "importance": 4,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": false,
+          "valid_from": null,
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-003-t1"]
+        },
+        {
+          "memory_id": "of360-seed-003-m2",
+          "claim": "Maya's wedding is in Denver on 2026-09-14.",
+          "kind": "event",
+          "importance": 4,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": true,
+          "valid_from": "2026-09-14",
+          "valid_to": "2026-09-14",
+          "evidence_turn_ids": ["of360-seed-003-t1"]
+        }
+      ],
+      "distractor_memories": [
+        "Maya lives in Denver."
+      ]
+    },
+    {
+      "case_id": "of360-seed-004-rejected-suggestion",
+      "title": "Assistant suggestion rejected by user",
+      "turns": [
+        {
+          "turn_id": "of360-seed-004-t1",
+          "speaker": "assistant",
+          "timestamp": "2026-04-08T20:00:00Z",
+          "text": "Maybe you prefer Vim for notes?"
+        },
+        {
+          "turn_id": "of360-seed-004-t2",
+          "speaker": "user",
+          "timestamp": "2026-04-08T20:00:15Z",
+          "text": "No, please do not store that. I do not use Vim; I write notes in Obsidian."
+        }
+      ],
+      "gold_memory_points": [
+        {
+          "memory_id": "of360-seed-004-m1",
+          "claim": "User does not use Vim.",
+          "kind": "correction",
+          "importance": 5,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": false,
+          "valid_from": null,
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-004-t2"]
+        },
+        {
+          "memory_id": "of360-seed-004-m2",
+          "claim": "User writes notes in Obsidian.",
+          "kind": "preference",
+          "importance": 3,
+          "weight": 1.0,
+          "is_update": false,
+          "temporal_required": false,
+          "valid_from": null,
+          "valid_to": null,
+          "evidence_turn_ids": ["of360-seed-004-t2"]
+        }
+      ],
+      "distractor_memories": [
+        "User prefers Vim for notes."
+      ]
+    }
+  ]
+}

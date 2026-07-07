@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "set_id": "of360-halumem-extraction-quality.v1",
+  "revision": "2026-07-07.one-1524",
+  "source_refs": [
+    "Linear ONE-1524",
+    "Linear ONE-198",
+    "OF-366-autoreason-claim-authoring-DESIGN.md AC4",
+    "HaluMem arXiv:2511.03506"
+  ],
+  "derivation_envelope": {
+    "content_hash": "sha256:of360-halumem-extraction-quality-v1",
+    "model_id": "of360-offline-parsed-harness",
+    "version": "1",
+    "params_hash": "sha256:no-runtime-judge-params"
+  },
+  "metrics": [
+    {
+      "metric_id": "halumem_recall",
+      "label": "HaluMem recall",
+      "definition": "Mean HaluMem extraction score across gold memory points using the 0, 0.5, 1 rubric.",
+      "formula": "sum(best_gold_match_score) / count(gold_memory_points)",
+      "direction": "higher_is_better",
+      "primary": false
+    },
+    {
+      "metric_id": "halumem_weighted_recall",
+      "label": "HaluMem weighted recall",
+      "definition": "Importance-weighted HaluMem extraction score across gold memory points.",
+      "formula": "sum(best_gold_match_score * gold_weight) / sum(gold_weight)",
+      "direction": "higher_is_better",
+      "primary": false
+    },
+    {
+      "metric_id": "target_precision",
+      "label": "Target precision",
+      "definition": "Share of extracted claims with at least one positive gold memory match.",
+      "formula": "count(extracted_claims_with_positive_gold_match) / count(extracted_claims)",
+      "direction": "higher_is_better",
+      "primary": false
+    },
+    {
+      "metric_id": "halumem_f1",
+      "label": "HaluMem F1",
+      "definition": "Harmonic mean of target precision and unweighted HaluMem recall.",
+      "formula": "2 * target_precision * halumem_recall / (target_precision + halumem_recall)",
+      "direction": "higher_is_better",
+      "primary": false
+    },
+    {
+      "metric_id": "faithfulness_rate",
+      "label": "Faithfulness rate",
+      "definition": "Share of extracted claims grounded by at least one positive gold match.",
+      "formula": "1 - hallucination_rate",
+      "direction": "higher_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "hallucination_rate",
+      "label": "Hallucination rate",
+      "definition": "Share of extracted claims with no positive gold memory match.",
+      "formula": "count(extracted_claims_without_positive_gold_match) / count(extracted_claims)",
+      "direction": "lower_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "overreach_rate",
+      "label": "Overreach rate",
+      "definition": "Share of extracted claims that add unsupported specificity, causal claims, or role attribution beyond the source turns.",
+      "formula": "count(overreaching_extracted_claims) / count(extracted_claims)",
+      "direction": "lower_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "temporal_correctness",
+      "label": "Temporal correctness",
+      "definition": "Share of positive matched claims whose temporal anchoring is correct when the matched gold memory requires time.",
+      "formula": "count(temporally_correct_matched_claims) / count(temporal_required_matched_claims)",
+      "direction": "higher_is_better",
+      "primary": true
+    },
+    {
+      "metric_id": "redundancy_rate",
+      "label": "Redundancy rate",
+      "definition": "Share of extracted claims that repeat a prior extracted claim under the same deduplication key.",
+      "formula": "count(redundant_extracted_claims_after_first_key_occurrence) / count(extracted_claims)",
+      "direction": "lower_is_better",
+      "primary": true
+    }
+  ]
+}
