@@ -225,7 +225,7 @@ impl ReceiptQuery {
         self.kinds.is_empty() || self.kinds.contains(&kind)
     }
 
-    fn matches(&self, receipt: &ReceiptRecord) -> bool {
+    pub(crate) fn matches(&self, receipt: &ReceiptRecord) -> bool {
         if !self.includes_kind(receipt.receipt_kind) {
             return false;
         }
@@ -1613,13 +1613,10 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     }
 
     // The settle projection opens its own read txn, so it runs before the shared
-    // `rtxn` below to avoid a nested read transaction on this thread.
+    // `rtxn` below to avoid a nested read transaction on this thread. It applies
+    // the query filter itself (the settlement key is not time-ordered).
     if query.includes_kind(ReceiptKind::ArtifactSettle) {
-        for receipt in crate::edit_settle::settle_receipts(vault, MAX_RECEIPT_QUERY_SCAN)? {
-            if query.matches(&receipt) {
-                records.push(receipt);
-            }
-        }
+        records.extend(crate::edit_settle::settle_receipts(vault, query)?);
     }
 
     let rtxn = vault.store.env.read_txn()?;

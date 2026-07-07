@@ -16,27 +16,41 @@
 //! proposal is invisible to the version chain — the retained bytes are never a
 //! version, never read back.
 //!
-//! # Consume-once ledger
+//! # Consume-once ledger + one-transaction settle
 //!
 //! Each proposal is keyed by `(artifact, proposal_ref)` where `proposal_ref` is
 //! the agent run ref that produced it. A [`SettlementRecord`] in `vault_meta`
-//! is the ledger: a select or discard writes exactly one, and every settle
-//! guards on its presence — an early read (which stops a sequential second
-//! settle before any side effect) plus a final check-and-insert (the atomic
-//! commit point, which stops a racing second settle). Because the version
-//! append dedupes identical bytes and the re-anchor sweep is idempotent, a
-//! crash-retry of a select converges rather than duplicating work.
+//! is the ledger: a select or discard writes exactly one.
+//!
+//! A settle-select's ledger acquisition, version append, and re-anchor sweep are
+//! ONE [`Vault::with_write_txn`] — all-or-nothing. The ledger key is checked
+//! FIRST, before any side effect, so a settle that finds it committed refuses
+//! having written nothing. Because LMDB serializes writers, a racing second
+//! settle runs its whole transaction only after the first commits, sees the
+//! ledger row, and rolls back with no version appended; and a crash mid-settle
+//! rolls the entire transaction back, so a retry re-appends cleanly rather than
+//! rereading the new head as its base and skipping the re-anchor. The base head
+//! is read inside the same transaction, so it is never stale against a
+//! concurrent append. A discard is the same shape without the append/re-anchor.
+//!
+//! # Stale-proposal refusal (D5)
+//!
+//! A proposal is produced FROM a specific head ([`EditProposal::base_content_hash`]).
+//! Select refuses ([`Error::EditProposalStale`]) when that base no longer equals
+//! the artifact head — an intervening edit moved the head, so committing these
+//! bytes would clobber it and replay a stale manifest onto newer anchors.
 //!
 //! # Re-anchor on select (D2/D5)
 //!
-//! Select appends the new version, then replays the manifest's anchor effects
-//! ([`EditManifest::anchor_effects`]) onto the threads anchored at the prior
-//! head. The manifest's [`AnchorEffect`](crate::edit_roundtrip::AnchorEffect)s
-//! lower to ARTL-2 [`ReanchorOp`]s through
-//! `From<&AnchorEffect>` (the reconciliation the ARTL-2 module doc calls for),
-//! and [`Vault::reanchor_annotation_threads`] does the work: a thread on a
-//! moved cell advances to the new version with a remapped locator; a thread on
-//! a destroyed range drifts and stays pinned to its origin version.
+//! In the same transaction as the append, select replays the manifest's anchor
+//! effects ([`EditManifest::anchor_effects`]) onto the threads anchored at the
+//! prior head — the [`Vault::reanchor_annotation_threads`] sweep, driven through
+//! the shared write txn. The manifest's
+//! [`AnchorEffect`](crate::edit_roundtrip::AnchorEffect)s lower to ARTL-2
+//! [`ReanchorOp`]s through `From<&AnchorEffect>` (the reconciliation the ARTL-2
+//! module doc calls for): a thread on a moved cell advances to the new version
+//! with a remapped locator; a thread on a destroyed range drifts and stays
+//! pinned to its origin version.
 //!
 //! # Receipts (D6/D7)
 //!
@@ -73,23 +87,28 @@ use crate::Vault;
 use crate::anchored_annotation::{
     Locator, ReanchorOp, ReanchorSummary, decode_locator, encode_locator,
 };
-use crate::blob_artifact::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactVersion};
+use crate::batch::secret_scan;
+use crate::blob_artifact::{
+    BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobArtifactVersion,
+    read_blob_artifact_head_in_txn, require_entity_type,
+};
 use crate::edit_roundtrip::{EditManifest, EditProposal, OfficeFormat};
 use crate::error::{Error, Result};
-use crate::receipt::{ReceiptKind, ReceiptRecord};
-use crate::types::{ENTITY_ID_LEN, EntityId, TimeRange, WriteActor};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_BLOB_ARTIFACT, EntityId, TimeRange, WriteActor};
 
 /// Current settlement-record body schema version.
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 1;
 
 /// Pinned on-disk MessagePack key set for a [`SettlementRecord`] body.
-pub const SETTLEMENT_RECORD_KEYS: [&str; 12] = [
+pub const SETTLEMENT_RECORD_KEYS: [&str; 13] = [
     "schema_version",
     "proposal_ref",
     "outcome",
     "settled_at",
     "actor_ref",
     "brief_ref",
+    "before_version",
     "version",
     "content_hash",
     "manifest_ref",
@@ -115,12 +134,13 @@ const KEY_OUTCOME: &str = SETTLEMENT_RECORD_KEYS[2];
 const KEY_SETTLED_AT: &str = SETTLEMENT_RECORD_KEYS[3];
 const KEY_ACTOR_REF: &str = SETTLEMENT_RECORD_KEYS[4];
 const KEY_BRIEF_REF: &str = SETTLEMENT_RECORD_KEYS[5];
-const KEY_VERSION: &str = SETTLEMENT_RECORD_KEYS[6];
-const KEY_CONTENT_HASH: &str = SETTLEMENT_RECORD_KEYS[7];
-const KEY_MANIFEST_REF: &str = SETTLEMENT_RECORD_KEYS[8];
-const KEY_MANIFEST_OPS: &str = SETTLEMENT_RECORD_KEYS[9];
-const KEY_ANCHORS: &str = SETTLEMENT_RECORD_KEYS[10];
-const KEY_REASON: &str = SETTLEMENT_RECORD_KEYS[11];
+const KEY_BEFORE_VERSION: &str = SETTLEMENT_RECORD_KEYS[6];
+const KEY_VERSION: &str = SETTLEMENT_RECORD_KEYS[7];
+const KEY_CONTENT_HASH: &str = SETTLEMENT_RECORD_KEYS[8];
+const KEY_MANIFEST_REF: &str = SETTLEMENT_RECORD_KEYS[9];
+const KEY_MANIFEST_OPS: &str = SETTLEMENT_RECORD_KEYS[10];
+const KEY_ANCHORS: &str = SETTLEMENT_RECORD_KEYS[11];
+const KEY_REASON: &str = SETTLEMENT_RECORD_KEYS[12];
 
 const KEY_ANCHOR_THREAD_ID: &str = SETTLED_ANCHOR_KEYS[0];
 const KEY_ANCHOR_LOCATOR: &str = SETTLED_ANCHOR_KEYS[1];
@@ -136,6 +156,7 @@ const FIELD_ARTIFACT_REF: &str = "artifact_ref";
 const FIELD_PROPOSAL_REF: &str = "proposal_ref";
 const FIELD_RUN_REF: &str = "run_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
+const FIELD_BEFORE_VERSION: &str = "before_version";
 const FIELD_VERSION: &str = "version";
 const FIELD_CONTENT_HASH: &str = "content_hash";
 const FIELD_MANIFEST_REF: &str = "manifest_ref";
@@ -234,6 +255,9 @@ pub struct SettlementRecord {
     pub actor_ref: Option<String>,
     /// The assigning brief this settle rode, if any.
     pub brief_ref: Option<String>,
+    /// The artifact head version the select was appended ONTO — the D6 receipt's
+    /// before-version ref (select only; a discard commits no version).
+    pub before_version: Option<u64>,
     /// The committed version (select only).
     pub version: Option<u64>,
     /// The committed version's content hash (select only).
@@ -306,65 +330,86 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        let proposal_ref = proposal.run_ref.as_str();
         self.ensure_selectable(proposal)?;
-        // Early consume-once guard: a sequential second settle is refused before
-        // any version is appended.
-        if let Some(existing) = self.blob_artifact_settlement(artifact_id, proposal_ref)? {
-            return Err(already_settled(&existing));
-        }
         self.authorize_settle(consent)?;
+        let proposal_ref = proposal.run_ref.as_str();
+        let key = settlement_key(artifact_id, proposal_ref);
+        let manifest_hash = manifest_ref(&proposal.manifest)?;
+        let manifest_ops = u64::try_from(proposal.manifest.ops.len()).unwrap_or(u64::MAX);
+        let ops: Vec<ReanchorOp> = proposal
+            .manifest
+            .anchor_effects()
+            .iter()
+            .map(ReanchorOp::from)
+            .collect();
 
-        let base = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
-        let version = self.append_blob_artifact_version(
-            artifact_id,
-            &proposal.new_bytes,
-            &proposal.agent_run_provenance(),
-            actor,
-            occurred,
-            learned_at,
-        )?;
-
-        // Replay the manifest's anchor effects onto threads anchored at the
-        // prior head. A dedupe no-op append (identical bytes) advances no
-        // version, so there is nothing to re-anchor.
-        let reanchor = if version.version > base.version {
-            let ops: Vec<ReanchorOp> = proposal
-                .manifest
-                .anchor_effects()
-                .iter()
-                .map(ReanchorOp::from)
-                .collect();
-            self.reanchor_annotation_threads(
+        // The consume-once acquisition, the version append, and the re-anchor
+        // sweep are ONE transaction: all-or-nothing. A racing second settle,
+        // serialized by the LMDB write lock, sees the committed ledger row here
+        // and rolls back with nothing appended; a crash rolls the whole settle
+        // back so a retry re-appends cleanly rather than skipping the re-anchor.
+        let (version, reanchor, record) = self.with_write_txn(|wtxn| {
+            // Ledger acquisition BEFORE any side effect.
+            if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
+                return Err(already_settled(&decode_settlement_record(raw)?));
+            }
+            // Base head read in-txn, consistent with the append below.
+            let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            // Stale-proposal refusal: the head must still be the one the proposal
+            // was produced from. An intervening edit changes the head hash, and
+            // committing these bytes would clobber it and replay a stale manifest
+            // onto newer anchors.
+            if base.content_hash != proposal.base_content_hash {
+                return Err(Error::EditProposalStale);
+            }
+            let version = self.append_blob_artifact_version_in_txn(
+                wtxn,
                 artifact_id,
-                base.version,
-                version.version,
-                &ops,
+                &proposal.new_bytes,
+                &proposal.agent_run_provenance(),
                 actor,
                 occurred,
                 learned_at,
-            )?
-        } else {
-            ReanchorSummary::default()
-        };
+            )?;
+            // Replay the manifest anchor effects onto threads at the prior head.
+            // A dedupe no-op append (identical bytes) advances no version, so
+            // there is nothing to re-anchor.
+            let reanchor = if version.version > base.version {
+                self.reanchor_annotation_threads_in_txn(
+                    wtxn,
+                    artifact_id,
+                    base.version,
+                    version.version,
+                    &ops,
+                    actor,
+                    occurred,
+                    learned_at,
+                )?
+            } else {
+                ReanchorSummary::default()
+            };
+            let record = SettlementRecord {
+                proposal_ref: proposal_ref.to_owned(),
+                outcome: SettleOutcomeKind::Selected,
+                settled_at: learned_at,
+                actor_ref: Some(actor.entity_ref().to_hex()),
+                brief_ref: consent.brief_ref().map(str::to_owned),
+                before_version: Some(base.version),
+                version: Some(version.version),
+                content_hash: Some(version.content_hash),
+                manifest_ref: Some(manifest_hash),
+                manifest_ops,
+                anchors: settled_anchors_from_summary(&reanchor),
+                reason: None,
+            };
+            self.store
+                .vault_meta
+                .put(wtxn, &key, &encode_settlement_record(&record)?)?;
+            Ok((version, reanchor, record))
+        })?;
 
-        let record = SettlementRecord {
-            proposal_ref: proposal_ref.to_owned(),
-            outcome: SettleOutcomeKind::Selected,
-            settled_at: learned_at,
-            actor_ref: Some(actor.entity_ref().to_hex()),
-            brief_ref: consent.brief_ref().map(str::to_owned),
-            version: Some(version.version),
-            content_hash: Some(version.content_hash),
-            manifest_ref: Some(manifest_ref(&proposal.manifest)?),
-            manifest_ops: u64::try_from(proposal.manifest.ops.len()).unwrap_or(u64::MAX),
-            anchors: settled_anchors_from_summary(&reanchor),
-            reason: None,
-        };
-        self.commit_settlement_record(artifact_id, &record)?;
-        let receipt = settlement_receipt_record(*artifact_id, &record);
+        let receipt = settlement_receipt_record(*artifact_id, &record)?;
         Ok(SettleSelectOutcome {
             version,
             reanchor,
@@ -387,16 +432,10 @@ impl Vault {
         reason: &str,
         learned_at: u64,
     ) -> Result<SettleDiscardOutcome> {
-        let proposal_ref = proposal.run_ref.as_str();
-        if proposal_ref.trim().is_empty() {
-            return Err(Error::EditRoundtripFailed(
-                "proposal run_ref must be non-empty",
-            ));
-        }
-        if let Some(existing) = self.blob_artifact_settlement(artifact_id, proposal_ref)? {
-            return Err(already_settled(&existing));
-        }
+        validate_settle_proposal_ref(&proposal.run_ref)?;
         self.authorize_settle(consent)?;
+        let proposal_ref = proposal.run_ref.as_str();
+        let key = settlement_key(artifact_id, proposal_ref);
 
         let reason = reason.trim();
         let record = SettlementRecord {
@@ -405,6 +444,7 @@ impl Vault {
             settled_at: learned_at,
             actor_ref: Some(actor.entity_ref().to_hex()),
             brief_ref: consent.brief_ref().map(str::to_owned),
+            before_version: None,
             version: None,
             content_hash: None,
             manifest_ref: None,
@@ -412,8 +452,27 @@ impl Vault {
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
         };
-        self.commit_settlement_record(artifact_id, &record)?;
-        let receipt = settlement_receipt_record(*artifact_id, &record);
+        let encoded = encode_settlement_record(&record)?;
+
+        // One txn: the artifact-existence check and the consume-once acquisition
+        // commit together, so a discard never lands a durable ledger row for a
+        // nonexistent artifact and a racing second settle is refused.
+        self.with_write_txn(|wtxn| {
+            require_entity_type(
+                &self.store,
+                wtxn,
+                artifact_id,
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                "settle-discard target must be a BLOB_ARTIFACT entity",
+            )?;
+            if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
+                return Err(already_settled(&decode_settlement_record(raw)?));
+            }
+            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            Ok(())
+        })?;
+
+        let receipt = settlement_receipt_record(*artifact_id, &record)?;
         Ok(SettleDiscardOutcome { receipt })
     }
 
@@ -430,30 +489,6 @@ impl Vault {
             return Ok(None);
         };
         decode_settlement_record(raw).map(Some)
-    }
-
-    /// Lists settlement ledger entries across all artifacts (oldest key order),
-    /// paired with the artifact each belongs to. Bounded by `limit`.
-    pub fn blob_artifact_settlements(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<(EntityId, SettlementRecord)>> {
-        let rtxn = self.store.env.read_txn()?;
-        let mut out = Vec::new();
-        for entry in self
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX)?
-        {
-            if out.len() >= limit {
-                break;
-            }
-            let (key, raw) = entry?;
-            let artifact_id = settlement_key_artifact_id(key)?;
-            let record = decode_settlement_record(raw)?;
-            out.push((artifact_id, record));
-        }
-        Ok(out)
     }
 
     /// Resolves the tappable door of a *select* settle: the committed
@@ -507,32 +542,8 @@ impl Vault {
         }
     }
 
-    /// Atomic consume-once commit: inserts the settlement record only if the
-    /// proposal is still unsettled, else refuses. This is the authoritative
-    /// guard a racing second settle fails against.
-    fn commit_settlement_record(
-        &self,
-        artifact_id: &EntityId,
-        record: &SettlementRecord,
-    ) -> Result<()> {
-        let key = settlement_key(artifact_id, &record.proposal_ref);
-        let encoded = encode_settlement_record(record)?;
-        self.with_write_txn(|wtxn| {
-            if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
-                let existing = decode_settlement_record(raw)?;
-                return Err(already_settled(&existing));
-            }
-            self.store.vault_meta.put(wtxn, &key, &encoded)?;
-            Ok(())
-        })
-    }
-
     fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
-        if proposal.run_ref.trim().is_empty() {
-            return Err(Error::EditRoundtripFailed(
-                "proposal run_ref must be non-empty",
-            ));
-        }
+        validate_settle_proposal_ref(&proposal.run_ref)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {
@@ -556,21 +567,57 @@ impl Vault {
     }
 }
 
-/// Builds settle receipts across the settlement ledger for the OF-367 family
-/// query. Filtering is the caller's (`receipt.rs`) job.
-pub(crate) fn settle_receipts(vault: &Vault, limit: usize) -> Result<Vec<ReceiptRecord>> {
-    Ok(vault
-        .blob_artifact_settlements(limit)?
-        .into_iter()
-        .map(|(artifact_id, record)| settlement_receipt_record(artifact_id, &record))
-        .collect())
+/// Validates a proposal ref before it lands in a durable ledger row — the same
+/// non-empty / length / secret-scan bar `append_blob_artifact_version` applies
+/// to an `AgentRun` run_ref, so a discard (which never reaches append) is held
+/// to it too.
+fn validate_settle_proposal_ref(run_ref: &str) -> Result<()> {
+    if run_ref.trim().is_empty() || run_ref.len() > BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
+        return Err(Error::EditRoundtripFailed(
+            "proposal run_ref must be non-empty and within the run-ref length bound",
+        ));
+    }
+    secret_scan::scan_metadata_field(run_ref)?;
+    Ok(())
+}
+
+/// Projects the settlement ledger into OF-367 family receipts matching `query`.
+///
+/// The query filter is applied DURING the scan — the settlement key is ordered
+/// by artifact id then proposal-ref hash, NOT by time, so filtering before the
+/// caller's newest-first sort + `limit` truncation keeps a narrow query from
+/// being starved by unrelated rows. The scan is capped at the family DoS guard.
+pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (scanned, entry) in vault
+        .store
+        .vault_meta
+        .prefix_iter(&rtxn, BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX)?
+        .enumerate()
+    {
+        if scanned >= crate::receipt::MAX_RECEIPT_QUERY_SCAN {
+            break;
+        }
+        let (key, raw) = entry?;
+        let artifact_id = settlement_key_artifact_id(key)?;
+        let record = decode_settlement_record(raw)?;
+        let receipt = settlement_receipt_record(artifact_id, &record)?;
+        if query.matches(&receipt) {
+            out.push(receipt);
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
 // Receipt projection
 // ---------------------------------------------------------------------------
 
-fn settlement_receipt_record(artifact_id: EntityId, record: &SettlementRecord) -> ReceiptRecord {
+fn settlement_receipt_record(
+    artifact_id: EntityId,
+    record: &SettlementRecord,
+) -> Result<ReceiptRecord> {
     let artifact_hex = artifact_id.to_hex();
     let mut fields = BTreeMap::new();
     fields.insert(FIELD_ARTIFACT_REF.to_owned(), artifact_hex.clone());
@@ -584,20 +631,24 @@ fn settlement_receipt_record(artifact_id: EntityId, record: &SettlementRecord) -
 
     let trigger_ref = match record.outcome {
         SettleOutcomeKind::Selected => {
-            let version = record.version.unwrap_or(0);
+            // Fail closed: a Selected ledger row MUST carry its version and the
+            // content/manifest hashes. A missing one is a corrupt record, never
+            // an artifact@0 receipt.
+            let version = record.version.ok_or_else(corrupt)?;
+            let content_hash = record.content_hash.ok_or_else(corrupt)?;
+            let manifest_ref = record.manifest_ref.ok_or_else(corrupt)?;
+            if let Some(before_version) = record.before_version {
+                fields.insert(FIELD_BEFORE_VERSION.to_owned(), before_version.to_string());
+            }
             fields.insert(FIELD_VERSION.to_owned(), version.to_string());
-            if let Some(content_hash) = record.content_hash.as_ref() {
-                fields.insert(
-                    FIELD_CONTENT_HASH.to_owned(),
-                    crate::receipt::hex_lower(content_hash),
-                );
-            }
-            if let Some(manifest_ref) = record.manifest_ref.as_ref() {
-                fields.insert(
-                    FIELD_MANIFEST_REF.to_owned(),
-                    crate::receipt::hex_lower(manifest_ref),
-                );
-            }
+            fields.insert(
+                FIELD_CONTENT_HASH.to_owned(),
+                crate::receipt::hex_lower(&content_hash),
+            );
+            fields.insert(
+                FIELD_MANIFEST_REF.to_owned(),
+                crate::receipt::hex_lower(&manifest_ref),
+            );
             fields.insert(
                 FIELD_MANIFEST_OPS.to_owned(),
                 record.manifest_ops.to_string(),
@@ -617,7 +668,7 @@ fn settlement_receipt_record(artifact_id: EntityId, record: &SettlementRecord) -
         }
     };
 
-    ReceiptRecord {
+    Ok(ReceiptRecord {
         receipt_id: format!("artifact_settle:{artifact_hex}:{}", record.proposal_ref),
         receipt_kind: ReceiptKind::ArtifactSettle,
         occurred_at: record.settled_at,
@@ -630,7 +681,7 @@ fn settlement_receipt_record(artifact_id: EntityId, record: &SettlementRecord) -
         trigger_ref: Some(trigger_ref),
         policy_trace: Vec::new(),
         fields,
-    }
+    })
 }
 
 fn settled_anchors_from_summary(summary: &ReanchorSummary) -> Vec<SettledAnchor> {
@@ -718,6 +769,10 @@ fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<u8>> {
             option_str_value(record.brief_ref.as_deref()),
         ),
         (
+            Value::from(KEY_BEFORE_VERSION),
+            record.before_version.map_or(Value::Nil, Value::from),
+        ),
+        (
             Value::from(KEY_VERSION),
             record.version.map_or(Value::Nil, Value::from),
         ),
@@ -786,6 +841,7 @@ fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord> {
         settled_at: field_u64(&entries, KEY_SETTLED_AT)?,
         actor_ref: field_opt_str(&entries, KEY_ACTOR_REF)?,
         brief_ref: field_opt_str(&entries, KEY_BRIEF_REF)?,
+        before_version: field_opt_u64(&entries, KEY_BEFORE_VERSION)?,
         version: field_opt_u64(&entries, KEY_VERSION)?,
         content_hash: field_opt_hash(&entries, KEY_CONTENT_HASH)?,
         manifest_ref: field_opt_hash(&entries, KEY_MANIFEST_REF)?,

@@ -17,6 +17,10 @@ use crate::types::{
     ENTITY_TYPE_PERSON, EdgeActorClass, HnswConfig, TextAnalyzerConfig, VaultConfig, WriteActor,
 };
 
+/// The v1 bytes `put_workbook` uploads — the base every hand-built proposal is
+/// pinned to (a proposal is produced FROM the head it edits).
+const WORKBOOK_V1_BYTES: &[u8] = b"workbook bytes v1";
+
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.map_size = 16 * 1024 * 1024;
@@ -56,7 +60,7 @@ fn put_workbook(vault: &Vault, actor: WriteActor, at: u64) -> EntityId {
     vault
         .append_blob_artifact_version(
             &artifact_id,
-            b"workbook bytes v1",
+            WORKBOOK_V1_BYTES,
             &BlobVersionProvenance::UserUpload,
             actor,
             test_time(at),
@@ -79,7 +83,9 @@ fn owner() -> SettleConsent {
 }
 
 /// Builds a retained proposal by hand — settle never re-parses `new_bytes`, so
-/// arbitrary non-empty bytes stand in for the edited xlsx.
+/// arbitrary non-empty bytes stand in for the edited xlsx. The proposal is
+/// pinned to the v1 base `put_workbook` uploads, so it settles non-stale as long
+/// as no intervening edit has moved the head.
 fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
     EditProposal {
         run_ref: run_ref.to_owned(),
@@ -108,6 +114,8 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             checks: Vec::new(),
         },
         recalc: RecalcStatus::NotNeeded,
+        base_version: Some(1),
+        base_content_hash: *blake3::hash(WORKBOOK_V1_BYTES).as_bytes(),
     }
 }
 
@@ -252,6 +260,11 @@ fn both_settle_paths_are_receipted_and_the_door_resolves() -> Result<()> {
         Some(artifact.to_hex().as_str())
     );
     assert_eq!(receipt.fields.get("version").map(String::as_str), Some("2"));
+    // Before/after version pair (D6): the head it committed onto was v1.
+    assert_eq!(
+        receipt.fields.get("before_version").map(String::as_str),
+        Some("1")
+    );
     assert_eq!(
         receipt.fields.get("anchor_moves").map(String::as_str),
         Some("1")
@@ -443,6 +456,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         settled_at: 42,
         actor_ref: Some("cafef00d".to_owned()),
         brief_ref: Some("brief:codec".to_owned()),
+        before_version: Some(6),
         version: Some(7),
         content_hash: Some([0xA5; BLOB_ARTIFACT_CONTENT_HASH_LEN]),
         manifest_ref: Some([0xB6; 32]),
@@ -470,6 +484,7 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
         settled_at: 43,
         actor_ref: None,
         brief_ref: None,
+        before_version: None,
         version: None,
         content_hash: None,
         manifest_ref: None,
@@ -479,5 +494,50 @@ fn settlement_record_round_trips_through_msgpack() -> Result<()> {
     };
     let bytes = encode_settlement_record(&discarded)?;
     assert_eq!(decode_settlement_record(&bytes)?, discarded);
+    Ok(())
+}
+
+// P1 rider + atomicity: a stale proposal (its base no longer matches the head
+// after an intervening edit) is refused, and the refused select is atomic —
+// nothing is appended and no ledger row is written.
+#[test]
+fn stale_base_select_is_refused_atomically() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+
+    // A proposal produced from v1.
+    let prop = proposal("run:stale", b"agent edit off v1", Vec::new());
+
+    // An intervening user edit moves the head to v2 before the agent proposal
+    // settles.
+    vault.append_blob_artifact_version(
+        &artifact,
+        b"human edit v2",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(11),
+        11,
+    )?;
+
+    // Settling the now-stale proposal is refused: its base (v1) no longer
+    // matches the head (v2).
+    let err = vault
+        .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(12), 12)
+        .expect_err("a stale proposal must be refused");
+    assert_eq!(err.kind(), crate::error::ErrorKind::EditProposalStale);
+
+    // Atomic refusal: no v3 appended, no ledger row, no receipt.
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 2);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "run:stale")?
+            .is_none()
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(50).with_kind(ReceiptKind::ArtifactSettle))?
+            .is_empty()
+    );
     Ok(())
 }

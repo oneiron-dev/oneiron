@@ -669,7 +669,13 @@ pub fn replay_locator(locator: &Locator, ops: &[ReanchorOp]) -> ReanchorOutcome 
                         None => return ReanchorOutcome::Drifted,
                     }
                 } else if ranges_overlap(from, &cur) {
-                    // Partial overlap is ambiguous: never guess a position.
+                    // Partial source overlap is ambiguous: never guess a position.
+                    return ReanchorOutcome::Drifted;
+                } else if ranges_overlap(to, &cur) {
+                    // The anchor sits (partly) at the move's DESTINATION but is not
+                    // part of the moved content, so that content was overwritten by
+                    // the move. Its cells no longer hold what the anchor named — drift
+                    // rather than point at replaced content.
                     return ReanchorOutcome::Drifted;
                 }
             }
@@ -1291,34 +1297,23 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
     ) -> Result<Vec<AnnotationThread>> {
-        // Group by thread id, keeping the newest Active head per thread.
-        let mut heads: Vec<(EntityId, EntityId, ThreadHead)> = Vec::new();
-        for (claim_id, body) in self.active_annotation_claims(artifact_id)? {
-            if body.predicate != ANNOTATION_THREAD_PREDICATE {
-                continue;
-            }
-            let head = match decode_thread_head(&body.value) {
-                Ok(head) => head,
-                Err(err) => {
-                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
-                    continue;
-                }
-            };
-            match heads.iter_mut().find(|(tid, _, _)| *tid == head.thread_id) {
-                Some((_, existing_id, existing_head)) if claim_id > *existing_id => {
-                    *existing_id = claim_id;
-                    *existing_head = head;
-                }
-                Some(_) => {}
-                None => heads.push((head.thread_id, claim_id, head)),
-            }
-        }
-        let mut threads: Vec<AnnotationThread> = heads
-            .into_iter()
-            .map(|(_, claim_id, head)| thread_from_head(*artifact_id, claim_id, head))
-            .collect();
-        threads.sort_by_key(|thread| thread.thread_id);
-        Ok(threads)
+        Ok(threads_from_active_claims(
+            *artifact_id,
+            self.active_annotation_claims(artifact_id)?,
+        ))
+    }
+
+    /// Transaction-composable [`Vault::annotation_threads_for_artifact`]: reads
+    /// the live thread heads through the caller's txn (settle's re-anchor sweep).
+    fn annotation_threads_for_artifact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<AnnotationThread>> {
+        Ok(threads_from_active_claims(
+            *artifact_id,
+            self.active_annotation_claims_in_txn(rtxn, artifact_id)?,
+        ))
     }
 
     /// Reads a thread's comments, ordered by authored time then claim id.
@@ -1379,54 +1374,98 @@ impl Vault {
             if thread.is_drifted() || thread.anchor.version != from_version {
                 continue;
             }
-            let (head, drifted) = match replay_locator(&thread.anchor.locator, ops) {
-                ReanchorOutcome::Mapped(locator) => (
-                    ThreadHead {
-                        thread_id: thread.thread_id,
-                        origin_version: thread.origin_version,
-                        anchor_version: to_version,
-                        state: thread.state,
-                        locator,
-                        drift: None,
-                    },
-                    false,
-                ),
-                ReanchorOutcome::Drifted => (
-                    ThreadHead {
-                        thread_id: thread.thread_id,
-                        origin_version: thread.origin_version,
-                        anchor_version: from_version,
-                        state: thread.state,
-                        locator: thread.anchor.locator.clone(),
-                        drift: Some(DriftMarker {
-                            drifted_at_version: to_version,
-                            pinned_version: from_version,
-                        }),
-                    },
-                    true,
-                ),
-            };
+            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            // Each thread's head write + old-head supersede share ONE txn, so a
+            // rejected supersede leaves that thread's original head live.
             let new_head_id = self.with_write_txn(|wtxn| {
-                let new_head_id = self.write_thread_head_in_txn(
+                self.apply_reanchor_head_in_txn(
                     wtxn,
                     artifact_id,
+                    &thread,
                     &head,
                     actor,
-                    "reanchor",
                     occurred,
                     learned_at,
-                )?;
-                self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
-                Ok(new_head_id)
+                )
             })?;
-            let updated = thread_from_head(*artifact_id, new_head_id, head);
-            if drifted {
-                summary.drifted.push(updated);
-            } else {
-                summary.remapped.push(updated);
-            }
+            push_reanchor_result(
+                &mut summary,
+                thread_from_head(*artifact_id, new_head_id, head),
+                drifted,
+            );
         }
         Ok(summary)
+    }
+
+    /// Transaction-composable re-anchor sweep: replays `ops` onto every live,
+    /// non-drifted thread at `from_version`, writing all head updates through the
+    /// caller's `wtxn`. ARTL-4 settle-select drives this so the re-anchor commits
+    /// atomically with the version append and the consume-once ledger insert —
+    /// a crash rolls the whole settle back rather than pinning threads to the old
+    /// version. `to_version` is validated against the head visible in `wtxn`, so
+    /// the version the same txn just appended resolves.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn reanchor_annotation_threads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        from_version: u64,
+        to_version: u64,
+        ops: &[ReanchorOp],
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<ReanchorSummary> {
+        self.require_anchor_version_in_txn(&*wtxn, artifact_id, to_version)?;
+        let mut summary = ReanchorSummary::default();
+        let threads = self.annotation_threads_for_artifact_in_txn(&*wtxn, artifact_id)?;
+        for thread in threads {
+            if thread.is_drifted() || thread.anchor.version != from_version {
+                continue;
+            }
+            let (head, drifted) = plan_reanchored_head(&thread, from_version, to_version, ops);
+            let new_head_id = self.apply_reanchor_head_in_txn(
+                wtxn,
+                artifact_id,
+                &thread,
+                &head,
+                actor,
+                occurred,
+                learned_at,
+            )?;
+            push_reanchor_result(
+                &mut summary,
+                thread_from_head(*artifact_id, new_head_id, head),
+                drifted,
+            );
+        }
+        Ok(summary)
+    }
+
+    /// Writes one re-anchored head and supersedes the thread's prior head in the
+    /// caller's txn, returning the new head claim id.
+    #[expect(clippy::too_many_arguments)]
+    fn apply_reanchor_head_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        artifact_id: &EntityId,
+        thread: &AnnotationThread,
+        head: &ThreadHead,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let new_head_id = self.write_thread_head_in_txn(
+            wtxn,
+            artifact_id,
+            head,
+            actor,
+            "reanchor",
+            occurred,
+            learned_at,
+        )?;
+        self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
+        Ok(new_head_id)
     }
 
     /// Converts a thread into a task-brief (OF-368 D4).
@@ -1584,12 +1623,25 @@ impl Vault {
     }
 
     fn require_anchor_version(&self, artifact_id: &EntityId, version: u64) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        self.require_anchor_version_in_txn(&rtxn, artifact_id, version)
+    }
+
+    /// Transaction-composable [`Vault::require_anchor_version`]: validates the
+    /// target version against the artifact head read through the caller's txn,
+    /// so settle sees the version it just appended in the same write txn.
+    fn require_anchor_version_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<()> {
         if version == 0 {
             return Err(Error::InvalidAnchor("anchor version must be at least 1"));
         }
-        let head = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::InvalidAnchor("anchor artifact has no versions"))?;
+        let head =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?
+                .ok_or(Error::InvalidAnchor("anchor artifact has no versions"))?;
         if version > head.version {
             return Err(Error::InvalidAnchor(
                 "anchor version is beyond the artifact head",
@@ -1613,9 +1665,21 @@ impl Vault {
         &self,
         artifact_id: &EntityId,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.active_annotation_claims_in_txn(&rtxn, artifact_id)
+    }
+
+    /// Transaction-composable [`Vault::active_annotation_claims`]: reads the
+    /// live-read annotation cohort through the caller's txn, so settle can gather
+    /// threads inside the same write txn that appends the version.
+    fn active_annotation_claims_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut out = Vec::new();
-        for claim_id in self.claims_for_subject(artifact_id)? {
-            let Some(body) = self.get_claim(&claim_id)? else {
+        for claim_id in self.claims_for_subject_in_txn(rtxn, artifact_id)? {
+            let Some(body) = self.get_claim_in_txn(rtxn, &claim_id)? else {
                 continue;
             };
             if crate::claim::claim_surfaceable(&body) && is_annotation_predicate(&body.predicate) {
@@ -1647,6 +1711,89 @@ fn is_annotation_predicate(predicate: &str) -> bool {
         predicate,
         ANNOTATION_THREAD_PREDICATE | ANNOTATION_COMMENT_PREDICATE | ANNOTATION_BRIEF_PREDICATE
     )
+}
+
+/// Computes the re-anchored head for one thread across a `from → to` version
+/// bump: a mappable anchor advances to `to_version` with its new locator; a
+/// non-mappable one drifts and stays pinned to `from_version`. Returns the new
+/// head and whether it drifted. Pure — the caller writes it.
+fn plan_reanchored_head(
+    thread: &AnnotationThread,
+    from_version: u64,
+    to_version: u64,
+    ops: &[ReanchorOp],
+) -> (ThreadHead, bool) {
+    match replay_locator(&thread.anchor.locator, ops) {
+        ReanchorOutcome::Mapped(locator) => (
+            ThreadHead {
+                thread_id: thread.thread_id,
+                origin_version: thread.origin_version,
+                anchor_version: to_version,
+                state: thread.state,
+                locator,
+                drift: None,
+            },
+            false,
+        ),
+        ReanchorOutcome::Drifted => (
+            ThreadHead {
+                thread_id: thread.thread_id,
+                origin_version: thread.origin_version,
+                anchor_version: from_version,
+                state: thread.state,
+                locator: thread.anchor.locator.clone(),
+                drift: Some(DriftMarker {
+                    drifted_at_version: to_version,
+                    pinned_version: from_version,
+                }),
+            },
+            true,
+        ),
+    }
+}
+
+fn push_reanchor_result(summary: &mut ReanchorSummary, thread: AnnotationThread, drifted: bool) {
+    if drifted {
+        summary.drifted.push(thread);
+    } else {
+        summary.remapped.push(thread);
+    }
+}
+
+/// Groups a live-read annotation claim cohort into one [`AnnotationThread`] per
+/// thread id (newest Active head wins on a torn supersede), skipping non-thread
+/// predicates and malformed heads. Shared by the own-txn and in-txn listers.
+fn threads_from_active_claims(
+    artifact_id: EntityId,
+    claims: Vec<(EntityId, ClaimBody)>,
+) -> Vec<AnnotationThread> {
+    let mut heads: Vec<(EntityId, EntityId, ThreadHead)> = Vec::new();
+    for (claim_id, body) in claims {
+        if body.predicate != ANNOTATION_THREAD_PREDICATE {
+            continue;
+        }
+        let head = match decode_thread_head(&body.value) {
+            Ok(head) => head,
+            Err(err) => {
+                warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                continue;
+            }
+        };
+        match heads.iter_mut().find(|(tid, _, _)| *tid == head.thread_id) {
+            Some((_, existing_id, existing_head)) if claim_id > *existing_id => {
+                *existing_id = claim_id;
+                *existing_head = head;
+            }
+            Some(_) => {}
+            None => heads.push((head.thread_id, claim_id, head)),
+        }
+    }
+    let mut threads: Vec<AnnotationThread> = heads
+        .into_iter()
+        .map(|(_, claim_id, head)| thread_from_head(artifact_id, claim_id, head))
+        .collect();
+    threads.sort_by_key(|thread| thread.thread_id);
+    threads
 }
 
 fn thread_from_head(
@@ -1911,6 +2058,35 @@ mod tests {
             }],
         );
         assert_eq!(untouched, ReanchorOutcome::Mapped(locator));
+    }
+
+    #[test]
+    fn replay_drifts_anchor_overwritten_by_move_destination() {
+        // Move A1:B2 to D1:E2. A thread anchored at D1 (in the destination, not
+        // part of the moved source) had its content overwritten by the move, so
+        // it must drift rather than keep pointing at replaced cells.
+        let at_destination = Locator::xlsx("Sheet1", "D1").expect("locator");
+        let overwritten = replay_locator(
+            &at_destination,
+            &[ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::parse("A1:B2").expect("from"),
+                to: A1Range::parse("D1:E2").expect("to"),
+            }],
+        );
+        assert_eq!(overwritten, ReanchorOutcome::Drifted);
+
+        // A thread disjoint from BOTH source and destination is untouched.
+        let elsewhere = Locator::xlsx("Sheet1", "H8").expect("locator");
+        let untouched = replay_locator(
+            &elsewhere,
+            &[ReanchorOp::MoveRange {
+                sheet: "Sheet1".to_owned(),
+                from: A1Range::parse("A1:B2").expect("from"),
+                to: A1Range::parse("D1:E2").expect("to"),
+            }],
+        );
+        assert_eq!(untouched, ReanchorOutcome::Mapped(elsewhere));
     }
 
     #[test]

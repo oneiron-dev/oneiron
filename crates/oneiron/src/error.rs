@@ -193,6 +193,7 @@ pub enum ErrorKind {
     InvalidEditManifest,
     EditRoundtripFailed,
     EditProposalAlreadySettled,
+    EditProposalStale,
     SettleNotAuthorized,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
@@ -811,6 +812,13 @@ pub enum Error {
     /// reported. Nothing was written.
     #[error("edit proposal already settled: prior outcome was {outcome}")]
     EditProposalAlreadySettled { outcome: &'static str },
+    /// An ARTL-4 settle-select targeted a proposal whose base no longer matches
+    /// the artifact head — an intervening edit moved the head since the proposal
+    /// was produced (OF-368 D5). Committing these bytes would clobber the
+    /// intervening version and replay a stale manifest onto newer anchors, so
+    /// the settle is refused. Nothing was written.
+    #[error("edit proposal is stale: its base no longer matches the artifact head")]
+    EditProposalStale,
     /// An ARTL-4 settle was not authorized: standing-grant consent found no
     /// covering brief×verb-class bundle grant (OF-368 D6). Fail-closed —
     /// nothing was written.
@@ -1419,6 +1427,7 @@ impl Error {
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
+            Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
