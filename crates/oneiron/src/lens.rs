@@ -439,6 +439,249 @@ pub enum GeneratedUiCatalog {
     LensAtomKit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedUiPrimitive {
+    TextBlock,
+    LedgerRow,
+    ClaimLine,
+    StatusDot,
+    Seal,
+    MetaLine,
+    DossierSection,
+    ThreadEntry,
+    Sheet,
+    Slip,
+    Receipt,
+    Charter,
+    Postmark,
+    PackLine,
+    AnswerSheet,
+    TwoClocks,
+    NeighborhoodGraph,
+    AsofScrubber,
+    Throbber,
+    VoiceLine,
+    QuickFilter,
+    InspectorSheet,
+    InspectorRail,
+    InspectorTrail,
+    SelfUi,
+    Media,
+}
+
+impl GeneratedUiPrimitive {
+    pub const ALL: &'static [Self] = &[
+        Self::TextBlock,
+        Self::LedgerRow,
+        Self::ClaimLine,
+        Self::StatusDot,
+        Self::Seal,
+        Self::MetaLine,
+        Self::DossierSection,
+        Self::ThreadEntry,
+        Self::Sheet,
+        Self::Slip,
+        Self::Receipt,
+        Self::Charter,
+        Self::Postmark,
+        Self::PackLine,
+        Self::AnswerSheet,
+        Self::TwoClocks,
+        Self::NeighborhoodGraph,
+        Self::AsofScrubber,
+        Self::Throbber,
+        Self::VoiceLine,
+        Self::QuickFilter,
+        Self::InspectorSheet,
+        Self::InspectorRail,
+        Self::InspectorTrail,
+        Self::SelfUi,
+        Self::Media,
+    ];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TextBlock => "text_block",
+            Self::LedgerRow => "ledger_row",
+            Self::ClaimLine => "claim_line",
+            Self::StatusDot => "status_dot",
+            Self::Seal => "seal",
+            Self::MetaLine => "meta_line",
+            Self::DossierSection => "dossier_section",
+            Self::ThreadEntry => "thread_entry",
+            Self::Sheet => "sheet",
+            Self::Slip => "slip",
+            Self::Receipt => "receipt",
+            Self::Charter => "charter",
+            Self::Postmark => "postmark",
+            Self::PackLine => "pack_line",
+            Self::AnswerSheet => "answer_sheet",
+            Self::TwoClocks => "two_clocks",
+            Self::NeighborhoodGraph => "neighborhood_graph",
+            Self::AsofScrubber => "asof_scrubber",
+            Self::Throbber => "throbber",
+            Self::VoiceLine => "voice_line",
+            Self::QuickFilter => "quick_filter",
+            Self::InspectorSheet => "inspector_sheet",
+            Self::InspectorRail => "inspector_rail",
+            Self::InspectorTrail => "inspector_trail",
+            Self::SelfUi => "self_ui",
+            Self::Media => "media",
+        }
+    }
+
+    #[must_use]
+    pub const fn minimum_catalog_version(self) -> u16 {
+        match self {
+            Self::TextBlock
+            | Self::LedgerRow
+            | Self::ClaimLine
+            | Self::StatusDot
+            | Self::Seal
+            | Self::MetaLine
+            | Self::DossierSection
+            | Self::ThreadEntry
+            | Self::Sheet
+            | Self::Slip
+            | Self::Receipt
+            | Self::Charter
+            | Self::Postmark
+            | Self::PackLine
+            | Self::AnswerSheet
+            | Self::TwoClocks
+            | Self::NeighborhoodGraph
+            | Self::AsofScrubber
+            | Self::Throbber
+            | Self::VoiceLine
+            | Self::QuickFilter
+            | Self::InspectorSheet
+            | Self::InspectorRail
+            | Self::InspectorTrail
+            | Self::SelfUi
+            | Self::Media => LENS_ATOM_KIT_VERSION,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiSurfaceCapabilities {
+    pub catalog: GeneratedUiCatalog,
+    pub max_catalog_version: u16,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub primitives: Vec<GeneratedUiPrimitive>,
+}
+
+impl GeneratedUiSurfaceCapabilities {
+    #[must_use]
+    pub fn new(
+        catalog: GeneratedUiCatalog,
+        max_catalog_version: u16,
+        primitives: Vec<GeneratedUiPrimitive>,
+    ) -> Self {
+        Self {
+            catalog,
+            max_catalog_version,
+            primitives,
+        }
+    }
+
+    #[must_use]
+    pub fn all_atom_kit() -> Self {
+        Self::new(
+            GeneratedUiCatalog::LensAtomKit,
+            LENS_ATOM_KIT_VERSION,
+            GeneratedUiPrimitive::ALL.to_vec(),
+        )
+    }
+
+    #[must_use]
+    pub fn text_only() -> Self {
+        Self::new(
+            GeneratedUiCatalog::LensAtomKit,
+            LENS_ATOM_KIT_VERSION,
+            vec![GeneratedUiPrimitive::TextBlock],
+        )
+    }
+
+    #[must_use]
+    pub fn supports(&self, primitive: GeneratedUiPrimitive) -> bool {
+        primitive == GeneratedUiPrimitive::TextBlock
+            || (self.catalog == GeneratedUiCatalog::LensAtomKit
+                && self.max_catalog_version >= primitive.minimum_catalog_version()
+                && self.primitives.contains(&primitive))
+    }
+}
+
+impl Default for GeneratedUiSurfaceCapabilities {
+    fn default() -> Self {
+        Self::all_atom_kit()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "name",
+    content = "props",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum GeneratedUiPrebuilt {
+    SummaryCard(GeneratedUiSummaryCardPrebuilt),
+}
+
+impl GeneratedUiPrebuilt {
+    pub fn expand(&self) -> Result<LensNode> {
+        match self {
+            Self::SummaryCard(prebuilt) => prebuilt.expand(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiSummaryCardPrebuilt {
+    pub title: LensText,
+    pub body: LensText,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub details: Vec<MetaLineAtom>,
+}
+
+impl GeneratedUiSummaryCardPrebuilt {
+    fn expand(&self) -> Result<LensNode> {
+        validate_required_lens_text("generated-ui summary_card title", &self.title)?;
+        validate_required_lens_text("generated-ui summary_card body", &self.body)?;
+        validate_lens_collection_len("generated-ui summary_card details", self.details.len())?;
+
+        let mut root = LensNode::with_fallback_text(
+            LensAtomId::new("summary-card-root")?,
+            LensAtom::Sheet(CollectionAtom {
+                title: self.title.clone(),
+                rows: Vec::new(),
+            }),
+            self.title.clone(),
+        );
+        root.children.push(LensNode::with_fallback_text(
+            LensAtomId::new("summary-card-body")?,
+            LensAtom::TextBlock(TextBlockAtom {
+                spans: vec![LensTextSpan::Literal(self.body.clone())],
+            }),
+            self.body.clone(),
+        ));
+        for (index, detail) in self.details.iter().enumerate() {
+            root.children.push(LensNode::new(
+                LensAtomId::new(format!("summary-card-detail-{index}"))?,
+                LensAtom::MetaLine(detail.clone()),
+            ));
+        }
+
+        validate_lens_tree(&root)?;
+        Ok(root)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedUiCard {
@@ -453,6 +696,10 @@ impl GeneratedUiCard {
         Self::new(card_id, GeneratedLens::new(root)?)
     }
 
+    pub fn prebuilt(card_id: LensRenderId, prebuilt: GeneratedUiPrebuilt) -> Result<Self> {
+        Self::card(card_id, prebuilt.expand()?)
+    }
+
     pub fn new(card_id: LensRenderId, tree: GeneratedLens) -> Result<Self> {
         let card = Self {
             protocol_version: GENERATED_UI_WIRE_VERSION,
@@ -465,6 +712,13 @@ impl GeneratedUiCard {
     }
 
     pub fn render(&self) -> Result<GeneratedUiRender> {
+        self.render_for_surface(&GeneratedUiSurfaceCapabilities::all_atom_kit())
+    }
+
+    pub fn render_for_surface(
+        &self,
+        surface: &GeneratedUiSurfaceCapabilities,
+    ) -> Result<GeneratedUiRender> {
         let root = self.tree.root();
         let mut nodes = Vec::new();
         let mut stack = vec![(root, None::<LensAtomId>)];
@@ -478,7 +732,7 @@ impl GeneratedUiCard {
             nodes.push(GeneratedUiNode {
                 id: node.id.clone(),
                 parent,
-                atom: node.atom.clone(),
+                atom: compile_atom_for_surface(&node.atom, &node.fallback_text, surface),
                 fallback_text: node.fallback_text.clone(),
                 bindings: node.bindings.clone(),
                 child_refs,
@@ -496,8 +750,25 @@ impl GeneratedUiCard {
         Ok(self.render()?.segments())
     }
 
+    pub fn segments_for_surface(
+        &self,
+        surface: &GeneratedUiSurfaceCapabilities,
+    ) -> Result<Vec<GeneratedUiSegment>> {
+        Ok(self.render_for_surface(surface)?.segments())
+    }
+
     pub fn content_parts(&self) -> Result<Vec<ContentPart>> {
         self.segments()?
+            .iter()
+            .map(GeneratedUiSegment::to_content_part)
+            .collect()
+    }
+
+    pub fn content_parts_for_surface(
+        &self,
+        surface: &GeneratedUiSurfaceCapabilities,
+    ) -> Result<Vec<ContentPart>> {
+        self.segments_for_surface(surface)?
             .iter()
             .map(GeneratedUiSegment::to_content_part)
             .collect()
@@ -525,15 +796,35 @@ impl<'de> Deserialize<'de> for GeneratedUiCard {
             protocol_version: u16,
             catalog: GeneratedUiCatalog,
             card_id: LensRenderId,
-            tree: GeneratedLens,
+            #[serde(default)]
+            tree: Option<GeneratedLens>,
+            #[serde(default)]
+            prebuilt: Option<GeneratedUiPrebuilt>,
         }
 
         let wire = GeneratedUiCardWire::deserialize(deserializer)?;
+        let tree = match (wire.tree, wire.prebuilt) {
+            (Some(tree), None) => tree,
+            (None, Some(prebuilt)) => {
+                let root = prebuilt.expand().map_err(de::Error::custom)?;
+                GeneratedLens::new(root).map_err(de::Error::custom)?
+            }
+            (Some(_), Some(_)) => {
+                return Err(de::Error::custom(
+                    "generated-ui card must contain either tree or prebuilt, not both",
+                ));
+            }
+            (None, None) => {
+                return Err(de::Error::custom(
+                    "generated-ui card must contain tree or prebuilt",
+                ));
+            }
+        };
         let card = Self {
             protocol_version: wire.protocol_version,
             catalog: wire.catalog,
             card_id: wire.card_id,
-            tree: wire.tree,
+            tree,
         };
         card.validate().map_err(de::Error::custom)?;
         Ok(card)
@@ -2892,35 +3183,40 @@ where
 
 impl LensAtom {
     #[must_use]
-    pub fn kind(&self) -> &'static str {
+    pub const fn primitive(&self) -> GeneratedUiPrimitive {
         match self {
-            Self::TextBlock(_) => "text_block",
-            Self::LedgerRow(_) => "ledger_row",
-            Self::ClaimLine(_) => "claim_line",
-            Self::StatusDot(_) => "status_dot",
-            Self::Seal(_) => "seal",
-            Self::MetaLine(_) => "meta_line",
-            Self::DossierSection(_) => "dossier_section",
-            Self::ThreadEntry(_) => "thread_entry",
-            Self::Sheet(_) => "sheet",
-            Self::Slip(_) => "slip",
-            Self::Receipt(_) => "receipt",
-            Self::Charter(_) => "charter",
-            Self::Postmark(_) => "postmark",
-            Self::PackLine(_) => "pack_line",
-            Self::AnswerSheet(_) => "answer_sheet",
-            Self::TwoClocks(_) => "two_clocks",
-            Self::NeighborhoodGraph(_) => "neighborhood_graph",
-            Self::AsofScrubber(_) => "asof_scrubber",
-            Self::Throbber(_) => "throbber",
-            Self::VoiceLine(_) => "voice_line",
-            Self::QuickFilter(_) => "quick_filter",
-            Self::InspectorSheet(_) => "inspector_sheet",
-            Self::InspectorRail(_) => "inspector_rail",
-            Self::InspectorTrail(_) => "inspector_trail",
-            Self::SelfUi(_) => "self_ui",
-            Self::Media(_) => "media",
+            Self::TextBlock(_) => GeneratedUiPrimitive::TextBlock,
+            Self::LedgerRow(_) => GeneratedUiPrimitive::LedgerRow,
+            Self::ClaimLine(_) => GeneratedUiPrimitive::ClaimLine,
+            Self::StatusDot(_) => GeneratedUiPrimitive::StatusDot,
+            Self::Seal(_) => GeneratedUiPrimitive::Seal,
+            Self::MetaLine(_) => GeneratedUiPrimitive::MetaLine,
+            Self::DossierSection(_) => GeneratedUiPrimitive::DossierSection,
+            Self::ThreadEntry(_) => GeneratedUiPrimitive::ThreadEntry,
+            Self::Sheet(_) => GeneratedUiPrimitive::Sheet,
+            Self::Slip(_) => GeneratedUiPrimitive::Slip,
+            Self::Receipt(_) => GeneratedUiPrimitive::Receipt,
+            Self::Charter(_) => GeneratedUiPrimitive::Charter,
+            Self::Postmark(_) => GeneratedUiPrimitive::Postmark,
+            Self::PackLine(_) => GeneratedUiPrimitive::PackLine,
+            Self::AnswerSheet(_) => GeneratedUiPrimitive::AnswerSheet,
+            Self::TwoClocks(_) => GeneratedUiPrimitive::TwoClocks,
+            Self::NeighborhoodGraph(_) => GeneratedUiPrimitive::NeighborhoodGraph,
+            Self::AsofScrubber(_) => GeneratedUiPrimitive::AsofScrubber,
+            Self::Throbber(_) => GeneratedUiPrimitive::Throbber,
+            Self::VoiceLine(_) => GeneratedUiPrimitive::VoiceLine,
+            Self::QuickFilter(_) => GeneratedUiPrimitive::QuickFilter,
+            Self::InspectorSheet(_) => GeneratedUiPrimitive::InspectorSheet,
+            Self::InspectorRail(_) => GeneratedUiPrimitive::InspectorRail,
+            Self::InspectorTrail(_) => GeneratedUiPrimitive::InspectorTrail,
+            Self::SelfUi(_) => GeneratedUiPrimitive::SelfUi,
+            Self::Media(_) => GeneratedUiPrimitive::Media,
         }
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        self.primitive().as_str()
     }
 
     #[must_use]
@@ -3328,6 +3624,20 @@ fn validate_generated_ui_protocol_version(protocol_version: u16) -> Result<()> {
 
 fn fallback_lens_text(kind: &'static str, value: String) -> LensText {
     LensText::new(value).unwrap_or_else(|_| LensText::new(kind).expect("static fallback is valid"))
+}
+
+fn compile_atom_for_surface(
+    atom: &LensAtom,
+    fallback_text: &LensText,
+    surface: &GeneratedUiSurfaceCapabilities,
+) -> LensAtom {
+    if surface.supports(atom.primitive()) {
+        return atom.clone();
+    }
+
+    LensAtom::TextBlock(TextBlockAtom {
+        spans: vec![LensTextSpan::Literal(fallback_text.clone())],
+    })
 }
 
 fn validate_self_ui_options(context: &str, options: &[SelfUiOption]) -> Result<()> {
@@ -3742,11 +4052,21 @@ mod tests {
     fn atom_kind_catalog_matches_closed_enum() {
         let atoms = sample_atoms();
         assert_eq!(atoms.len(), GENERATED_LENS_ATOM_KINDS.len());
+        assert_eq!(
+            GeneratedUiPrimitive::ALL.len(),
+            GENERATED_LENS_ATOM_KINDS.len()
+        );
 
         let mut unique = HashSet::new();
-        for (atom, expected_kind) in atoms.iter().zip(GENERATED_LENS_ATOM_KINDS) {
+        for ((atom, expected_kind), expected_primitive) in atoms
+            .iter()
+            .zip(GENERATED_LENS_ATOM_KINDS)
+            .zip(GeneratedUiPrimitive::ALL)
+        {
             let observed_kind = atom.kind();
             assert_eq!(observed_kind, *expected_kind);
+            assert_eq!(atom.primitive(), *expected_primitive);
+            assert_eq!(expected_primitive.as_str(), *expected_kind);
             assert!(
                 unique.insert(observed_kind),
                 "duplicate kind {observed_kind}"
@@ -4133,6 +4453,128 @@ mod tests {
                 *segment
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn generated_ui_prebuilt_shorthand_expands_server_side_into_tree() -> Result<()> {
+        let shorthand = json!({
+            "protocolVersion": GENERATED_UI_WIRE_VERSION,
+            "catalog": "lens_atom_kit",
+            "cardId": "summary-card",
+            "prebuilt": {
+                "name": "summary_card",
+                "props": {
+                    "title": "Consent summary",
+                    "body": "Approve one send to Ada.",
+                    "details": [
+                        { "label": "principal", "value": "user:ada" },
+                        { "label": "scope", "value": "just_once" }
+                    ]
+                }
+            }
+        });
+
+        let card: GeneratedUiCard =
+            serde_json::from_value(shorthand).expect("prebuilt shorthand decodes");
+        let card_value = serde_json::to_value(&card).expect("expanded card encodes");
+        assert!(
+            card_value.get("tree").is_some(),
+            "server-side shorthand must serialize as the 01A tree"
+        );
+        assert!(
+            card_value.get("prebuilt").is_none(),
+            "prebuilt names must not leak into the client wire payload"
+        );
+
+        let render = card.render()?;
+        assert_eq!(render.nodes.len(), 4);
+        assert_eq!(render.nodes[0].id, id("summary-card-root"));
+        assert_eq!(
+            render.nodes[0].atom.primitive(),
+            GeneratedUiPrimitive::Sheet
+        );
+        assert_eq!(
+            render.nodes[0].child_refs,
+            vec![
+                id("summary-card-body"),
+                id("summary-card-detail-0"),
+                id("summary-card-detail-1")
+            ]
+        );
+        assert_eq!(
+            render.nodes[1].atom.primitive(),
+            GeneratedUiPrimitive::TextBlock
+        );
+        assert_eq!(
+            render.nodes[2].atom.primitive(),
+            GeneratedUiPrimitive::MetaLine
+        );
+        assert_eq!(
+            render.nodes[3].atom.primitive(),
+            GeneratedUiPrimitive::MetaLine
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn generated_ui_capability_negotiation_degrades_unsupported_primitives() -> Result<()> {
+        let mut root = LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Sheet(CollectionAtom {
+                title: text("Unsupported root"),
+                rows: Vec::new(),
+            }),
+            text("Unsupported root"),
+        );
+        root.children.push(LensNode::with_fallback_text(
+            id("media"),
+            LensAtom::Media(MediaAtom {
+                handle: media_handle("engine-media-portrait"),
+                alt: text("Portrait"),
+            }),
+            text("Portrait fallback"),
+        ));
+        root.children.push(LensNode::with_fallback_text(
+            id("action"),
+            LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
+                id: control_id("approve"),
+                label: text("Approve"),
+                action: action("approve_once"),
+            })),
+            text("Approve fallback"),
+        ));
+
+        let card = GeneratedUiCard::card(render_id("degrade-card"), root)?;
+        let surface = GeneratedUiSurfaceCapabilities::text_only();
+        let render = card.render_for_surface(&surface)?;
+
+        assert_eq!(render.nodes.len(), 3);
+        assert!(
+            render
+                .nodes
+                .iter()
+                .all(|node| node.atom.primitive() == GeneratedUiPrimitive::TextBlock),
+            "unsupported primitives should lower to text fallbacks"
+        );
+        assert_eq!(render.nodes[0].child_refs, vec![id("media"), id("action")]);
+        assert_eq!(
+            render.nodes[0].fallback_text.as_str(),
+            "Unsupported root",
+            "fallbackText remains explicit on the degraded node"
+        );
+        let LensAtom::TextBlock(atom) = &render.nodes[1].atom else {
+            panic!("media should degrade to text_block");
+        };
+        assert_eq!(
+            atom.fallback_text(),
+            "Portrait fallback",
+            "degraded text must use the node fallback"
+        );
+        let segments = card.segments_for_surface(&surface)?;
+        assert_eq!(GeneratedUiRender::from_segments(&segments)?, render);
 
         Ok(())
     }
