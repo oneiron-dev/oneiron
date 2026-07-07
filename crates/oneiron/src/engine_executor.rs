@@ -13,7 +13,7 @@ use serde_json::json;
 
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayGeneration,
-    CodeRunReplayRecord, CodeRunStepCheckpoint,
+    CodeRunReplayRecord, CodeRunStepCheckpoint, encode_code_run_replay_value,
 };
 use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,
@@ -431,7 +431,7 @@ impl<'a> EngineNativeExecutor<'a> {
                     &script,
                     &step_outcome,
                     &record.bridge_calls[bridge_start..],
-                ),
+                )?,
                 config
                     .determinism
                     .frozen_unix_ms
@@ -493,7 +493,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 script,
                 &failed_outcome,
                 &record.bridge_calls[bridge_start..],
-            ),
+            )?,
             config
                 .determinism
                 .frozen_unix_ms
@@ -954,7 +954,7 @@ fn step_state_hash(
     script: &str,
     outcome: &JsCodeModeStepOutcome,
     bridge_calls: &[CodeRunBridgeCall],
-) -> [u8; 32] {
+) -> EngineExecutorResult<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hash_bytes(&mut hasher, CHECKPOINT_DOMAIN);
     hash_bytes(&mut hasher, &previous);
@@ -975,10 +975,14 @@ fn step_state_hash(
     for call in bridge_calls {
         hash_u64(&mut hasher, call.seq);
         hash_str(&mut hasher, call.effect.as_str());
-        hash_str(&mut hasher, &format!("{:?}", call.request));
-        hash_str(&mut hasher, &format!("{:?}", call.outcome));
+        let request =
+            encode_code_run_replay_value(&call.request, "executor bridge call request hash")?;
+        let outcome =
+            encode_code_run_replay_value(&call.outcome, "executor bridge call outcome hash")?;
+        hash_bytes(&mut hasher, &request);
+        hash_bytes(&mut hasher, &outcome);
     }
-    *hasher.finalize().as_bytes()
+    Ok(*hasher.finalize().as_bytes())
 }
 
 fn hash_u64(hasher: &mut blake3::Hasher, value: u64) {
@@ -2428,10 +2432,49 @@ mod tests {
             ],
         };
 
-        assert_ne!(
-            step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &left, &[]),
-            step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &right, &[])
-        );
+        let left_hash = step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &left, &[])
+            .expect("left hash");
+        let right_hash = step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &right, &[])
+            .expect("right hash");
+
+        assert_ne!(left_hash, right_hash);
+    }
+
+    #[test]
+    fn step_state_hash_frames_bridge_call_values() {
+        let request_hash = [0x22; 32];
+        let outcome = JsCodeModeStepOutcome::pending("observed");
+        let left = CodeRunBridgeCall {
+            seq: 0,
+            effect: SelfEffect::MemorySearch,
+            request: Value::Map(vec![(Value::from("a"), Value::from("bc"))]),
+            outcome: Value::Map(vec![(Value::from("result"), Value::from("ok"))]),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+        };
+        let right = CodeRunBridgeCall {
+            seq: 0,
+            effect: SelfEffect::MemorySearch,
+            request: Value::Map(vec![(Value::from("ab"), Value::from("c"))]),
+            outcome: Value::Map(vec![(Value::from("result"), Value::from("ok"))]),
+            started_at_ms: 0,
+            finished_at_ms: 0,
+        };
+
+        let left_hash =
+            step_state_hash([0; 32], 7, &request_hash, "const x = 1;", &outcome, &[left])
+                .expect("left hash");
+        let right_hash = step_state_hash(
+            [0; 32],
+            7,
+            &request_hash,
+            "const x = 1;",
+            &outcome,
+            &[right],
+        )
+        .expect("right hash");
+
+        assert_ne!(left_hash, right_hash);
     }
 
     #[test]

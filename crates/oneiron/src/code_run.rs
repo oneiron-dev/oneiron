@@ -1180,6 +1180,13 @@ fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+pub(crate) fn encode_code_run_replay_value(
+    value: &Value,
+    context: &'static str,
+) -> Result<Vec<u8>> {
+    encode_value(value, context)
+}
+
 fn pinned_map<'a, const N: usize>(
     value: &'a Value,
     keys: &[&str; N],
