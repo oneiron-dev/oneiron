@@ -2787,7 +2787,7 @@ fn needs_yaml_quotes(value: &str) -> bool {
         || value.contains('}')
         || value.contains(',')
         || value.contains('\\')
-        || contains_yaml_c0_control(value)
+        || contains_yaml_control(value)
         // Leading/trailing whitespace
         || value.starts_with(' ')
         || value.ends_with(' ')
@@ -2796,12 +2796,8 @@ fn needs_yaml_quotes(value: &str) -> bool {
         || looks_numeric(value)
 }
 
-fn contains_yaml_c0_control(value: &str) -> bool {
-    value.chars().any(is_yaml_c0_control)
-}
-
-fn is_yaml_c0_control(ch: char) -> bool {
-    matches!(ch, '\0'..='\x1F')
+fn contains_yaml_control(value: &str) -> bool {
+    value.chars().any(char::is_control)
 }
 
 fn is_yaml_reserved_word(value: &str) -> bool {
@@ -4557,7 +4553,8 @@ mod tests {
                 fields: Some(HashMap::from([(
                     "text".to_owned(),
                     Value::String(
-                        "nul\0bel\x07backspace\x08vertical\x0Bform\x0Cesc\x1Bunit\x1F".to_owned(),
+                        "nul\0bel\x07backspace\x08vertical\x0Bform\x0Cesc\x1Bunit\x1Fdel\x7F"
+                            .to_owned(),
                     ),
                 )])),
                 edges: None,
@@ -4571,7 +4568,9 @@ mod tests {
         let text =
             String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
         assert!(
-            text.contains("text: \"nul\\0bel\\abackspace\\bvertical\\vform\\fesc\\eunit\\x1F\""),
+            text.contains(
+                "text: \"nul\\0bel\\abackspace\\bvertical\\vform\\fesc\\eunit\\x1Fdel\\x7F\""
+            ),
             "{text}"
         );
     }
