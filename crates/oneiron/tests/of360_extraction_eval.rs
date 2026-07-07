@@ -1,8 +1,8 @@
 use oneiron::{
     OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION, OF360_METRIC_DEFINITION_SET_ID,
-    OF360_METRIC_DEFINITION_SET_REVISION, Of360CaseExtractionOutput, Of360ExtractedClaim,
-    Of360ExtractionRun, Of360ExtractionScore, Of360GoldMatch, Of360MetricDefinitionSet,
-    Of360RateMetric, Of360SeededSubsetConfig, evaluate_of360_extraction,
+    OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION, Of360CaseExtractionOutput,
+    Of360EvalError, Of360ExtractedClaim, Of360ExtractionRun, Of360ExtractionScore, Of360GoldMatch,
+    Of360MetricDefinitionSet, Of360RateMetric, Of360SeededSubsetConfig, evaluate_of360_extraction,
     generate_of360_seeded_gold_subset, of360_ar3_metric_tier, of360_gold_subset,
     of360_metric_definitions,
 };
@@ -10,6 +10,7 @@ use oneiron::{
 #[test]
 fn of360_metric_definitions_round_trip() {
     let definitions = of360_metric_definitions().expect("metric definitions");
+    assert_eq!(definitions.schema_version, OF360_SCHEMA_VERSION);
     assert_eq!(definitions.set_id, OF360_METRIC_DEFINITION_SET_ID);
     assert_eq!(definitions.revision, OF360_METRIC_DEFINITION_SET_REVISION);
     assert!(
@@ -45,6 +46,7 @@ fn of360_metric_definitions_round_trip() {
 #[test]
 fn of360_harness_self_test_over_gold_subset() {
     let dataset = of360_gold_subset().expect("gold subset");
+    assert_eq!(dataset.schema_version, OF360_SCHEMA_VERSION);
     assert_eq!(dataset.dataset_id, OF360_GOLD_DATASET_ID);
     assert_eq!(dataset.revision, OF360_GOLD_DATASET_REVISION);
     assert!(dataset.owner_corpus_missing);
@@ -102,6 +104,50 @@ fn of360_harness_self_test_over_gold_subset() {
         8.0,
         Some(0.6875),
     );
+}
+
+#[test]
+fn of360_rejects_unsupported_gold_dataset_schema_version() {
+    let mut dataset = of360_gold_subset().expect("gold subset");
+    dataset.schema_version = OF360_SCHEMA_VERSION + 1;
+
+    let err =
+        evaluate_of360_extraction(&dataset, &parsed_smoke_run()).expect_err("schema rejection");
+    assert!(matches!(
+        err,
+        Of360EvalError::UnsupportedGoldDatasetSchemaVersion { actual }
+            if actual == OF360_SCHEMA_VERSION + 1
+    ));
+}
+
+#[test]
+fn of360_rejects_unsupported_extraction_run_schema_version() {
+    let dataset = of360_gold_subset().expect("gold subset");
+    let mut run = parsed_smoke_run();
+    run.schema_version = OF360_SCHEMA_VERSION + 1;
+
+    let err = evaluate_of360_extraction(&dataset, &run).expect_err("schema rejection");
+    assert!(matches!(
+        err,
+        Of360EvalError::UnsupportedExtractionRunSchemaVersion { actual }
+            if actual == OF360_SCHEMA_VERSION + 1
+    ));
+}
+
+#[test]
+fn of360_rejects_duplicate_gold_turn_ids() {
+    let mut dataset = of360_gold_subset().expect("gold subset");
+    let expected_case_id = dataset.cases[0].case_id.clone();
+    let expected_turn_id = dataset.cases[0].turns[0].turn_id.clone();
+    let duplicate_turn = dataset.cases[0].turns[0].clone();
+    dataset.cases[0].turns.push(duplicate_turn);
+
+    let err = evaluate_of360_extraction(&dataset, &parsed_smoke_run()).expect_err("duplicate turn");
+    assert!(matches!(
+        err,
+        Of360EvalError::DuplicateGoldTurn { case_id, turn_id }
+            if case_id == expected_case_id && turn_id == expected_turn_id
+    ));
 }
 
 fn assert_rate(metric: &Of360RateMetric, numerator: f64, denominator: f64, value: Option<f64>) {

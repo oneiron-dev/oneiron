@@ -6,6 +6,7 @@ const OF360_GOLD_SUBSET_JSON: &str = include_str!("data/of360_gold_subset.v1.jso
 const OF360_METRIC_DEFINITIONS_JSON: &str = include_str!("data/of360_metric_definitions.v1.json");
 
 pub const OF360_AR3_METRIC_TIER_INTERFACE_VERSION: u32 = 1;
+pub const OF360_SCHEMA_VERSION: u32 = 1;
 pub const OF360_METRIC_DEFINITION_SET_ID: &str = "of360-halumem-extraction-quality.v1";
 pub const OF360_METRIC_DEFINITION_SET_REVISION: &str = "2026-07-07.one-1524";
 pub const OF360_GOLD_DATASET_ID: &str = "of360-halumem-gold-subset.v1";
@@ -20,6 +21,12 @@ pub enum Of360EvalError {
     InvalidMetricDefinitions(#[source] serde_json::Error),
     #[error("invalid OF-360 gold dataset JSON: {0}")]
     InvalidGoldDataset(#[source] serde_json::Error),
+    #[error("unsupported OF-360 metric definition schema version `{actual}`")]
+    UnsupportedMetricDefinitionSchemaVersion { actual: u32 },
+    #[error("unsupported OF-360 gold dataset schema version `{actual}`")]
+    UnsupportedGoldDatasetSchemaVersion { actual: u32 },
+    #[error("unsupported OF-360 extraction run schema version `{actual}`")]
+    UnsupportedExtractionRunSchemaVersion { actual: u32 },
     #[error(
         "OF-360 extraction run dataset mismatch: expected {expected_id}@{expected_revision}, got {actual_id}@{actual_revision}"
     )]
@@ -31,6 +38,8 @@ pub enum Of360EvalError {
     },
     #[error("OF-360 gold dataset `{dataset_id}` has duplicate case id `{case_id}`")]
     DuplicateGoldCase { dataset_id: String, case_id: String },
+    #[error("OF-360 case `{case_id}` has duplicate turn id `{turn_id}`")]
+    DuplicateGoldTurn { case_id: String, turn_id: String },
     #[error("OF-360 case `{case_id}` has duplicate gold memory id `{memory_id}`")]
     DuplicateGoldMemory { case_id: String, memory_id: String },
     #[error("OF-360 case `{case_id}` references unknown evidence turn `{turn_id}`")]
@@ -339,8 +348,10 @@ pub const fn of360_gold_subset_json() -> &'static str {
 }
 
 pub fn of360_metric_definitions() -> Of360Result<Of360MetricDefinitionSet> {
-    serde_json::from_str(OF360_METRIC_DEFINITIONS_JSON)
-        .map_err(Of360EvalError::InvalidMetricDefinitions)
+    let definitions = serde_json::from_str(OF360_METRIC_DEFINITIONS_JSON)
+        .map_err(Of360EvalError::InvalidMetricDefinitions)?;
+    validate_metric_definitions(&definitions)?;
+    Ok(definitions)
 }
 
 pub fn of360_gold_subset() -> Of360Result<Of360GoldDataset> {
@@ -404,7 +415,9 @@ fn evaluate_with_metric_definitions(
     run: &Of360ExtractionRun,
     metric_definitions: &Of360MetricDefinitionSet,
 ) -> Of360Result<Of360EvalReport> {
+    validate_metric_definitions(metric_definitions)?;
     validate_dataset(dataset)?;
+    validate_run_schema(run)?;
     if dataset.dataset_id != run.dataset_id || dataset.revision != run.dataset_revision {
         return Err(Of360EvalError::DatasetMismatch {
             expected_id: dataset.dataset_id.clone(),
@@ -569,7 +582,22 @@ fn evaluate_case(
     })
 }
 
+fn validate_metric_definitions(metric_definitions: &Of360MetricDefinitionSet) -> Of360Result<()> {
+    if metric_definitions.schema_version != OF360_SCHEMA_VERSION {
+        return Err(Of360EvalError::UnsupportedMetricDefinitionSchemaVersion {
+            actual: metric_definitions.schema_version,
+        });
+    }
+    Ok(())
+}
+
 fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
+    if dataset.schema_version != OF360_SCHEMA_VERSION {
+        return Err(Of360EvalError::UnsupportedGoldDatasetSchemaVersion {
+            actual: dataset.schema_version,
+        });
+    }
+
     let mut seen_cases = HashSet::new();
     for case in &dataset.cases {
         if !seen_cases.insert(case.case_id.clone()) {
@@ -578,11 +606,16 @@ fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
                 case_id: case.case_id.clone(),
             });
         }
-        let turn_ids: HashSet<&str> = case
-            .turns
-            .iter()
-            .map(|turn| turn.turn_id.as_str())
-            .collect();
+        let mut turn_ids = HashSet::new();
+        for turn in &case.turns {
+            if !turn_ids.insert(turn.turn_id.as_str()) {
+                return Err(Of360EvalError::DuplicateGoldTurn {
+                    case_id: case.case_id.clone(),
+                    turn_id: turn.turn_id.clone(),
+                });
+            }
+        }
+
         let mut seen_memory_ids = HashSet::new();
         for memory in &case.gold_memory_points {
             if !seen_memory_ids.insert(memory.memory_id.clone()) {
@@ -614,6 +647,15 @@ fn validate_dataset(dataset: &Of360GoldDataset) -> Of360Result<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_run_schema(run: &Of360ExtractionRun) -> Of360Result<()> {
+    if run.schema_version != OF360_SCHEMA_VERSION {
+        return Err(Of360EvalError::UnsupportedExtractionRunSchemaVersion {
+            actual: run.schema_version,
+        });
     }
     Ok(())
 }
@@ -754,5 +796,25 @@ impl MetricAccumulator {
             ),
             redundancy_rate: Of360RateMetric::new(self.redundant_claims, self.extracted_claims),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unsupported_metric_definition_schema_version() {
+        let mut definitions: Of360MetricDefinitionSet =
+            serde_json::from_str(OF360_METRIC_DEFINITIONS_JSON).expect("definitions JSON");
+        definitions.schema_version = OF360_SCHEMA_VERSION + 1;
+
+        let err =
+            validate_metric_definitions(&definitions).expect_err("unsupported schema version");
+        assert!(matches!(
+            err,
+            Of360EvalError::UnsupportedMetricDefinitionSchemaVersion { actual }
+                if actual == OF360_SCHEMA_VERSION + 1
+        ));
     }
 }

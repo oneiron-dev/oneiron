@@ -274,8 +274,8 @@ pub use crate::embed::{
 pub use crate::error::{Error, ErrorKind, Result};
 pub use crate::extraction_eval::{
     OF360_AR3_METRIC_TIER_INTERFACE_VERSION, OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION,
-    OF360_METRIC_DEFINITION_SET_ID, OF360_METRIC_DEFINITION_SET_REVISION, Of360Ar3MetricTier,
-    Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness,
+    OF360_METRIC_DEFINITION_SET_ID, OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION,
+    Of360Ar3MetricTier, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness,
     Of360DerivationEnvelope, Of360EvalError, Of360EvalReport, Of360ExtractedClaim,
     Of360ExtractionRun, Of360ExtractionScore, Of360GoldCase, Of360GoldDataset, Of360GoldMatch,
     Of360GoldMemoryPoint, Of360MemoryKind, Of360MetricDefinition, Of360MetricDefinitionSet,
