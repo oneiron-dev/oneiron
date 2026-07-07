@@ -188,6 +188,8 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidEditManifest,
+    EditRoundtripFailed,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -782,6 +784,14 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// An ARTL-3 edit manifest failed encode, decode, or schema validation.
+    #[error("invalid edit manifest: {0}")]
+    InvalidEditManifest(&'static str),
+    /// An ARTL-3 edit round-trip stage failed: unreadable OPC package,
+    /// malformed cell reference, or a session-side failure. The input bytes
+    /// are never mutated.
+    #[error("edit round-trip failed: {0}")]
+    EditRoundtripFailed(&'static str),
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -1380,6 +1390,8 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
+            Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
