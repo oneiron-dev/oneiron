@@ -16,7 +16,7 @@ use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
-use crate::receipt::{ReceiptRecord, outbound_intent_receipt};
+use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
 use crate::types::EntityId;
 
 /// Stable manifest shape advertised to agents.
@@ -344,6 +344,13 @@ pub struct OutboundDispatchRequest {
     pub channel_identity_ref: Option<EntityId>,
     pub counterparty_ref: Option<String>,
     pub window_decision: OutboundDeliveryWindowDecision,
+    /// OF-369/RS9 context field-set captured at the context-assembly seam;
+    /// recorded onto the emit receipt for every dispatch outcome.
+    /// Optional by design: RS9 pins one hook at the assembly seam, not a
+    /// wall at dispatch — emits that never ride a context assembly
+    /// (commitment-timer and gap-queue wakes, pre-field-set callers) have
+    /// no board or persona compile to record and dispatch unstamped.
+    pub context_receipt: Option<ContextReceiptFields>,
 }
 
 impl OutboundDispatchRequest {
@@ -366,6 +373,7 @@ impl OutboundDispatchRequest {
             channel_identity_ref: None,
             counterparty_ref: None,
             window_decision: OutboundDeliveryWindowDecision::DeliverNow,
+            context_receipt: None,
         }
     }
 
@@ -384,6 +392,12 @@ impl OutboundDispatchRequest {
     #[must_use]
     pub fn window_decision(mut self, decision: OutboundDeliveryWindowDecision) -> Self {
         self.window_decision = decision;
+        self
+    }
+
+    #[must_use]
+    pub fn context_receipt(mut self, context: ContextReceiptFields) -> Self {
+        self.context_receipt = Some(context);
         self
     }
 }
@@ -877,6 +891,9 @@ impl OutboundDispatchPipeline {
             &gate_receipt_reasons,
         );
         append_window_receipt_fields(&mut receipt, &request.window_decision);
+        if let Some(context) = request.context_receipt.as_ref() {
+            context.append_to_fields(&mut receipt.fields);
+        }
 
         Ok(OutboundDispatchResult {
             outcome,
@@ -1846,6 +1863,72 @@ mod tests {
                 .policy_trace
                 .contains(&"delivery_window.no_restriction".to_owned())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_records_context_receipt_field_set()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA1);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let context = ContextReceiptFields {
+            persona_compile_stamp: "oneiron.prompt_recompile.v1:deadbeef".to_owned(),
+            activated_memory_ids: vec![entity(0x21).to_hex(), entity(0x22).to_hex()],
+            board_state_ref: "board:cafe1234".to_owned(),
+            substrate_ref: Some(format!("model:{}", entity(0x77).to_hex())),
+            model: Some("test-model-v1".to_owned()),
+            reasoning_effort: Some("high".to_owned()),
+            prompt_input_ref: None,
+        };
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:invite-kenji",
+            "intent:invite-kenji",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:send-now")),
+            actor.clone(),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_000,
+        )
+        .context_receipt(context.clone());
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(
+            result.receipt.context_receipt_fields().as_ref(),
+            Some(&context),
+            "what she knew rides the emit receipt"
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("activated_memory_ids")
+                .map(String::as_str),
+            Some(format!("{},{}", entity(0x21).to_hex(), entity(0x22).to_hex()).as_str())
+        );
+
+        // Emits dispatched without an assembled-context stamp stay unstamped.
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:invite-yuki",
+            "intent:invite-yuki",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:send-now")),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_001,
+        );
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+        assert_eq!(result.receipt.context_receipt_fields(), None);
         Ok(())
     }
 
