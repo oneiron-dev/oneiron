@@ -864,4 +864,84 @@ mod tests {
             Some("provision")
         );
     }
+
+    #[test]
+    fn denied_external_effect_receipts_denied_without_mutating_identity() {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xD1);
+        // Missing actor provenance forces the ExternalEffect gate to Deny.
+        let denied_actor = ChannelIdentityLifecycleActor {
+            actor_class: "agent".to_owned(),
+            actor_ref: Some(agent.to_hex()),
+            actor_entity_ref: None,
+        };
+        let identity_id = entity(0xD2);
+        let requested = requested_identity(agent, 3_000);
+
+        let denied = vault
+            .apply_channel_identity_lifecycle_intent(request(
+                denied_actor,
+                3_000,
+                ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
+                    identity_id,
+                    identity: requested,
+                    fulfillment_mode: ChannelIdentityFulfillment::Manual,
+                }),
+            ))
+            .expect("denied provision should receipt without erroring");
+
+        assert_eq!(denied.outcome, "denied");
+        assert_eq!(denied.owner_visible_state, "denied");
+        assert!(!denied.outbound_closed);
+        assert!(!denied.identity_retiring);
+        assert!(
+            vault
+                .get_channel_identity(&identity_id)
+                .expect("read denied identity")
+                .is_none(),
+            "denied provision must not create the identity"
+        );
+        let receipts = vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::IdentityLifecycle))
+            .expect("query denied lifecycle receipts");
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].outcome, "denied");
+    }
+
+    #[test]
+    fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xE1);
+        let actor = ChannelIdentityLifecycleActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xE0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["route_inbound"],
+            ),
+        )?;
+
+        let identity_id = entity(0xE2);
+        let mut tombstoned = requested_identity(agent, 4_000);
+        tombstoned.state = ChannelIdentityState::Tombstone;
+        vault.create_channel_identity(&identity_id, &tombstoned)?;
+
+        let routed = vault.apply_channel_identity_lifecycle_intent(request(
+            actor,
+            4_000,
+            ChannelIdentityLifecycleIntent::RouteInbound(RouteInboundIntent { identity_id }),
+        ))?;
+
+        assert_eq!(routed.outcome, "closed");
+        assert_eq!(routed.owner_visible_state, "tombstone");
+        assert!(routed.outbound_closed);
+        assert!(!routed.identity_retiring);
+        assert_eq!(
+            routed.identity.as_ref().expect("identity").state,
+            ChannelIdentityState::Tombstone
+        );
+        Ok(())
+    }
 }

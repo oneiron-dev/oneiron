@@ -384,7 +384,8 @@ fn validate_non_blank(value: &str, reason: &'static str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::channel_identity::{
-        CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityShape,
+        CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
+        ChannelIdentityShape,
     };
     use crate::test_util::open_test_vault_with;
     use crate::types::VaultConfig;
@@ -553,6 +554,83 @@ mod tests {
             Some(InboundSurfaceRejectionReason::UnknownReceivingIdentity)
         );
         assert!(receipt.receiving_identity_ref.is_none());
+        assert!(receipt.agent_ref.is_none());
+        assert!(receipt.surface_event.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn inbound_requested_and_pending_fulfillment_reject_as_inactive() -> Result<()> {
+        let (_dir, vault) = test_vault();
+
+        let requested_ref = entity(0x15);
+        let requested_agent = entity(0xA5);
+        vault.create_channel_identity(
+            &requested_ref,
+            &identity(
+                "requested@example.com",
+                requested_agent,
+                ChannelIdentityState::Requested,
+            ),
+        )?;
+
+        let pending_ref = entity(0x16);
+        let pending_agent = entity(0xA6);
+        let mut pending = identity(
+            "pending@example.com",
+            pending_agent,
+            ChannelIdentityState::PendingFulfillment,
+        );
+        pending.pending_fulfillment = Some(ChannelIdentityFulfillment::Manual);
+        vault.create_channel_identity(&pending_ref, &pending)?;
+
+        for (address, identity_ref, agent_ref) in [
+            ("requested@example.com", requested_ref, requested_agent),
+            ("pending@example.com", pending_ref, pending_agent),
+        ] {
+            let receipt = vault.route_inbound_surface_event(input(
+                address,
+                SurfaceCounterpartyStamp::known(entity(0xC5)),
+            ))?;
+
+            assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Rejected);
+            assert_eq!(
+                receipt.rejection_reason,
+                Some(InboundSurfaceRejectionReason::InactiveReceivingIdentity)
+            );
+            assert_eq!(receipt.receiving_identity_ref, Some(identity_ref.to_hex()));
+            assert_eq!(receipt.agent_ref, Some(agent_ref.to_hex()));
+            assert!(!receipt.identity_retiring);
+            assert!(receipt.surface_event.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inbound_vault_bound_identity_rejects_as_non_agent_bound() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let identity_ref = entity(0x17);
+        let mut vault_bound = ChannelIdentity::requested(
+            "email",
+            "vault-bound@example.com",
+            ChannelIdentityShape::DedicatedAddress,
+            ChannelIdentityBinding::vault(7),
+            1_800_000_000,
+        );
+        vault_bound.state = ChannelIdentityState::Active;
+        vault.create_channel_identity(&identity_ref, &vault_bound)?;
+
+        let receipt = vault.route_inbound_surface_event(input(
+            "vault-bound@example.com",
+            SurfaceCounterpartyStamp::known(entity(0xC7)),
+        ))?;
+
+        assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Rejected);
+        assert_eq!(
+            receipt.rejection_reason,
+            Some(InboundSurfaceRejectionReason::NonAgentBoundIdentity)
+        );
+        assert_eq!(receipt.receiving_identity_ref, Some(identity_ref.to_hex()));
         assert!(receipt.agent_ref.is_none());
         assert!(receipt.surface_event.is_none());
         Ok(())

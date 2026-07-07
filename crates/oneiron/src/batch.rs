@@ -4213,6 +4213,91 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn checkin_same_role_mutation_rejected_and_identical_reput_idempotent() -> Result<()> {
+        let (_dir, vault) = open_raw_test_vault();
+        let habit = EntityId::now();
+        let checkin = EntityId::now();
+        let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
+        let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+
+        vault.put_entity(
+            &habit,
+            ENTITY_TYPE_TASK,
+            test_time_range(10, 10),
+            10,
+            &habit_body,
+        )?;
+        vault.put_habit_checkin(&habit, &checkin, test_time_range(11, 11), 11, &checkin_body)?;
+        let original = vault
+            .get_raw(&checkin)?
+            .expect("check-in row must be written");
+
+        // Re-put with the role still HabitCheckin but mutated occurred/learned_at:
+        // the immutability guard protects payload/time, not just role changes.
+        let err = vault
+            .put_entity(
+                &checkin,
+                ENTITY_TYPE_TASK,
+                test_time_range(20, 20),
+                20,
+                &checkin_body,
+            )
+            .expect_err("same-role check-in time mutation must be rejected");
+        assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
+        assert_eq!(vault.get_raw(&checkin)?, Some(original.clone()));
+
+        // An identical re-put (same role, body, occurred, learned_at) stays accepted.
+        vault.put_entity(
+            &checkin,
+            ENTITY_TYPE_TASK,
+            test_time_range(11, 11),
+            11,
+            &checkin_body,
+        )?;
+        assert_eq!(vault.get_raw(&checkin)?, Some(original));
+        Ok(())
+    }
+
+    #[test]
+    fn habit_with_checkins_cannot_change_role() -> Result<()> {
+        let (_dir, vault) = open_raw_test_vault();
+        let habit = EntityId::now();
+        let checkin = EntityId::now();
+        let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
+        let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+        let demoted_body = crate::types::task_body_for_test(TaskRole::Task);
+
+        vault.put_entity(
+            &habit,
+            ENTITY_TYPE_TASK,
+            test_time_range(10, 10),
+            10,
+            &habit_body,
+        )?;
+        vault.put_habit_checkin(&habit, &checkin, test_time_range(11, 11), 11, &checkin_body)?;
+        let original = vault.get_raw(&habit)?.expect("habit row must be written");
+
+        let err = vault
+            .put_entity(
+                &habit,
+                ENTITY_TYPE_TASK,
+                test_time_range(12, 12),
+                12,
+                &demoted_body,
+            )
+            .expect_err("demoting a Habit that has check-ins must be rejected");
+
+        match err {
+            Error::InvalidTaskBody(msg) => {
+                assert_eq!(msg, "Habit TASK with check-ins cannot change role");
+            }
+            other => panic!("expected InvalidTaskBody, got {other:?}"),
+        }
+        assert_eq!(vault.get_raw(&habit)?, Some(original));
+        Ok(())
+    }
+
     fn first_party_eiri_connector_actor_id() -> Result<EntityId> {
         EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
             .map_err(|_| Error::InvariantViolation("invalid first-party Eiri actor fixture id"))
