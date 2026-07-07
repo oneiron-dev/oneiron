@@ -1036,6 +1036,11 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn owner_policy_rows_dropped(&self) -> bool {
+        self.owner_policy_rows_dropped
+    }
+
+    #[must_use]
     pub(crate) fn has_scoped_read_grants(&self) -> bool {
         self.scoped_grants()
             .iter()
@@ -3178,6 +3183,9 @@ fn parse_legal_floor_rows(value: &Value) -> Option<Vec<PolicyLegalFloorRow>> {
         let category = required_nonempty_string(entries, POLICY_ROW_CATEGORY_KEY)?;
         let subcategory = required_nonempty_string(entries, POLICY_ROW_SUBCATEGORY_KEY)?;
         let action = required_nonempty_string(entries, POLICY_ROW_ACTION_KEY)?;
+        if !is_supported_policy_floor_action(&action) {
+            return None;
+        }
         let text = required_nonempty_string(entries, POLICY_ROW_TEXT_KEY)?;
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         parsed.push(PolicyLegalFloorRow {
@@ -3206,6 +3214,12 @@ fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
         let active = optional_bool_default(entries, POLICY_ROW_ACTIVE_KEY, true)?;
         let world_ref = optional_string(entries, POLICY_ROW_WORLD_REF_KEY)?;
         let action = optional_string(entries, POLICY_ROW_ACTION_KEY)?;
+        if action
+            .as_deref()
+            .is_some_and(|action| !is_supported_owner_policy_action(action))
+        {
+            return None;
+        }
         let block = match single_map_value(entries, POLICY_ROW_BLOCK_KEY) {
             MapValue::Missing => action.as_deref() == Some("block"),
             MapValue::Duplicate => return None,
@@ -3221,6 +3235,17 @@ fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPolicyRow>> {
         });
     }
     Some(parsed)
+}
+
+fn is_supported_policy_floor_action(action: &str) -> bool {
+    matches!(
+        action,
+        "block" | "route_to_help" | "route-to-help" | "reword_retry" | "reword-retry"
+    )
+}
+
+fn is_supported_owner_policy_action(action: &str) -> bool {
+    matches!(action, "block" | "reword_retry" | "reword-retry")
 }
 
 fn required_nonempty_string(entries: &[(Value, Value)], key: &str) -> Option<String> {

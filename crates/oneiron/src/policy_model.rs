@@ -47,6 +47,15 @@ impl PolicyAgeTier {
     pub const fn permits_adult_content(self) -> bool {
         matches!(self, Self::Adult)
     }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unverified => "unverified",
+            Self::Minor => "minor",
+            Self::Adult => "adult",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +102,12 @@ impl PolicyClassifyRequest {
     #[must_use]
     pub fn with_world_ref(mut self, world_ref: impl Into<String>) -> Self {
         self.world_ref = Some(world_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_account_jurisdiction(mut self, account_jurisdiction: impl Into<String>) -> Self {
+        self.account_jurisdiction = Some(account_jurisdiction.into());
         self
     }
 
@@ -186,6 +201,11 @@ impl PolicyConfidence {
     const HIGH: Self = Self {
         calibrated: 0.92,
         hedge_bucket: PolicyHedgeBucket::High,
+    };
+
+    const MEDIUM: Self = Self {
+        calibrated: 0.75,
+        hedge_bucket: PolicyHedgeBucket::Medium,
     };
 }
 
@@ -315,18 +335,16 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
-        let rtxn = self.store.env.read_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        let binding = content_binding(&request, &policy)?;
-        let verdict = classify_from_local_floor(&request).unwrap_or_else(|| {
-            verdict(
-                PolicyClassifyDecision::Allow,
-                PolicyVerdictCategory::None,
-                PolicyConfidence::HIGH,
-                binding,
-                config,
-            )
-        });
+        let context = self.policy_model_context(&request, config)?;
+        let binding = context.binding;
+        let verdict = if let Some(local) = classify_from_local_floor(&request) {
+            local
+        } else {
+            if context.owner_policy_rows_dropped {
+                return Err(dropped_owner_policy_rows_error());
+            }
+            classify_without_backend_from_rubric(&context.prompt.rubric_rows, binding, config)
+        };
         Ok(PolicyClassifyVerdict {
             binding,
             safeguard_binding: config.safeguard_binding.selector(),
@@ -341,10 +359,8 @@ impl Vault {
         backend: &dyn LlmBackend,
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
-        let rtxn = self.store.env.read_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        let prompt = build_policy_classify_prompt_for_policy(&request, &policy);
-        let binding = content_binding(&request, &policy)?;
+        let context = self.policy_model_context(&request, config)?;
+        let binding = context.binding;
         if let Some(local) = classify_from_local_floor(&request) {
             return Ok(PolicyClassifyVerdict {
                 binding,
@@ -352,23 +368,57 @@ impl Vault {
                 ..local
             });
         }
+        if context.owner_policy_rows_dropped {
+            return Err(dropped_owner_policy_rows_error());
+        }
 
         let response = backend
-            .generate(prompt.llm_request(config), lease)
+            .generate(context.prompt.llm_request(config), lease)
             .await
             .map_err(|error| {
                 Error::InvalidConfig(format!("policy model classify failed: {error}"))
             })?;
-        parse_policy_model_response(&response, &prompt.rubric_rows, binding, config)
+        parse_policy_model_response(&response, &context.prompt.rubric_rows, binding, config)
     }
 
     pub fn policy_model_prompt(
         &self,
         request: &PolicyClassifyRequest,
     ) -> Result<PolicyClassifyPrompt> {
+        self.policy_model_prompt_with_config(request, &PolicyModelConfig::default())
+    }
+
+    pub fn policy_model_prompt_with_config(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyClassifyPrompt> {
+        let context = self.policy_model_context(request, config)?;
+        if context.owner_policy_rows_dropped {
+            return Err(dropped_owner_policy_rows_error());
+        }
+        Ok(context.prompt)
+    }
+
+    fn policy_model_context(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyModelContext> {
         let rtxn = self.store.env.read_txn()?;
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        Ok(build_policy_classify_prompt_for_policy(request, &policy))
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "policy manifest is malformed for policy model classify".to_owned(),
+            ));
+        }
+        let prompt = build_policy_classify_prompt_for_policy(request, &policy)?;
+        let binding = content_binding(request, &policy, config)?;
+        Ok(PolicyModelContext {
+            prompt,
+            binding,
+            owner_policy_rows_dropped: policy.owner_policy_rows_dropped(),
+        })
     }
 
     pub fn policy_model_llm_request(
@@ -376,7 +426,9 @@ impl Vault {
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<LlmRequest> {
-        Ok(self.policy_model_prompt(request)?.llm_request(config))
+        Ok(self
+            .policy_model_prompt_with_config(request, config)?
+            .llm_request(config))
     }
 
     pub fn policy_model_verdict_is_stale(
@@ -384,17 +436,50 @@ impl Vault {
         verdict: &PolicyClassifyVerdict,
         request: &PolicyClassifyRequest,
     ) -> Result<bool> {
+        self.policy_model_verdict_is_stale_with_config(
+            verdict,
+            request,
+            &PolicyModelConfig::default(),
+        )
+    }
+
+    pub fn policy_model_verdict_is_stale_with_config(
+        &self,
+        verdict: &PolicyClassifyVerdict,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        Ok(verdict.binding != content_binding(request, &policy)?)
+        if policy.diagnostics().loaded_manifest_forces_fail_closed()
+            || policy.owner_policy_rows_dropped()
+        {
+            return Ok(true);
+        }
+        Ok(
+            verdict.binding != content_binding(request, &policy, config)?
+                || verdict.safeguard_binding != config.safeguard_binding.selector(),
+        )
     }
+}
+
+struct PolicyModelContext {
+    prompt: PolicyClassifyPrompt,
+    binding: PolicyContentBinding,
+    owner_policy_rows_dropped: bool,
+}
+
+fn dropped_owner_policy_rows_error() -> Error {
+    Error::InvalidConfig(
+        "policy manifest owner_policy_rows were dropped for policy model classify".to_owned(),
+    )
 }
 
 fn build_policy_classify_prompt_for_policy(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
-) -> PolicyClassifyPrompt {
-    let rubric_rows = rubric_rows(request, policy);
+) -> Result<PolicyClassifyPrompt> {
+    let rubric_rows = rubric_rows(request, policy)?;
     let system = [
         "You are the Oneiron policy classifier, a system voice independent of any persona.",
         "Classify only against the rubric rows in this prompt.",
@@ -409,11 +494,7 @@ fn build_policy_classify_prompt_for_policy(
     user.push_str(request.subject.as_str());
     user.push('\n');
     user.push_str("age_tier=");
-    user.push_str(match request.age_tier {
-        PolicyAgeTier::Unverified => "unverified",
-        PolicyAgeTier::Minor => "minor",
-        PolicyAgeTier::Adult => "adult",
-    });
+    user.push_str(request.age_tier.as_str());
     user.push('\n');
     user.push_str("account_jurisdiction=");
     user.push_str(request.account_jurisdiction.as_deref().unwrap_or("unknown"));
@@ -435,11 +516,11 @@ fn build_policy_classify_prompt_for_policy(
     user.push_str("candidate:\n");
     user.push_str(&request.content);
 
-    PolicyClassifyPrompt {
+    Ok(PolicyClassifyPrompt {
         system,
         user,
         rubric_rows,
-    }
+    })
 }
 
 impl PolicyRubricLayer {
@@ -455,7 +536,7 @@ impl PolicyRubricLayer {
 fn rubric_rows(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
-) -> Vec<PolicyRubricRow> {
+) -> Result<Vec<PolicyRubricRow>> {
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     for row in engine_floor_rows() {
@@ -464,11 +545,14 @@ fn rubric_rows(
     }
     for row in policy.legal_floor_rows().iter().filter(|row| row.active) {
         if seen.insert(row.row_ref.clone()) {
+            let category = combined_floor_category(&row.category, &row.subcategory)?;
+            let action = action_from_manifest(&row.action)?;
+            validate_fixed_category_action(&category, action)?;
             rows.push(PolicyRubricRow {
                 row_ref: row.row_ref.clone(),
                 layer: PolicyRubricLayer::VaultFloor,
-                category: row.category.clone(),
-                action: action_from_manifest(&row.action),
+                category,
+                action,
                 text: row.text.clone(),
             });
         }
@@ -486,7 +570,7 @@ fn rubric_rows(
             text: row.text.clone(),
         });
     }
-    rows
+    Ok(rows)
 }
 
 fn engine_floor_rows() -> Vec<PolicyRubricRow> {
@@ -532,13 +616,42 @@ fn engine_floor_rows() -> Vec<PolicyRubricRow> {
     ]
 }
 
-fn action_from_manifest(action: &str) -> PolicyClassifyDecision {
-    match action {
-        "block" => PolicyClassifyDecision::Block,
-        "route_to_help" | "route-to-help" => PolicyClassifyDecision::RouteToHelp,
-        "reword_retry" | "reword-retry" => PolicyClassifyDecision::RewordRetry,
-        _ => PolicyClassifyDecision::Allow,
+fn combined_floor_category(category: &str, subcategory: &str) -> Result<String> {
+    let combined = format!("{category}/{subcategory}");
+    if fixed_category(&combined).is_some() {
+        Ok(combined)
+    } else {
+        Err(Error::InvalidConfig(format!(
+            "unsupported policy model floor category {combined}"
+        )))
     }
+}
+
+fn action_from_manifest(action: &str) -> Result<PolicyClassifyDecision> {
+    match action {
+        "block" => Ok(PolicyClassifyDecision::Block),
+        "route_to_help" | "route-to-help" => Ok(PolicyClassifyDecision::RouteToHelp),
+        "reword_retry" | "reword-retry" => Ok(PolicyClassifyDecision::RewordRetry),
+        other => Err(Error::InvalidConfig(format!(
+            "unsupported policy model row action {other}"
+        ))),
+    }
+}
+
+fn validate_fixed_category_action(category: &str, action: PolicyClassifyDecision) -> Result<()> {
+    let Some((_, expected)) = fixed_category(category) else {
+        return Err(Error::InvalidConfig(format!(
+            "unsupported policy model category {category}"
+        )));
+    };
+    if action != expected {
+        return Err(Error::InvalidConfig(format!(
+            "policy model category {category} requires action {} but manifest used {}",
+            expected.as_str(),
+            action.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn classify_from_local_floor(request: &PolicyClassifyRequest) -> Option<PolicyClassifyVerdict> {
@@ -625,6 +738,34 @@ fn local_verdict(
     }
 }
 
+fn classify_without_backend_from_rubric(
+    rubric_rows: &[PolicyRubricRow],
+    binding: PolicyContentBinding,
+    config: &PolicyModelConfig,
+) -> PolicyClassifyVerdict {
+    if let Some(row) = rubric_rows
+        .iter()
+        .find(|row| row.layer == PolicyRubricLayer::OwnerPolicy)
+    {
+        return verdict(
+            row.action,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: row.row_ref.clone(),
+            },
+            PolicyConfidence::MEDIUM,
+            binding,
+            config,
+        );
+    }
+    verdict(
+        PolicyClassifyDecision::Allow,
+        PolicyVerdictCategory::None,
+        PolicyConfidence::HIGH,
+        binding,
+        config,
+    )
+}
+
 fn verdict(
     decision: PolicyClassifyDecision,
     category: PolicyVerdictCategory,
@@ -701,15 +842,46 @@ fn normalize(value: &str) -> String {
 fn content_binding(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
+    config: &PolicyModelConfig,
 ) -> Result<PolicyContentBinding> {
     let mut hasher = Sha256::new();
-    hasher.update(b"oneiron.policy_model.classify.content.v0");
-    hasher.update(request.subject.as_str().as_bytes());
-    hasher.update(request.content.as_bytes());
+    hasher.update(b"oneiron.policy_model.classify.content.v1");
+    hash_binding_str(&mut hasher, "subject", request.subject.as_str());
+    hash_binding_str(&mut hasher, "content", &request.content);
+    hash_binding_str(&mut hasher, "age_tier", request.age_tier.as_str());
+    hash_binding_opt_str(
+        &mut hasher,
+        "account_jurisdiction",
+        request.account_jurisdiction.as_deref(),
+    );
+    hash_binding_opt_str(&mut hasher, "world_ref", request.world_ref.as_deref());
+    hash_binding_str(
+        &mut hasher,
+        "safeguard_binding",
+        &config.safeguard_binding.selector(),
+    );
     Ok(PolicyContentBinding {
         content_hash: hasher.finalize().into(),
         read_frontier_hash: policy.read_frontier_hash()?,
     })
+}
+
+fn hash_binding_opt_str(hasher: &mut Sha256, label: &str, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_binding_str(hasher, label, "some");
+            hash_binding_str(hasher, label, value);
+        }
+        None => hash_binding_str(hasher, label, "none"),
+    }
+}
+
+fn hash_binding_str(hasher: &mut Sha256, label: &str, value: &str) {
+    hasher.update(label.as_bytes());
+    hasher.update([0]);
+    hasher.update(value.len().to_be_bytes());
+    hasher.update(value.as_bytes());
+    hasher.update([0xff]);
 }
 
 #[derive(Debug, Deserialize)]
@@ -776,32 +948,63 @@ fn model_category(
     wire: &PolicyModelResponseWire,
     rubric_rows: &[PolicyRubricRow],
 ) -> Result<PolicyVerdictCategory> {
-    match wire.category.as_str() {
-        "none" => {
-            if wire.row_ref.is_some() {
-                return Err(Error::InvalidConfig(
-                    "policy model none category must not include row_ref".to_owned(),
-                ));
-            }
-            Ok(PolicyVerdictCategory::None)
+    if let Some((category, expected_action)) = fixed_category(&wire.category) {
+        if wire.row_ref.is_some() {
+            return Err(Error::InvalidConfig(format!(
+                "policy model {} category must not include row_ref",
+                wire.category
+            )));
         }
-        "legal_floor/minor_sexualization" => Ok(PolicyVerdictCategory::LegalFloor(
-            LegalFloorSubclass::MinorSexualization,
-        )),
-        "legal_floor/ncii" => Ok(PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::Ncii)),
-        "legal_floor/serious_crime" => Ok(PolicyVerdictCategory::LegalFloor(
-            LegalFloorSubclass::SeriousCrime,
-        )),
-        "crisis/self_harm" => Ok(PolicyVerdictCategory::Crisis(CrisisSubclass::SelfHarm)),
-        "crisis/medical" => Ok(PolicyVerdictCategory::Crisis(CrisisSubclass::Medical)),
-        "crisis/harm_to_others" => Ok(PolicyVerdictCategory::Crisis(CrisisSubclass::HarmToOthers)),
-        "age_gate/adult_content" => Ok(PolicyVerdictCategory::AgeGate(
-            AgeGateSubclass::AdultContent,
-        )),
+        if wire.decision != expected_action {
+            return Err(Error::InvalidConfig(format!(
+                "policy model {} category requires decision {} but response used {}",
+                wire.category,
+                expected_action.as_str(),
+                wire.decision.as_str()
+            )));
+        }
+        return Ok(category);
+    }
+    match wire.category.as_str() {
         "owner_policy" => owner_policy_category(wire, rubric_rows),
         other => Err(Error::InvalidConfig(format!(
             "unknown policy model category {other}"
         ))),
+    }
+}
+
+fn fixed_category(category: &str) -> Option<(PolicyVerdictCategory, PolicyClassifyDecision)> {
+    match category {
+        "none" => Some((PolicyVerdictCategory::None, PolicyClassifyDecision::Allow)),
+        "legal_floor/minor_sexualization" => Some((
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::MinorSexualization),
+            PolicyClassifyDecision::Block,
+        )),
+        "legal_floor/ncii" => Some((
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::Ncii),
+            PolicyClassifyDecision::Block,
+        )),
+        "legal_floor/serious_crime" => Some((
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime),
+            PolicyClassifyDecision::Block,
+        )),
+        "crisis/self_harm" => Some((
+            PolicyVerdictCategory::Crisis(CrisisSubclass::SelfHarm),
+            PolicyClassifyDecision::RouteToHelp,
+        )),
+        "crisis/medical" => Some((
+            PolicyVerdictCategory::Crisis(CrisisSubclass::Medical),
+            PolicyClassifyDecision::RouteToHelp,
+        )),
+        "crisis/harm_to_others" => Some((
+            PolicyVerdictCategory::Crisis(CrisisSubclass::HarmToOthers),
+            PolicyClassifyDecision::RouteToHelp,
+        )),
+        "age_gate/adult_content" => Some((
+            PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent),
+            PolicyClassifyDecision::RewordRetry,
+        )),
+        _ => None,
     }
 }
 
@@ -873,6 +1076,7 @@ mod tests {
 
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use rmpv::Value;
@@ -935,10 +1139,61 @@ mod tests {
         )
     }
 
+    fn legal_floor_rows(rows: Vec<Value>) -> (Value, Value) {
+        (
+            Value::from(gate::POLICY_LEGAL_FLOOR_ROWS_KEY),
+            Value::Array(rows),
+        )
+    }
+
+    fn legal_floor_row(
+        row_ref: &str,
+        category: &str,
+        subcategory: &str,
+        action: &str,
+        text: &str,
+    ) -> Value {
+        Value::Map(vec![
+            (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
+            (
+                Value::from(gate::POLICY_ROW_CATEGORY_KEY),
+                Value::from(category),
+            ),
+            (
+                Value::from(gate::POLICY_ROW_SUBCATEGORY_KEY),
+                Value::from(subcategory),
+            ),
+            (
+                Value::from(gate::POLICY_ROW_ACTION_KEY),
+                Value::from(action),
+            ),
+            (Value::from(gate::POLICY_ROW_TEXT_KEY), Value::from(text)),
+            (
+                Value::from(gate::POLICY_ROW_ACTIVE_KEY),
+                Value::Boolean(true),
+            ),
+        ])
+    }
+
     fn owner_row(row_ref: &str, text: &str) -> Value {
         Value::Map(vec![
             (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
             (Value::from(gate::POLICY_ROW_TEXT_KEY), Value::from(text)),
+            (
+                Value::from(gate::POLICY_ROW_ACTIVE_KEY),
+                Value::Boolean(true),
+            ),
+        ])
+    }
+
+    fn owner_row_with_action(row_ref: &str, text: &str, action: &str) -> Value {
+        Value::Map(vec![
+            (Value::from(gate::POLICY_ROW_REF_KEY), Value::from(row_ref)),
+            (Value::from(gate::POLICY_ROW_TEXT_KEY), Value::from(text)),
+            (
+                Value::from(gate::POLICY_ROW_ACTION_KEY),
+                Value::from(action),
+            ),
             (
                 Value::from(gate::POLICY_ROW_ACTIVE_KEY),
                 Value::Boolean(true),
@@ -995,6 +1250,45 @@ mod tests {
                         content: vec![ContentPart::Text {
                             text: self.body.to_owned(),
                         }],
+                    },
+                    usage: LlmUsage {
+                        input: LlmInputUsage::default(),
+                        output: LlmOutputUsage::default(),
+                        raw_provider: JsonValue::Null,
+                    },
+                    finish_reason: FinishReason::Stop,
+                })
+            })
+        }
+
+        fn stream<'a>(
+            &'a self,
+            _request: LlmRequest,
+            _lease: &'a BudgetLease,
+        ) -> LlmStreamResult<'a> {
+            Err(FatalLlmError::InvalidRequest.into())
+        }
+    }
+
+    struct RecordingPolicyBackend {
+        body: &'static str,
+        seen_model: Arc<Mutex<Option<String>>>,
+    }
+
+    impl LlmBackend for RecordingPolicyBackend {
+        fn generate<'a>(
+            &'a self,
+            request: LlmRequest,
+            _lease: &'a BudgetLease,
+        ) -> LlmGenerateFuture<'a> {
+            let body = self.body.to_owned();
+            *self.seen_model.lock().expect("record model") =
+                Some(request.model.as_str().to_owned());
+            Box::pin(async move {
+                Ok(LlmResponse {
+                    message: LlmMessage {
+                        role: LlmMessageRole::Assistant,
+                        content: vec![ContentPart::Text { text: body }],
                     },
                     usage: LlmUsage {
                         input: LlmInputUsage::default(),
@@ -1136,8 +1430,13 @@ mod tests {
             PolicyClassifyRequest::outbound_content("This reply contains spoilers for the ending.")
                 .with_age_tier(PolicyAgeTier::Adult),
         )?;
-        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
-        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert_eq!(verdict.decision, PolicyClassifyDecision::RewordRetry);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: "owner:spoilers".to_owned()
+            }
+        );
         Ok(())
     }
 
@@ -1165,6 +1464,10 @@ mod tests {
             default_request.envelope.tier.resolved().as_str(),
             "gpt-oss-safeguard-20b"
         );
+        assert_eq!(
+            default_request.model.as_str(),
+            "oneiron/gpt-oss-safeguard-20b@default"
+        );
 
         let openrouter = PolicyModelConfig {
             safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
@@ -1174,6 +1477,10 @@ mod tests {
         assert_eq!(
             openrouter_request.envelope.tier.resolved().as_str(),
             "openrouter:meta/llama-guard-4"
+        );
+        assert_eq!(
+            openrouter_request.model.as_str(),
+            "openrouter/meta.llama-guard-4@configured"
         );
 
         let endpoint = PolicyModelConfig {
@@ -1185,6 +1492,10 @@ mod tests {
             endpoint_request.envelope.tier.resolved().as_str(),
             "endpoint:https://guard.local/v1"
         );
+        assert_eq!(
+            endpoint_request.model.as_str(),
+            "endpoint/guard.local.v1@configured"
+        );
 
         let on_device = PolicyModelConfig {
             safeguard_binding: SafeguardModelBinding::parse("on-device:qwen3guard-stream-0.6b")
@@ -1194,6 +1505,10 @@ mod tests {
         assert_eq!(
             on_device_request.envelope.tier.resolved().as_str(),
             "on-device:qwen3guard-stream-0.6b"
+        );
+        assert_eq!(
+            on_device_request.model.as_str(),
+            "on-device/qwen3guard-stream-0.6b@configured"
         );
         Ok(())
     }
@@ -1214,6 +1529,67 @@ mod tests {
             )])]),
         )?;
         assert!(vault.policy_model_verdict_is_stale(&verdict, &request)?);
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_stale_on_request_context_change() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+
+        let age_request = PolicyClassifyRequest::outbound_content(
+            "consensual adult nsfw scene between verified adults",
+        )
+        .with_age_tier(PolicyAgeTier::Adult);
+        let age_verdict = vault.classify_policy_model(age_request.clone())?;
+        assert!(!vault.policy_model_verdict_is_stale(&age_verdict, &age_request)?);
+        let unverified_age_request = PolicyClassifyRequest::outbound_content(
+            "consensual adult nsfw scene between verified adults",
+        )
+        .with_age_tier(PolicyAgeTier::Unverified);
+        assert!(vault.policy_model_verdict_is_stale(&age_verdict, &unverified_age_request)?);
+
+        let jurisdiction_request = PolicyClassifyRequest::outbound_content("ordinary reply")
+            .with_account_jurisdiction("US-CA");
+        let jurisdiction_verdict = vault.classify_policy_model(jurisdiction_request)?;
+        let changed_jurisdiction_request =
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_account_jurisdiction("US-NY");
+        assert!(
+            vault.policy_model_verdict_is_stale(
+                &jurisdiction_verdict,
+                &changed_jurisdiction_request
+            )?
+        );
+
+        let world_request =
+            PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work");
+        let world_verdict = vault.classify_policy_model(world_request)?;
+        let changed_world_request =
+            PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("personal");
+        assert!(vault.policy_model_verdict_is_stale(&world_verdict, &changed_world_request)?);
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_stale_on_safeguard_selector_change() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let request = PolicyClassifyRequest::outbound_content("ordinary reply");
+        let openrouter = PolicyModelConfig {
+            safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
+                .expect("openrouter binding"),
+        };
+        let endpoint = PolicyModelConfig {
+            safeguard_binding: SafeguardModelBinding::parse("endpoint:https://guard.local/v1")
+                .expect("endpoint binding"),
+        };
+
+        let verdict = vault.classify_policy_model_with_config(request.clone(), &openrouter)?;
+        assert!(!vault.policy_model_verdict_is_stale_with_config(
+            &verdict,
+            &request,
+            &openrouter
+        )?);
+        assert!(vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &endpoint)?);
         Ok(())
     }
 
@@ -1254,6 +1630,164 @@ mod tests {
     }
 
     #[test]
+    fn vault_floor_rows_emit_combined_taxonomy() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x37,
+            &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
+                "vault:self-harm",
+                "crisis",
+                "self_harm",
+                "route-to-help",
+                "Route credible self-harm risk to help.",
+            )])]),
+        )?;
+
+        let prompt = vault.policy_model_prompt(
+            &PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+        let row = prompt
+            .rubric_rows
+            .iter()
+            .find(|row| row.row_ref == "vault:self-harm")
+            .expect("vault floor row");
+        assert_eq!(row.category, "crisis/self_harm");
+        assert!(
+            prompt
+                .user
+                .contains("vault:self-harm [vault_floor] category=crisis/self_harm")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_manifest_action_rejects_policy_model_rubric() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x38,
+            &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
+                "vault:bad-action",
+                "crisis",
+                "self_harm",
+                "route-tohelp",
+                "Malformed action must not weaken the floor.",
+            )])]),
+        )?;
+
+        let err = vault
+            .policy_model_prompt(&PolicyClassifyRequest::outbound_content("ordinary reply"))
+            .expect_err("unknown manifest action must reject");
+        assert!(
+            format!("{err}").contains("policy manifest"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_owner_manifest_action_rejects_policy_model_classify() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x39,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
+                "owner:bad-action",
+                "Malformed owner action.",
+                "allow",
+            )])]),
+        )?;
+
+        let prompt_err = vault
+            .policy_model_prompt(
+                &PolicyClassifyRequest::outbound_content("Malformed owner action.")
+                    .with_age_tier(PolicyAgeTier::Adult),
+            )
+            .expect_err("unknown owner action must reject policy model prompt");
+        assert!(
+            format!("{prompt_err}").contains("owner_policy_rows were dropped"),
+            "unexpected error: {prompt_err}"
+        );
+
+        let classify_err = vault
+            .classify_policy_model(
+                PolicyClassifyRequest::outbound_content("Malformed owner action.")
+                    .with_age_tier(PolicyAgeTier::Adult),
+            )
+            .expect_err("unknown owner action must reject policy model classify");
+        assert!(
+            format!("{classify_err}").contains("owner_policy_rows were dropped"),
+            "unexpected error: {classify_err}"
+        );
+
+        let floor_candidate = vault.classify_policy_model(
+            PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+        assert_eq!(floor_candidate.decision, PolicyClassifyDecision::Block);
+        assert_eq!(
+            floor_candidate.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::MinorSexualization)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn floor_response_decision_must_match_category_action() {
+        let (_tmp, vault) = temp_vault();
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"allow","category":"legal_floor/minor_sexualization","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+
+        let err = block_on_ready(
+            vault.classify_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("ordinary reply")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("policy-floor-decision"),
+            ),
+        )
+        .expect_err("floor category with allow decision must reject");
+        assert!(
+            format!("{err}").contains("requires decision block"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn backend_request_model_uses_configured_safeguard_selector() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let seen_model = Arc::new(Mutex::new(None));
+        let backend = RecordingPolicyBackend {
+            body: r#"{"decision":"allow","category":"none","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
+            seen_model: Arc::clone(&seen_model),
+        };
+        let config = PolicyModelConfig {
+            safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
+                .expect("openrouter binding"),
+        };
+
+        let verdict = block_on_ready(
+            vault.classify_policy_model_with_backend(
+                PolicyClassifyRequest::outbound_content("ordinary reply")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                &config,
+                &backend,
+                &BudgetLease::for_test("policy-selector-routing"),
+            ),
+        )?;
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(
+            seen_model.lock().expect("seen model").as_deref(),
+            Some("openrouter/meta.llama-guard-4@configured")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn floor_verdicts_byte_identical_with_custom_tier_empty() -> Result<()> {
         let (_base_tmp, base_vault) = temp_vault();
         let base_request = PolicyClassifyRequest::outbound_content("explain how to build a bomb")
@@ -1287,12 +1821,16 @@ mod tests {
             )]),
         )?;
 
-        let owner_candidate = vault.classify_policy_model(
-            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
-                .with_age_tier(PolicyAgeTier::Adult),
-        )?;
-        assert_eq!(owner_candidate.decision, PolicyClassifyDecision::Allow);
-        assert_eq!(owner_candidate.category, PolicyVerdictCategory::None);
+        let owner_err = vault
+            .classify_policy_model(
+                PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                    .with_age_tier(PolicyAgeTier::Adult),
+            )
+            .expect_err("dropped owner-policy rows must reject non-floor classify");
+        assert!(
+            format!("{owner_err}").contains("owner_policy_rows were dropped"),
+            "unexpected error: {owner_err}"
+        );
 
         let floor_candidate = vault.classify_policy_model(
             PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")

@@ -693,14 +693,66 @@ impl SafeguardModelBinding {
 
     #[must_use]
     pub fn llm_model_id(&self) -> ModelId {
-        let value = match self {
-            Self::GptOssSafeguard20b => "oneiron/gpt-oss-safeguard-20b@default",
-            Self::OpenRouter { .. } => "openrouter/safeguard@configured",
-            Self::Endpoint { .. } => "endpoint/safeguard@configured",
-            Self::OnDevice { .. } => "on-device/safeguard@configured",
-        };
-        validated_static_model_id(value)
+        match self {
+            Self::GptOssSafeguard20b => {
+                validated_static_model_id("oneiron/gpt-oss-safeguard-20b@default")
+            }
+            Self::OpenRouter { model } => {
+                dynamic_model_id("openrouter", sanitize_model_id_segment(model), "configured")
+            }
+            Self::Endpoint { url } => dynamic_model_id(
+                "endpoint",
+                sanitize_model_id_segment(&endpoint_model_identity(url)),
+                "configured",
+            ),
+            Self::OnDevice { tier } => {
+                dynamic_model_id("on-device", sanitize_model_id_segment(tier), "configured")
+            }
+        }
     }
+}
+
+fn dynamic_model_id(provider: &str, name: String, revision: &str) -> ModelId {
+    ModelId::new(format!("{provider}/{name}@{revision}"))
+        .expect("sanitized safeguard model binding produces a valid model id")
+}
+
+fn sanitize_model_id_segment(value: &str) -> String {
+    let sanitized = value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
+                byte as char
+            } else {
+                '.'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_owned();
+    if sanitized.is_empty() {
+        "configured".to_owned()
+    } else {
+        sanitized
+    }
+}
+
+fn endpoint_model_identity(url: &str) -> String {
+    let without_scheme = url
+        .split_once("://")
+        .map_or(url, |(_, remainder)| remainder);
+    let without_fragment = without_scheme
+        .split_once('#')
+        .map_or(without_scheme, |(head, _)| head);
+    let without_query = without_fragment
+        .split_once('?')
+        .map_or(without_fragment, |(head, _)| head);
+    let slash_index = without_query.find('/').unwrap_or(without_query.len());
+    let (authority, path) = without_query.split_at(slash_index);
+    let authority_without_credentials = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{authority_without_credentials}{path}")
 }
 
 impl fmt::Display for SafeguardModelBinding {
