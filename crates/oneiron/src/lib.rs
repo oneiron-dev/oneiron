@@ -28,6 +28,7 @@ pub mod delivery_window;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
+pub mod edit_roundtrip;
 pub mod embed;
 pub mod engine_executor;
 pub mod error;
@@ -69,6 +70,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod thread_lens;
 pub mod tokenizer;
 pub mod types;
 mod vault;
@@ -309,6 +311,11 @@ pub use crate::engine_executor::{
     JsCodeModeStepOutcome,
 };
 pub use crate::error::{Error, ErrorKind, Result};
+#[cfg(feature = "sync")]
+pub use crate::error::{
+    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
+    SyncSelectorValidation,
+};
 pub use crate::extraction_eval::{
     OF360_AR3_METRIC_TIER_INTERFACE_VERSION, OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION,
     OF360_METRIC_DEFINITION_SET_ID, OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION,
@@ -393,10 +400,23 @@ pub use crate::lens::{
     TwoClocksAtom, VadBadge, VoiceLineAtom,
 };
 pub use crate::linkedin_connector::{
-    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
-    LINKEDIN_MCP_CONNECTOR_KEY, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
-    LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport,
-    LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
+    DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY,
+    LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
+    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_INBOX_SYNC_JOB_KIND,
+    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LINKEDIN_MCP_CONNECTOR_KEY,
+    LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB, LinkedInAccountRiskLimits,
+    LinkedInConsentScreenCopy, LinkedInConversationMessage, LinkedInConversationMessageEvent,
+    LinkedInEscalationConfig, LinkedInInboxSyncConfig, LinkedInInboxSyncProvenanceRow,
+    LinkedInInboxSyncReport, LinkedInInboxSyncRunner, LinkedInLoginHandoff,
+    LinkedInManagedTransport, LinkedInMcpConnectorAdapter, LinkedInMcpInboxSyncTransport,
+    LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpServerHarness,
+    LinkedInMcpVerifiedSendSink, LinkedInNetworkRoute, LinkedInPasswordCustody,
+    LinkedInSandboxHostConfig, LinkedInSandboxHostHarness, LinkedInSandboxRuntime,
+    LinkedInSeatDispatchState, LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision,
+    LinkedInSeatSandboxPolicy, LinkedInSelectorDriver, LinkedInVerifiedSendPlan,
+    linkedin_connect_consent_screen_copy, linkedin_inbox_sync_provenance_rows,
+    linkedin_inbox_sync_runner_from_job, run_linkedin_kill_switch,
 };
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -532,6 +552,10 @@ pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent,
+};
+pub use crate::thread_lens::{
+    THREAD_LENS_INBOX_DRAFTS_KIND, THREAD_LENS_OF327_SEND_COMMAND, ThreadLensEntry,
+    ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,

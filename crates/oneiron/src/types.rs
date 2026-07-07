@@ -2362,6 +2362,78 @@ pub(crate) fn decode_edge_value_for_kind(
     Ok(decoded)
 }
 
+/// Fully parsed strict edge row shared by fail-closed graph readers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct StrictEdgeRecord {
+    pub source: EntityId,
+    pub kind: EdgeKind,
+    pub target: EntityId,
+    pub decoded: DecodedEdgeValue,
+}
+
+impl StrictEdgeRecord {
+    pub(crate) fn into_edge_info(self) -> EdgeInfo {
+        EdgeInfo {
+            kind: self.kind,
+            target: self.target,
+            target_short_id: None,
+            weight: self.decoded.weight,
+            created_at: self.decoded.created_at,
+            vad: self.decoded.vad,
+            provenance: self.decoded.provenance,
+        }
+    }
+}
+
+/// Parses one `edges_out` / `edges_in` row fail-closed.
+///
+/// A key that is not `EDGE_KEY_LEN` bytes, an unknown edge-kind byte,
+/// a reserved/invalid source or peer id, or a value that does not decode as
+/// a valid layout for the kind (12/24/26 B per ARCH-0034) is normalized to
+/// `Error::CorruptedIndex("edge record")`.
+pub(crate) fn parse_strict_edge_record(
+    key: &[u8],
+    value: &[u8],
+) -> crate::error::Result<StrictEdgeRecord> {
+    let (source, kind, target) = parse_strict_edge_record_key(key)?;
+    let decoded = decode_edge_value_for_kind(kind, value).map_err(|_| edge_record_error())?;
+
+    Ok(StrictEdgeRecord {
+        source,
+        kind,
+        target,
+        decoded,
+    })
+}
+
+pub(crate) fn parse_strict_edge_record_key(
+    key: &[u8],
+) -> crate::error::Result<(EntityId, EdgeKind, EntityId)> {
+    if key.len() != EDGE_KEY_LEN {
+        return Err(edge_record_error());
+    }
+
+    let source = EntityId::from_bytes(
+        key[..ENTITY_ID_LEN]
+            .try_into()
+            .map_err(|_| edge_record_error())?,
+    )
+    .map_err(|_| edge_record_error())?;
+    let kind = EdgeKind::try_from_u8(key[ENTITY_ID_LEN]).ok_or_else(edge_record_error)?;
+    let target = EntityId::from_bytes(
+        key[ENTITY_ID_LEN + 1..EDGE_KEY_LEN]
+            .try_into()
+            .map_err(|_| edge_record_error())?,
+    )
+    .map_err(|_| edge_record_error())?;
+
+    Ok((source, kind, target))
+}
+
+fn edge_record_error() -> crate::error::Error {
+    crate::error::Error::CorruptedIndex("edge record")
+}
+
 /// Validates a stored edge weight against the contract-pinned range.
 ///
 /// Contract: edge `weight` ∈ \[0, 1\] (oneiron-docs
@@ -3102,6 +3174,59 @@ mod tests {
     fn entity_id_from_hex_rejects_invalid() {
         assert!(EntityId::from_hex("too_short").is_err());
         assert!(EntityId::from_hex("gggggggggggggggggggggggggggggggg").is_err());
+    }
+
+    #[test]
+    fn strict_edge_record_parser_decodes_key_and_value() {
+        let source = EntityId::from_bytes([0x11; ENTITY_ID_LEN]).unwrap();
+        let target = EntityId::from_bytes([0x22; ENTITY_ID_LEN]).unwrap();
+        let kind = EdgeKind::Supports;
+        let mut key = [0_u8; EDGE_KEY_LEN];
+        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
+        key[ENTITY_ID_LEN] = kind as u8;
+        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
+        let value = encode_edge_value(kind, 0.75, 42, Vad::NEUTRAL, None).unwrap();
+
+        let record = parse_strict_edge_record(&key, &value).unwrap();
+        assert_eq!(record.source, source);
+        assert_eq!(record.kind, kind);
+        assert_eq!(record.target, target);
+        assert_eq!(record.decoded.weight, 0.75);
+        assert_eq!(record.decoded.created_at, 42);
+
+        let info = record.into_edge_info();
+        assert_eq!(info.kind, kind);
+        assert_eq!(info.target, target);
+        assert_eq!(info.target_short_id, None);
+        assert_eq!(info.weight, 0.75);
+        assert_eq!(info.created_at, 42);
+    }
+
+    #[test]
+    fn strict_edge_record_parser_normalizes_corruption_errors() {
+        let source = EntityId::from_bytes([0x11; ENTITY_ID_LEN]).unwrap();
+        let target = EntityId::from_bytes([0x22; ENTITY_ID_LEN]).unwrap();
+        let mut key = [0_u8; EDGE_KEY_LEN];
+        key[..ENTITY_ID_LEN].copy_from_slice(source.as_bytes());
+        key[ENTITY_ID_LEN] = EdgeKind::Supports as u8;
+        key[ENTITY_ID_LEN + 1..].copy_from_slice(target.as_bytes());
+
+        let truncated_value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN - 1];
+        let err = parse_strict_edge_record(&key, &truncated_value)
+            .expect_err("truncated edge value must fail closed");
+        assert!(matches!(
+            err,
+            crate::error::Error::CorruptedIndex("edge record")
+        ));
+
+        key[ENTITY_ID_LEN + 1..].fill(0xFF);
+        let value = encode_edge_value(EdgeKind::Supports, 0.5, 1, Vad::NEUTRAL, None).unwrap();
+        let err = parse_strict_edge_record(&key, &value)
+            .expect_err("reserved target id must fail closed");
+        assert!(matches!(
+            err,
+            crate::error::Error::CorruptedIndex("edge record")
+        ));
     }
 
     #[test]

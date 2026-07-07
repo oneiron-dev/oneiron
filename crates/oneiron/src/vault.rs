@@ -1,6 +1,6 @@
 //! Top-level `Vault` API: the crate's main entry point for all LMDB-backed
-//! entity / vector / edge / text / temporal operations. Also hosts the private
-//! edge-record helpers used exclusively by Vault methods.
+//! entity / vector / edge / text / temporal operations. Also hosts
+//! edge-record helpers kept for Vault-facing compatibility.
 
 use std::path::Path;
 use std::time::Instant;
@@ -90,7 +90,7 @@ use crate::types::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_JOB_KIND,
     ClaimCandidate, CompanionExportClassification, CompanionRecord, CompanionRecordKey,
     CompanionRegister, CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus,
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
     ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT,
@@ -101,8 +101,8 @@ use crate::types::{
     MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
     StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation, VadAnnotationSource,
     VaultConfig, WriteEnvelope, bytes_to_hex_lower, decode_companion_record_body,
-    decode_edge_value_for_kind, edge_value_layout_for_kind, encode_companion_record_body,
-    encode_companion_task_payload, entity_type_registry_entry,
+    edge_value_layout_for_kind, encode_companion_record_body, encode_companion_task_payload,
+    entity_type_registry_entry, parse_strict_edge_record,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -7755,38 +7755,12 @@ fn closed_claim_put_payload(
     Ok((occurred, claim.learned_at, wrapper, data))
 }
 
-/// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`], failing
-/// closed: a key that is not `EDGE_KEY_LEN` bytes, an unknown edge-kind
-/// byte, a reserved/invalid peer id, or a value that does not decode as a
-/// valid layout for the kind (12/24/26 B per ARCH-0034) is
-/// `Error::CorruptedIndex("edge record")`. Shared with the context-pack
-/// read path so every reader classifies the same bytes identically
-/// (ONE-1101 / pinned decision D9).
+/// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`].
+///
+/// Compatibility wrapper over [`crate::types::parse_strict_edge_record`] so
+/// Vault and context-pack readers classify malformed edge rows identically.
 pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
-    if key.len() != EDGE_KEY_LEN {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-
-    let kind =
-        EdgeKind::try_from_u8(key[ENTITY_ID_LEN]).ok_or(Error::CorruptedIndex("edge record"))?;
-    let target = EntityId::from_bytes(
-        key[EDGE_KIND_PREFIX_LEN..EDGE_KEY_LEN]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let decoded = decode_edge_value_for_kind(kind, value)
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-
-    Ok(EdgeInfo {
-        kind,
-        target,
-        target_short_id: None,
-        weight: decoded.weight,
-        created_at: decoded.created_at,
-        vad: decoded.vad,
-        provenance: decoded.provenance,
-    })
+    Ok(parse_strict_edge_record(key, value)?.into_edge_info())
 }
 
 #[cfg(test)]

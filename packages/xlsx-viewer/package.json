@@ -1,0 +1,46 @@
+{
+  "name": "@oneiron/xlsx-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OF-336 xlsx viewer instrument: pinned Univer (Apache-2.0) grid + SheetJS CE import bridge. View-only, no client recalculation, no export path, no Univer-Pro imports.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bridge/worker": "./src/bridge/worker.ts"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "audit:licenses": "bun run scripts/license-audit.ts",
+    "check": "bun run typecheck && bun test"
+  },
+  "dependencies": {
+    "@univerjs/core": "0.25.1",
+    "@univerjs/design": "0.25.1",
+    "@univerjs/engine-formula": "0.25.1",
+    "@univerjs/engine-render": "0.25.1",
+    "@univerjs/sheets": "0.25.1",
+    "@univerjs/sheets-formula": "0.25.1",
+    "@univerjs/sheets-numfmt": "0.25.1",
+    "@univerjs/sheets-thread-comment": "0.25.1",
+    "@univerjs/sheets-ui": "0.25.1",
+    "@univerjs/thread-comment": "0.25.1",
+    "@univerjs/ui": "0.25.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rxjs": "7.8.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.4",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.7.3"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Programmatically generated test fixtures (never commit large binaries)
+tests/.fixtures/
+*.xlsx

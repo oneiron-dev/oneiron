@@ -1,3 +1,5 @@
+#[cfg(feature = "sync")]
+use std::error::Error as StdError;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -188,6 +190,8 @@ pub enum ErrorKind {
     InvalidBlobArtifactBody,
     InvalidAnchor,
     AnnotationThreadNotFound,
+    InvalidEditManifest,
+    EditRoundtripFailed,
     InvalidSkillBody,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
@@ -232,6 +236,7 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    UpstreamToolFailure,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -240,6 +245,8 @@ pub enum ErrorKind {
     WindowBusy,
     #[cfg(feature = "sync")]
     SyncProtocolError,
+    #[cfg(feature = "sync")]
+    SyncEngineError,
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
     InvalidRedactionReceiptBody,
@@ -256,6 +263,290 @@ pub enum ErrorKind {
     ReceiptLeaseUnknown,
     #[cfg(feature = "sync")]
     ReceiptLeaseRevoked,
+}
+
+/// Sync configuration field rejected by protocol setup validation.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SyncConfigField {
+    EphemeralTimeoutMs,
+    MaxEphemeralPayloadBytes,
+    MaxEphemeralSnapshotBytes,
+}
+
+#[cfg(feature = "sync")]
+impl SyncConfigField {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EphemeralTimeoutMs => "ephemeral_timeout_ms",
+            Self::MaxEphemeralPayloadBytes => "max_ephemeral_payload_bytes",
+            Self::MaxEphemeralSnapshotBytes => "max_ephemeral_snapshot_bytes",
+        }
+    }
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncConfigField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Stable selector-validation reason for sync protocol failures.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SyncSelectorValidation {
+    TooLarge,
+    RequestTooShort,
+    Length,
+    LengthOverflow,
+    RequestTruncated,
+    MessagePackEncode,
+    Decode,
+    TrailingBytes,
+    MustBeMap,
+    UnsupportedSchemaVersion,
+    GrantNotFound,
+    GrantHeader,
+    GrantWrongType,
+    GrantScopeMismatch,
+    MemberNotGranted,
+    WorldMustBeMap,
+    WorldKind,
+    AllWorldHasExtraFields,
+    BaseWorldHasExtraFields,
+    ForeignWorldId,
+    UnknownWorldKind,
+    KeyMustBeString,
+    UnknownKey,
+    DuplicateKey,
+    MissingKey,
+    WorldKey,
+    WorldUnknownKey,
+    WorldDuplicateKey,
+    WorldMissingKey,
+    MissingRequiredValue,
+    EntityIdMustBeHex,
+    InvalidEntityId,
+    EntityListMustBeArray,
+    BandsMustBeArray,
+    BandMustBeString,
+    UnknownBand,
+}
+
+#[cfg(feature = "sync")]
+impl SyncSelectorValidation {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TooLarge => "sync selector too large",
+            Self::RequestTooShort => "sync selector request too short",
+            Self::Length => "sync selector length",
+            Self::LengthOverflow => "sync selector length overflow",
+            Self::RequestTruncated => "sync selector request truncated",
+            Self::MessagePackEncode => "sync selector MessagePack encode failed",
+            Self::Decode => "sync selector decode",
+            Self::TrailingBytes => "sync selector trailing bytes",
+            Self::MustBeMap => "sync selector must be a map",
+            Self::UnsupportedSchemaVersion => "sync selector unsupported schema version",
+            Self::GrantNotFound => "sync selector grant not found",
+            Self::GrantHeader => "sync selector grant header",
+            Self::GrantWrongType => "sync selector grant wrong type",
+            Self::GrantScopeMismatch => "sync selector grant scope mismatch",
+            Self::MemberNotGranted => "sync selector member not granted",
+            Self::WorldMustBeMap => "sync selector world must be a map",
+            Self::WorldKind => "sync selector world kind",
+            Self::AllWorldHasExtraFields => "sync selector all world has extra fields",
+            Self::BaseWorldHasExtraFields => "sync selector base world has extra fields",
+            Self::ForeignWorldId => "sync selector foreign world id",
+            Self::UnknownWorldKind => "sync selector unknown world kind",
+            Self::KeyMustBeString => "sync selector key must be string",
+            Self::UnknownKey => "sync selector unknown key",
+            Self::DuplicateKey => "sync selector duplicate key",
+            Self::MissingKey => "sync selector missing key",
+            Self::WorldKey => "sync selector world key",
+            Self::WorldUnknownKey => "sync selector world unknown key",
+            Self::WorldDuplicateKey => "sync selector world duplicate key",
+            Self::WorldMissingKey => "sync selector world missing key",
+            Self::MissingRequiredValue => "sync selector missing required value",
+            Self::EntityIdMustBeHex => "sync selector entity id must be hex",
+            Self::InvalidEntityId => "sync selector invalid entity id",
+            Self::EntityListMustBeArray => "sync selector entity list must be array",
+            Self::BandsMustBeArray => "sync selector bands must be array",
+            Self::BandMustBeString => "sync selector band must be string",
+            Self::UnknownBand => "sync selector unknown band",
+        }
+    }
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncSelectorValidation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Sync protocol row family guarded by a scoped prune.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SyncProtocolPruneScope {
+    WindowUpdateRows,
+    SweepUpdateRows,
+}
+
+/// Typed validation context for sync protocol failures.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SyncProtocolValidation {
+    InvalidConfig {
+        field: SyncConfigField,
+    },
+    Selector {
+        reason: SyncSelectorValidation,
+    },
+    ScopedPrune {
+        scope: SyncProtocolPruneScope,
+        prefix: String,
+        key: String,
+    },
+    SweepSnapshotRace,
+    SweepUpdateRowsRace,
+    FederatedTombstoneAdmission,
+    TombstoneRemovalDelta,
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncProtocolValidation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig { field } => write!(f, "{field} must be positive"),
+            Self::Selector { reason } => write!(f, "{reason}"),
+            Self::ScopedPrune { scope, prefix, key } => match scope {
+                SyncProtocolPruneScope::WindowUpdateRows => {
+                    write!(
+                        f,
+                        "u:w: prune scoped to {prefix}* refused foreign key {key}"
+                    )
+                }
+                SyncProtocolPruneScope::SweepUpdateRows => write!(
+                    f,
+                    "sweep u:w: prune scoped to {prefix}* refused foreign key {key}"
+                ),
+            },
+            Self::SweepSnapshotRace => {
+                f.write_str("sweep raced: d:w: snapshot changed between read and write")
+            }
+            Self::SweepUpdateRowsRace => {
+                f.write_str("sweep raced: u:w: row set changed between read and write")
+            }
+            Self::FederatedTombstoneAdmission => {
+                f.write_str("federated tombstone updates require delete admission")
+            }
+            Self::TombstoneRemovalDelta => {
+                f.write_str("tombstone removal delta (tombstones are permanent)")
+            }
+        }
+    }
+}
+
+/// Local sync engine operation that failed under the protocol layer.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SyncEngineContext {
+    LoroMapInsert,
+    LoroMapDelete,
+    LoroExportAllUpdates,
+    LoroExportUpdates,
+    LoroExportSnapshot,
+    LoroExportShallowSnapshot,
+    LoroSetPeerId,
+    LoroRevert,
+    RebootstrapEncode,
+    DreamerProgressTransport,
+}
+
+#[cfg(feature = "sync")]
+impl SyncEngineContext {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LoroMapInsert => "loro map insert",
+            Self::LoroMapDelete => "loro map delete",
+            Self::LoroExportAllUpdates => "loro export all updates",
+            Self::LoroExportUpdates => "loro export updates",
+            Self::LoroExportSnapshot => "loro export snapshot",
+            Self::LoroExportShallowSnapshot => "loro export shallow snapshot",
+            Self::LoroSetPeerId => "loro set peer id",
+            Self::LoroRevert => "loro revert",
+            Self::RebootstrapEncode => "re-bootstrap encode",
+            Self::DreamerProgressTransport => "dreamer progress transport",
+        }
+    }
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncEngineContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Source error for rollback failures that occur after an earlier sync engine
+/// operation already failed.
+#[cfg(feature = "sync")]
+#[derive(Debug)]
+pub struct SyncRollbackError {
+    operation: Box<dyn StdError + Send + Sync + 'static>,
+    rollback: Box<dyn StdError + Send + Sync + 'static>,
+}
+
+#[cfg(feature = "sync")]
+impl SyncRollbackError {
+    #[must_use]
+    pub fn new<Operation, Rollback>(operation: Operation, rollback: Rollback) -> Self
+    where
+        Operation: StdError + Send + Sync + 'static,
+        Rollback: StdError + Send + Sync + 'static,
+    {
+        Self {
+            operation: Box::new(operation),
+            rollback: Box::new(rollback),
+        }
+    }
+
+    #[must_use]
+    pub fn operation(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        self.operation.as_ref()
+    }
+
+    #[must_use]
+    pub fn rollback(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        self.rollback.as_ref()
+    }
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncRollbackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "operation failed: {}; rollback failed: {}",
+            self.operation, self.rollback
+        )
+    }
+}
+
+#[cfg(feature = "sync")]
+impl StdError for SyncRollbackError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.rollback)
+    }
 }
 
 /// LMDB file inside a vault root.
@@ -503,6 +794,14 @@ pub enum Error {
     /// artifact. Nothing was written.
     #[error("anchored-annotation thread not found")]
     AnnotationThreadNotFound,
+    /// An ARTL-3 edit manifest failed encode, decode, or schema validation.
+    #[error("invalid edit manifest: {0}")]
+    InvalidEditManifest(&'static str),
+    /// An ARTL-3 edit round-trip stage failed: unreadable OPC package,
+    /// malformed cell reference, or a session-side failure. The input bytes
+    /// are never mutated.
+    #[error("edit round-trip failed: {0}")]
+    EditRoundtripFailed(&'static str),
     /// A SKILL entity body failed pinned reliability/provenance validation.
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
@@ -835,6 +1134,10 @@ pub enum Error {
     /// transitive Sudachi/jieba/lindera error types into the public surface.
     #[error("analyzer error: {0}")]
     AnalyzerError(String),
+    /// An upstream tool or connector call failed outside local config
+    /// validation. The code is caller-safe and pre-sanitized by the adapter.
+    #[error("upstream tool failure: tool={tool}, code={code}")]
+    UpstreamToolFailure { tool: &'static str, code: String },
     /// Malformed CRDT update bytes.
     #[cfg(feature = "sync")]
     #[error("crdt decode error ({context}): {source}")]
@@ -871,8 +1174,16 @@ pub enum Error {
     },
     /// Sync protocol violation.
     #[cfg(feature = "sync")]
-    #[error("sync protocol error: {0}")]
-    SyncProtocolError(String),
+    #[error("sync protocol error: {context}")]
+    SyncProtocolError { context: SyncProtocolValidation },
+    /// Local sync engine operation failed below the protocol validation layer.
+    #[cfg(feature = "sync")]
+    #[error("sync engine error ({context}): {source}")]
+    SyncEngineError {
+        context: SyncEngineContext,
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
     /// A signed maintenance-band op arriving through a sync replay door would
     /// exceed this device's local per-peer ingest quota for the current quota
     /// window. The op is quarantined and can be lazily re-admitted by a later
@@ -970,6 +1281,40 @@ pub enum Error {
 }
 
 impl Error {
+    /// Constructs a typed sync protocol validation failure.
+    #[cfg(feature = "sync")]
+    #[must_use]
+    pub fn sync_protocol(context: SyncProtocolValidation) -> Self {
+        Self::SyncProtocolError { context }
+    }
+
+    /// Constructs a typed sync engine failure while preserving its source.
+    #[cfg(feature = "sync")]
+    pub fn sync_engine<E>(context: SyncEngineContext, source: E) -> Self
+    where
+        E: StdError + Send + Sync + 'static,
+    {
+        Self::SyncEngineError {
+            context,
+            source: Box::new(source),
+        }
+    }
+
+    /// Constructs a sync engine failure for a failed rollback after an earlier
+    /// engine/storage operation had already failed.
+    #[cfg(feature = "sync")]
+    pub fn sync_engine_rollback<Operation, Rollback>(
+        context: SyncEngineContext,
+        operation: Operation,
+        rollback: Rollback,
+    ) -> Self
+    where
+        Operation: StdError + Send + Sync + 'static,
+        Rollback: StdError + Send + Sync + 'static,
+    {
+        Self::sync_engine(context, SyncRollbackError::new(operation, rollback))
+    }
+
     /// Returns the typed Gate denial taxonomy for [`Error::GateWriteRejected`].
     #[must_use]
     pub fn gate_denial(&self) -> Option<GateDenial> {
@@ -1057,6 +1402,8 @@ impl Error {
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
+            Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
+            Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
@@ -1109,6 +1456,7 @@ impl Error {
             Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
+            Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             #[cfg(feature = "sync")]
             Self::CrdtDecodeError { .. } => ErrorKind::CrdtDecodeError,
             #[cfg(feature = "sync")]
@@ -1116,7 +1464,9 @@ impl Error {
             #[cfg(feature = "sync")]
             Self::WindowBusy { .. } => ErrorKind::WindowBusy,
             #[cfg(feature = "sync")]
-            Self::SyncProtocolError(_) => ErrorKind::SyncProtocolError,
+            Self::SyncProtocolError { .. } => ErrorKind::SyncProtocolError,
+            #[cfg(feature = "sync")]
+            Self::SyncEngineError { .. } => ErrorKind::SyncEngineError,
             #[cfg(feature = "sync")]
             Self::MaintenanceIngestQuotaExceeded { .. } => {
                 ErrorKind::MaintenanceIngestQuotaExceeded
@@ -1143,6 +1493,7 @@ impl Error {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::ConcurrentWrite(_) => true,
+            Self::UpstreamToolFailure { .. } => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]

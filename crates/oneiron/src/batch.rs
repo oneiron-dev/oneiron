@@ -28,8 +28,8 @@ use crate::types::{
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole,
-    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
-    encode_edge_value, validate_edge_weight,
+    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, encode_edge_value,
+    parse_strict_edge_record, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2108,13 +2108,7 @@ impl ChildOfBatchOverlay {
 
         for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            validate_edge_record(key, value)?;
-            let parent = EntityId::from_bytes(
-                key[17..33]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            let parent = parse_strict_edge_record(key, value)?.target;
 
             if self.final_edge_override(child, &parent).unwrap_or(true) {
                 parents.insert(parent);
@@ -2414,13 +2408,7 @@ fn reconcile_claim_of_edges(
     let mut stale_subjects = Vec::new();
     for entry in store.edges_out.prefix_iter(wtxn, &prefix)? {
         let (key, value) = entry?;
-        validate_edge_record(key, value)?;
-        let subject = EntityId::from_bytes(
-            key[17..33]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        let subject = parse_strict_edge_record(key, value)?.target;
         if Some(subject) != new_subject {
             stale_subjects.push(subject);
         }
@@ -3361,13 +3349,7 @@ fn validate_task_role_put_invariants(
         let prefix = child_of_prefix(id);
         for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            validate_edge_record(key, value)?;
-            let parent = EntityId::from_bytes(
-                key[17..33]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            let parent = parse_strict_edge_record(key, value)?.target;
             validate_habit_checkin_parent_role(store, rtxn, &parent)?;
         }
     }
@@ -3376,13 +3358,7 @@ fn validate_task_role_put_invariants(
         let prefix = child_of_prefix(id);
         for entry in store.edges_in.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            validate_edge_record(key, value)?;
-            let child = EntityId::from_bytes(
-                key[17..33]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("edge record"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("edge record"))?;
+            let child = parse_strict_edge_record(key, value)?.target;
             if stored_task_role(store, rtxn, &child)? == Some(TaskRole::HabitCheckin) {
                 return Err(Error::InvalidTaskBody(
                     "Habit TASK with check-ins cannot change role",
@@ -3513,17 +3489,11 @@ fn lexical_query_hint_claim_ids_for_target(
     let mut hint_ids = Vec::new();
     for entry in store.edges_in.prefix_iter(wtxn, target.as_bytes())? {
         let (key, value) = entry?;
-        validate_edge_record(key, value)?;
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-        if kind != EdgeKind::ClaimOf {
+        let edge = parse_strict_edge_record(key, value)?;
+        if edge.kind != EdgeKind::ClaimOf {
             continue;
         }
-        let source = EntityId::from_bytes(
-            key[17..33]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+        let source = edge.target;
         let Some(raw) = store.entities.get(wtxn, source.as_bytes())? else {
             continue;
         };
@@ -3883,15 +3853,8 @@ fn delete_related_edges(
     let mut outbound = Vec::new();
     for entry in store.edges_out.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        validate_edge_record(key, value)?;
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-        let target = EntityId::from_bytes(
-            key[17..33]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-        outbound.push((kind, target));
+        let edge = parse_strict_edge_record(key, value)?;
+        outbound.push((edge.kind, edge.target));
     }
 
     for (kind, target) in &outbound {
@@ -3904,15 +3867,8 @@ fn delete_related_edges(
     let mut inbound = Vec::new();
     for entry in store.edges_in.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        validate_edge_record(key, value)?;
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-        let source = EntityId::from_bytes(
-            key[17..33]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("edge record"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-        inbound.push((kind, source));
+        let edge = parse_strict_edge_record(key, value)?;
+        inbound.push((edge.kind, edge.target));
     }
 
     for (kind, source) in &inbound {
@@ -4083,17 +4039,6 @@ fn decode_phonetic_forward_codes(raw: &[u8]) -> Result<Vec<String>> {
 
 fn encode_phonetic_forward_codes(codes: &[String]) -> Vec<u8> {
     codes.join("\0").into_bytes()
-}
-
-fn validate_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
-    if key.len() != EDGE_KEY_LEN {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-    decode_edge_value_for_kind(kind, value).map_err(|_| Error::CorruptedIndex("edge record"))?;
-
-    Ok(())
 }
 
 #[cfg(test)]
