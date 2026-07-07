@@ -400,16 +400,24 @@ pub struct OutboundExecutionRequest<'a> {
 /// Adapter execution outcome consumed by the common receipt emitter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundExecutionOutcome {
-    pub outcome: String,
+    pub kind: OutboundExecutionOutcomeKind,
     pub provider_ref: Option<String>,
     pub retry_state: Option<String>,
+}
+
+/// Typed adapter execution result. Unknown adapter outcomes must be modeled
+/// explicitly instead of being silently collapsed by the dispatcher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum OutboundExecutionOutcomeKind {
+    DeliveredToChannel,
+    Failed,
 }
 
 impl OutboundExecutionOutcome {
     #[must_use]
     pub fn delivered_to_channel(provider_ref: impl Into<String>) -> Self {
         Self {
-            outcome: "delivered_to_channel".to_owned(),
+            kind: OutboundExecutionOutcomeKind::DeliveredToChannel,
             provider_ref: Some(provider_ref.into()),
             retry_state: None,
         }
@@ -418,7 +426,7 @@ impl OutboundExecutionOutcome {
     #[must_use]
     pub fn failed(reason: impl Into<String>) -> Self {
         Self {
-            outcome: "failed".to_owned(),
+            kind: OutboundExecutionOutcomeKind::Failed,
             provider_ref: None,
             retry_state: Some(reason.into()),
         }
@@ -735,10 +743,11 @@ impl OutboundDispatchPipeline {
                         counterparty_ref: request.counterparty_ref.as_deref(),
                     };
                     let execution = sink.execute(&execution_request);
-                    let outcome = match execution.outcome.as_str() {
-                        "delivered_to_channel" => OutboundDispatchOutcome::DeliveredToChannel,
-                        "failed" => OutboundDispatchOutcome::Failed,
-                        _ => OutboundDispatchOutcome::Failed,
+                    let outcome = match execution.kind {
+                        OutboundExecutionOutcomeKind::DeliveredToChannel => {
+                            OutboundDispatchOutcome::DeliveredToChannel
+                        }
+                        OutboundExecutionOutcomeKind::Failed => OutboundDispatchOutcome::Failed,
                     };
                     (outcome, Some(execution))
                 }
@@ -766,9 +775,10 @@ impl OutboundDispatchPipeline {
         receipt
             .policy_trace
             .push(request.window_decision.policy_trace());
+        let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
         receipt
             .fields
-            .insert("gate_decision_id".to_owned(), gate_decision_id.to_hex());
+            .insert("gate_decision_ref".to_owned(), gate_decision_ref.clone());
         receipt
             .fields
             .insert("gate_outcome".to_owned(), gate_outcome.clone());
@@ -845,7 +855,7 @@ impl OutboundDispatchPipeline {
 
         Ok(OutboundDispatchResult {
             outcome,
-            gate_decision_id: Some(format!("gate:{}", gate_decision_id.to_hex())),
+            gate_decision_id: Some(gate_decision_ref),
             gate_outcome,
             gate_reason_codes,
             receipt,
@@ -1538,9 +1548,18 @@ mod tests {
         })
     }
 
-    #[derive(Default)]
     struct RecordingExecutor {
         calls: Vec<(String, String, String)>,
+        outcome: OutboundExecutionOutcome,
+    }
+
+    impl Default for RecordingExecutor {
+        fn default() -> Self {
+            Self {
+                calls: Vec::new(),
+                outcome: OutboundExecutionOutcome::delivered_to_channel("provider:message:one"),
+            }
+        }
     }
 
     impl OutboundExecutionSink for RecordingExecutor {
@@ -1550,7 +1569,7 @@ mod tests {
                 request.intent.channel.clone(),
                 request.verb_contract.kind.clone(),
             ));
-            OutboundExecutionOutcome::delivered_to_channel("provider:message:one")
+            self.outcome.clone()
         }
     }
 
@@ -1700,6 +1719,15 @@ mod tests {
         );
         assert_eq!(result.gate_outcome, "allow");
         assert_eq!(result.gate_reason_codes, vec!["gate.allow"]);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("gate_decision_ref")
+                .map(String::as_str),
+            result.gate_decision_id.as_deref()
+        );
+        assert!(!result.receipt.fields.contains_key("gate_decision_id"));
         assert_eq!(result.receipt.outcome, "delivered_to_channel");
         assert_eq!(
             result
@@ -1742,6 +1770,48 @@ mod tests {
                 .receipt
                 .policy_trace
                 .contains(&"delivery_window.not_configured".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_records_typed_failed_execution()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA5);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD3,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:failed-send",
+            "intent:failed-send",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate(
+                "session:failed-send",
+            )),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_040,
+        );
+
+        let mut executor = RecordingExecutor {
+            outcome: OutboundExecutionOutcome::failed("transport_timeout"),
+            ..RecordingExecutor::default()
+        };
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(result.receipt.outcome, "failed");
+        assert_eq!(
+            result.receipt.fields.get("retry_state").map(String::as_str),
+            Some("transport_timeout")
         );
         Ok(())
     }

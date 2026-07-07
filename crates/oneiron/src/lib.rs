@@ -375,11 +375,11 @@ pub use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchPipeline,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentSource, OutboundIntentTrigger, OutboundInterruptionClass,
-    OutboundPermissionState, OutboundRetryClass, OutboundVerbContract,
-    UnsupportedOutboundCapability, outbound_capability_manifest, outbound_capability_manifests,
-    outbound_verb_contract, unsupported_outbound_connector,
+    OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
+    OutboundIntentTrigger, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass,
+    OutboundVerbContract, UnsupportedOutboundCapability, outbound_capability_manifest,
+    outbound_capability_manifests, outbound_verb_contract, unsupported_outbound_connector,
 };
 pub use crate::outbound_grant::{
     OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, StandingOutboundGrant,
