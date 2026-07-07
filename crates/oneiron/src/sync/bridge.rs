@@ -1906,6 +1906,10 @@ mod tests {
         Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap())
     }
 
+    fn task_body() -> Vec<u8> {
+        crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    }
+
     /// Minimal WARN-level event capture: collects `message` fields so tests
     /// can assert a specific warn fired without a subscriber dependency.
     #[derive(Clone, Default)]
@@ -2234,21 +2238,21 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 2,
-                b"a",
+                &task_body(),
             )
             .put(
                 &b,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 3, end: 3 },
                 4,
-                b"b",
+                &task_body(),
             )
             .put(
                 &c,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 5, end: 5 },
                 6,
-                b"c",
+                &task_body(),
             )
             .edge(&b, EdgeKind::ChildOf, &a, 1.0)
             .commit()
@@ -2300,21 +2304,21 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 2,
-                b"a",
+                &task_body(),
             )
             .put(
                 &b,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 3, end: 3 },
                 4,
-                b"b",
+                &task_body(),
             )
             .put(
                 &c,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 5, end: 5 },
                 6,
-                b"c",
+                &task_body(),
             )
             .edge(&c, EdgeKind::ChildOf, &b, 1.0)
             .edge(&b, EdgeKind::ChildOf, &a, 1.0)
@@ -2364,28 +2368,28 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 2,
-                b"a",
+                &task_body(),
             )
             .put(
                 &x,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 3, end: 3 },
                 4,
-                b"x",
+                &task_body(),
             )
             .put(
                 &b,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 5, end: 5 },
                 6,
-                b"b",
+                &task_body(),
             )
             .put(
                 &y,
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 7, end: 7 },
                 8,
-                b"y",
+                &task_body(),
             )
             .edge(&a, EdgeKind::ChildOf, &x, 1.0)
             .edge(&b, EdgeKind::ChildOf, &y, 1.0)
@@ -2436,13 +2440,23 @@ mod tests {
         map_insert_bytes(
             &entities,
             &a.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            ),
         )
         .unwrap();
         map_insert_bytes(
             &entities,
             &b.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                &task_body(),
+            ),
         )
         .unwrap();
         doc.commit();
@@ -2481,14 +2495,19 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 2,
-                b"deleted",
+                &task_body(),
             ),
         )
         .unwrap();
         map_insert_bytes(
             &entities,
             &live.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"live"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                &task_body(),
+            ),
         )
         .unwrap();
         tombstones.insert(&deleted.to_hex(), b"1").unwrap();
@@ -2532,18 +2551,14 @@ mod tests {
 
         // All three rows exist locally — the deleted ones are the stale
         // survivors of an interrupted purge.
-        for (id, body) in [
-            (&live, b"live".as_slice()),
-            (&del_bin, b"stale-bin".as_slice()),
-            (&del_str, b"stale-str".as_slice()),
-        ] {
+        for id in [&live, &del_bin, &del_str] {
             vault
                 .put_entity(
                     id,
                     ENTITY_TYPE_TASK,
                     TimeRange { start: 1, end: 1 },
                     2,
-                    body,
+                    &task_body(),
                 )
                 .unwrap();
         }
@@ -2600,13 +2615,7 @@ mod tests {
         let learned_at = 1_772_400_000u64; // 2026-03 window
         let occurred = TimeRange { start: 1, end: 1 };
         vault
-            .put_entity(
-                &id,
-                ENTITY_TYPE_TASK,
-                occurred,
-                learned_at,
-                b"hard-delete-me",
-            )
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
 
         // Mirror LMDB → CRDT, then persist, so `write_crdt_tombstone` (which
@@ -2650,12 +2659,7 @@ mod tests {
         map_insert_bytes(
             &entities,
             &hex_id,
-            &entity_blob(
-                ENTITY_TYPE_TASK,
-                occurred,
-                learned_at,
-                b"resurrection-attempt",
-            ),
+            &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, &task_body()),
         )
         .unwrap();
         window.doc.commit();
@@ -2677,7 +2681,7 @@ mod tests {
         let learned_at = 1_772_400_000u64;
         let occurred = TimeRange { start: 1, end: 1 };
         vault
-            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, b"private-body")
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
 
         // SoftErase (`user_delete`): scrubs the body, keeps the 25 B shell.
@@ -2705,7 +2709,7 @@ mod tests {
         map_insert_bytes(
             &entities,
             &id.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, b"private-body"),
+            &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, &task_body()),
         )
         .unwrap();
         doc.commit();
@@ -2739,13 +2743,23 @@ mod tests {
         map_insert_bytes(
             &entities,
             &a.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 1, end: 1 }, 2, b"a"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            ),
         )
         .unwrap();
         map_insert_bytes(
             &entities,
             &b.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, TimeRange { start: 3, end: 3 }, 4, b"b"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 3, end: 3 },
+                4,
+                &task_body(),
+            ),
         )
         .unwrap();
         doc.commit();
@@ -2789,13 +2803,7 @@ mod tests {
         let learned_at = 1_772_400_000u64; // 2026-03 window
         let occurred = TimeRange { start: 1, end: 1 };
         vault
-            .put_entity(
-                &id,
-                ENTITY_TYPE_TASK,
-                occurred,
-                learned_at,
-                b"hard-delete-me",
-            )
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
 
         // Mirror LMDB → CRDT and persist so the hard delete operates on a
@@ -2839,12 +2847,7 @@ mod tests {
         map_insert_bytes(
             &fork.get_map("entities"),
             &hex_id,
-            &entity_blob(
-                ENTITY_TYPE_TASK,
-                occurred,
-                learned_at,
-                b"resurrection-attempt",
-            ),
+            &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, &task_body()),
         )
         .unwrap();
         fork.commit();
@@ -2909,7 +2912,7 @@ mod tests {
 
         let hard = EntityId::now();
         vault
-            .put_entity(&hard, ENTITY_TYPE_TASK, occurred, learned_at, b"hard")
+            .put_entity(&hard, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
         vault
             .delete_entity_with_reason(&hard, crate::DeleteReason::UserHardDelete)
@@ -2932,7 +2935,7 @@ mod tests {
         // GDPR delete is also HARD — marker with reason byte 3.
         let gdpr = EntityId::now();
         vault
-            .put_entity(&gdpr, ENTITY_TYPE_TASK, occurred, learned_at, b"gdpr")
+            .put_entity(&gdpr, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
         vault
             .delete_entity_with_reason(&gdpr, crate::DeleteReason::GdprDelete)
@@ -2943,7 +2946,7 @@ mod tests {
         // SoftErase writes NO marker.
         let soft = EntityId::now();
         vault
-            .put_entity(&soft, ENTITY_TYPE_TASK, occurred, learned_at, b"soft")
+            .put_entity(&soft, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
         vault
             .delete_entity_with_reason(&soft, crate::DeleteReason::UserDelete)
@@ -2980,7 +2983,7 @@ mod tests {
 
         let id = EntityId::now();
         vault
-            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, b"residue")
+            .put_entity(&id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body())
             .unwrap();
         // Strip ONLY the entity row, leaving index residue (short-id
         // reverse row) — the exact shape `delete_entity_without_header`
@@ -3023,7 +3026,7 @@ mod tests {
             map_insert_bytes(
                 &doc.get_map("entities"),
                 &id.to_hex(),
-                &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, b"reput-attempt"),
+                &entity_blob(ENTITY_TYPE_TASK, occurred, learned_at, &task_body()),
             )
             .unwrap();
             doc.commit();
@@ -3057,15 +3060,16 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 2,
-                b"honest-path",
+                &task_body(),
             ),
         )
         .unwrap();
         doc.commit();
 
+        let expected = task_body();
         assert_eq!(
             vault.get(&id).unwrap().as_deref(),
-            Some(&b"honest-path"[..]),
+            Some(expected.as_slice()),
             "never-deleted entity must materialize normally"
         );
     }
@@ -3234,7 +3238,7 @@ mod tests {
                     end: learned_at,
                 },
                 learned_at,
-                b"syncable-task",
+                &task_body(),
             ),
         )
         .unwrap();

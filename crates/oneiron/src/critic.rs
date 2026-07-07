@@ -1096,7 +1096,7 @@ mod tests {
             crate::types::ENTITY_TYPE_TASK,
             TimeRange { start: 1, end: 1 },
             1,
-            b"anchor",
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
         )?;
         let mut writable = body;
         writable.subject = ClaimSubject::Entity(anchor);

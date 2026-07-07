@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::Cursor;
 use std::path::PathBuf;
 
 use rmpv::Value;
@@ -104,6 +105,104 @@ pub const ENTITY_TYPE_COUNTERPARTY_CONTACT: u8 = 132;
 /// OF-367 StandingOutboundGrant entity. Engine-authored maintenance kind for
 /// ask-card and bundle-approval outbound consent grants.
 pub const ENTITY_TYPE_OUTBOUND_GRANT: u8 = 133;
+
+pub(crate) const TASK_BODY_ROLE_KEY: &str = "role";
+
+/// Pinned TASK role byte for the productivity pack.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TaskRole {
+    Task = 1,
+    Goal = 2,
+    Milestone = 3,
+    Habit = 4,
+    HabitCheckin = 5,
+}
+
+impl TaskRole {
+    pub const ALL: [Self; 5] = [
+        Self::Task,
+        Self::Goal,
+        Self::Milestone,
+        Self::Habit,
+        Self::HabitCheckin,
+    ];
+
+    #[must_use]
+    pub const fn role_byte(self) -> u8 {
+        match self {
+            Self::Task => 1,
+            Self::Goal => 2,
+            Self::Milestone => 3,
+            Self::Habit => 4,
+            Self::HabitCheckin => 5,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_role_byte(role: u8) -> Option<Self> {
+        match role {
+            1 => Some(Self::Task),
+            2 => Some(Self::Goal),
+            3 => Some(Self::Milestone),
+            4 => Some(Self::Habit),
+            5 => Some(Self::HabitCheckin),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn task_body_for_test(role: TaskRole) -> Vec<u8> {
+    let value = Value::Map(vec![(
+        Value::from(TASK_BODY_ROLE_KEY),
+        Value::from(role.role_byte()),
+    )]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)
+        .expect("writing MessagePack TASK body to Vec cannot fail");
+    bytes
+}
+
+pub(crate) fn validate_task_body_bytes(bytes: &[u8]) -> crate::error::Result<()> {
+    let mut cursor = Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| crate::error::Error::InvalidTaskBody("body is not valid MessagePack"))?;
+    if cursor.position() != bytes.len() as u64 {
+        return Err(crate::error::Error::InvalidTaskBody(
+            "trailing bytes after body map",
+        ));
+    }
+    let entries = value.as_map().ok_or(crate::error::Error::InvalidTaskBody(
+        "body must be a MessagePack map",
+    ))?;
+    let mut role = None;
+    for (key, value) in entries {
+        let key = key.as_str().ok_or(crate::error::Error::InvalidTaskBody(
+            "body keys must be strings",
+        ))?;
+        if key != TASK_BODY_ROLE_KEY {
+            continue;
+        }
+        if role.is_some() {
+            return Err(crate::error::Error::InvalidTaskBody(
+                "duplicate task role key",
+            ));
+        }
+        let role_byte = value
+            .as_u64()
+            .and_then(|raw| u8::try_from(raw).ok())
+            .ok_or(crate::error::Error::InvalidTaskBody(
+                "task role must be a byte",
+            ))?;
+        role = Some(
+            TaskRole::from_role_byte(role_byte)
+                .ok_or(crate::error::Error::InvalidTaskBody("unknown task role"))?,
+        );
+    }
+    role.ok_or(crate::error::Error::InvalidTaskBody("missing task role"))?;
+    Ok(())
+}
 
 /// Registry classification mirroring the contracts.ts §1
 /// `EntityClassification` enum: `"semantic" | "core" | "pack" | "maintenance"`.

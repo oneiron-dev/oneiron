@@ -3143,7 +3143,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 1,
-                b"repo branch",
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
             )
             .expect("branch subject");
         branch_subject
