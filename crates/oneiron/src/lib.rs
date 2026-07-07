@@ -412,11 +412,13 @@ pub use crate::provenance::{
     validate_actor_class,
 };
 pub use crate::receipt::{
-    BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, PendingTrayAsk,
-    PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent, ReceiptProjectionRun, ReceiptQuery,
-    ReceiptRecord, ReceiptView, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
-    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, outbound_intent_receipt,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
+    BriefReceiptProjection, ContextReceiptFields, CounterpartyReceiptProjection,
+    GrantReceiptProjection, PendingTrayAsk, PendingTrayQuery, ReceiptKind, ReceiptProjectionIntent,
+    ReceiptProjectionRun, ReceiptQuery, ReceiptRecord, ReceiptView, SessionLocalReceiptLog,
+    SessionReceiptClose, StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction,
+    StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, append_context_receipt_fields,
+    eiri_memory_board_state_ref, outbound_intent_receipt, project_receipts_by_brief,
+    project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use crate::recovery::{
     QuarantinedArtifact, RECOVERY_ARTIFACT_INVALID_SUFFIX_PREFIX, RECOVERY_ARTIFACT_MAGIC,
