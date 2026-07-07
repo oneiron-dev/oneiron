@@ -69,6 +69,7 @@ const LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX: &str = "linkedin:inbox_sync:provena
 const LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX: &str = "linkedin:inbox_sync:";
 const LINKEDIN_INBOX_SYNC_SOURCE: &str = "imported";
 const LINKEDIN_INBOX_SYNC_TIER: &str = "external";
+const LINKEDIN_INBOX_SYNC_CLAIMED_VALUE: &[u8] = b"claimed";
 
 const MAX_LINKEDIN_ADDRESS_BYTES: usize = 512;
 const MAX_LINKEDIN_SESSION_REF_BYTES: usize = 512;
@@ -793,6 +794,9 @@ pub struct LinkedInInboxSyncProvenanceRow {
     pub source: String,
     pub tier: String,
     pub channel: String,
+    pub receiving_address_or_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<String>,
     pub thread_id: String,
     pub message_id: String,
     pub surface_event_id: String,
@@ -1027,12 +1031,21 @@ impl LinkedInMcpConnectorAdapter {
         received_at: u64,
         backfill_window_secs: u64,
     ) -> Result<Vec<LinkedInConversationMessageEvent>> {
+        let messages = conversation_messages_from_tool_output(output, None)?;
+        self.normalize_conversation_messages(messages, received_at, backfill_window_secs)
+    }
+
+    fn normalize_conversation_messages(
+        &self,
+        messages: Vec<LinkedInConversationMessage>,
+        received_at: u64,
+        backfill_window_secs: u64,
+    ) -> Result<Vec<LinkedInConversationMessageEvent>> {
         if backfill_window_secs > MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
             return Err(Error::InvalidConfig(
                 "LinkedIn inbox backfill window exceeds maximum length".to_owned(),
             ));
         }
-        let messages = conversation_messages_from_tool_output(output)?;
         let mut events = Vec::new();
         for message in messages {
             if !message_in_backfill_window(&message, received_at, backfill_window_secs) {
@@ -1131,12 +1144,10 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     pub fn run_once(&mut self, now: u64) -> Result<LinkedInInboxSyncReport> {
         self.config.validate()?;
         validate_inbox_sync_config_matches_adapter(&self.adapter, &self.config)?;
-        let inbox_output = self.transport.get_inbox().map_err(|err| {
-            Error::InvalidConfig(format!(
-                "LinkedIn {LINKEDIN_MCP_GET_INBOX_TOOL} failed: {}",
-                receipt_error_code(&err)
-            ))
-        })?;
+        let inbox_output = self
+            .transport
+            .get_inbox()
+            .map_err(|err| linkedin_tool_failure(LINKEDIN_MCP_GET_INBOX_TOOL, &err))?;
         let thread_ids = self
             .adapter
             .inbox_thread_ids_from_tool_output(&inbox_output)?;
@@ -1144,17 +1155,15 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
         report.threads_seen = thread_ids.len();
 
         for thread_id in thread_ids {
-            let conversation_output =
-                self.transport.get_conversation(&thread_id).map_err(|err| {
-                    Error::InvalidConfig(format!(
-                        "LinkedIn {LINKEDIN_MCP_GET_CONVERSATION_TOOL} failed: {}",
-                        receipt_error_code(&err)
-                    ))
-                })?;
-            let all_message_count =
-                conversation_messages_from_tool_output(&conversation_output)?.len();
-            let events = self.adapter.normalize_get_conversation_message_events(
-                &conversation_output,
+            let conversation_output = self
+                .transport
+                .get_conversation(&thread_id)
+                .map_err(|err| linkedin_tool_failure(LINKEDIN_MCP_GET_CONVERSATION_TOOL, &err))?;
+            let messages =
+                conversation_messages_from_tool_output(&conversation_output, Some(&thread_id))?;
+            let all_message_count = messages.len();
+            let events = self.adapter.normalize_conversation_messages(
+                messages,
                 now,
                 self.config.backfill_window_secs,
             )?;
@@ -1164,24 +1173,35 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
                 .saturating_add(all_message_count.saturating_sub(events.len()));
 
             for event in events {
-                if linkedin_inbox_message_seen(self.vault, &event.message)? {
+                if !claim_linkedin_inbox_message(self.vault, &self.config, &event.message)? {
                     report.duplicate_messages = report.duplicate_messages.saturating_add(1);
                     continue;
                 }
 
-                let receipt = self
+                let receipt = match self
                     .vault
-                    .route_inbound_surface_event(event.event_input.clone())?;
+                    .route_inbound_surface_event(event.event_input.clone())
+                {
+                    Ok(receipt) => receipt,
+                    Err(err) => {
+                        release_linkedin_inbox_message_claim(
+                            self.vault,
+                            &self.config,
+                            &event.message,
+                        )?;
+                        return Err(err);
+                    }
+                };
                 if receipt.outcome == InboundSurfaceRouteOutcome::Routed {
-                    if persist_linkedin_inbox_seen_message(
+                    finalize_linkedin_inbox_seen_message(
                         self.vault,
+                        &self.config,
                         &event.message,
                         &event.event_input,
-                    )? {
-                        report.new_messages = report.new_messages.saturating_add(1);
-                    } else {
-                        report.duplicate_messages = report.duplicate_messages.saturating_add(1);
-                    }
+                    )?;
+                    report.new_messages = report.new_messages.saturating_add(1);
+                } else {
+                    release_linkedin_inbox_message_claim(self.vault, &self.config, &event.message)?;
                 }
                 report.receipts.push(receipt);
             }
@@ -1650,18 +1670,32 @@ fn validate_inbox_sync_config_matches_adapter(
     Ok(())
 }
 
+fn linkedin_tool_failure(tool: &'static str, err: &str) -> Error {
+    Error::UpstreamToolFailure {
+        tool,
+        code: receipt_error_code(err),
+    }
+}
+
 fn conversation_messages_from_tool_output(
     output: &Value,
+    fallback_thread_id: Option<&str>,
 ) -> Result<Vec<LinkedInConversationMessage>> {
     let payload = mcp_payload(output)?;
     let conversation_references = section_references(&payload, "conversation");
     let thread_id = match thread_id_from_payload_url(&payload)? {
         Some(thread_id) => thread_id,
-        None => first_conversation_thread_id(&conversation_references)?.ok_or_else(|| {
-            Error::InvalidConfig(
-                "LinkedIn get_conversation output did not include a thread id".to_owned(),
-            )
-        })?,
+        None => match first_conversation_thread_id(&conversation_references)? {
+            Some(thread_id) => thread_id,
+            None => fallback_thread_id
+                .map(normalize_thread_id)
+                .transpose()?
+                .ok_or_else(|| {
+                    Error::InvalidConfig(
+                        "LinkedIn get_conversation output did not include a thread id".to_owned(),
+                    )
+                })?,
+        },
     };
 
     let mut messages =
@@ -1706,10 +1740,10 @@ fn explicit_conversation_messages(
         let text = first_string_field(object, &["text", "body", "content", "message"])
             .map(normalize_whitespace)
             .filter(|text| !text.is_empty());
-        let occurred_at = first_u64_field(
+        let occurred_at = first_timestamp_field(
             object,
             &["occurred_at", "timestamp", "created_at", "sent_at"],
-        );
+        )?;
         messages.push(LinkedInConversationMessage {
             thread_id: thread_id.to_owned(),
             message_id,
@@ -1742,7 +1776,6 @@ fn fallback_conversation_messages(
     let mut index = start;
     while index < lines.len() {
         if index + 2 < lines.len() && looks_like_linkedin_time(&lines[index + 1]) {
-            let author = &lines[index];
             let timestamp = &lines[index + 1];
             index += 2;
             let body_start = index;
@@ -1756,8 +1789,7 @@ fn fallback_conversation_messages(
             if !body.is_empty() {
                 messages.push(fallback_message(
                     thread_id,
-                    messages.len(),
-                    [author.as_str(), timestamp.as_str(), body.as_str()].as_slice(),
+                    [timestamp.as_str(), body.as_str()].as_slice(),
                     Some(body.clone()),
                 )?);
             }
@@ -1767,7 +1799,6 @@ fn fallback_conversation_messages(
         let body = lines[index].clone();
         messages.push(fallback_message(
             thread_id,
-            messages.len(),
             [body.as_str()].as_slice(),
             Some(body.clone()),
         )?);
@@ -1778,14 +1809,11 @@ fn fallback_conversation_messages(
 
 fn fallback_message(
     thread_id: &str,
-    ordinal: usize,
     hash_parts: &[&str],
     text: Option<String>,
 ) -> Result<LinkedInConversationMessage> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(thread_id.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(ordinal.to_string().as_bytes());
     for part in hash_parts {
         hasher.update(&[0]);
         hasher.update(part.as_bytes());
@@ -1793,7 +1821,7 @@ fn fallback_message(
     let digest = hasher.finalize().to_hex().to_string();
     Ok(LinkedInConversationMessage {
         thread_id: thread_id.to_owned(),
-        message_id: normalize_message_id(&format!("fallback-{ordinal}-{}", &digest[..16]))?,
+        message_id: normalize_message_id(&format!("fallback-{}", &digest[..16]))?,
         occurred_at: None,
         text,
     })
@@ -1814,12 +1842,84 @@ fn first_u64_field(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Op
         .find_map(|key| object.get(*key).and_then(Value::as_u64))
 }
 
+fn first_timestamp_field(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Result<Option<u64>> {
+    first_u64_field(object, keys)
+        .map(normalize_epoch_timestamp_secs)
+        .transpose()
+}
+
+fn normalize_epoch_timestamp_secs(value: u64) -> Result<u64> {
+    if value >= 1_000_000_000_000_000 {
+        return Err(Error::InvalidConfig(
+            "LinkedIn timestamp unit exceeds supported epoch milliseconds".to_owned(),
+        ));
+    }
+    if value >= 10_000_000_000 {
+        return Ok(value / 1_000);
+    }
+    Ok(value)
+}
+
 fn looks_like_linkedin_time(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     if lower.contains(':') && (lower.ends_with("am") || lower.ends_with("pm")) {
         return true;
     }
-    lower == "today" || lower == "yesterday" || lower.contains(" ago")
+    lower == "today"
+        || lower == "yesterday"
+        || lower.contains(" ago")
+        || looks_like_linkedin_date_label(&lower)
+}
+
+fn looks_like_linkedin_date_label(lower: &str) -> bool {
+    let mut parts = lower.split_whitespace();
+    let Some(month) = parts.next() else {
+        return false;
+    };
+    if !matches!(
+        month.trim_end_matches('.'),
+        "jan"
+            | "january"
+            | "feb"
+            | "february"
+            | "mar"
+            | "march"
+            | "apr"
+            | "april"
+            | "may"
+            | "jun"
+            | "june"
+            | "jul"
+            | "july"
+            | "aug"
+            | "august"
+            | "sep"
+            | "sept"
+            | "september"
+            | "oct"
+            | "october"
+            | "nov"
+            | "november"
+            | "dec"
+            | "december"
+    ) {
+        return false;
+    }
+    let Some(day) = parts.next() else {
+        return false;
+    };
+    let day = day.trim_end_matches(',');
+    if !matches!(day.parse::<u8>(), Ok(1..=31)) {
+        return false;
+    }
+    match parts.next() {
+        None => true,
+        Some(year) if year.len() == 4 && year.parse::<u16>().is_ok() => parts.next().is_none(),
+        Some(_) => false,
+    }
 }
 
 fn message_in_backfill_window(
@@ -1833,27 +1933,53 @@ fn message_in_backfill_window(
     occurred_at.saturating_add(backfill_window_secs) >= now
 }
 
-fn linkedin_inbox_message_seen(
+fn claim_linkedin_inbox_message(
     vault: &Vault,
+    config: &LinkedInInboxSyncConfig,
     message: &LinkedInConversationMessage,
 ) -> Result<bool> {
-    let key = linkedin_inbox_seen_key(message);
-    let rtxn = vault.store.env.read_txn()?;
-    Ok(vault.store.sync_state.get(&rtxn, &key)?.is_some())
+    let seen_key = linkedin_inbox_seen_key(config, message);
+    vault.with_write_txn(|wtxn| {
+        if vault.store.sync_state.get(wtxn, &seen_key)?.is_some() {
+            return Ok(false);
+        }
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &seen_key, LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)?;
+        Ok(true)
+    })
 }
 
-fn persist_linkedin_inbox_seen_message(
+fn release_linkedin_inbox_message_claim(
     vault: &Vault,
+    config: &LinkedInInboxSyncConfig,
+    message: &LinkedInConversationMessage,
+) -> Result<()> {
+    let seen_key = linkedin_inbox_seen_key(config, message);
+    vault.with_write_txn(|wtxn| {
+        if vault.store.sync_state.get(wtxn, &seen_key)? == Some(LINKEDIN_INBOX_SYNC_CLAIMED_VALUE) {
+            vault.store.sync_state.delete(wtxn, &seen_key)?;
+        }
+        Ok(())
+    })
+}
+
+fn finalize_linkedin_inbox_seen_message(
+    vault: &Vault,
+    config: &LinkedInInboxSyncConfig,
     message: &LinkedInConversationMessage,
     event_input: &InboundSurfaceEventInput,
-) -> Result<bool> {
-    let seen_key = linkedin_inbox_seen_key(message);
-    let provenance_key = linkedin_inbox_provenance_key(message);
+) -> Result<()> {
+    let seen_key = linkedin_inbox_seen_key(config, message);
+    let provenance_key = linkedin_inbox_provenance_key(config, message);
     let row = LinkedInInboxSyncProvenanceRow {
         schema_version: 1,
         source: LINKEDIN_INBOX_SYNC_SOURCE.to_owned(),
         tier: LINKEDIN_INBOX_SYNC_TIER.to_owned(),
         channel: LINKEDIN_CHANNEL.to_owned(),
+        receiving_address_or_handle: config.receiving_address_or_handle.clone(),
+        session_ref: config.session_ref.clone(),
         thread_id: message.thread_id.clone(),
         message_id: message.message_id.clone(),
         surface_event_id: event_input.event_id.clone(),
@@ -1868,8 +1994,10 @@ fn persist_linkedin_inbox_seen_message(
     })?;
 
     vault.with_write_txn(|wtxn| {
-        if vault.store.sync_state.get(wtxn, &seen_key)?.is_some() {
-            return Ok(false);
+        if vault.store.sync_state.get(wtxn, &seen_key)? != Some(LINKEDIN_INBOX_SYNC_CLAIMED_VALUE) {
+            return Err(Error::ConcurrentWrite(
+                "LinkedIn inbox sync claim missing before finalization",
+            ));
         }
         vault
             .store
@@ -1879,7 +2007,7 @@ fn persist_linkedin_inbox_seen_message(
             .store
             .sync_state
             .put(wtxn, &provenance_key, &encoded)?;
-        Ok(true)
+        Ok(())
     })
 }
 
@@ -1914,17 +2042,43 @@ pub fn linkedin_inbox_sync_provenance_rows(
     Ok(rows)
 }
 
-fn linkedin_inbox_seen_key(message: &LinkedInConversationMessage) -> String {
+fn linkedin_inbox_seen_key(
+    config: &LinkedInInboxSyncConfig,
+    message: &LinkedInConversationMessage,
+) -> String {
     format!(
         "{LINKEDIN_INBOX_SYNC_SEEN_PREFIX}{}",
-        event_hash([message.thread_id.as_str(), message.message_id.as_str()].as_slice())
+        linkedin_inbox_message_key_hash(config, message)
     )
 }
 
-fn linkedin_inbox_provenance_key(message: &LinkedInConversationMessage) -> String {
+fn linkedin_inbox_provenance_key(
+    config: &LinkedInInboxSyncConfig,
+    message: &LinkedInConversationMessage,
+) -> String {
     format!(
         "{LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX}{}",
-        event_hash([message.thread_id.as_str(), message.message_id.as_str()].as_slice())
+        linkedin_inbox_message_key_hash(config, message)
+    )
+}
+
+fn linkedin_inbox_message_key_hash(
+    config: &LinkedInInboxSyncConfig,
+    message: &LinkedInConversationMessage,
+) -> String {
+    let (session_kind, session_ref) = match config.session_ref.as_deref() {
+        Some(session_ref) => ("session", session_ref),
+        None => ("no-session", ""),
+    };
+    event_hash(
+        [
+            config.receiving_address_or_handle.as_str(),
+            session_kind,
+            session_ref,
+            message.thread_id.as_str(),
+            message.message_id.as_str(),
+        ]
+        .as_slice(),
     )
 }
 

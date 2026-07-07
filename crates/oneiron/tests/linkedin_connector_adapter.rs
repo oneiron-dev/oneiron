@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use oneiron::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState,
-    EnqueueOutcome, EntityId, InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL,
+    EnqueueOutcome, EntityId, ErrorKind, InboundSurfaceRouteOutcome, LINKEDIN_CHANNEL,
     LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_CONNECT_REQUEST_VERB,
     LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
     LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
@@ -99,8 +99,17 @@ fn active_linkedin_identity(
     vault: &Vault,
     adapter: &LinkedInMcpConnectorAdapter,
 ) -> Result<(EntityId, EntityId)> {
-    let identity_id = entity(0x51);
-    let agent_ref = entity(0xA1);
+    active_linkedin_identity_with_seeds(vault, adapter, 0x51, 0xA1)
+}
+
+fn active_linkedin_identity_with_seeds(
+    vault: &Vault,
+    adapter: &LinkedInMcpConnectorAdapter,
+    identity_seed: u8,
+    agent_seed: u8,
+) -> Result<(EntityId, EntityId)> {
+    let identity_id = entity(identity_seed);
+    let agent_ref = entity(agent_seed);
     let mut identity = ChannelIdentity::requested(
         LINKEDIN_CHANNEL,
         adapter.receiving_address_or_handle(),
@@ -496,6 +505,14 @@ fn linkedin_inbox_sync_double_poll_routes_no_duplicates_and_imported_external_pr
     assert!(rows.iter().all(|row| row.tier == "external"));
     assert!(
         rows.iter()
+            .all(|row| row.receiving_address_or_handle == "linkedin:member:yura")
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.session_ref.as_deref() == Some("linkedin:session:yura:tokyo-sandbox"))
+    );
+    assert!(
+        rows.iter()
             .all(|row| row.thread_id == "2-jane-doe-abc" && row.channel == LINKEDIN_CHANNEL)
     );
 
@@ -508,6 +525,144 @@ fn linkedin_inbox_sync_double_poll_routes_no_duplicates_and_imported_external_pr
     assert!(second.receipts.is_empty());
     assert_eq!(linkedin_inbox_sync_provenance_rows(&vault)?.len(), 2);
 
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_scopes_seen_rows_by_receiving_identity_and_session() -> Result<()> {
+    let adapter_a = adapter()?;
+    let adapter_b = LinkedInMcpConnectorAdapter::new("linkedin:member:akira")?
+        .with_session_ref("linkedin:session:akira:tokyo-sandbox")?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity_with_seeds(&vault, &adapter_a, 0x51, 0xA1)?;
+    active_linkedin_identity_with_seeds(&vault, &adapter_b, 0x52, 0xA2)?;
+
+    let inbox = json!({
+        "sections": {
+            "inbox": "Messaging\nJane Doe\nShared thread message."
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-shared-thread/",
+                    "context": "inbox",
+                    "text": "Jane Doe"
+                }
+            ]
+        }
+    });
+    let conversation = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-shared-thread/",
+        "messages": [
+            {
+                "id": "shared-msg",
+                "text": "Shared thread message.",
+                "occurred_at": 1_800_000_010_u64
+            }
+        ]
+    });
+    let transport =
+        ScriptedInboxTransport::new(inbox, [("2-shared-thread".to_owned(), conversation)]);
+
+    let config_a = LinkedInInboxSyncConfig::from_adapter(&adapter_a);
+    let config_b = LinkedInInboxSyncConfig::from_adapter(&adapter_b);
+    let mut runner_a = LinkedInInboxSyncRunner::new(&vault, adapter_a, transport.clone(), config_a);
+    let mut runner_b = LinkedInInboxSyncRunner::new(&vault, adapter_b, transport, config_b);
+
+    let first = runner_a.run_once(1_800_000_020)?;
+    let second = runner_b.run_once(1_800_000_020)?;
+    assert_eq!(first.new_messages, 1);
+    assert_eq!(second.new_messages, 1);
+
+    let rows = linkedin_inbox_sync_provenance_rows(&vault)?;
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| {
+        row.receiving_address_or_handle == "linkedin:member:yura"
+            && row.session_ref.as_deref() == Some("linkedin:session:yura:tokyo-sandbox")
+    }));
+    assert!(rows.iter().any(|row| {
+        row.receiving_address_or_handle == "linkedin:member:akira"
+            && row.session_ref.as_deref() == Some("linkedin:session:akira:tokyo-sandbox")
+    }));
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_uses_known_thread_for_message_only_payload() -> Result<()> {
+    let adapter = adapter()?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity(&vault, &adapter)?;
+    let config = LinkedInInboxSyncConfig::from_adapter(&adapter);
+    let inbox = json!({
+        "sections": {
+            "inbox": "Messaging\nJane Doe\nMessage-only payload."
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-message-only/",
+                    "context": "inbox",
+                    "text": "Jane Doe"
+                }
+            ]
+        }
+    });
+    let conversation = json!({
+        "messages": [
+            {
+                "id": "message-only-msg",
+                "text": "Message-only payload.",
+                "occurred_at": 1_800_000_010_u64
+            }
+        ]
+    });
+    let transport =
+        ScriptedInboxTransport::new(inbox, [("2-message-only".to_owned(), conversation)]);
+
+    let mut runner = LinkedInInboxSyncRunner::new(&vault, adapter, transport, config);
+    let report = runner.run_once(1_800_000_020)?;
+    assert_eq!(report.new_messages, 1);
+    let rows = linkedin_inbox_sync_provenance_rows(&vault)?;
+    assert_eq!(rows[0].thread_id, "2-message-only");
+    assert_eq!(rows[0].message_id, "message-only-msg");
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_tool_failures_are_retryable() -> Result<()> {
+    let adapter = adapter()?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity(&vault, &adapter)?;
+    let config = LinkedInInboxSyncConfig::from_adapter(&adapter);
+    let inbox = json!({
+        "sections": {
+            "inbox": "Messaging\nJane Doe\nMissing conversation."
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-missing-conversation/",
+                    "context": "inbox",
+                    "text": "Jane Doe"
+                }
+            ]
+        }
+    });
+    let transport = ScriptedInboxTransport::new(inbox, []);
+    let mut runner = LinkedInInboxSyncRunner::new(&vault, adapter, transport, config);
+
+    let err = runner
+        .run_once(1_800_000_020)
+        .expect_err("missing tool output fails");
+    assert_eq!(err.kind(), ErrorKind::UpstreamToolFailure);
+    assert!(err.is_retryable());
+    assert!(
+        format!("{err}").contains("tool=get_conversation"),
+        "unexpected error: {err}"
+    );
     Ok(())
 }
 
@@ -560,6 +715,97 @@ fn linkedin_inbox_sync_backfill_window_is_configurable() -> Result<()> {
     assert_eq!(rows[0].message_id, "fresh-msg");
     assert_eq!(rows[0].source, "imported");
     assert_eq!(rows[0].tier, "external");
+    Ok(())
+}
+
+#[test]
+fn linkedin_inbox_sync_normalizes_millisecond_timestamps_for_backfill() -> Result<()> {
+    let adapter = adapter()?;
+    let (_tmp, vault) = temp_vault();
+    active_linkedin_identity(&vault, &adapter)?;
+    let config = LinkedInInboxSyncConfig::from_adapter(&adapter).with_backfill_window_secs(60)?;
+    let inbox = json!({
+        "sections": {
+            "inbox": "Messaging\nKenji Mori\nFresh millisecond payload."
+        },
+        "references": {
+            "inbox": [
+                {
+                    "kind": "conversation",
+                    "url": "/messaging/thread/2-ms-timestamps/",
+                    "context": "inbox",
+                    "text": "Kenji Mori"
+                }
+            ]
+        }
+    });
+    let conversation = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-ms-timestamps/",
+        "messages": [
+            {
+                "id": "old-ms",
+                "text": "Old millisecond payload.",
+                "timestamp": 1_799_999_000_000_u64
+            },
+            {
+                "id": "fresh-ms",
+                "text": "Fresh millisecond payload.",
+                "timestamp": 1_800_000_019_000_u64
+            }
+        ]
+    });
+    let transport =
+        ScriptedInboxTransport::new(inbox, [("2-ms-timestamps".to_owned(), conversation)]);
+
+    let mut runner = LinkedInInboxSyncRunner::new(&vault, adapter, transport, config);
+    let report = runner.run_once(1_800_000_020)?;
+    assert_eq!(report.messages_seen, 2);
+    assert_eq!(report.backfill_skipped_messages, 1);
+    assert_eq!(report.new_messages, 1);
+    let rows = linkedin_inbox_sync_provenance_rows(&vault)?;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].message_id, "fresh-ms");
+    assert_eq!(rows[0].occurred_at, Some(1_800_000_019));
+    Ok(())
+}
+
+#[test]
+fn linkedin_fallback_message_ids_are_content_stable_and_date_labels_group_rows() -> Result<()> {
+    let adapter = adapter()?;
+    let output = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-text-fallback/",
+        "sections": {
+            "conversation": "Jane Doe\nJul 1\nFirst dated body.\nKenji Mori\nMar 14\nSecond dated body."
+        }
+    });
+    let shifted_output = json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-text-fallback/",
+        "sections": {
+            "conversation": "Alex Kim\nJun 1\nOlder prepended body.\nJane Doe\nJul 1\nFirst dated body.\nKenji Mori\nMar 14\nSecond dated body."
+        }
+    });
+
+    let events = adapter.normalize_get_conversation_message_events(&output, 1_800_000_020, 60)?;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].message.text.as_deref(), Some("First dated body."));
+    assert_eq!(
+        events[1].message.text.as_deref(),
+        Some("Second dated body.")
+    );
+    let original_ids = events
+        .iter()
+        .map(|event| event.message.message_id.clone())
+        .collect::<Vec<_>>();
+
+    let shifted =
+        adapter.normalize_get_conversation_message_events(&shifted_output, 1_800_000_020, 60)?;
+    assert_eq!(shifted.len(), 3);
+    let shifted_ids = shifted
+        .iter()
+        .map(|event| event.message.message_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(shifted_ids.contains(&original_ids[0].as_str()));
+    assert!(shifted_ids.contains(&original_ids[1].as_str()));
     Ok(())
 }
 
