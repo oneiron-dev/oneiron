@@ -3391,6 +3391,40 @@ impl Vault {
         self.sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))
     }
 
+    pub(crate) fn claim_bodies_for_subjects_matching(
+        &self,
+        subjects: &[EntityId],
+        mut matches: impl FnMut(&ClaimBody, &EntityId) -> bool,
+    ) -> Result<Vec<ClaimBody>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut claims = Vec::new();
+        for subject in subjects {
+            let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
+            for (scanned, entry) in self.store.edges_in.prefix_iter(&rtxn, &prefix)?.enumerate() {
+                if scanned >= MAX_EDGE_QUERY_RESULTS {
+                    return Err(Error::IndexOverflow("claim_bodies_for_subjects"));
+                }
+                let (key, value) = entry?;
+                let claim_id = parse_edge_record(key, value)?.target;
+                let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? else {
+                    continue;
+                };
+                let Some(header) = EntityMetadataHeader::parse(raw) else {
+                    continue;
+                };
+                if header.entity_type != ENTITY_TYPE_CLAIM {
+                    continue;
+                }
+                let body =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                if matches(&body, subject) {
+                    claims.push(body);
+                }
+            }
+        }
+        Ok(claims)
+    }
+
     /// Writes an `edge.provenance` Claim for an EXISTING semantic edge,
     /// applies the contract's SUPERSEDE lifecycle to prior live Claims, and
     /// re-stamps the edge's two hot flags from the deterministic WINNER —
