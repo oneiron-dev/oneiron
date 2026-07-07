@@ -285,6 +285,11 @@ impl ReceiptView {
 /// This is a field-set on the RS1 shared spine, NOT a new receipt kind: it
 /// rides the `fields` map of receipts whose kind is
 /// [`ReceiptKind::is_emit_adjacent`].
+///
+/// The provenance joins (`substrate_ref`, `model`, `reasoning_effort`)
+/// mirror the ratified provenance ABI, where `substrate_ref` and
+/// `reasoning_effort` are themselves optional fields: they are recorded
+/// when the emit's provenance carries them, absent otherwise.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextReceiptFields {
     /// The OF-217 B9 standing-block compile id in effect for this emit.
@@ -316,20 +321,19 @@ impl ContextReceiptFields {
     /// `persona_compile_stamp` records the compile id of the resolved
     /// standing-block prompt in effect; `activated_memory_ids` and
     /// `board_state_ref` record the assembled memory board as shown.
-    #[must_use]
-    pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Self {
-        Self {
+    pub fn from_assembly(persona: &PromptRecompileStamp, board: &EiriMemoryBoard) -> Result<Self> {
+        Ok(Self {
             persona_compile_stamp: format!(
                 "{}:{}",
                 persona.schema_version, persona.resolved_fingerprint
             ),
             activated_memory_ids: board.rows.iter().map(|row| row.id.clone()).collect(),
-            board_state_ref: eiri_memory_board_state_ref(board),
+            board_state_ref: eiri_memory_board_state_ref(board)?,
             substrate_ref: None,
             model: None,
             reasoning_effort: None,
             prompt_input_ref: None,
-        }
+        })
     }
 
     /// Joins the provenance `substrate_ref` (MODEL entity ref) to the stamp.
@@ -394,13 +398,13 @@ impl ContextReceiptFields {
 /// The ref covers the board as shown (rows, scores, budget, companion), so
 /// any drift in retrieval output produces a different ref while already
 /// recorded receipts keep the ref captured at their emit.
-#[must_use]
-pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> String {
-    let bytes = rmp_serde::to_vec_named(board).expect("memory board serializes");
-    format!(
+pub fn eiri_memory_board_state_ref(board: &EiriMemoryBoard) -> Result<String> {
+    let bytes = rmp_serde::to_vec_named(board)
+        .map_err(|_| Error::InvariantViolation("memory board state ref encode failed"))?;
+    Ok(format!(
         "{BOARD_STATE_REF_PREFIX}{}",
         hex_lower(blake3::hash(&bytes).as_bytes())
-    )
+    ))
 }
 
 /// Attaches the OF-369 context field-set to an emit-adjacent receipt.
@@ -3347,6 +3351,7 @@ mod tests {
     fn context_receipt_field_set_rides_emit_receipts_and_round_trips() {
         let board = test_memory_board(0.5);
         let context = ContextReceiptFields::from_assembly(&test_prompt_stamp(), &board)
+            .expect("assembled board stamps")
             .substrate_ref(format!("model:{}", entity(0x77).to_hex()))
             .model("test-model-v1")
             .reasoning_effort("high")
@@ -3365,7 +3370,10 @@ mod tests {
             ]
         );
         assert!(context.board_state_ref.starts_with("board:"));
-        assert_eq!(context.board_state_ref, eiri_memory_board_state_ref(&board));
+        assert_eq!(
+            context.board_state_ref,
+            eiri_memory_board_state_ref(&board).expect("assembled board hashes")
+        );
 
         let mut receipt = projected_receipt(
             "outbound:intent:say-it",
@@ -3403,7 +3411,8 @@ mod tests {
     #[test]
     fn context_receipt_field_set_is_rejected_on_non_emit_receipts() {
         let context =
-            ContextReceiptFields::from_assembly(&test_prompt_stamp(), &test_memory_board(0.5));
+            ContextReceiptFields::from_assembly(&test_prompt_stamp(), &test_memory_board(0.5))
+                .expect("assembled board stamps");
 
         for kind in [
             ReceiptKind::Gate,
@@ -3444,18 +3453,19 @@ mod tests {
     }
 
     #[test]
-    fn board_state_ref_records_the_board_as_shown() {
+    fn board_state_ref_records_the_board_as_shown() -> Result<()> {
         let board = test_memory_board(0.5);
         assert_eq!(
-            eiri_memory_board_state_ref(&board),
-            eiri_memory_board_state_ref(&test_memory_board(0.5)),
+            eiri_memory_board_state_ref(&board)?,
+            eiri_memory_board_state_ref(&test_memory_board(0.5))?,
             "same board as shown, same ref"
         );
         assert_ne!(
-            eiri_memory_board_state_ref(&board),
-            eiri_memory_board_state_ref(&test_memory_board(0.75)),
+            eiri_memory_board_state_ref(&board)?,
+            eiri_memory_board_state_ref(&test_memory_board(0.75))?,
             "retrieval drift changes the ref"
         );
+        Ok(())
     }
 
     #[test]

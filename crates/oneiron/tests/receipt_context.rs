@@ -87,7 +87,7 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
     assert!(!board.rows.is_empty(), "activation set is non-empty");
 
     let stamp = persona_stamp();
-    let context = ContextReceiptFields::from_assembly(&stamp, &board)
+    let context = ContextReceiptFields::from_assembly(&stamp, &board)?
         .substrate_ref(format!("model:{}", entity(0x77).to_hex()))
         .model("test-model-v1")
         .reasoning_effort("medium")
@@ -125,7 +125,7 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
     );
     assert_eq!(
         recorded.board_state_ref,
-        eiri_memory_board_state_ref(&board)
+        eiri_memory_board_state_ref(&board)?
     );
     assert_eq!(
         recorded.substrate_ref.as_deref(),
@@ -148,7 +148,7 @@ fn index_rebuild_does_not_change_a_stored_receipt() -> Result<()> {
     put_memory(&vault, 0x23, "matcha powder from the spring harvest fair")?;
 
     let board_at_emit = assembled_board(&vault)?;
-    let context = ContextReceiptFields::from_assembly(&persona_stamp(), &board_at_emit)
+    let context = ContextReceiptFields::from_assembly(&persona_stamp(), &board_at_emit)?
         .model("test-model-v1");
 
     let mut receipt = outbound_intent_receipt(
@@ -169,7 +169,7 @@ fn index_rebuild_does_not_change_a_stored_receipt() -> Result<()> {
     vault.maintain().rebuild_hnsw().run()?;
 
     let board_after_rebuild = assembled_board(&vault)?;
-    let fresh = ContextReceiptFields::from_assembly(&persona_stamp(), &board_after_rebuild);
+    let fresh = ContextReceiptFields::from_assembly(&persona_stamp(), &board_after_rebuild)?;
     assert_ne!(
         fresh.board_state_ref, context.board_state_ref,
         "the drifted board no longer matches the board as shown at emit"
@@ -198,7 +198,7 @@ fn off_record_session_emit_receipts_are_deleted_at_session_close() -> Result<()>
     put_memory(&vault, 0x22, "matcha whisk and a warm bowl")?;
 
     let board = assembled_board(&vault)?;
-    let context = ContextReceiptFields::from_assembly(&persona_stamp(), &board);
+    let context = ContextReceiptFields::from_assembly(&persona_stamp(), &board)?;
 
     let session_emit = |receipt_id: &str, trigger_ref: &str| -> Result<ReceiptRecord> {
         let mut receipt = outbound_intent_receipt(

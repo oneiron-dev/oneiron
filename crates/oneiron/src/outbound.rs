@@ -346,6 +346,10 @@ pub struct OutboundDispatchRequest {
     pub window_decision: OutboundDeliveryWindowDecision,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
     /// recorded onto the emit receipt for every dispatch outcome.
+    /// Optional by design: RS9 pins one hook at the assembly seam, not a
+    /// wall at dispatch — emits that never ride a context assembly
+    /// (commitment-timer and gap-queue wakes, pre-field-set callers) have
+    /// no board or persona compile to record and dispatch unstamped.
     pub context_receipt: Option<ContextReceiptFields>,
 }
 
