@@ -26,9 +26,10 @@ use crate::types::{
     EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, EdgeKind,
-    EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
-    decode_edge_value_for_kind, encode_edge_value, validate_edge_weight,
+    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    EdgeKind, EdgeProvenanceFlags, EntityId, TimeRange, Vad, WriteEnvelope,
+    decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
+    validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2538,6 +2539,8 @@ fn apply_put(
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
+    } else if entity_type == ENTITY_TYPE_TASK {
+        crate::types::validate_task_body_bytes(data)?;
     }
     if occurred.start > occurred.end {
         return Err(Error::InvalidTimeRange {
@@ -4549,7 +4552,13 @@ mod tests {
         let trigger = EntityId::now();
         vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
         vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, 1, b"person")?;
-        vault.put_entity(&trigger, ENTITY_TYPE_TASK, occurred, 1, b"trigger")?;
+        vault.put_entity(
+            &trigger,
+            ENTITY_TYPE_TASK,
+            occurred,
+            1,
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        )?;
         let envelope = test_write_envelope(actor)?;
 
         let affect_claim = EntityId::now();
@@ -6980,8 +6989,20 @@ mod tests {
         let child = EntityId::now();
         let parent = EntityId::now();
         let occurred = test_time_range(1, 1);
-        vault.put_entity(&child, ENTITY_TYPE_TASK, occurred, 1, b"child")?;
-        vault.put_entity(&parent, ENTITY_TYPE_TASK, occurred, 1, b"parent")?;
+        vault.put_entity(
+            &child,
+            ENTITY_TYPE_TASK,
+            occurred,
+            1,
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        )?;
+        vault.put_entity(
+            &parent,
+            ENTITY_TYPE_TASK,
+            occurred,
+            1,
+            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        )?;
 
         vault
             .batch()

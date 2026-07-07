@@ -971,7 +971,11 @@ mod tests {
         .encode()
     }
 
-    fn put_receiver_entity(vault: &Vault, id: &EntityId, body: &[u8]) {
+    fn task_body() -> Vec<u8> {
+        crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    }
+
+    fn put_receiver_entity(vault: &Vault, id: &EntityId, _body: &[u8]) {
         vault
             .put_entity(
                 id,
@@ -981,7 +985,7 @@ mod tests {
                     end: RECEIVER_SCRUB_LEARNED_AT,
                 },
                 RECEIVER_SCRUB_LEARNED_AT,
-                body,
+                &task_body(),
             )
             .unwrap();
     }

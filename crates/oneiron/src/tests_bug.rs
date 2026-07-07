@@ -1,5 +1,7 @@
 use crate::store::Store;
-use crate::types::{EDGE_VALUE_STRUCTURAL_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
+use crate::types::{
+    EDGE_VALUE_STRUCTURAL_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK, TaskRole, task_body_for_test,
+};
 use crate::*;
 use core::assert_matches;
 
@@ -7,6 +9,10 @@ fn non_finite_edge_value(weight: f32) -> [u8; EDGE_VALUE_STRUCTURAL_LEN] {
     let mut value = [0_u8; EDGE_VALUE_STRUCTURAL_LEN];
     value[..4].copy_from_slice(&weight.to_le_bytes());
     value
+}
+
+fn task_body() -> Vec<u8> {
+    task_body_for_test(TaskRole::Task)
 }
 
 #[test]
@@ -23,14 +29,14 @@ fn test_intra_batch_cycle() {
             ENTITY_TYPE_TASK,
             TimeRange { start: 1, end: 1 },
             2,
-            b"a",
+            &task_body(),
         )
         .put(
             &b,
             ENTITY_TYPE_TASK,
             TimeRange { start: 3, end: 3 },
             4,
-            b"b",
+            &task_body(),
         )
         .commit()
         .unwrap();
@@ -114,7 +120,7 @@ fn sources_reject_corrupted_edge_key_length() {
             ENTITY_TYPE_TASK,
             TimeRange { start: 1, end: 1 },
             2,
-            b"parent",
+            &task_body(),
         )
         .commit()
         .unwrap();
@@ -312,14 +318,14 @@ fn non_finite_edge_payload_rejected_by_all_read_paths() {
                         ENTITY_TYPE_TASK,
                         TimeRange { start: 1, end: 1 },
                         2,
-                        b"src",
+                        &task_body(),
                     )
                     .put(
                         &tgt,
                         ENTITY_TYPE_TASK,
                         TimeRange { start: 1, end: 1 },
                         2,
-                        b"tgt",
+                        &task_body(),
                     )
                     .commit()
                     .unwrap();
@@ -350,14 +356,14 @@ fn non_finite_edge_payload_rejected_by_all_read_paths() {
                         ENTITY_TYPE_TASK,
                         TimeRange { start: 1, end: 1 },
                         2,
-                        b"src",
+                        &task_body(),
                     )
                     .put(
                         &tgt,
                         ENTITY_TYPE_TASK,
                         TimeRange { start: 1, end: 1 },
                         2,
-                        b"tgt",
+                        &task_body(),
                     )
                     .commit()
                     .unwrap();
@@ -396,7 +402,7 @@ fn batch_in_put_failure_does_not_commit_partial_entity_update() {
     let new_occurred = TimeRange { start: 20, end: 25 };
 
     vault
-        .put_entity(&id, ENTITY_TYPE_TASK, old_occurred, 11, b"old")
+        .put_entity(&id, ENTITY_TYPE_TASK, old_occurred, 11, &task_body())
         .unwrap();
     let before_raw = vault.get_raw(&id).unwrap().unwrap();
 

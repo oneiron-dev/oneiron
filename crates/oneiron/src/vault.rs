@@ -7842,7 +7842,13 @@ mod tests {
                 4,
                 b"list-b",
             )
-            .put(&task, ENTITY_TYPE_TASK, range(5, 5), 6, b"task")
+            .put(
+                &task,
+                ENTITY_TYPE_TASK,
+                range(5, 5),
+                6,
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            )
             .commit()?;
 
         assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK_LIST)?, 2);
@@ -7886,9 +7892,27 @@ mod tests {
 
         vault
             .batch()
-            .put(&entity(0x21), ENTITY_TYPE_TASK, range(1, 1), 10, b"early")
-            .put(&entity(0x22), ENTITY_TYPE_TASK, range(2, 2), 30, b"latest")
-            .put(&entity(0x23), ENTITY_TYPE_TASK, range(3, 3), 20, b"middle")
+            .put(
+                &entity(0x21),
+                ENTITY_TYPE_TASK,
+                range(1, 1),
+                10,
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            )
+            .put(
+                &entity(0x22),
+                ENTITY_TYPE_TASK,
+                range(2, 2),
+                30,
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            )
+            .put(
+                &entity(0x23),
+                ENTITY_TYPE_TASK,
+                range(3, 3),
+                20,
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            )
             .commit()?;
 
         assert_eq!(vault.latest_learned_at()?, Some(30));
@@ -7907,7 +7931,13 @@ mod tests {
 
         vault
             .batch()
-            .put(&entity(0x21), ENTITY_TYPE_TASK, range(1, 1), 10, b"task")
+            .put(
+                &entity(0x21),
+                ENTITY_TYPE_TASK,
+                range(1, 1),
+                10,
+                &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            )
             .commit()?;
 
         assert_eq!(

@@ -10312,6 +10312,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidAccessGrantBody
+        | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidCodeArtifactBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
@@ -18760,6 +18761,25 @@ mod tests {
                 .message()
                 .contains("provenance must be a non-empty MessagePack map"),
             "message should expose the specific SKILL validation detail"
+        );
+    }
+
+    #[test]
+    fn core_engine_error_maps_invalid_task_body_to_bad_request() {
+        let error = core_engine_error(
+            "core batch commit failed",
+            oneiron::Error::InvalidTaskBody("missing task role"),
+        );
+
+        assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error.code(), ErrorCode::BadRequest);
+        assert!(
+            error.message().contains("invalid TASK body"),
+            "message should expose the TASK validation failure"
+        );
+        assert!(
+            error.message().contains("missing task role"),
+            "message should expose the specific TASK validation detail"
         );
     }
 

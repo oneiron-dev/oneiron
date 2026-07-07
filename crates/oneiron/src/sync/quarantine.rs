@@ -177,6 +177,7 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
+        | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidPredicate
         | ErrorKind::InvalidEdgeWeight
         | ErrorKind::InvalidVad
@@ -1196,6 +1197,10 @@ mod tests {
         blob
     }
 
+    fn task_body() -> Vec<u8> {
+        crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    }
+
     /// Hand-built 24-byte SemanticBare edge value (weight + created_at +
     /// VAD), bypassing `encode_edge_value`'s own validation.
     fn semantic_edge_value(weight: f32) -> Vec<u8> {
@@ -1276,6 +1281,10 @@ mod tests {
         assert_eq!(
             remote_rejection_reason(&Error::InvalidSkillBody("bad skill")).as_deref(),
             Some("InvalidSkillBody")
+        );
+        assert_eq!(
+            remote_rejection_reason(&Error::InvalidTaskBody("missing task role")).as_deref(),
+            Some("InvalidTaskBody")
         );
     }
 
@@ -1439,7 +1448,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"purge-me",
+                &task_body(),
             )
             .unwrap();
 
@@ -1514,7 +1523,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"purge-me",
+                &task_body(),
             )
             .unwrap();
 
@@ -1581,7 +1590,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"purge-me",
+                &task_body(),
             )
             .unwrap();
 
@@ -1645,18 +1654,10 @@ mod tests {
 
         let a = EntityId::now();
         let b = EntityId::now();
-        let blob_a = entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            b"one-1147-a",
-        );
-        let blob_b = entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            b"one-1147-b",
-        );
+        let body_a = task_body();
+        let body_b = task_body();
+        let blob_a = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body_a);
+        let blob_b = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body_b);
 
         // One commit → one delta → ONE batch txn carrying BOTH ops; the
         // injected LOCAL error aborts it post-batch, hitting the Observer-B
@@ -1698,12 +1699,12 @@ mod tests {
         assert!(report.still_pending.is_empty());
         assert_eq!(
             vault.get(&a).unwrap().as_deref(),
-            Some(b"one-1147-a".as_slice()),
+            Some(body_a.as_slice()),
             "drain must heal the lost entity write"
         );
         assert_eq!(
             vault.get(&b).unwrap().as_deref(),
-            Some(b"one-1147-b".as_slice()),
+            Some(body_b.as_slice()),
             "drain must heal the lost entity write"
         );
         let rtxn = vault.store.env.read_txn().unwrap();
@@ -1741,13 +1742,23 @@ mod tests {
         map_insert_bytes(
             &entities,
             &src.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"src"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                &task_body(),
+            ),
         )
         .unwrap();
         map_insert_bytes(
             &entities,
             &tgt.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                &task_body(),
+            ),
         )
         .unwrap();
         window.doc.commit();
@@ -1834,11 +1845,16 @@ mod tests {
         let window_key = WindowKey::new(WINDOW);
         let doc = create_window_doc("test-user", &window_key);
         let entities = doc.get_map("entities");
-        for (id, data) in endpoints {
+        for (id, _data) in endpoints {
             map_insert_bytes(
                 &entities,
                 &id.to_hex(),
-                &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, data),
+                &entity_blob(
+                    ENTITY_TYPE_TASK,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &task_body(),
+                ),
             )
             .unwrap();
         }
@@ -2015,7 +2031,12 @@ mod tests {
         map_insert_bytes(
             &window.doc.get_map("entities"),
             &tgt.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt"),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                valid_time_range(),
+                LEARNED_AT,
+                &task_body(),
+            ),
         )
         .unwrap();
         window.doc.commit();
@@ -2220,7 +2241,12 @@ mod tests {
         let src = EntityId::now();
         let tgt = EntityId::now();
         let src_blob = entity_blob(200, valid_time_range(), LEARNED_AT, b"bad-src");
-        let tgt_blob = entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"tgt");
+        let tgt_blob = entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        );
         let entities = doc.get_map("entities");
         map_insert_bytes(&entities, &src.to_hex(), &src_blob).unwrap();
         map_insert_bytes(&entities, &tgt.to_hex(), &tgt_blob).unwrap();
@@ -2314,13 +2340,15 @@ mod tests {
 
         let delete_safety = EntityId::now();
         let replay = EntityId::now();
+        let delete_safety_body = task_body();
+        let replay_body = task_body();
         vault
             .put_entity(
                 &delete_safety,
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"live-delete",
+                &delete_safety_body,
             )
             .unwrap();
         vault
@@ -2329,7 +2357,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"live-replay",
+                &replay_body,
             )
             .unwrap();
 
@@ -2353,12 +2381,12 @@ mod tests {
         assert_eq!(count, 0, "both CRDT rows terminate in x: quarantine");
         assert_eq!(
             vault.get(&delete_safety).unwrap().as_deref(),
-            Some(b"live-delete".as_slice()),
+            Some(delete_safety_body.as_slice()),
             "stale delete-safety payload remains live without a tombstone pass"
         );
         assert_eq!(
             vault.get(&replay).unwrap().as_deref(),
-            Some(b"live-replay".as_slice())
+            Some(replay_body.as_slice())
         );
 
         let delete_marker = remat_marker_key(WINDOW, &delete_safety);
@@ -2424,11 +2452,12 @@ mod tests {
         let doc = create_window_doc("test-user", &window_key);
 
         let good = EntityId::now();
+        let good_body = task_body();
         let entities = doc.get_map("entities");
         map_insert_bytes(
             &entities,
             &good.to_hex(),
-            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, b"good"),
+            &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &good_body),
         )
         .unwrap();
         // Undecodable blob + unknown type byte + bad edge key.
@@ -2451,7 +2480,7 @@ mod tests {
         assert_eq!(count, 1, "only the good entity materializes");
         assert_eq!(
             vault.get(&good).unwrap().as_deref(),
-            Some(b"good".as_slice())
+            Some(good_body.as_slice())
         );
 
         let mut reasons: Vec<String> = quarantined_records(&vault)
@@ -2517,9 +2546,15 @@ mod tests {
         let window_key = WindowKey::new(WINDOW);
         let x = EntityId::now();
         let y = EntityId::now();
-        for (id, data) in [(&x, b"x".as_slice()), (&y, b"y".as_slice())] {
+        for id in [&x, &y] {
             vault
-                .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, data)
+                .put_entity(
+                    id,
+                    ENTITY_TYPE_TASK,
+                    valid_time_range(),
+                    LEARNED_AT,
+                    &task_body(),
+                )
                 .unwrap();
         }
 
@@ -2599,7 +2634,7 @@ mod tests {
                 ENTITY_TYPE_TASK,
                 valid_time_range(),
                 LEARNED_AT,
-                b"purge-me",
+                &task_body(),
             )
             .unwrap();
 
