@@ -1,13 +1,23 @@
-//! Outbound action capability manifests for the OF-327 O1 contract.
+//! Outbound action capability manifests and dispatch spine for OF-327.
 //!
-//! This module intentionally stops at schema-on-demand capability discovery.
-//! Dispatch, delivery windows, receipts, and adapter execution live in later
-//! SURF-ENG-06 tickets.
+//! Capability discovery is the O1 field contract. The O2 dispatcher below is
+//! intentionally connector-agnostic: concrete adapters plug in through
+//! [`OutboundExecutionSink`], while delivery-window policy remains a later
+//! evaluator hook.
 
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::Vault;
+use crate::error::Error;
+use crate::gate::{
+    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
+    GateProvenanceHandles,
+};
+use crate::receipt::{ReceiptRecord, outbound_intent_receipt};
+use crate::types::EntityId;
 
 /// Stable manifest shape advertised to agents.
 pub const OUTBOUND_CAPABILITY_MANIFEST_VERSION: &str = "outbound.capability_manifest.v1";
@@ -57,11 +67,423 @@ pub struct OutboundIntent {
     pub verb: String,
     pub channel: String,
     pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
     pub intent_source: String,
     pub trigger_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_ref: Option<String>,
 }
+
+impl OutboundIntent {
+    /// Builds an intent from one of the three O2 trigger doors.
+    #[must_use]
+    pub fn from_trigger(draft: OutboundIntentDraft, trigger: OutboundIntentTrigger) -> Self {
+        Self {
+            actor: draft.actor,
+            on_behalf_of: draft.on_behalf_of,
+            verb: draft.verb,
+            channel: draft.channel,
+            target: draft.target,
+            content_ref: draft.content_ref,
+            idempotency_key: draft.idempotency_key,
+            dedupe_key: draft.dedupe_key,
+            intent_source: trigger.source.as_str().to_owned(),
+            trigger_ref: trigger.trigger_ref,
+            job_ref: trigger.job_ref,
+        }
+    }
+}
+
+/// Intent fields shared by all trigger sources.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundIntentDraft {
+    pub actor: String,
+    pub on_behalf_of: Option<String>,
+    pub verb: String,
+    pub channel: String,
+    pub target: String,
+    pub content_ref: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub dedupe_key: Option<String>,
+}
+
+impl OutboundIntentDraft {
+    #[must_use]
+    pub fn new(
+        actor: impl Into<String>,
+        verb: impl Into<String>,
+        channel: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Self {
+        Self {
+            actor: actor.into(),
+            on_behalf_of: None,
+            verb: verb.into(),
+            channel: channel.into(),
+            target: target.into(),
+            content_ref: None,
+            idempotency_key: None,
+            dedupe_key: None,
+        }
+    }
+
+    #[must_use]
+    pub fn on_behalf_of(mut self, principal: impl Into<String>) -> Self {
+        self.on_behalf_of = Some(principal.into());
+        self
+    }
+
+    #[must_use]
+    pub fn content_ref(mut self, content_ref: impl Into<String>) -> Self {
+        self.content_ref = Some(content_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn idempotency_key(mut self, idempotency_key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(idempotency_key.into());
+        self
+    }
+
+    #[must_use]
+    pub fn dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
+        self.dedupe_key = Some(dedupe_key.into());
+        self
+    }
+}
+
+/// O2 trigger source. All variants converge into [`OutboundIntent`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundIntentSource {
+    /// OF-187 timer wake.
+    Commitment,
+    /// Dreamer gap queue.
+    GapQueue,
+    /// In-session agent action.
+    AgentImmediate,
+}
+
+impl OutboundIntentSource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Commitment => "commitment",
+            Self::GapQueue => "gap_queue",
+            Self::AgentImmediate => "agent_immediate",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "commitment" | "commitment_timer_wake" => Some(Self::Commitment),
+            "gap_queue" => Some(Self::GapQueue),
+            "agent_immediate" => Some(Self::AgentImmediate),
+            _ => None,
+        }
+    }
+}
+
+/// Source-specific trigger envelope for an outbound intent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundIntentTrigger {
+    pub source: OutboundIntentSource,
+    pub trigger_ref: String,
+    pub job_ref: Option<String>,
+}
+
+impl OutboundIntentTrigger {
+    #[must_use]
+    pub fn commitment_timer_wake(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::Commitment,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn gap_queue(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::GapQueue,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn agent_immediate(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::AgentImmediate,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn job_ref(mut self, job_ref: impl Into<String>) -> Self {
+        self.job_ref = Some(job_ref.into());
+        self
+    }
+}
+
+/// Actor context supplied to the outbound dispatch gate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundDispatchActor {
+    pub actor_class: String,
+    pub actor_ref: Option<String>,
+    pub actor_entity_ref: Option<EntityId>,
+}
+
+impl OutboundDispatchActor {
+    #[must_use]
+    pub fn agent(agent_ref: EntityId) -> Self {
+        Self {
+            actor_class: "agent".to_owned(),
+            actor_ref: Some(agent_ref.to_hex()),
+            actor_entity_ref: Some(agent_ref),
+        }
+    }
+
+    fn gate_actor(&self) -> GateActor {
+        GateActor {
+            actor_class: self.actor_class.clone(),
+            actor_ref: self.actor_ref.clone(),
+        }
+    }
+
+    fn provenance(&self) -> GateProvenanceHandles {
+        GateProvenanceHandles {
+            actor_entity_ref: self.actor_entity_ref,
+            ..GateProvenanceHandles::default()
+        }
+    }
+}
+
+/// ExternalEffect policy-risk dial for outbound dispatch.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+pub enum OutboundDispatchPolicyRisk {
+    #[default]
+    Normal,
+    HoldToProposal,
+}
+
+impl OutboundDispatchPolicyRisk {
+    const fn to_gate(self) -> ExternalEffectPolicyRisk {
+        match self {
+            Self::Normal => ExternalEffectPolicyRisk::Normal,
+            Self::HoldToProposal => ExternalEffectPolicyRisk::HoldToProposal,
+        }
+    }
+}
+
+/// Gate facts supplied by the trigger source or caller.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct OutboundDispatchGate {
+    pub has_opted_in: bool,
+    pub has_permission: bool,
+    pub policy_risk: OutboundDispatchPolicyRisk,
+}
+
+impl OutboundDispatchGate {
+    #[must_use]
+    pub const fn allow_when_policy_grants() -> Self {
+        Self {
+            has_opted_in: true,
+            has_permission: true,
+            policy_risk: OutboundDispatchPolicyRisk::Normal,
+        }
+    }
+}
+
+/// Delivery-window stage result. ONE-1500 owns policy; this type is the O2 hook.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum OutboundDeliveryWindowDecision {
+    #[default]
+    DeliverNow,
+    Hold {
+        reason: String,
+        retry_at: Option<u64>,
+    },
+    Degrade {
+        reason: String,
+        from: String,
+        to: String,
+    },
+    LetGo {
+        reason: String,
+    },
+}
+
+impl OutboundDeliveryWindowDecision {
+    fn policy_trace(&self) -> String {
+        match self {
+            Self::DeliverNow => "delivery_window.not_configured".to_owned(),
+            Self::Hold { reason, .. } => format!("delivery_window.hold:{reason}"),
+            Self::Degrade { reason, .. } => format!("delivery_window.degrade:{reason}"),
+            Self::LetGo { reason } => format!("delivery_window.let_go:{reason}"),
+        }
+    }
+}
+
+/// Request envelope for one O2 dispatch pipeline run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundDispatchRequest {
+    pub receipt_id: String,
+    pub intent_ref: String,
+    pub intent: OutboundIntent,
+    pub actor: OutboundDispatchActor,
+    pub gate: OutboundDispatchGate,
+    pub occurred_at: u64,
+    pub channel_identity_ref: Option<EntityId>,
+    pub counterparty_ref: Option<String>,
+    pub window_decision: OutboundDeliveryWindowDecision,
+}
+
+impl OutboundDispatchRequest {
+    #[must_use]
+    pub fn new(
+        receipt_id: impl Into<String>,
+        intent_ref: impl Into<String>,
+        intent: OutboundIntent,
+        actor: OutboundDispatchActor,
+        gate: OutboundDispatchGate,
+        occurred_at: u64,
+    ) -> Self {
+        Self {
+            receipt_id: receipt_id.into(),
+            intent_ref: intent_ref.into(),
+            intent,
+            actor,
+            gate,
+            occurred_at,
+            channel_identity_ref: None,
+            counterparty_ref: None,
+            window_decision: OutboundDeliveryWindowDecision::DeliverNow,
+        }
+    }
+
+    #[must_use]
+    pub fn channel_identity_ref(mut self, identity_ref: EntityId) -> Self {
+        self.channel_identity_ref = Some(identity_ref);
+        self
+    }
+
+    #[must_use]
+    pub fn counterparty_ref(mut self, counterparty_ref: impl Into<String>) -> Self {
+        self.counterparty_ref = Some(counterparty_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn window_decision(mut self, decision: OutboundDeliveryWindowDecision) -> Self {
+        self.window_decision = decision;
+        self
+    }
+}
+
+/// Connector-adapter execution request after resolve, gate, and window stages.
+pub struct OutboundExecutionRequest<'a> {
+    pub intent_ref: &'a str,
+    pub intent: &'a OutboundIntent,
+    pub verb_contract: &'static OutboundVerbContract,
+    pub channel_identity_ref: Option<EntityId>,
+    pub counterparty_ref: Option<&'a str>,
+}
+
+/// Adapter execution outcome consumed by the common receipt emitter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundExecutionOutcome {
+    pub kind: OutboundExecutionOutcomeKind,
+    pub provider_ref: Option<String>,
+    pub retry_state: Option<String>,
+}
+
+/// Typed adapter execution result. Unknown adapter outcomes must be modeled
+/// explicitly instead of being silently collapsed by the dispatcher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum OutboundExecutionOutcomeKind {
+    DeliveredToChannel,
+    Failed,
+}
+
+impl OutboundExecutionOutcome {
+    #[must_use]
+    pub fn delivered_to_channel(provider_ref: impl Into<String>) -> Self {
+        Self {
+            kind: OutboundExecutionOutcomeKind::DeliveredToChannel,
+            provider_ref: Some(provider_ref.into()),
+            retry_state: None,
+        }
+    }
+
+    #[must_use]
+    pub fn failed(reason: impl Into<String>) -> Self {
+        Self {
+            kind: OutboundExecutionOutcomeKind::Failed,
+            provider_ref: None,
+            retry_state: Some(reason.into()),
+        }
+    }
+}
+
+/// Connector execution adapter. Per-connector transport is intentionally O6/06e.
+pub trait OutboundExecutionSink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome;
+}
+
+/// Coarse pipeline outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum OutboundDispatchOutcome {
+    DeliveredToChannel,
+    Held,
+    Degraded,
+    LetGo,
+    Failed,
+    Denied,
+}
+
+impl OutboundDispatchOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeliveredToChannel => "delivered_to_channel",
+            Self::Held => "held",
+            Self::Degraded => "degraded",
+            Self::LetGo => "let_go",
+            Self::Failed => "failed",
+            Self::Denied => "denied",
+        }
+    }
+}
+
+/// Result of the single dispatch pipeline.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundDispatchResult {
+    pub outcome: OutboundDispatchOutcome,
+    pub gate_decision_id: Option<String>,
+    pub gate_outcome: String,
+    pub gate_reason_codes: Vec<String>,
+    pub receipt: ReceiptRecord,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OutboundDispatchError {
+    #[error(transparent)]
+    UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
+    #[error(transparent)]
+    Engine(#[from] Error),
+}
+
+/// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OutboundDispatchPipeline;
 
 /// Whether a verb may interrupt the recipient.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -265,6 +687,261 @@ pub fn outbound_verb_contract(
 #[must_use]
 pub fn unsupported_outbound_connector(connector: &str) -> UnsupportedOutboundCapability {
     unsupported_outbound_capability(normalize_key(connector), None, None)
+}
+
+impl OutboundDispatchPipeline {
+    pub fn dispatch<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
+        let policy_risk = outbound_dispatch_policy_risk(request.gate, verb_contract);
+        let effect = ExternalEffectGateInput {
+            actor: request.actor.gate_actor(),
+            provenance: request.actor.provenance(),
+            verb: verb_contract.kind.clone(),
+            channel: request.intent.channel.clone(),
+            channel_identity_ref: request.channel_identity_ref,
+            counterparty: request
+                .counterparty_ref
+                .clone()
+                .or_else(|| Some(request.intent.target.clone())),
+            brief_ref: request.intent.job_ref.clone(),
+            send_ref: Some(request.intent_ref.clone()),
+            standing_grant_ref: None,
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
+            has_opted_in: request.gate.has_opted_in,
+            has_permission: request.gate.has_permission,
+            policy_risk,
+        };
+
+        let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+        let (gate_decision_id, gate_decision) =
+            gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
+        wtxn.commit().map_err(Error::from)?;
+
+        let gate_outcome = gate_decision.outcome().as_str().to_owned();
+        let gate_reason_codes = gate_decision
+            .reason_codes()
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect::<Vec<_>>();
+
+        let (outcome, execution) = match gate_decision.outcome() {
+            GateOutcome::Allow => match &request.window_decision {
+                OutboundDeliveryWindowDecision::DeliverNow => {
+                    let execution_request = OutboundExecutionRequest {
+                        intent_ref: &request.intent_ref,
+                        intent: &request.intent,
+                        verb_contract,
+                        channel_identity_ref: request.channel_identity_ref,
+                        counterparty_ref: request.counterparty_ref.as_deref(),
+                    };
+                    let execution = sink.execute(&execution_request);
+                    let outcome = match execution.kind {
+                        OutboundExecutionOutcomeKind::DeliveredToChannel => {
+                            OutboundDispatchOutcome::DeliveredToChannel
+                        }
+                        OutboundExecutionOutcomeKind::Failed => OutboundDispatchOutcome::Failed,
+                    };
+                    (outcome, Some(execution))
+                }
+                OutboundDeliveryWindowDecision::Hold { .. } => {
+                    (OutboundDispatchOutcome::Held, None)
+                }
+                OutboundDeliveryWindowDecision::Degrade { .. } => {
+                    (OutboundDispatchOutcome::Degraded, None)
+                }
+                OutboundDeliveryWindowDecision::LetGo { .. } => {
+                    (OutboundDispatchOutcome::LetGo, None)
+                }
+            },
+            GateOutcome::Pending => (OutboundDispatchOutcome::Held, None),
+            GateOutcome::Deny => (OutboundDispatchOutcome::Denied, None),
+        };
+
+        let mut receipt = outbound_intent_receipt(
+            request.receipt_id,
+            request.intent_ref.clone(),
+            &request.intent,
+            request.occurred_at,
+            outcome.as_str(),
+        );
+        receipt
+            .policy_trace
+            .push(request.window_decision.policy_trace());
+        let gate_decision_ref = format!("gate:{}", gate_decision_id.to_hex());
+        receipt
+            .fields
+            .insert("gate_decision_ref".to_owned(), gate_decision_ref.clone());
+        receipt
+            .fields
+            .insert("gate_outcome".to_owned(), gate_outcome.clone());
+        receipt
+            .fields
+            .insert("gate_reason_codes".to_owned(), gate_reason_codes.join(","));
+        receipt.fields.insert(
+            "channel_call".to_owned(),
+            verb_contract.channel_call.clone(),
+        );
+        receipt.fields.insert(
+            "interruption_class".to_owned(),
+            serde_json::to_value(&verb_contract.interruption_class)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "unknown".to_owned()),
+        );
+        receipt.fields.insert(
+            "retry_class".to_owned(),
+            serde_json::to_value(&verb_contract.retry_class)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "unknown".to_owned()),
+        );
+        receipt.fields.insert(
+            "policy_risk".to_owned(),
+            match policy_risk {
+                ExternalEffectPolicyRisk::Normal => "normal",
+                ExternalEffectPolicyRisk::HoldToProposal => "hold_to_proposal",
+            }
+            .to_owned(),
+        );
+        append_optional_receipt_field(
+            &mut receipt,
+            "content_ref",
+            request.intent.content_ref.as_deref(),
+        );
+        append_optional_receipt_field(
+            &mut receipt,
+            "idempotency_key",
+            request.intent.idempotency_key.as_deref(),
+        );
+        append_optional_receipt_field(
+            &mut receipt,
+            "dedupe_key",
+            request.intent.dedupe_key.as_deref(),
+        );
+        append_optional_receipt_field(
+            &mut receipt,
+            "channel_identity_ref",
+            request
+                .channel_identity_ref
+                .map(|identity_ref| identity_ref.to_hex())
+                .as_deref(),
+        );
+        append_optional_receipt_field(
+            &mut receipt,
+            "counterparty_ref",
+            request.counterparty_ref.as_deref(),
+        );
+        if let Some(execution) = execution {
+            append_optional_receipt_field(
+                &mut receipt,
+                "provider_ref",
+                execution.provider_ref.as_deref(),
+            );
+            append_optional_receipt_field(
+                &mut receipt,
+                "retry_state",
+                execution.retry_state.as_deref(),
+            );
+        }
+        append_window_receipt_fields(&mut receipt, &request.window_decision);
+
+        Ok(OutboundDispatchResult {
+            outcome,
+            gate_decision_id: Some(gate_decision_ref),
+            gate_outcome,
+            gate_reason_codes,
+            receipt,
+        })
+    }
+}
+
+impl Vault {
+    pub fn dispatch_outbound_intent<S: OutboundExecutionSink>(
+        &self,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        OutboundDispatchPipeline.dispatch(self, request, sink)
+    }
+}
+
+fn outbound_dispatch_policy_risk(
+    gate: OutboundDispatchGate,
+    verb_contract: &OutboundVerbContract,
+) -> ExternalEffectPolicyRisk {
+    if gate.policy_risk == OutboundDispatchPolicyRisk::HoldToProposal
+        || verb_contract.capability_vs_permission.policy_risk
+    {
+        ExternalEffectPolicyRisk::HoldToProposal
+    } else {
+        gate.policy_risk.to_gate()
+    }
+}
+
+fn append_optional_receipt_field(
+    receipt: &mut ReceiptRecord,
+    key: &'static str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value
+        && !value.trim().is_empty()
+    {
+        receipt.fields.insert(key.to_owned(), value.to_owned());
+    }
+}
+
+fn append_window_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    decision: &OutboundDeliveryWindowDecision,
+) {
+    match decision {
+        OutboundDeliveryWindowDecision::DeliverNow => {
+            receipt
+                .fields
+                .insert("window_action".to_owned(), "deliver_now".to_owned());
+        }
+        OutboundDeliveryWindowDecision::Hold { reason, retry_at } => {
+            receipt
+                .fields
+                .insert("window_action".to_owned(), "hold".to_owned());
+            receipt
+                .fields
+                .insert("window_reason".to_owned(), reason.clone());
+            if let Some(retry_at) = retry_at {
+                receipt
+                    .fields
+                    .insert("retry_at".to_owned(), retry_at.to_string());
+            }
+        }
+        OutboundDeliveryWindowDecision::Degrade { reason, from, to } => {
+            receipt
+                .fields
+                .insert("window_action".to_owned(), "degrade".to_owned());
+            receipt
+                .fields
+                .insert("window_reason".to_owned(), reason.clone());
+            receipt
+                .fields
+                .insert("degrade_from".to_owned(), from.clone());
+            receipt.fields.insert("degrade_to".to_owned(), to.clone());
+        }
+        OutboundDeliveryWindowDecision::LetGo { reason } => {
+            receipt
+                .fields
+                .insert("window_action".to_owned(), "let_go".to_owned());
+            receipt
+                .fields
+                .insert("window_reason".to_owned(), reason.clone());
+        }
+    }
 }
 
 fn unsupported_outbound_capability(
@@ -788,6 +1465,124 @@ fn normalize_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmpv::Value;
+
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::store::Store;
+    use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, VaultConfig};
+
+    fn temp_vault() -> (tempfile::TempDir, Vault) {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+        (tmp, vault)
+    }
+
+    fn entity(seed: u8) -> EntityId {
+        let mut bytes = [seed; ENTITY_ID_LEN];
+        bytes[0] = seed.max(1);
+        EntityId::from_bytes(bytes).expect("test entity id")
+    }
+
+    fn policy_manifest(actor_ref: &str, channel: &str, verbs: &[&str]) -> Vec<u8> {
+        let scoped_grants = verbs
+            .iter()
+            .map(|verb| {
+                Value::Map(vec![
+                    (Value::from("actor_ref"), Value::from(actor_ref)),
+                    (
+                        Value::from("effector"),
+                        Value::from(format!("external:{verb}")),
+                    ),
+                    (
+                        Value::from("scope"),
+                        Value::Map(vec![(Value::from("channel"), Value::from(channel))]),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let entries = vec![
+            (Value::from("schema_version"), Value::from("1.1")),
+            (Value::from("pack_id"), Value::from("outbound-o2-test")),
+            (Value::from("pack_version"), Value::from("v1")),
+            (
+                Value::from("min_engine_version"),
+                Value::from(env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                Value::from("defaults"),
+                Value::Map(vec![
+                    (Value::from("criticality"), Value::from("normal")),
+                    (Value::from("sensitivity"), Value::from("normal")),
+                ]),
+            ),
+            (Value::from("rules"), Value::Array(Vec::new())),
+            (
+                Value::from("actor_ceilings"),
+                Value::Array(vec![Value::Map(vec![
+                    (Value::from("actor_class"), Value::from("agent")),
+                    (Value::from("actor_ref"), Value::from(actor_ref)),
+                    (Value::from("ceiling"), Value::from("auto")),
+                ])]),
+            ),
+            (Value::from("scoped_grants"), Value::Array(scoped_grants)),
+        ];
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("manifest encode");
+        out
+    }
+
+    fn put_policy_manifest(vault: &Vault, seed: u8, data: &[u8]) -> crate::Result<()> {
+        let id = entity(seed);
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+        payload.push(ENTITY_TYPE_POLICY_MANIFEST);
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(data);
+
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+            let type_key = Store::encode_type_key(ENTITY_TYPE_POLICY_MANIFEST, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+    }
+
+    struct RecordingExecutor {
+        calls: Vec<(String, String, String)>,
+        outcome: OutboundExecutionOutcome,
+    }
+
+    impl Default for RecordingExecutor {
+        fn default() -> Self {
+            Self {
+                calls: Vec::new(),
+                outcome: OutboundExecutionOutcome::delivered_to_channel("provider:message:one"),
+            }
+        }
+    }
+
+    impl OutboundExecutionSink for RecordingExecutor {
+        fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.calls.push((
+                request.intent_ref.to_owned(),
+                request.intent.channel.clone(),
+                request.verb_contract.kind.clone(),
+            ));
+            self.outcome.clone()
+        }
+    }
+
+    fn dispatch_intent(trigger: OutboundIntentTrigger) -> OutboundIntent {
+        OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com")
+                .on_behalf_of("owner")
+                .content_ref("content:invite-kenji")
+                .idempotency_key("idem:invite-kenji")
+                .dedupe_key("dedupe:invite-kenji"),
+            trigger,
+        )
+    }
 
     #[test]
     fn every_outbound_verb_declares_the_closed_seven_field_contract() {
@@ -855,6 +1650,309 @@ mod tests {
         };
         let value = serde_json::to_value(&brief_rooted).expect("serialize intent");
         assert_eq!(value["job_ref"], "brief:party");
+    }
+
+    #[test]
+    fn three_trigger_doors_converge_into_one_intent_shape() {
+        let commitment = dispatch_intent(OutboundIntentTrigger::commitment_timer_wake(
+            "commitment:party-reminder",
+        ));
+        assert_eq!(commitment.intent_source, "commitment");
+        assert_eq!(commitment.trigger_ref, "commitment:party-reminder");
+
+        let gap = dispatch_intent(OutboundIntentTrigger::gap_queue("gap:unresolved-thread"));
+        assert_eq!(gap.intent_source, "gap_queue");
+        assert_eq!(gap.trigger_ref, "gap:unresolved-thread");
+
+        let immediate = dispatch_intent(
+            OutboundIntentTrigger::agent_immediate("session:reply-now").job_ref("brief:party"),
+        );
+        assert_eq!(immediate.intent_source, "agent_immediate");
+        assert_eq!(immediate.job_ref.as_deref(), Some("brief:party"));
+        assert_eq!(
+            immediate.idempotency_key.as_deref(),
+            Some("idem:invite-kenji")
+        );
+        assert_eq!(immediate.dedupe_key.as_deref(), Some("dedupe:invite-kenji"));
+    }
+
+    #[test]
+    fn dispatch_pipeline_resolves_gates_executes_and_emits_receipt()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA1);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let intent = dispatch_intent(
+            OutboundIntentTrigger::agent_immediate("session:send-now").job_ref("brief:party"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:invite-kenji",
+            "intent:invite-kenji",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_000,
+        )
+        .counterparty_ref("counterparty:kenji");
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+        assert_eq!(
+            executor.calls,
+            vec![(
+                "intent:invite-kenji".to_owned(),
+                "email".to_owned(),
+                "send".to_owned()
+            )]
+        );
+        assert_eq!(result.gate_outcome, "allow");
+        assert_eq!(result.gate_reason_codes, vec!["gate.allow"]);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("gate_decision_ref")
+                .map(String::as_str),
+            result.gate_decision_id.as_deref()
+        );
+        assert!(!result.receipt.fields.contains_key("gate_decision_id"));
+        assert_eq!(result.receipt.outcome, "delivered_to_channel");
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("channel_call")
+                .map(String::as_str),
+            Some("send_email")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("provider_ref")
+                .map(String::as_str),
+            Some("provider:message:one")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("idempotency_key")
+                .map(String::as_str),
+            Some("idem:invite-kenji")
+        );
+        assert_eq!(
+            result.receipt.fields.get("dedupe_key").map(String::as_str),
+            Some("dedupe:invite-kenji")
+        );
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("deliver_now")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.not_configured".to_owned())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_records_typed_failed_execution()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA5);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD3,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:failed-send",
+            "intent:failed-send",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate(
+                "session:failed-send",
+            )),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_040,
+        );
+
+        let mut executor = RecordingExecutor {
+            outcome: OutboundExecutionOutcome::failed("transport_timeout"),
+            ..RecordingExecutor::default()
+        };
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+        assert_eq!(result.receipt.outcome, "failed");
+        assert_eq!(
+            result.receipt.fields.get("retry_state").map(String::as_str),
+            Some("transport_timeout")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_holds_gate_pending_without_executing()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA2);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD1,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let gate = OutboundDispatchGate {
+            has_opted_in: true,
+            has_permission: false,
+            policy_risk: OutboundDispatchPolicyRisk::Normal,
+        };
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:held",
+            "intent:held",
+            dispatch_intent(OutboundIntentTrigger::agent_immediate("session:held")),
+            actor,
+            gate,
+            1_010,
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "pending");
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("gate_reason_codes")
+                .map(String::as_str),
+            Some("gate.pending.external_effect_authority")
+        );
+        assert_eq!(result.receipt.outcome, "held");
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA3);
+        let actor = OutboundDispatchActor::agent(agent);
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "edit", "line", "line:user:kenji"),
+            OutboundIntentTrigger::agent_immediate("session:edit"),
+        );
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:line-edit",
+            "intent:line-edit",
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_020,
+        );
+
+        let mut executor = RecordingExecutor::default();
+        let error = vault
+            .dispatch_outbound_intent(request, &mut executor)
+            .expect_err("line edit should fail capability resolution");
+
+        assert!(executor.calls.is_empty());
+        match error {
+            OutboundDispatchError::UnsupportedCapability(error) => {
+                assert_eq!(error.connector(), "line");
+                assert_eq!(error.verb(), Some("edit"));
+            }
+            OutboundDispatchError::Engine(error) => panic!("unexpected engine error: {error}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_pipeline_window_hold_skips_execution_after_gate_allow()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA4);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD2,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+
+        let request = OutboundDispatchRequest::new(
+            "outbound:intent:window-held",
+            "intent:window-held",
+            dispatch_intent(OutboundIntentTrigger::commitment_timer_wake(
+                "commitment:morning",
+            )),
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_030,
+        )
+        .window_decision(OutboundDeliveryWindowDecision::Hold {
+            reason: "quiet_window".to_owned(),
+            retry_at: Some(2_000),
+        });
+
+        let mut executor = RecordingExecutor::default();
+        let result = vault.dispatch_outbound_intent(request, &mut executor)?;
+
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert!(executor.calls.is_empty());
+        assert_eq!(result.gate_outcome, "allow");
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("window_action")
+                .map(String::as_str),
+            Some("hold")
+        );
+        assert_eq!(
+            result.receipt.fields.get("retry_at").map(String::as_str),
+            Some("2000")
+        );
+        assert!(
+            result
+                .receipt
+                .policy_trace
+                .contains(&"delivery_window.hold:quiet_window".to_owned())
+        );
+        Ok(())
     }
 
     #[test]
