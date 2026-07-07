@@ -1793,6 +1793,16 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     ),
                 ]),
                 Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("commitment.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                Value::Map(vec![
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(PREDICATE_EDGE_PROVENANCE),

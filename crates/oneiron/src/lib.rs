@@ -18,6 +18,7 @@ pub mod code_run;
 pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
+pub mod commitment;
 pub mod context_pack;
 pub mod counterparty_contact;
 pub mod critic;
@@ -193,6 +194,13 @@ pub use crate::codebase::{
     CODEBASE_SNAPSHOT_MAX_FILES, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
     CodebaseSnapshot, RepoIngestConfig, RepoIngestResult, RepoRef, decode_codebase_snapshot,
     encode_codebase_snapshot,
+};
+pub use crate::commitment::{
+    COMMITMENT_CLAIM_PREDICATES, COMMITMENT_VALUE_KEYS, COMMITMENT_VALUE_SCHEMA_VERSION,
+    CommitmentBirthKind, CommitmentBirthProvenance, CommitmentContent, CommitmentObligor,
+    CommitmentObligorKind, CommitmentRecord, CommitmentStatus, CommitmentStrength,
+    PREDICATE_COMMITMENT_RECORD, commitment_claim_candidate, decode_commitment_claim,
+    decode_commitment_value, encode_commitment_value, is_commitment_claim_predicate,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
 pub use crate::counterparty_contact::{

@@ -1322,6 +1322,8 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;
+    } else if crate::commitment::is_commitment_claim_predicate(&body.predicate) {
+        crate::commitment::validate_commitment_claim_structure(&body)?;
     }
     Ok(body)
 }
