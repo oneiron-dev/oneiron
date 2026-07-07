@@ -1078,10 +1078,10 @@ mod tests {
 
         // Re-fencing a promoted turn would let close delete a turn whose
         // durable promote receipt pins its survival — rejected.
-        let refence = vault
+        let retag = vault
             .tag_turn_off_record("sess-promote", &kept)
             .expect_err("re-tag of a promoted turn");
-        assert_eq!(refence.kind(), ErrorKind::InvariantViolation);
+        assert_eq!(retag.kind(), ErrorKind::InvariantViolation);
 
         let receipt_log = vault
             .off_record_receipt_log("sess-promote")
