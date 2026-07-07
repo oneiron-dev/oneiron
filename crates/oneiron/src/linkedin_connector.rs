@@ -7,6 +7,7 @@
 //! touching a live LinkedIn session.
 
 use std::collections::{BTreeMap, HashSet};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -44,6 +45,8 @@ const MAX_LINKEDIN_INTENT_REF_BYTES: usize = 512;
 const MAX_LINKEDIN_ERROR_CODE_BYTES: usize = 96;
 const DEFAULT_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 3;
 const MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS: usize = 25;
+const LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS: u64 = 25;
+const LINKEDIN_SEND_VERIFY_BACKOFF_MAX_MS: u64 = 250;
 
 const RECEIPT_FIELD_LINKEDIN_THREAD_REF: &str = "linkedin_thread_ref";
 const RECEIPT_FIELD_ARTIFACT_THREAD_MESSAGE_REF: &str = "artifact_thread_message_ref";
@@ -482,12 +485,22 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             Err(err) => {
                 fields.insert(
                     RECEIPT_FIELD_SEND_MESSAGE_RESULT.to_owned(),
-                    "ignored_error".to_owned(),
+                    "failed".to_owned(),
                 );
                 fields.insert(
                     RECEIPT_FIELD_SEND_MESSAGE_TOOL_ERROR.to_owned(),
                     receipt_error_code(&err),
                 );
+                fields.insert(
+                    RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
+                    "send_message_failed".to_owned(),
+                );
+                fields.insert(
+                    RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
+                    "0".to_owned(),
+                );
+                return OutboundExecutionOutcome::failed("verify_after_send_send_message_failed")
+                    .with_receipt_fields(fields);
             }
         }
 
@@ -508,7 +521,9 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                             return OutboundExecutionOutcome::delivered_to_channel(message_ref)
                                 .with_receipt_fields(fields);
                         }
-                        Ok(None) => {}
+                        Ok(None) => {
+                            last_get_error = None;
+                        }
                         Err(err) => {
                             last_get_error = Some(receipt_error_code(&err.to_string()));
                         }
@@ -517,6 +532,9 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                 Err(err) => {
                     last_get_error = Some(receipt_error_code(&err));
                 }
+            }
+            if attempt < plan.max_observation_attempts {
+                sleep_before_next_linkedin_observation(attempt);
             }
         }
 
@@ -717,13 +735,43 @@ fn linkedin_thread_message_ref(thread_id: &str, message_text: &str) -> String {
 }
 
 fn conversation_contains_message(conversation_text: &str, message_text: &str) -> bool {
-    let conversation = normalize_whitespace(conversation_text);
     let message = normalize_whitespace(message_text);
-    !message.is_empty() && conversation.contains(&message)
+    if message.is_empty() {
+        return false;
+    }
+    let conversation_lines = conversation_text
+        .lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if conversation_lines.is_empty() {
+        return false;
+    }
+    let message_line_count = message_text
+        .lines()
+        .map(normalize_whitespace)
+        .filter(|line| !line.is_empty())
+        .count()
+        .max(1);
+    if message_line_count > conversation_lines.len() {
+        return false;
+    }
+    let tail = conversation_lines[conversation_lines.len() - message_line_count..].join(" ");
+    normalize_whitespace(&tail) == message
 }
 
 fn normalize_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn sleep_before_next_linkedin_observation(attempt: usize) {
+    let attempt = u64::try_from(attempt).unwrap_or(u64::MAX);
+    let delay_ms = LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS
+        .saturating_mul(attempt)
+        .min(LINKEDIN_SEND_VERIFY_BACKOFF_MAX_MS);
+    if delay_ms > 0 {
+        std::thread::sleep(Duration::from_millis(delay_ms));
+    }
 }
 
 fn receipt_error_code(value: &str) -> String {
