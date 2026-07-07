@@ -613,6 +613,105 @@ impl GeneratedUiRender {
             .collect()
     }
 
+    pub fn from_segments(segments: &[GeneratedUiSegment]) -> Result<Self> {
+        let Some((start_segment, rest)) = segments.split_first() else {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must contain card_start".to_string(),
+            ));
+        };
+        let GeneratedUiSegment::CardStart(start) = start_segment else {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must start with card_start".to_string(),
+            ));
+        };
+        start.validate()?;
+
+        let mut nodes = Vec::with_capacity(start.node_count);
+        let mut budget = LensBudget::default();
+        let mut saw_state_update = false;
+
+        for segment in rest {
+            match segment {
+                GeneratedUiSegment::CardStart(_) => {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui segment stream must contain exactly one card_start"
+                            .to_string(),
+                    ));
+                }
+                GeneratedUiSegment::CardElement(element) => {
+                    if saw_state_update {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_element segments must precede card_state_update"
+                                .to_string(),
+                        ));
+                    }
+                    validate_generated_ui_protocol_version(element.protocol_version)?;
+                    if element.card_id != start.card_id {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_element card_id must match card_start".to_string(),
+                        ));
+                    }
+                    element.node.validate_with_budget(&mut budget)?;
+                    nodes.push(element.node.clone());
+                }
+                GeneratedUiSegment::CardStateUpdate(state) => {
+                    if saw_state_update {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui segment stream must contain exactly one card_state_update"
+                                .to_string(),
+                        ));
+                    }
+                    state.validate()?;
+                    if state.card_id != start.card_id {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update card_id must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    if state.data_model.root != start.root {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update root must match card_start".to_string(),
+                        ));
+                    }
+                    if state.data_model.catalog != start.catalog {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update catalog must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    if state.data_model.node_count != start.node_count {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update node count must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    saw_state_update = true;
+                }
+            }
+        }
+
+        if !saw_state_update {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must end with card_state_update".to_string(),
+            ));
+        }
+        if nodes.len() != start.node_count {
+            return Err(Error::InvalidConfig(
+                "generated-ui card_element count must match card_start node count".to_string(),
+            ));
+        }
+
+        let render = Self {
+            protocol_version: start.protocol_version,
+            catalog: start.catalog,
+            card_id: start.card_id.clone(),
+            root: start.root.clone(),
+            nodes,
+        };
+        render.validate()?;
+        Ok(render)
+    }
+
     fn validate(&self) -> Result<()> {
         if self.protocol_version != GENERATED_UI_WIRE_VERSION {
             return Err(Error::InvalidConfig(format!(
@@ -866,7 +965,7 @@ pub struct GeneratedUiCardStart {
 impl GeneratedUiCardStart {
     fn validate(&self) -> Result<()> {
         validate_generated_ui_protocol_version(self.protocol_version)?;
-        validate_lens_collection_len("generated-ui segment node count", self.node_count)?;
+        validate_generated_ui_node_count("generated-ui segment node count", self.node_count)?;
         validate_required_lens_text("generated-ui segment fallbackText", &self.fallback_text)
     }
 }
@@ -980,7 +1079,7 @@ impl<'de> Deserialize<'de> for GeneratedUiCardStateUpdate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiDataModel {
     pub root: LensAtomId,
@@ -990,7 +1089,31 @@ pub struct GeneratedUiDataModel {
 
 impl GeneratedUiDataModel {
     fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("generated-ui data model node count", self.node_count)
+        validate_generated_ui_node_count("generated-ui data model node count", self.node_count)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiDataModel {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiDataModelWire {
+            root: LensAtomId,
+            node_count: usize,
+            catalog: GeneratedUiCatalog,
+        }
+
+        let wire = GeneratedUiDataModelWire::deserialize(deserializer)?;
+        let data_model = Self {
+            root: wire.root,
+            node_count: wire.node_count,
+            catalog: wire.catalog,
+        };
+        data_model.validate().map_err(de::Error::custom)?;
+        Ok(data_model)
     }
 }
 
@@ -3179,6 +3302,14 @@ fn validate_lens_collection_len(context: &str, len: usize) -> Result<()> {
     Ok(())
 }
 
+fn validate_generated_ui_node_count(context: &str, len: usize) -> Result<()> {
+    validate_lens_collection_len(context, len)?;
+    if len == 0 {
+        return Err(Error::InvalidConfig(format!("{context} must be non-zero")));
+    }
+    Ok(())
+}
+
 fn validate_required_lens_text(context: &str, value: &LensText) -> Result<()> {
     if value.as_str().trim().is_empty() {
         return Err(Error::InvalidConfig(format!("{context} must not be empty")));
@@ -3989,6 +4120,7 @@ mod tests {
             segments.last(),
             Some(GeneratedUiSegment::CardStateUpdate(_))
         ));
+        assert_eq!(GeneratedUiRender::from_segments(&segments)?, render);
 
         let content_parts = render.content_parts()?;
         assert_eq!(content_parts.len(), segments.len());
@@ -4003,6 +4135,156 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn generated_ui_segment_stream_rejects_incoherent_sequences() -> Result<()> {
+        let mut root = LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Sheet(CollectionAtom {
+                title: text("Card"),
+                rows: Vec::new(),
+            }),
+            text("Card fallback"),
+        );
+        root.children.push(LensNode::with_fallback_text(
+            id("body"),
+            LensAtom::StatusDot(status()),
+            text("Body"),
+        ));
+
+        let render = GeneratedUiCard::card(render_id("card-1"), root)?.render()?;
+        let segments = render.segments();
+
+        let mut wrong_element_card = segments.clone();
+        if let GeneratedUiSegment::CardElement(element) = &mut wrong_element_card[1] {
+            element.card_id = render_id("foreign-card");
+        } else {
+            panic!("expected card element");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_element_card).is_err(),
+            "streamed elements must not belong to another card"
+        );
+
+        let mut wrong_state_root = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_root.last_mut() {
+            state.data_model.root = id("foreign-root");
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_root).is_err(),
+            "stream state root must agree with card_start"
+        );
+
+        let mut wrong_state_card = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_card.last_mut() {
+            state.card_id = render_id("foreign-card");
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_card).is_err(),
+            "stream state card_id must agree with card_start"
+        );
+
+        let mut wrong_state_count = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_count.last_mut() {
+            state.data_model.node_count += 1;
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_count).is_err(),
+            "stream state nodeCount must agree with card_start"
+        );
+
+        let mut duplicate_start = segments.clone();
+        duplicate_start.insert(1, duplicate_start[0].clone());
+        assert!(
+            GeneratedUiRender::from_segments(&duplicate_start).is_err(),
+            "a stream must contain exactly one card_start"
+        );
+
+        let mut state_before_elements = segments.clone();
+        let state = state_before_elements.pop().expect("state update");
+        state_before_elements.insert(1, state);
+        assert!(
+            GeneratedUiRender::from_segments(&state_before_elements).is_err(),
+            "state update must not arrive before all card elements"
+        );
+
+        let mut missing_element = segments.clone();
+        missing_element.remove(1);
+        assert!(
+            GeneratedUiRender::from_segments(&missing_element).is_err(),
+            "element count must match card_start nodeCount"
+        );
+
+        let mut missing_state = segments.clone();
+        missing_state.pop();
+        assert!(
+            GeneratedUiRender::from_segments(&missing_state).is_err(),
+            "stream must end with card_state_update"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn generated_ui_segment_stream_enforces_aggregate_budget() {
+        let mut root = generated_ui_node("root", None, &["child"]);
+        root.bindings = (0..(MAX_LENS_COLLECTION_ITEMS - 1))
+            .map(|index| LensHandleRef {
+                name: handle(&format!("binding-{index}")),
+                role: LensHandleRole::ClaimSet,
+            })
+            .collect();
+
+        let mut child = generated_ui_node("child", Some("root"), &[]);
+        child.atom = LensAtom::TextBlock(TextBlockAtom {
+            spans: vec![LensTextSpan::Literal(text("x"))],
+        });
+
+        let segments = vec![
+            GeneratedUiSegment::CardStart(GeneratedUiCardStart {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                catalog: GeneratedUiCatalog::LensAtomKit,
+                card_id: render_id("card-1"),
+                root: id("root"),
+                node_count: 2,
+                fallback_text: text("root"),
+            }),
+            GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                node: root,
+            })),
+            GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                node: child,
+            })),
+            GeneratedUiSegment::CardStateUpdate(GeneratedUiCardStateUpdate {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                data_model: GeneratedUiDataModel {
+                    root: id("root"),
+                    node_count: 2,
+                    catalog: GeneratedUiCatalog::LensAtomKit,
+                },
+            }),
+        ];
+
+        assert!(
+            segments.iter().all(|segment| segment.validate().is_ok()),
+            "individual segments stay under per-segment limits"
+        );
+        assert!(
+            GeneratedUiRender::from_segments(&segments).is_err(),
+            "stream validation must preserve one aggregate lens budget across elements"
+        );
     }
 
     #[test]
@@ -4267,6 +4549,47 @@ mod tests {
                 "segment payloads must reject unsupported generated-ui wire versions"
             );
         }
+
+        for segment in [
+            json!({
+                "segment": "card_start",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION,
+                    "catalog": "lens_atom_kit",
+                    "cardId": "card-1",
+                    "root": "root",
+                    "nodeCount": 0,
+                    "fallbackText": "root"
+                }
+            }),
+            json!({
+                "segment": "card_state_update",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION,
+                    "cardId": "card-1",
+                    "dataModel": {
+                        "root": "root",
+                        "nodeCount": 0,
+                        "catalog": "lens_atom_kit"
+                    }
+                }
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<GeneratedUiSegment>(segment).is_err(),
+                "segment payloads must reject zero nodeCount"
+            );
+        }
+
+        let zero_node_data_model = json!({
+            "root": "root",
+            "nodeCount": 0,
+            "catalog": "lens_atom_kit"
+        });
+        assert!(
+            serde_json::from_value::<GeneratedUiDataModel>(zero_node_data_model).is_err(),
+            "generated-ui data model must reject zero nodeCount"
+        );
 
         let raw_url_handle = json!({
             "kind": "media",
