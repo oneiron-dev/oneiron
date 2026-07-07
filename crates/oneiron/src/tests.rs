@@ -10,10 +10,11 @@ use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, TaskRole, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
+    EdgeProvenanceFlags, TaskRole, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -6458,6 +6459,13 @@ fn all_entity_type_prefixes() {
         (
             "OUTBOUND_GRANT",
             ENTITY_TYPE_OUTBOUND_GRANT,
+            None,
+            EntityClassification::Maintenance,
+            TypeByteBand::InducedDynamicMaintenance,
+        ),
+        (
+            "PERSONA_SNAPSHOT_EXPORT",
+            ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
             None,
             EntityClassification::Maintenance,
             TypeByteBand::InducedDynamicMaintenance,

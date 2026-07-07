@@ -26,10 +26,10 @@ use crate::types::{
     EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
-    EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole, TimeRange, Vad, WriteEnvelope,
-    decode_companion_record_body, decode_edge_value_for_kind, encode_edge_value,
-    validate_edge_weight,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole,
+    TimeRange, Vad, WriteEnvelope, decode_companion_record_body, decode_edge_value_for_kind,
+    encode_edge_value, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2595,6 +2595,8 @@ fn apply_put(
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
         crate::types::psych_profile::validate_psych_profile_body_bytes(data)?;
+    } else if entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
+        crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         new_skill_record = Some(crate::skill::decode_skill_record(data)?);
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {

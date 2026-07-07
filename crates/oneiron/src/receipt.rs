@@ -17,13 +17,15 @@ use crate::outbound::OutboundIntent;
 use crate::outbound_grant::{
     StandingOutboundGrant, StandingOutboundGrantScope, decode_standing_outbound_grant_body,
 };
+use crate::persona_snapshot::{PersonaSnapshotExportRecord, decode_persona_snapshot_export_body};
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
     PendingGateConsentRecord,
 };
 use crate::types::{
     ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, EntityId,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    EntityId,
     companion::{
         CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
         decode_companion_record_body,
@@ -49,6 +51,7 @@ const FIELD_BUDGET: &str = "budget";
 const FIELD_FIRST_TOUCH: &str = "first_touch";
 const FIELD_OPT_OUT: &str = "opt_out";
 const FIELD_PROMO_CONSENT: &str = "promo_consent";
+const FIELD_PERSONA_COMPILE_STAMP: &str = "persona_compile_stamp";
 const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
 const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
 
@@ -1285,6 +1288,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     }
     if query.includes_kind(ReceiptKind::Share) {
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
+        records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
     }
 
     Ok(records)
@@ -1748,6 +1752,81 @@ fn federation_share_receipt(
         outcome: "granted".to_owned(),
         job_ref: None,
         trigger_ref: Some(format!("federation_grant:{}", id.to_hex())),
+        policy_trace: Vec::new(),
+        fields,
+    }
+}
+
+fn persona_snapshot_export_receipts(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
+    let mut receipts = Vec::new();
+    scan_entities_by_type(
+        vault,
+        txn,
+        ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+        "persona snapshot export type index",
+        |id, _header, body| {
+            let record = decode_persona_snapshot_export_body(body)?;
+            let receipt = persona_snapshot_export_receipt(id, &record);
+            if query.matches(&receipt) {
+                receipts.push(receipt);
+            }
+            Ok(())
+        },
+    )?;
+    Ok(receipts)
+}
+
+fn persona_snapshot_export_receipt(
+    id: EntityId,
+    record: &PersonaSnapshotExportRecord,
+) -> ReceiptRecord {
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        FIELD_PERSONA_COMPILE_STAMP.to_owned(),
+        record.compile_stamp_identity(),
+    );
+    fields.insert("subject_ref".to_owned(), record.subject_ref.to_hex());
+    if let Some(audience_ref) = record.audience_ref.as_deref() {
+        fields.insert("audience_ref".to_owned(), audience_ref.to_owned());
+    }
+    fields.insert(
+        "compiled_at_secs".to_owned(),
+        record.compiled_at_secs.to_string(),
+    );
+    fields.insert(
+        "stale_after_secs".to_owned(),
+        record.stale_after_secs.to_string(),
+    );
+    fields.insert(
+        "included_rows".to_owned(),
+        record.included_row_ids.len().to_string(),
+    );
+    fields.insert(
+        "struck_rows".to_owned(),
+        record.struck_row_ids.len().to_string(),
+    );
+    fields.insert(
+        "takes_included".to_owned(),
+        record.takes_included.to_string(),
+    );
+    fields.insert(
+        "artifact_fingerprint".to_owned(),
+        record.artifact_fingerprint.clone(),
+    );
+
+    ReceiptRecord {
+        receipt_id: format!("share:persona_snapshot:{}", id.to_hex()),
+        receipt_kind: ReceiptKind::Share,
+        occurred_at: record.exported_at_secs,
+        actor: Some(record.granted_by.clone()),
+        on_behalf_of: None,
+        outcome: "exported".to_owned(),
+        job_ref: None,
+        trigger_ref: Some(format!("persona_snapshot_export:{}", id.to_hex())),
         policy_trace: Vec::new(),
         fields,
     }
