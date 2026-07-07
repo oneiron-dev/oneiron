@@ -2484,6 +2484,15 @@ fn validates_non_finite_vector_and_edge_weights() {
     assert!(vector_message.contains("index 1"));
     assert!(vector_message.contains("NaN"));
 
+    let inf_err = vault
+        .put_vector(&EntityId::now(), &[1.0_f32, f32::INFINITY, 2.0, 3.0])
+        .expect_err("expected invalid vector");
+    assert_matches!(
+        inf_err,
+        Error::InvalidVector { index: 1, value }
+            if value.is_infinite() && value.is_sign_positive()
+    );
+
     let edge_err = vault
         .put_edge(
             &EntityId::now(),

@@ -311,6 +311,14 @@ fn replicated_put_op(
     }
 }
 
+fn capture_invalid_vector_component(validation_error: &mut Option<Error>, vector: &[f32]) {
+    if validation_error.is_none()
+        && let Some(error) = Error::invalid_vector_component(vector)
+    {
+        *validation_error = Some(error);
+    }
+}
+
 impl<'a> BatchBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
@@ -516,6 +524,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds a vector write operation to the batch.
     pub fn vector(mut self, id: &EntityId, vector: &[f32]) -> Self {
+        capture_invalid_vector_component(&mut self.validation_error, vector);
         self.ops.push(BatchOp::Vector {
             id: *id,
             vector: vector.to_vec(),
@@ -735,8 +744,9 @@ impl<'a> BatchBuilder<'a> {
 
     /// Commits all queued operations atomically in a single LMDB write transaction.
     ///
-    /// Returns any validation error captured during `put()` before opening
-    /// the LMDB write transaction, avoiding unnecessary I/O on bad input.
+    /// Returns any validation error captured during builder calls before
+    /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
+    /// input.
     pub fn commit(self) -> Result<()> {
         if let Some(err) = self.validation_error {
             return Err(err);
@@ -6088,6 +6098,29 @@ mod tests {
     }
 
     #[test]
+    fn batch_vector_rejects_non_finite_without_persisting_vectors() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let good = EntityId::now();
+        let bad = EntityId::now();
+
+        let err = vault
+            .batch()
+            .vector(&good, &[1.0, 0.0, 0.0, 0.0])
+            .vector(&bad, &[0.0, f32::NEG_INFINITY, 0.0, 0.0])
+            .commit()
+            .expect_err("non-finite batch vector must fail closed");
+
+        assert_matches!(
+            err,
+            Error::InvalidVector { index: 1, value }
+                if value.is_infinite() && value.is_sign_negative()
+        );
+        assert!(vault.get_vector(&good)?.is_none());
+        assert!(vault.get_vector(&bad)?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn vector_fill_clears_pending_embedding_marker() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let claim = EntityId::now();
@@ -6111,6 +6144,29 @@ mod tests {
             raw_pending_embedding_marker(&vault, &claim)?.is_none(),
             "token-proven vector fill must remove durable marker state"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn pending_vector_fill_rejects_non_finite_without_clearing_marker() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let claim = EntityId::now();
+        commit_claim_candidate_fixture(&vault, claim)?;
+        let token = pending_embedding_token(&vault, &claim)?;
+
+        let err = vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, f32::INFINITY, 0.0, 0.0], &token)
+            .commit()
+            .expect_err("non-finite pending vector fill must fail closed");
+
+        assert_matches!(
+            err,
+            Error::InvalidVector { index: 1, value }
+                if value.is_infinite() && value.is_sign_positive()
+        );
+        assert!(vault.get_vector(&claim)?.is_none());
+        assert_eq!(pending_embedding_token(&vault, &claim)?, token);
         Ok(())
     }
 
