@@ -430,6 +430,137 @@ pub enum PolicyRubricLayer {
     OwnerPolicy,
 }
 
+/// B11-2 / ONE-WIRE-2 R9 trust domain for a relay-boundary floor pass.
+///
+/// The floor runs where OUR infrastructure touches content, once per trust
+/// domain. The hosted relay / connector edge (the caller) MUST derive this from
+/// the connection's infrastructure trust domain, NEVER from a vault-attested
+/// "already classified" receipt — a sovereign machine owns its box, so its
+/// receipt is not evidence (R9).
+///
+/// Intentionally `Serialize` but NOT `Deserialize`: this must never be decoded
+/// from the wire. A future protocol carrying `"trust_domain":"cloud_vault"`
+/// parsed from vault-supplied bytes would be exactly the vault-attested-receipt
+/// bypass in a different coat — the trust domain is established by our
+/// infrastructure, so it is emitted (receipts/logs) but never accepted inbound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayTrustDomain {
+    /// Cloud vault: content was floor-classified vault-side on our infra; the
+    /// relay trusts that pass and does not re-run.
+    CloudVault,
+    /// Local/self-host vault whose outbound transits an Oneiron-hosted connector
+    /// (shared Slack app, push relay, hosted email sender). Our infra relays the
+    /// content, so the relay runs a FLOOR-ONLY pass at the boundary.
+    LocalViaHostedConnector,
+    /// Local/self-host vault using its own BYO connector: nothing transits us.
+    LocalViaByoConnector,
+}
+
+impl RelayTrustDomain {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CloudVault => "cloud_vault",
+            Self::LocalViaHostedConnector => "local_via_hosted_connector",
+            Self::LocalViaByoConnector => "local_via_byo_connector",
+        }
+    }
+}
+
+/// Why a hosted-relay floor pass degraded off the safeguard-model tier. A
+/// degraded pass fell back to the Rung-1 deterministic result (never below it);
+/// the marker keeps a degraded `Allow` distinguishable from a model-confirmed
+/// `Allow` in receipts and logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayFloorDegrade {
+    /// The safeguard model was unavailable (transport/backend error).
+    SafeguardModelUnavailable,
+    /// The safeguard model responded but the response was unusable (unparseable,
+    /// or an off-floor verdict such as a hallucinated owner-policy row that has
+    /// no floor rubric row to bind to).
+    SafeguardModelResponseUnusable,
+}
+
+impl RelayFloorDegrade {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SafeguardModelUnavailable => "safeguard_model_unavailable",
+            Self::SafeguardModelResponseUnusable => "safeguard_model_response_unusable",
+        }
+    }
+}
+
+/// Outcome of a relay-boundary FLOOR pass (B11-2 / R9). Advisory only — this
+/// classifies, it does not itself halt the relay; the caller must honor
+/// [`RelayFloorPass::must_halt_relay`].
+///
+/// `FloorClassified` is the only variant that ran a classify pass, and its
+/// verdict is FLOOR ONLY — the owner custom tier is never assembled at the
+/// relay, so the verdict category can never be
+/// [`PolicyVerdictCategory::OwnerPolicy`].
+///
+/// Intentionally `Serialize` but NOT `Deserialize` (same reason as
+/// [`RelayTrustDomain`]): a relay outcome is emitted for receipts/logs, never
+/// reconstructed from untrusted bytes.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelayFloorPass {
+    /// Cloud vault: already classified vault-side; the relay trusts it.
+    TrustedVaultSide,
+    /// BYO connector: nothing transits our infra; nothing ran.
+    NotRelayedByUs,
+    /// Hosted connector on a local vault: OUR infra ran a floor-only pass.
+    /// `degraded` is set when the pass fell back to the Rung-1 result because
+    /// the safeguard-model tier failed.
+    FloorClassified {
+        verdict: PolicyClassifyVerdict,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        degraded: Option<RelayFloorDegrade>,
+    },
+}
+
+impl RelayFloorPass {
+    /// The floor verdict, present only when OUR infra ran a relay classify pass.
+    #[must_use]
+    pub fn floor_verdict(&self) -> Option<&PolicyClassifyVerdict> {
+        match self {
+            Self::FloorClassified { verdict, .. } => Some(verdict),
+            Self::TrustedVaultSide | Self::NotRelayedByUs => None,
+        }
+    }
+
+    /// Whether OUR infra ran a classify pass at the relay boundary. False for a
+    /// cloud vault (trusted vault-side) and BYO (never transits us).
+    #[must_use]
+    pub fn ran_relay_classify(&self) -> bool {
+        matches!(self, Self::FloorClassified { .. })
+    }
+
+    /// The degradation marker, if the safeguard-model tier failed and the pass
+    /// fell back to the Rung-1 deterministic result.
+    #[must_use]
+    pub fn degraded(&self) -> Option<RelayFloorDegrade> {
+        match self {
+            Self::FloorClassified { degraded, .. } => *degraded,
+            Self::TrustedVaultSide | Self::NotRelayedByUs => None,
+        }
+    }
+
+    /// Whether the caller edge must NOT relay this content. True only when a
+    /// floor pass ran and returned a non-`Allow` verdict: every non-`Allow`
+    /// verdict — `Block`, `RouteToHelp`, and `RewordRetry` alike — means
+    /// do-not-relay as-is at an edge (this API is advisory; the edge enforces).
+    /// A trusted cloud pass and an untouched BYO path never halt the relay.
+    #[must_use]
+    pub fn must_halt_relay(&self) -> bool {
+        self.floor_verdict()
+            .is_some_and(|verdict| verdict.decision != PolicyClassifyDecision::Allow)
+    }
+}
+
 impl Vault {
     pub fn classify_policy_model(
         &self,
@@ -871,6 +1002,269 @@ impl Vault {
         })
     }
 
+    /// B11-2 / R9 relay-boundary FLOOR pass, deterministic (Rung-1) tier only.
+    ///
+    /// Runs where OUR infrastructure touches a vault's outbound content, once
+    /// per trust domain. `domain` MUST be derived by the caller (the hosted
+    /// relay / connector edge) from the connection's infrastructure trust
+    /// domain, NEVER from a vault-attested "already classified" receipt (R9).
+    ///
+    /// * [`RelayTrustDomain::CloudVault`] — trusts the vault-side floor pass; no
+    ///   re-run ([`RelayFloorPass::TrustedVaultSide`]).
+    /// * [`RelayTrustDomain::LocalViaHostedConnector`] — runs the Rung-1
+    ///   deterministic floor tripwire on 100% of relayed content, FLOOR ONLY:
+    ///   the owner custom tier is never assembled or evaluated here.
+    /// * [`RelayTrustDomain::LocalViaByoConnector`] — nothing transits us; no
+    ///   pass runs ([`RelayFloorPass::NotRelayedByUs`]).
+    ///
+    /// This never touches the input side and never runs the owner custom tier;
+    /// it can only ADD floor coverage on the hosted-relay path, never weaken an
+    /// existing floor or deny path.
+    ///
+    /// Advisory: this classifies but does not itself halt the relay — the caller
+    /// must honor [`RelayFloorPass::must_halt_relay`]. Every relay decision that
+    /// blocks or skips is recorded as an audit receipt (a clean, non-degraded
+    /// `Allow` is not), so a relay block or a mis-labeled skip is never silent.
+    /// A returned `Err` means infrastructure misuse only (unresolvable/malformed
+    /// local policy state or a failed receipt write).
+    pub fn relay_boundary_floor_pass(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+    ) -> Result<RelayFloorPass> {
+        self.relay_boundary_floor_pass_with_config(request, domain, &PolicyModelConfig::default())
+    }
+
+    pub fn relay_boundary_floor_pass_with_config(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+        config: &PolicyModelConfig,
+    ) -> Result<RelayFloorPass> {
+        let pass = match domain {
+            RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
+            RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
+            RelayTrustDomain::LocalViaHostedConnector => {
+                // Deterministic tier only: needs the binding, not the model
+                // prompt, so it never renders the floor rubric into a prompt.
+                let binding = self.relay_floor_only_binding(&request, config)?;
+                let verdict = relay_floor_rung1_verdict(&request, binding, config);
+                RelayFloorPass::FloorClassified {
+                    verdict,
+                    degraded: None,
+                }
+            }
+        };
+        self.record_relay_floor_receipt(&request, domain, &pass, config)?;
+        Ok(pass)
+    }
+
+    /// B11-2 / R9 relay-boundary FLOOR pass with the safeguard model available
+    /// for a flagged span.
+    ///
+    /// **Caller contract:** invoke this ONLY for a span the connector edge has
+    /// already flagged for model review. Rung-1 is not extended to emit flags
+    /// (B11 R8.3), so the flag heuristic is the edge's responsibility (the
+    /// out-of-scope connector lane) — this method does not re-derive it. Rung-1
+    /// still runs deterministically on 100% of the hosted-relay path via
+    /// [`relay_boundary_floor_pass`]; here it runs again as the backstop and the
+    /// FLOOR-ONLY safeguard model adjudicates the flagged span only when Rung-1
+    /// did not already resolve it. The owner custom tier is never assembled, so
+    /// the model classifies against floor rows only and a relay verdict can
+    /// never be [`PolicyVerdictCategory::OwnerPolicy`]; a model verdict whose
+    /// fixed category was not assembled into the floor rubric is treated as an
+    /// off-floor (unusable) response and degrades rather than taking effect.
+    ///
+    /// Failure is symmetric and never below the floor: if the safeguard model is
+    /// unavailable OR its response is unusable (unparseable, or an off-floor
+    /// verdict such as a hallucinated owner-policy row), the pass falls back to
+    /// the Rung-1 deterministic result and marks itself `degraded`. A returned
+    /// `Err` therefore means infrastructure misuse only — unresolvable/malformed
+    /// local policy state or a failed receipt write — never a model outcome.
+    ///
+    /// `pub(crate)` by design (R6): this takes an arbitrary safeguard backend,
+    /// and on our relay infrastructure the classifier binding must be OURS —
+    /// swapping in a weak model there would weaken enforcement of our own legal
+    /// duty. Model freedom is a local/self-host/BYO property, so only first-party
+    /// code that pins our classifier may drive the model tier; the public relay
+    /// API is the deterministic Rung-1 pass.
+    ///
+    /// Reserved crate API: no first-party caller exists yet (the connector-edge
+    /// wiring is a follow-up ticket), so it is exercised only by tests today.
+    #[allow(dead_code)]
+    pub(crate) async fn relay_boundary_floor_pass_with_backend(
+        &self,
+        request: PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        lease: &BudgetLease,
+    ) -> Result<RelayFloorPass> {
+        let pass = match domain {
+            RelayTrustDomain::CloudVault => RelayFloorPass::TrustedVaultSide,
+            RelayTrustDomain::LocalViaByoConnector => RelayFloorPass::NotRelayedByUs,
+            RelayTrustDomain::LocalViaHostedConnector => {
+                let context = self.policy_model_floor_only_context(&request, config)?;
+                let binding = context.binding;
+                if let Some(local) = classify_from_local_floor(&request) {
+                    // Rung-1 caught it deterministically; the model tier is not consulted.
+                    RelayFloorPass::FloorClassified {
+                        verdict: PolicyClassifyVerdict {
+                            binding,
+                            safeguard_binding: config.safeguard_binding.selector(),
+                            ..local
+                        },
+                        degraded: None,
+                    }
+                } else {
+                    // Rung-1 is clean; the FLOOR-ONLY model is the flagged-span
+                    // nuance layer. Any model failure degrades to the Rung-1
+                    // result, marked -- never below the floor.
+                    match backend
+                        .generate(context.prompt.llm_request(config), lease)
+                        .await
+                    {
+                        Ok(response) => match parse_policy_model_response(
+                            &response,
+                            &context.prompt.rubric_rows,
+                            binding,
+                            config,
+                        ) {
+                            // FLOOR ONLY: accept a fixed-category verdict only if
+                            // that category was actually assembled into the floor
+                            // rubric shown to the model. A closed-taxonomy
+                            // category the floor never listed (e.g. crisis/medical
+                            // with no vault floor row) is off-floor for this pass
+                            // and is treated as unusable — the relay enforces the
+                            // assembled floor, not the model's full taxonomy.
+                            Ok(verdict)
+                                if relay_category_in_floor_rubric(
+                                    &verdict.category,
+                                    &context.prompt.rubric_rows,
+                                ) =>
+                            {
+                                RelayFloorPass::FloorClassified {
+                                    verdict,
+                                    degraded: None,
+                                }
+                            }
+                            _off_floor_or_err => RelayFloorPass::FloorClassified {
+                                verdict: relay_floor_clean_verdict(binding, config),
+                                degraded: Some(RelayFloorDegrade::SafeguardModelResponseUnusable),
+                            },
+                        },
+                        Err(_unavailable) => RelayFloorPass::FloorClassified {
+                            verdict: relay_floor_clean_verdict(binding, config),
+                            degraded: Some(RelayFloorDegrade::SafeguardModelUnavailable),
+                        },
+                    }
+                }
+            }
+        };
+        self.record_relay_floor_receipt(&request, domain, &pass, config)?;
+        Ok(pass)
+    }
+
+    fn policy_model_floor_only_context(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyModelFloorOnlyContext> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "policy manifest is malformed for relay-boundary floor pass".to_owned(),
+            ));
+        }
+        // FLOOR ONLY: owner-policy rows are never assembled here, so a dropped or
+        // forged owner-rows manifest cannot block or misfire the floor pass.
+        let prompt = build_policy_classify_prompt_floor_only(request, &policy)?;
+        let binding = content_binding(request, &policy, config)?;
+        Ok(PolicyModelFloorOnlyContext { prompt, binding })
+    }
+
+    /// Binding + fail-closed check for the deterministic (Rung-1) relay pass,
+    /// without rendering the model prompt. The floor rows are still assembled and
+    /// validated (so a malformed legal-floor row fails closed exactly as the
+    /// model path does — no strictness is lost), but the prompt string is never
+    /// built because the deterministic path does not call the model.
+    fn relay_floor_only_binding(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+    ) -> Result<PolicyContentBinding> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(Error::InvalidConfig(
+                "policy manifest is malformed for relay-boundary floor pass".to_owned(),
+            ));
+        }
+        // Validate the floor rows (fail closed on a malformed legal-floor row)
+        // without paying for the prompt render the deterministic path never uses.
+        let _validated_floor_rows = rubric_rows_floor_only(&policy)?;
+        content_binding(request, &policy, config)
+    }
+
+    /// Writes the B11-2 / R9 relay-boundary audit receipt. Called from both
+    /// relay paths: a hosted-relay classify that blocks/routes/rewords or that
+    /// degraded, and a trust-domain SKIP (trusted cloud, untouched BYO), are all
+    /// recorded so a relay block or a mis-labeled skip is never silent. A clean,
+    /// non-degraded relay `Allow` carries no enforcement signal and is not
+    /// receipted (matching the vault-egress allow convention). The receipt
+    /// records the trust domain, whether classify ran or was skipped, and the
+    /// content binding.
+    fn record_relay_floor_receipt(
+        &self,
+        request: &PolicyClassifyRequest,
+        domain: RelayTrustDomain,
+        pass: &RelayFloorPass,
+        config: &PolicyModelConfig,
+    ) -> Result<()> {
+        // The gate decision ledger requires every reason code to be namespaced
+        // under `gate.` (vet_gate_decision_record), so relay codes ride there.
+        let mut reason_codes = vec![
+            format!("gate.relay.trust_domain.{}", domain.as_str()),
+            if pass.ran_relay_classify() {
+                "gate.relay.classify.ran".to_owned()
+            } else {
+                "gate.relay.classify.skipped".to_owned()
+            },
+        ];
+        if let Some(degrade) = pass.degraded() {
+            reason_codes.push(format!("gate.relay.degraded.{}", degrade.as_str()));
+        }
+        let (outcome, receipt_verdict) = match pass {
+            RelayFloorPass::FloorClassified { verdict, degraded } => {
+                if verdict.decision == PolicyClassifyDecision::Allow && degraded.is_none() {
+                    return Ok(());
+                }
+                reason_codes.extend(policy_model_reason_codes(verdict));
+                (
+                    format!("relay_floor_{}", relay_outcome_suffix(verdict.decision)),
+                    verdict.clone(),
+                )
+            }
+            RelayFloorPass::TrustedVaultSide => (
+                "relay_trusted_vault_side".to_owned(),
+                relay_skip_verdict(request, config),
+            ),
+            RelayFloorPass::NotRelayedByUs => (
+                "relay_not_relayed".to_owned(),
+                relay_skip_verdict(request, config),
+            ),
+        };
+        self.append_policy_model_gate_receipt(
+            request,
+            &receipt_verdict,
+            &outcome,
+            reason_codes,
+            Vec::new(),
+        )?;
+        Ok(())
+    }
+
     fn append_policy_model_gate_receipt(
         &self,
         request: &PolicyClassifyRequest,
@@ -991,6 +1385,11 @@ struct PolicyModelContext {
     prompt: PolicyClassifyPrompt,
     binding: PolicyContentBinding,
     owner_policy_rows_dropped: bool,
+}
+
+struct PolicyModelFloorOnlyContext {
+    prompt: PolicyClassifyPrompt,
+    binding: PolicyContentBinding,
 }
 
 struct PolicyBackendEnforcement<'a> {
@@ -1180,16 +1579,53 @@ fn build_policy_classify_prompt_for_policy(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<PolicyClassifyPrompt> {
-    let rubric_rows = rubric_rows(request, policy)?;
-    let system = [
+    Ok(render_classify_prompt(
+        request,
+        rubric_rows(request, policy)?,
+    ))
+}
+
+/// FLOOR-ONLY classify prompt (B11-2 / R9): engine floor + vault legal-floor
+/// rows only. The owner custom tier is never appended, so a relay verdict can
+/// never be `OwnerPolicy`.
+fn build_policy_classify_prompt_floor_only(
+    request: &PolicyClassifyRequest,
+    policy: &PolicyManifestResolution,
+) -> Result<PolicyClassifyPrompt> {
+    Ok(render_classify_prompt(
+        request,
+        rubric_rows_floor_only(policy)?,
+    ))
+}
+
+fn render_classify_prompt(
+    request: &PolicyClassifyRequest,
+    rubric_rows: Vec<PolicyRubricRow>,
+) -> PolicyClassifyPrompt {
+    let system = classify_system_prompt();
+    let user = render_classify_user_section(request, &rubric_rows);
+    PolicyClassifyPrompt {
+        system,
+        user,
+        rubric_rows,
+    }
+}
+
+fn classify_system_prompt() -> String {
+    [
         "You are the Oneiron policy classifier, a system voice independent of any persona.",
         "Classify only against the rubric rows in this prompt.",
         "Suppress all factory/default model safety taxonomies.",
         "Return exactly one decision: allow, block, route-to-help, or reword-retry.",
         "Allowed content includes legal consensual adult NSFW, dark fiction, profanity, and controversial opinion.",
     ]
-    .join("\n");
+    .join("\n")
+}
 
+fn render_classify_user_section(
+    request: &PolicyClassifyRequest,
+    rubric_rows: &[PolicyRubricRow],
+) -> String {
     let mut user = String::new();
     user.push_str("subject=");
     user.push_str(request.subject.as_str());
@@ -1201,7 +1637,7 @@ fn build_policy_classify_prompt_for_policy(
     user.push_str(request.account_jurisdiction.as_deref().unwrap_or("unknown"));
     user.push('\n');
     user.push_str("rubric:\n");
-    for row in &rubric_rows {
+    for row in rubric_rows {
         user.push_str("- ");
         user.push_str(&row.row_ref);
         user.push_str(" [");
@@ -1216,12 +1652,102 @@ fn build_policy_classify_prompt_for_policy(
     }
     user.push_str("candidate:\n");
     user.push_str(&request.content);
+    user
+}
 
-    Ok(PolicyClassifyPrompt {
-        system,
-        user,
-        rubric_rows,
-    })
+/// Deterministic Rung-1 floor verdict for a relay-boundary pass: the floor
+/// tripwire result, or a floor-clean `Allow` when nothing fires. FLOOR ONLY —
+/// the owner custom tier is never consulted.
+fn relay_floor_rung1_verdict(
+    request: &PolicyClassifyRequest,
+    binding: PolicyContentBinding,
+    config: &PolicyModelConfig,
+) -> PolicyClassifyVerdict {
+    match classify_from_local_floor(request) {
+        Some(local) => PolicyClassifyVerdict {
+            binding,
+            safeguard_binding: config.safeguard_binding.selector(),
+            ..local
+        },
+        None => relay_floor_clean_verdict(binding, config),
+    }
+}
+
+/// A floor-clean relay verdict (`Allow`/`None`): Rung-1 found nothing, or a
+/// degraded model tier fell back to the deterministic result.
+fn relay_floor_clean_verdict(
+    binding: PolicyContentBinding,
+    config: &PolicyModelConfig,
+) -> PolicyClassifyVerdict {
+    verdict(
+        PolicyClassifyDecision::Allow,
+        PolicyVerdictCategory::None,
+        PolicyConfidence::HIGH,
+        binding,
+        config,
+    )
+}
+
+/// Synthetic receipt verdict for a trust-domain SKIP. A skip never classifies
+/// against the manifest, so the receipt binds to a content-only hash with a zero
+/// policy frontier — an honest "did not run against policy state" marker.
+fn relay_skip_verdict(
+    request: &PolicyClassifyRequest,
+    config: &PolicyModelConfig,
+) -> PolicyClassifyVerdict {
+    relay_floor_clean_verdict(relay_skip_content_binding(request), config)
+}
+
+fn relay_skip_content_binding(request: &PolicyClassifyRequest) -> PolicyContentBinding {
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.policy_model.relay.skip.content.v1");
+    hash_binding_str(&mut hasher, "subject", request.subject.as_str());
+    hash_binding_str(&mut hasher, "content", &request.content);
+    PolicyContentBinding {
+        content_hash: hasher.finalize().into(),
+        read_frontier_hash: [0; 32],
+    }
+}
+
+fn relay_outcome_suffix(decision: PolicyClassifyDecision) -> &'static str {
+    match decision {
+        PolicyClassifyDecision::Allow => "allow",
+        PolicyClassifyDecision::Block => "block",
+        PolicyClassifyDecision::RouteToHelp => "route_to_help",
+        PolicyClassifyDecision::RewordRetry => "reword_retry",
+    }
+}
+
+/// Whether a relay model verdict's category was actually assembled into the
+/// floor-only rubric shown to the model. `None` (allow) needs no row; an owner
+/// verdict is never valid on the floor-only path. A fixed category is honored
+/// only when a rubric row carries it — engine-floor categories always qualify
+/// (they are in every rubric), while a closed-taxonomy category the floor did
+/// not list (e.g. `crisis/medical`/`crisis/harm_to_others` with no vault floor
+/// row) does not, so the relay never enforces a verdict outside its floor.
+fn relay_category_in_floor_rubric(
+    category: &PolicyVerdictCategory,
+    rubric_rows: &[PolicyRubricRow],
+) -> bool {
+    let key = match category {
+        PolicyVerdictCategory::None => return true,
+        PolicyVerdictCategory::OwnerPolicy { .. } => return false,
+        PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::MinorSexualization) => {
+            "legal_floor/minor_sexualization"
+        }
+        PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::Ncii) => "legal_floor/ncii",
+        PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime) => {
+            "legal_floor/serious_crime"
+        }
+        PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::Jurisdiction { .. }) => {
+            "legal_floor/jurisdiction"
+        }
+        PolicyVerdictCategory::Crisis(CrisisSubclass::SelfHarm) => "crisis/self_harm",
+        PolicyVerdictCategory::Crisis(CrisisSubclass::Medical) => "crisis/medical",
+        PolicyVerdictCategory::Crisis(CrisisSubclass::HarmToOthers) => "crisis/harm_to_others",
+        PolicyVerdictCategory::AgeGate(AgeGateSubclass::AdultContent) => "age_gate/adult_content",
+    };
+    rubric_rows.iter().any(|row| row.category == key)
 }
 
 impl PolicyRubricLayer {
@@ -1238,6 +1764,27 @@ fn rubric_rows(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<Vec<PolicyRubricRow>> {
+    let mut rows = rubric_rows_floor_only(policy)?;
+    for row in policy.active_owner_policy_rows(request.world_ref.as_deref()) {
+        rows.push(PolicyRubricRow {
+            row_ref: row.row_ref.clone(),
+            layer: PolicyRubricLayer::OwnerPolicy,
+            category: "owner_policy".to_owned(),
+            action: if row.block {
+                PolicyClassifyDecision::Block
+            } else {
+                PolicyClassifyDecision::RewordRetry
+            },
+            text: row.text.clone(),
+        });
+    }
+    Ok(rows)
+}
+
+/// The floor rubric only — engine floor + active vault legal-floor rows, no
+/// owner custom tier. Shared by the vault-egress classify and the B11-2 relay
+/// floor pass so the two never drift apart.
+fn rubric_rows_floor_only(policy: &PolicyManifestResolution) -> Result<Vec<PolicyRubricRow>> {
     let mut seen = BTreeSet::new();
     let mut rows = Vec::new();
     for row in engine_floor_rows() {
@@ -1257,19 +1804,6 @@ fn rubric_rows(
                 text: row.text.clone(),
             });
         }
-    }
-    for row in policy.active_owner_policy_rows(request.world_ref.as_deref()) {
-        rows.push(PolicyRubricRow {
-            row_ref: row.row_ref.clone(),
-            layer: PolicyRubricLayer::OwnerPolicy,
-            category: "owner_policy".to_owned(),
-            action: if row.block {
-                PolicyClassifyDecision::Block
-            } else {
-                PolicyClassifyDecision::RewordRetry
-            },
-            text: row.text.clone(),
-        });
     }
     Ok(rows)
 }
@@ -3165,6 +3699,563 @@ mod tests {
             PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
         );
         assert!(floor.receipt_ref.is_some());
+        Ok(())
+    }
+
+    // --- B11-2 / R9: relay-boundary floor pass on hosted connectors ---
+
+    #[test]
+    fn hosted_relay_outbound_from_local_vault_hits_rung1() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+
+        assert!(pass.ran_relay_classify());
+        let verdict = pass
+            .floor_verdict()
+            .expect("hosted relay runs a floor pass");
+        // Rung-1 deterministic tripwire fired at the relay boundary.
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_vault_relay_path_does_not_double_classify() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Content that WOULD block if re-run; a cloud vault already classified it
+        // vault-side on our infra, so the relay trusts it and never re-runs.
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::CloudVault,
+        )?;
+
+        assert_eq!(pass, RelayFloorPass::TrustedVaultSide);
+        assert!(!pass.ran_relay_classify());
+        assert!(pass.floor_verdict().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn custom_tier_rows_never_evaluated_at_relay() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x50,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+
+        // Sanity: the vault-egress classify DOES fire the owner (custom-tier) row.
+        let vault_side = vault.classify_policy_model(
+            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+        assert_eq!(
+            vault_side.category,
+            PolicyVerdictCategory::OwnerPolicy {
+                row_ref: "owner:spoilers".to_owned()
+            }
+        );
+
+        // The relay floor pass is FLOOR ONLY: the owner row is never evaluated.
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("This reply contains spoilers.")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+        let verdict = pass
+            .floor_verdict()
+            .expect("hosted relay runs a floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert!(!matches!(
+            verdict.category,
+            PolicyVerdictCategory::OwnerPolicy { .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn byo_path_untouched() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaByoConnector,
+        )?;
+
+        assert_eq!(pass, RelayFloorPass::NotRelayedByUs);
+        assert!(!pass.ran_relay_classify());
+        assert!(pass.floor_verdict().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_catches_flagged_floor_span() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Rung-1 is clean on this phrasing; the FLOOR-ONLY safeguard model is the
+        // flagged-span nuance layer and catches it.
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"block","category":"legal_floor/serious_crime","row_ref":null,"confidence":0.95,"hedge_bucket":"high"}"#,
+        };
+        let pass = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("a subtly worded dangerous ask")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-model-catch"),
+            ),
+        )?;
+
+        let verdict = pass.floor_verdict().expect("hosted relay floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        // A real model catch is NOT a degradation.
+        assert!(pass.degraded().is_none());
+        assert!(pass.must_halt_relay());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_stays_floor_only_and_degrades_owner_verdict() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x51,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row(
+                "owner:spoilers",
+                "Avoid spoilers in outbound content.",
+            )])]),
+        )?;
+        // The relay rubric carries no owner row, so a hallucinated owner_policy
+        // verdict has no floor row to bind to: it is an unusable off-floor
+        // response. It must degrade to the Rung-1-stands Allow (not propagate an
+        // Err, not take effect) so the custom tier can never take effect at the
+        // relay, and the degraded marker keeps it distinguishable in receipts.
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"reword-retry","category":"owner_policy","row_ref":"owner:spoilers","confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+        let pass = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("an ordinary flagged span")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-owner-degrade"),
+            ),
+        )?;
+
+        let verdict = pass.floor_verdict().expect("hosted relay floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert!(!matches!(
+            verdict.category,
+            PolicyVerdictCategory::OwnerPolicy { .. }
+        ));
+        assert_eq!(
+            pass.degraded(),
+            Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
+        );
+        assert!(!pass.must_halt_relay());
+
+        // A degraded allow IS receipted (unlike a clean allow) with the marker.
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].outcome, "relay_floor_allow");
+        assert!(
+            receipts[0]
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.degraded.safeguard_model_response_unusable")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_down_keeps_rung1_floor_backstop() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let backend = FailingPolicyBackend;
+        // Rung-1 still catches the catastrophe with the safeguard model down.
+        let caught = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-down-catch"),
+            ),
+        )?;
+        assert_eq!(
+            caught.floor_verdict().expect("floor verdict").category,
+            PolicyVerdictCategory::LegalFloor(LegalFloorSubclass::SeriousCrime)
+        );
+        // Rung-1 caught it deterministically — the model was never consulted, so
+        // this is not a degradation.
+        assert!(caught.degraded().is_none());
+
+        // A floor-clean span with the model down falls open over the floor
+        // (Rung-1 is the deterministic backstop; nothing weaker than it) and is
+        // MARKED degraded so the Allow is not mistaken for a model-confirmed one.
+        let clean = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-floor-down-clean"),
+            ),
+        )?;
+        assert_eq!(
+            clean.floor_verdict().expect("floor verdict").decision,
+            PolicyClassifyDecision::Allow
+        );
+        assert_eq!(
+            clean.degraded(),
+            Some(RelayFloorDegrade::SafeguardModelUnavailable)
+        );
+        assert!(!clean.must_halt_relay());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_trust_domains_short_circuit_without_running_classify() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // Cloud + BYO never run a relay classify regardless of content.
+        for domain in [
+            RelayTrustDomain::CloudVault,
+            RelayTrustDomain::LocalViaByoConnector,
+        ] {
+            let pass = vault.relay_boundary_floor_pass(
+                PolicyClassifyRequest::outbound_content("explicit sexual content about a minor")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                domain,
+            )?;
+            assert!(
+                !pass.ran_relay_classify(),
+                "{} re-ran classify",
+                domain.as_str()
+            );
+            assert!(pass.floor_verdict().is_none());
+            assert!(!pass.must_halt_relay());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn must_halt_relay_flags_every_non_allow_verdict() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let hosted = RelayTrustDomain::LocalViaHostedConnector;
+
+        // Block, RouteToHelp, and RewordRetry all mean do-not-relay.
+        let block = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+            hosted,
+        )?;
+        assert_eq!(
+            block.floor_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::Block
+        );
+        assert!(block.must_halt_relay());
+
+        let route = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("I might kill myself tonight")
+                .with_age_tier(PolicyAgeTier::Adult),
+            hosted,
+        )?;
+        assert_eq!(
+            route.floor_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::RouteToHelp
+        );
+        assert!(route.must_halt_relay());
+
+        let reword = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("adult nsfw reply")
+                .with_age_tier(PolicyAgeTier::Unverified),
+            hosted,
+        )?;
+        assert_eq!(
+            reword.floor_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::RewordRetry
+        );
+        assert!(reword.must_halt_relay());
+
+        // A floor-clean allow does not halt.
+        let allow = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+            hosted,
+        )?;
+        assert_eq!(
+            allow.floor_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::Allow
+        );
+        assert!(!allow.must_halt_relay());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_rubric_is_floor_only_and_pins_owner_append() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x52,
+            &base_policy_manifest(vec![owner_rows(vec![
+                owner_row("owner:spoilers", "Avoid spoilers."),
+                owner_row("owner:jargon", "Avoid nautical jargon."),
+            ])]),
+        )?;
+        let request = PolicyClassifyRequest::outbound_content("candidate")
+            .with_age_tier(PolicyAgeTier::Adult);
+        let rtxn = vault.store.env.read_txn()?;
+        let policy = gate::resolve_policy_manifest(&vault.store, &rtxn)?;
+
+        let floor_only = rubric_rows_floor_only(&policy)?;
+        let full = rubric_rows(&request, &policy)?;
+
+        // The relay rubric contains zero owner-policy-layer rows.
+        assert!(
+            floor_only
+                .iter()
+                .all(|row| row.layer != PolicyRubricLayer::OwnerPolicy)
+        );
+        assert!(
+            floor_only
+                .iter()
+                .any(|row| row.layer == PolicyRubricLayer::EngineFloor)
+        );
+
+        // rubric_rows() == rubric_rows_floor_only() + owner-append: the floor
+        // rows are an exact prefix and every extra row is an owner-policy row.
+        // Pins the delegation so a future edit to the shared floor assembly can
+        // never silently re-enable owner rows at the relay.
+        assert!(full.len() > floor_only.len());
+        assert_eq!(&full[..floor_only.len()], floor_only.as_slice());
+        assert!(
+            full[floor_only.len()..]
+                .iter()
+                .all(|row| row.layer == PolicyRubricLayer::OwnerPolicy)
+        );
+        assert_eq!(full[floor_only.len()..].len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn relay_block_writes_audit_receipt() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult)
+                .with_caller_ref("relay:slack-app"),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+        assert!(pass.must_halt_relay());
+
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 1);
+        let receipt = &receipts[0];
+        assert_eq!(receipt.outcome, "relay_floor_block");
+        assert!(
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.trust_domain.local_via_hosted_connector")
+        );
+        assert!(
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.classify.ran")
+        );
+        assert!(
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.policy_model.block")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let content = || {
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult)
+        };
+        vault.relay_boundary_floor_pass(content(), RelayTrustDomain::CloudVault)?;
+        vault.relay_boundary_floor_pass(content(), RelayTrustDomain::LocalViaByoConnector)?;
+
+        // A mis-labeled skip is never silent: both trust-domain skips are audited.
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert_eq!(receipts.len(), 2);
+        let outcomes = receipts
+            .iter()
+            .map(|receipt| receipt.outcome.as_str())
+            .collect::<Vec<_>>();
+        assert!(outcomes.contains(&"relay_trusted_vault_side"));
+        assert!(outcomes.contains(&"relay_not_relayed"));
+        assert!(receipts.iter().all(|receipt| {
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.classify.skipped")
+        }));
+        assert!(receipts.iter().any(|receipt| {
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.trust_domain.cloud_vault")
+        }));
+        assert!(receipts.iter().any(|receipt| {
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.relay.trust_domain.local_via_byo_connector")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn relay_clean_allow_writes_no_receipt() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let pass = vault.relay_boundary_floor_pass(
+            PolicyClassifyRequest::outbound_content("an ordinary friendly reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+            RelayTrustDomain::LocalViaHostedConnector,
+        )?;
+        assert_eq!(
+            pass.floor_verdict().expect("verdict").decision,
+            PolicyClassifyDecision::Allow
+        );
+        assert!(pass.degraded().is_none());
+
+        // A clean, non-degraded allow carries no enforcement signal — no receipt.
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert!(receipts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_degrades_off_floor_fixed_category() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // No vault floor row for crisis/medical, so it was never assembled into
+        // the floor-only rubric. A model verdict for it is off-floor and must
+        // degrade (the relay enforces its assembled floor, not the model's full
+        // closed taxonomy), not halt the relay for a category the floor omits.
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+        let pass = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("a flagged but floor-clean span")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-off-floor-medical"),
+            ),
+        )?;
+
+        let verdict = pass.floor_verdict().expect("hosted relay floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        assert_eq!(verdict.category, PolicyVerdictCategory::None);
+        assert_eq!(
+            pass.degraded(),
+            Some(RelayFloorDegrade::SafeguardModelResponseUnusable)
+        );
+        assert!(!pass.must_halt_relay());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_backend_accepts_fixed_category_present_in_floor_rubric() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // A vault legal-floor row DOES assemble crisis/medical, so the model
+        // verdict for it is on-floor and is honored (routes, halts the relay).
+        put_policy_manifest_bytes(
+            &vault,
+            0x53,
+            &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
+                "vault:medical",
+                "crisis",
+                "medical",
+                "route-to-help",
+                "Route medical crises to help.",
+            )])]),
+        )?;
+        let backend = StaticPolicyBackend {
+            body: r#"{"decision":"route-to-help","category":"crisis/medical","row_ref":null,"confidence":0.9,"hedge_bucket":"high"}"#,
+        };
+        let pass = block_on_ready(
+            vault.relay_boundary_floor_pass_with_backend(
+                PolicyClassifyRequest::outbound_content("a flagged but floor-clean span")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+                &PolicyModelConfig::default(),
+                &backend,
+                &BudgetLease::for_test("relay-on-floor-medical"),
+            ),
+        )?;
+
+        let verdict = pass.floor_verdict().expect("hosted relay floor pass");
+        assert_eq!(verdict.decision, PolicyClassifyDecision::RouteToHelp);
+        assert_eq!(
+            verdict.category,
+            PolicyVerdictCategory::Crisis(CrisisSubclass::Medical)
+        );
+        assert!(pass.degraded().is_none());
+        assert!(pass.must_halt_relay());
+        Ok(())
+    }
+
+    #[test]
+    fn relay_sync_pass_fails_closed_on_malformed_floor_row() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        // The deterministic path skips the model prompt render but still
+        // assembles+validates the floor rows, so a malformed legal-floor row
+        // fails closed exactly as the model path does — no strictness is lost.
+        put_policy_manifest_bytes(
+            &vault,
+            0x54,
+            &base_policy_manifest(vec![legal_floor_rows(vec![legal_floor_row(
+                "vault:bad-action",
+                "crisis",
+                "self_harm",
+                "route-tohelp",
+                "Malformed action must not silently pass the relay floor.",
+            )])]),
+        )?;
+
+        let err = vault
+            .relay_boundary_floor_pass(
+                PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                    .with_age_tier(PolicyAgeTier::Adult),
+                RelayTrustDomain::LocalViaHostedConnector,
+            )
+            .expect_err("malformed floor row must fail the deterministic relay pass closed");
+        assert!(
+            format!("{err}").contains("malformed"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 }
