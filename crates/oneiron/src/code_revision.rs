@@ -14,8 +14,8 @@ use crate::limits::{
 use crate::ppr;
 use crate::store::Store;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION,
-    EdgeKind, EntityId, Vad, decode_edge_value_for_kind, encode_edge_value, parse_entity_id,
+    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION, EdgeKind,
+    EntityId, Vad, encode_edge_value, parse_entity_id, parse_strict_edge_record,
 };
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
@@ -1966,28 +1966,15 @@ fn child_of_parents(store: &Store, txn: &RwTxn<'_>, child: &EntityId) -> Result<
     let mut parents = Vec::new();
     for entry in store.edges_out.prefix_iter(txn, &prefix)? {
         let (key, value) = entry?;
-        validate_child_of_edge_record(key, value)?;
-        parents.push(parse_entity_id(
-            key.get(ENTITY_ID_LEN + 1..EDGE_KEY_LEN)
-                .ok_or(Error::CorruptedIndex("edge record"))?,
-            "ChildOf edge key",
-        )?);
+        let edge = parse_strict_edge_record(key, value)?;
+        if edge.kind != EdgeKind::ChildOf {
+            return Err(Error::CorruptedIndex("edge record"));
+        }
+        parents.push(edge.target);
     }
     parents.sort_unstable();
     parents.dedup();
     Ok(parents)
-}
-
-fn validate_child_of_edge_record(key: &[u8], value: &[u8]) -> Result<()> {
-    if key.len() != EDGE_KEY_LEN {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-    if key[ENTITY_ID_LEN] != EdgeKind::ChildOf as u8 {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-    decode_edge_value_for_kind(EdgeKind::ChildOf, value)
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    Ok(())
 }
 
 fn child_of_prefix(child: &EntityId) -> [u8; ENTITY_ID_LEN + 1] {
