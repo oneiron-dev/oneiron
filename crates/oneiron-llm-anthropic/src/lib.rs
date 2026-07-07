@@ -287,6 +287,9 @@ pub fn build_anthropic_messages_request(
     for (key, value) in provider_options.to_wire_fields() {
         body.insert(key, value);
     }
+    // Anthropic's /v1/messages defines no response_format parameter; strip any
+    // caller-supplied copy so the OpenAI-shaped key never reaches the wire.
+    body.remove("response_format");
     body.insert(
         "model".to_owned(),
         JsonValue::String(request.model.name().to_owned()),
@@ -326,12 +329,16 @@ pub fn build_anthropic_messages_request(
         // The Anthropic Messages API expresses structured output as
         // `output_config.format`, not OpenAI's top-level `response_format`.
         // Merge into any caller-supplied output_config (e.g. effort) instead
-        // of clobbering it.
+        // of clobbering it; a non-object output_config is a caller error.
         let format = json!({ "type": "json_schema", "schema": schema });
-        if let Some(JsonValue::Object(output_config)) = body.get_mut("output_config") {
-            output_config.insert("format".to_owned(), format);
-        } else {
-            body.insert("output_config".to_owned(), json!({ "format": format }));
+        match body.get_mut("output_config") {
+            Some(JsonValue::Object(output_config)) => {
+                output_config.insert("format".to_owned(), format);
+            }
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            None => {
+                body.insert("output_config".to_owned(), json!({ "format": format }));
+            }
         }
     }
 
@@ -1046,6 +1053,38 @@ mod tests {
             }))
         );
         assert_eq!(wire.body.get("response_format"), None);
+    }
+
+    #[test]
+    fn caller_response_format_param_is_stripped_from_wire() {
+        let catalog = catalog_with([LlmCapability::JsonResponse]);
+        let config = AnthropicMessagesConfig::new(catalog);
+        let mut request = sample_request();
+        request.envelope.response_format = ResponseFormat::Text;
+        request.params.insert(
+            "response_format".to_owned(),
+            json!({ "type": "json_schema", "schema": { "type": "object" } }),
+        );
+
+        let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+
+        assert_eq!(wire.body.get("response_format"), None);
+    }
+
+    #[test]
+    fn non_object_output_config_with_json_response_is_invalid_request() {
+        let catalog = catalog_with([LlmCapability::JsonResponse]);
+        let config = AnthropicMessagesConfig::new(catalog);
+        let mut request = sample_request();
+        request
+            .params
+            .insert("output_config".to_owned(), json!("not-an-object"));
+
+        let error = build_anthropic_messages_request(&config, &request, false).unwrap_err();
+        assert!(matches!(
+            error,
+            LlmError::Fatal(FatalLlmError::InvalidRequest)
+        ));
     }
 
     #[test]
