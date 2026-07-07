@@ -2787,14 +2787,21 @@ fn needs_yaml_quotes(value: &str) -> bool {
         || value.contains('}')
         || value.contains(',')
         || value.contains('\\')
-        || value.contains('\n')
-        || value.contains('\t')
+        || contains_yaml_c0_control(value)
         // Leading/trailing whitespace
         || value.starts_with(' ')
         || value.ends_with(' ')
         // YAML 1.1 boolean/null aliases (all case variants)
         || is_yaml_reserved_word(value)
         || looks_numeric(value)
+}
+
+fn contains_yaml_c0_control(value: &str) -> bool {
+    value.chars().any(is_yaml_c0_control)
+}
+
+fn is_yaml_c0_control(ch: char) -> bool {
+    matches!(ch, '\0'..='\x1F')
 }
 
 fn is_yaml_reserved_word(value: &str) -> bool {
@@ -4536,6 +4543,37 @@ mod tests {
             String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
         assert!(text.contains("\"x:y\": value"));
         assert!(text.contains("\"true\": reserved"));
+    }
+
+    #[test]
+    fn yaml_quotes_scalar_control_characters() {
+        let pack = ContextPack {
+            results: vec![ContextEntity {
+                id: EntityId::from_bytes_unchecked([0x93; 16]),
+                short_id: "mc02".to_owned(),
+                content_hash: 0x02,
+                entity_type: ENTITY_TYPE_MACHINE,
+                score: 0.5,
+                fields: Some(HashMap::from([(
+                    "text".to_owned(),
+                    Value::String(
+                        "nul\0bel\x07backspace\x08vertical\x0Bform\x0Cesc\x1Bunit\x1F".to_owned(),
+                    ),
+                )])),
+                edges: None,
+                vector: None,
+            }],
+            neighbors: vec![],
+            stats: empty_stats(),
+            empty: None,
+        };
+
+        let text =
+            String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
+        assert!(
+            text.contains("text: \"nul\\0bel\\abackspace\\bvertical\\vform\\fesc\\eunit\\x1F\""),
+            "{text}"
+        );
     }
 
     #[test]
