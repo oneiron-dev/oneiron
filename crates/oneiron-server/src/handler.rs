@@ -1584,6 +1584,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_import_advances_state_vv_and_origin_without_extra_commit() {
+        let (_dir, server) = test_server();
+        let key = "2026-05";
+        let server_doc = server
+            .get_or_create_window(&WindowKey::new(key))
+            .await
+            .unwrap();
+
+        let observed_origins = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_origins_clone = observed_origins.clone();
+        let _sub = server_doc.subscribe_root(Arc::new(move |event| {
+            observed_origins_clone
+                .lock()
+                .unwrap()
+                .push(event.origin.to_string());
+        }));
+
+        let author = LoroDoc::new();
+        author
+            .get_map("entities")
+            .insert("e-import-commit", b"server".as_slice())
+            .unwrap();
+        author.commit();
+        let update = author.export(ExportMode::all_updates()).unwrap();
+        let author_peer = author.peer_id();
+        let author_ops = author
+            .oplog_vv()
+            .get(&author_peer)
+            .copied()
+            .expect("author update must include author ops");
+
+        let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut conn_state = test_legacy_conn_state();
+        handle_window_sync(
+            &server,
+            7,
+            key,
+            window_sub_tags::UPDATE,
+            &update,
+            &direct_tx,
+            &mut conn_state,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            direct_rx.try_recv().is_err(),
+            "UPDATE import must not direct-reply to the sender"
+        );
+        assert_eq!(
+            server_doc.oplog_vv().get(&author_peer).copied(),
+            Some(author_ops),
+            "import_with must advance the server doc oplog without a later commit"
+        );
+        assert_eq!(
+            server_doc.state_vv().get(&author_peer).copied(),
+            Some(author_ops),
+            "import_with must apply imported ops to visible state without a later commit"
+        );
+        match server_doc.get_map("entities").get("e-import-commit") {
+            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
+                assert_eq!(bytes.as_slice(), b"server");
+            }
+            other => panic!("expected imported binary value, got {other:?}"),
+        }
+        assert!(
+            observed_origins
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|origin| origin == "conn:7"),
+            "import_with origin must be emitted to observers during import"
+        );
+    }
+
+    #[tokio::test]
     async fn selector_vv_request_sends_filtered_update_only() {
         let (_dir, server) = test_server();
         let key = "2026-06";
