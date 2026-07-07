@@ -114,9 +114,9 @@ use crate::deletion::{
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
     validate_redaction_receipt_body,
 };
-use crate::error::{
-    Error, Result, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-};
+use crate::error::{Error, Result};
+#[cfg(feature = "sync")]
+use crate::error::{SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, EntityId};
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so

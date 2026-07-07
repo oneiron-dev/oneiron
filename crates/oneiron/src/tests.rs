@@ -31,6 +31,8 @@ use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope,
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
+#[cfg(feature = "sync")]
+use crate::error::SyncRollbackError;
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::store::{
@@ -2553,6 +2555,28 @@ fn sync_protocol_errors_carry_typed_context_and_engine_source() {
             context: SyncEngineContext::LoroExportUpdates,
             source
         } if source.downcast_ref::<std::io::Error>().is_some()
+    );
+
+    let rollback = Error::sync_engine_rollback(
+        SyncEngineContext::LoroRevert,
+        std::io::Error::other("root txn failed"),
+        std::io::Error::other("root revert failed"),
+    );
+    assert_eq!(rollback.kind(), ErrorKind::SyncEngineError);
+    assert!(rollback.to_string().contains("root txn failed"));
+    assert!(rollback.to_string().contains("root revert failed"));
+    assert_matches!(
+        &rollback,
+        Error::SyncEngineError {
+            context: SyncEngineContext::LoroRevert,
+            source
+        } if {
+            let rollback = source
+                .downcast_ref::<SyncRollbackError>()
+                .expect("sync rollback source should preserve both errors");
+            rollback.operation().to_string().contains("root txn failed")
+                && rollback.rollback().to_string().contains("root revert failed")
+        }
     );
 }
 

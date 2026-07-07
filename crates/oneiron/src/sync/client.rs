@@ -1158,8 +1158,9 @@ impl SyncClient {
             Ok(())
         }) {
             if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
-                return Err(Error::sync_engine(
+                return Err(Error::sync_engine_rollback(
                     SyncEngineContext::LoroRevert,
+                    err,
                     revert_err,
                 ));
             }

@@ -1,3 +1,4 @@
+#[cfg(feature = "sync")]
 use std::error::Error as StdError;
 use std::fmt;
 use std::path::PathBuf;
@@ -488,6 +489,58 @@ impl SyncEngineContext {
 impl fmt::Display for SyncEngineContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Source error for rollback failures that occur after an earlier sync engine
+/// operation already failed.
+#[cfg(feature = "sync")]
+#[derive(Debug)]
+pub struct SyncRollbackError {
+    operation: Box<dyn StdError + Send + Sync + 'static>,
+    rollback: Box<dyn StdError + Send + Sync + 'static>,
+}
+
+#[cfg(feature = "sync")]
+impl SyncRollbackError {
+    #[must_use]
+    pub fn new<Operation, Rollback>(operation: Operation, rollback: Rollback) -> Self
+    where
+        Operation: StdError + Send + Sync + 'static,
+        Rollback: StdError + Send + Sync + 'static,
+    {
+        Self {
+            operation: Box::new(operation),
+            rollback: Box::new(rollback),
+        }
+    }
+
+    #[must_use]
+    pub fn operation(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        self.operation.as_ref()
+    }
+
+    #[must_use]
+    pub fn rollback(&self) -> &(dyn StdError + Send + Sync + 'static) {
+        self.rollback.as_ref()
+    }
+}
+
+#[cfg(feature = "sync")]
+impl fmt::Display for SyncRollbackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "operation failed: {}; rollback failed: {}",
+            self.operation, self.rollback
+        )
+    }
+}
+
+#[cfg(feature = "sync")]
+impl StdError for SyncRollbackError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.rollback)
     }
 }
 
@@ -1220,6 +1273,21 @@ impl Error {
             context,
             source: Box::new(source),
         }
+    }
+
+    /// Constructs a sync engine failure for a failed rollback after an earlier
+    /// engine/storage operation had already failed.
+    #[cfg(feature = "sync")]
+    pub fn sync_engine_rollback<Operation, Rollback>(
+        context: SyncEngineContext,
+        operation: Operation,
+        rollback: Rollback,
+    ) -> Self
+    where
+        Operation: StdError + Send + Sync + 'static,
+        Rollback: StdError + Send + Sync + 'static,
+    {
+        Self::sync_engine(context, SyncRollbackError::new(operation, rollback))
     }
 
     /// Returns the typed Gate denial taxonomy for [`Error::GateWriteRejected`].

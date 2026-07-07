@@ -874,9 +874,13 @@ impl SyncServer {
             lease::mirror_leases_from_root_in_txn(&self.vault, wtxn, &self.root_doc)?;
             Ok(())
         }) {
-            self.root_doc
-                .revert_to(frontiers_before)
-                .map_err(|e| oneiron::Error::sync_engine(SyncEngineContext::LoroRevert, e))?;
+            if let Err(revert_err) = self.root_doc.revert_to(frontiers_before) {
+                return Err(oneiron::Error::sync_engine_rollback(
+                    SyncEngineContext::LoroRevert,
+                    err,
+                    revert_err,
+                ));
+            }
             return Err(err);
         }
         let delta = self
