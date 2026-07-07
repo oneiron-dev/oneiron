@@ -4081,14 +4081,35 @@ impl Vault {
     /// predicate semantics stay above the engine (ARCH-0003 §G.1, D20) —
     /// this method is transition mechanics only.
     pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Supersedes `old_id` with `new_id` INSIDE the caller's write
+    /// transaction, running the same fail-closed guards as
+    /// [`Vault::supersede_claim`] (self-supersession, type-0 / reserved
+    /// predicate, both-`active`, source-trust) but composing into an existing
+    /// txn instead of opening its own. A caller that first writes the
+    /// replacement head and then supersedes the old head in one `wtxn` commits
+    /// or rolls back BOTH together, so a rejected supersession never leaves a
+    /// torn two-`active`-heads window. `new_id` must already have been written
+    /// into the same `wtxn` before this is called.
+    pub(crate) fn supersede_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
         if new_id == old_id {
             return Err(Error::ClaimSelfSupersession);
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
+        let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
-        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
+        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&*wtxn, old_id)?;
         Self::require_active_claim(&old_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
@@ -4123,14 +4144,13 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
         )?;
-        wtxn.commit()?;
         Ok(())
     }
 

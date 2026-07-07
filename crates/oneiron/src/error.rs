@@ -188,6 +188,8 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
+    InvalidAnchor,
+    AnnotationThreadNotFound,
     InvalidEditManifest,
     EditRoundtripFailed,
     InvalidSkillBody,
@@ -784,6 +786,14 @@ pub enum Error {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// An anchored-annotation anchor or locator failed structural validation.
+    /// Nothing was written.
+    #[error("invalid anchor: {0}")]
+    InvalidAnchor(&'static str),
+    /// The referenced anchored-annotation thread does not exist on the
+    /// artifact. Nothing was written.
+    #[error("anchored-annotation thread not found")]
+    AnnotationThreadNotFound,
     /// An ARTL-3 edit manifest failed encode, decode, or schema validation.
     #[error("invalid edit manifest: {0}")]
     InvalidEditManifest(&'static str),
@@ -1390,6 +1400,8 @@ impl Error {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
+            Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,
             Self::InvalidEditManifest(_) => ErrorKind::InvalidEditManifest,
             Self::EditRoundtripFailed(_) => ErrorKind::EditRoundtripFailed,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
