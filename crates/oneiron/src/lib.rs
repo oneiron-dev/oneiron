@@ -27,6 +27,7 @@ pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod embed;
 pub mod error;
+pub mod extraction_eval;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
@@ -271,6 +272,18 @@ pub use crate::embed::{
     EMBED_PRIORITY_SURFACED_HOT, Embedder, EmbedderLocality, PendingEmbeddingInput,
 };
 pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::extraction_eval::{
+    OF360_AR3_METRIC_TIER_INTERFACE_VERSION, OF360_GOLD_DATASET_ID, OF360_GOLD_DATASET_REVISION,
+    OF360_METRIC_DEFINITION_SET_ID, OF360_METRIC_DEFINITION_SET_REVISION, OF360_SCHEMA_VERSION,
+    Of360Ar3MetricTier, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness,
+    Of360DerivationEnvelope, Of360EvalError, Of360EvalReport, Of360ExtractedClaim,
+    Of360ExtractionRun, Of360ExtractionScore, Of360GoldCase, Of360GoldDataset, Of360GoldMatch,
+    Of360GoldMemoryPoint, Of360MemoryKind, Of360MetricDefinition, Of360MetricDefinitionSet,
+    Of360MetricDirection, Of360ParsedMetrics, Of360RateMetric, Of360SeededSubsetConfig,
+    Of360Speaker, evaluate_of360_extraction, generate_of360_seeded_gold_subset,
+    of360_ar3_metric_tier, of360_builtin_ar3_metric_tier, of360_gold_subset,
+    of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
+};
 pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
     FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
