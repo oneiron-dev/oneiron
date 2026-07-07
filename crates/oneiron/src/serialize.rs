@@ -4553,7 +4553,7 @@ mod tests {
                 fields: Some(HashMap::from([(
                     "text".to_owned(),
                     Value::String(
-                        "nul\0bel\x07backspace\x08vertical\x0Bform\x0Cesc\x1Bunit\x1Fdel\x7F"
+                        "nul\0bel\x07backspace\x08vertical\x0Bform\x0Cesc\x1Bunit\x1Fdel\x7Fnextline\u{0085}"
                             .to_owned(),
                     ),
                 )])),
@@ -4569,7 +4569,7 @@ mod tests {
             String::from_utf8(serialize_pack(&pack, &config(PackFormat::Yaml))).expect("utf8");
         assert!(
             text.contains(
-                "text: \"nul\\0bel\\abackspace\\bvertical\\vform\\fesc\\eunit\\x1Fdel\\x7F\""
+                "text: \"nul\\0bel\\abackspace\\bvertical\\vform\\fesc\\eunit\\x1Fdel\\x7Fnextline\\x85\""
             ),
             "{text}"
         );
