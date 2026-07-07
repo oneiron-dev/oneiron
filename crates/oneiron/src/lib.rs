@@ -68,6 +68,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod thread_lens;
 pub mod tokenizer;
 pub mod types;
 mod vault;
@@ -524,6 +525,10 @@ pub use crate::surface_event::{
     INBOUND_SURFACE_RECEIPT_KIND, InboundSurfaceEventInput, InboundSurfaceRejectionReason,
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent,
+};
+pub use crate::thread_lens::{
+    THREAD_LENS_INBOX_DRAFTS_KIND, THREAD_LENS_OF327_SEND_COMMAND, ThreadLensEntry,
+    ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState,
 };
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
