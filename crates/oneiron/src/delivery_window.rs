@@ -400,6 +400,11 @@ impl DeliveryWindowEvaluationContext {
     }
 
     #[must_use]
+    pub const fn local_minute_of_day(&self) -> u16 {
+        self.local_minute_of_day
+    }
+
+    #[must_use]
     pub fn channel(mut self, channel: impl Into<String>) -> Self {
         let channel = channel.into();
         self.channel = Some(normalize_channel_key(&channel));
