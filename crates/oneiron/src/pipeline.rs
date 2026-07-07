@@ -3386,6 +3386,12 @@ fn apply_filters(
             continue;
         }
 
+        // OF-326 THE FENCE (ONE-1546): off-record-tagged entities never
+        // surface, independent of the owning session's current mode.
+        if crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            continue;
+        }
+
         if !crate::codebase::codebase_candidate_matches_filters(
             store,
             rtxn,
@@ -3436,6 +3442,14 @@ fn pipeline_candidate_matches_filters_and_gate(
     if let Some((start, end)) = filters.learned_range
         && (meta.learned_at < start || meta.learned_at > end)
     {
+        return Ok(false);
+    }
+
+    // OF-326 THE FENCE (ONE-1546): entities tagged off-record never surface
+    // to any retrieval/extraction consumer of this filter, independent of
+    // the owning session's current mode — the tag outlives a same-session
+    // flip back on-record, and only promote or delete-at-close lifts it.
+    if crate::off_record::off_record_fence_active(store, rtxn, id)? {
         return Ok(false);
     }
 
