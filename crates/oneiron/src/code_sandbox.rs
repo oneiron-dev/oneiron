@@ -28,7 +28,7 @@ pub const SANDBOX_JS_COMPONENT_NAME: &str = "oneiron.plain-js.quickjs-component"
 pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
   namespace memory {
     function search(input: { query: string; limit?: number }): Promise<{ results: unknown[] }>;
-    function putClaim(input: {
+    function put_claim(input: {
       id: string;
       predicate: string;
       subject: unknown;
@@ -37,8 +37,8 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
       occurred?: { start: number; end: number };
       learnedAt?: number;
     }): Promise<{ id: string }>;
-    function supersedeClaim(input: { newId: string; oldId: string; now: number }): Promise<{ id: string }>;
-    function putEdge(input: { src: string; kind: string; tgt: string; weight?: number }): Promise<{ src: string; kind: string; tgt: string }>;
+    function supersede_claim(input: { newId: string; oldId: string; now: number }): Promise<{ id: string }>;
+    function put_edge(input: { src: string; kind: string; tgt: string; weight?: number }): Promise<{ src: string; kind: string; tgt: string }>;
   }
 
   function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
@@ -1233,9 +1233,9 @@ mod tests {
 
         assert!(dts.contains("declare namespace self"));
         assert!(dts.contains("function search"));
-        assert!(dts.contains("function putClaim"));
-        assert!(dts.contains("function supersedeClaim"));
-        assert!(dts.contains("function putEdge"));
+        assert!(dts.contains("function put_claim"));
+        assert!(dts.contains("function supersede_claim"));
+        assert!(dts.contains("function put_edge"));
         assert!(dts.contains("function askHuman"));
         assert!(dts.contains("function ask_human"));
         assert!(dts.contains("namespace clock"));

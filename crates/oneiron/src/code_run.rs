@@ -30,6 +30,8 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
 const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
 
+/// Maximum results a first-party `self.memory.search` call can request.
+pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
@@ -1401,7 +1403,8 @@ impl<'a> HostSelfDispatcher<'a> {
     }
 
     fn dispatch_memory_search(&self, call: SelfMemorySearchCall) -> Result<SelfDispatchOutcome> {
-        let results = self.vault.search_text(&call.query, call.limit)?;
+        let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
+        let results = self.vault.search_text(&call.query, limit)?;
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
@@ -2479,6 +2482,45 @@ mod tests {
         };
         assert_eq!(result.query, "matcha");
         assert!(result.results.iter().any(|hit| hit.id == memory));
+        Ok(())
+    }
+
+    #[test]
+    fn code_run_memory_search_caps_guest_limit() -> Result<()> {
+        let (_dir, vault) = open_test_vault();
+        let actor = seed_person(&vault, 0xA3);
+        for index in 0..(SELF_MEMORY_SEARCH_MAX_RESULTS + 4) {
+            let byte = 0xB0_u8 + u8::try_from(index).expect("test index fits in u8");
+            let timestamp = 2 + u64::try_from(index).expect("test index fits in u64");
+            let memory = EntityId::from_bytes([byte; 16]).expect("memory id");
+            vault
+                .batch()
+                .put(
+                    &memory,
+                    ENTITY_TYPE_PERSON,
+                    range(timestamp),
+                    timestamp,
+                    b"matcha note",
+                )
+                .text(&memory, &[("body", "matcha preference")])
+                .commit()?;
+        }
+
+        let dispatcher = HostSelfDispatcher::new(
+            &vault,
+            WriteActor::new(actor, EdgeActorClass::Agent),
+            "run-search-cap",
+        )?;
+        let outcome = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+            "matcha",
+            SELF_MEMORY_SEARCH_MAX_RESULTS + 10_000,
+        )))?;
+
+        let SelfDispatchOutcome::MemorySearch(result) = outcome else {
+            panic!("expected memory search outcome");
+        };
+        assert_eq!(result.query, "matcha");
+        assert_eq!(result.results.len(), SELF_MEMORY_SEARCH_MAX_RESULTS);
         Ok(())
     }
 

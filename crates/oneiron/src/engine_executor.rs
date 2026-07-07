@@ -1515,9 +1515,9 @@ mod tests {
         assert!(system.contains("plain JavaScript"));
         for advertised in [
             "function search",
-            "function putClaim",
-            "function supersedeClaim",
-            "function putEdge",
+            "function put_claim",
+            "function supersede_claim",
+            "function put_edge",
             "function askHuman",
             "function ask_human",
         ] {
