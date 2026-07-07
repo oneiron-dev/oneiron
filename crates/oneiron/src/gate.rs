@@ -2674,6 +2674,20 @@ impl GateConsentBinding {
     }
 }
 
+/// Computes the content-addressed consent binding parts for a claim body
+/// against the currently-resolved policy manifest. The OF-234 inbox uses
+/// this to verify a pending proposal has not drifted (content or policy
+/// floor) before redeeming bundle consent on it.
+pub(crate) fn claim_consent_binding_parts(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<(Vec<u8>, [u8; 32])> {
+    let policy = resolve_policy_manifest(store, txn)?;
+    let binding = GateConsentBinding::for_claim(body, &policy)?;
+    Ok((binding.diff_handle, binding.read_frontier_hash))
+}
+
 pub(crate) fn standing_outbound_grant_binding_parts(
     intent: &GrantMintIntent,
     policy: &PolicyManifestResolution,
