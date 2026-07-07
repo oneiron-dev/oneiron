@@ -379,7 +379,8 @@ pub use crate::lens::{
 pub use crate::linkedin_connector::{
     LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL,
     LINKEDIN_MCP_CONNECTOR_KEY, LINKEDIN_MCP_SEND_MESSAGE_TOOL, LINKEDIN_SEND_DM_VERB,
-    LinkedInMcpConnectorAdapter,
+    LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport,
+    LinkedInMcpVerifiedSendSink, LinkedInVerifiedSendPlan,
 };
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
