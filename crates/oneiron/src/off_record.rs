@@ -30,6 +30,14 @@
 //!   [`Vault::off_record_receipt_log`] — which close CONSUMES, so there is
 //!   one close path and no emit receipt can be orphaned. Only floor
 //!   receipts (gate decisions, redaction audits) persist.
+//!
+//!   **MUST (caller discipline):** every retrieval run executed FOR an
+//!   off-record session MUST be registered via
+//!   [`Vault::note_off_record_context_receipt`] with the run id the
+//!   pipeline returned (`run_with_telemetry`). The retrieval-telemetry
+//!   write path has no session ref, so the engine CANNOT auto-register —
+//!   one forgotten call permanently leaks the room's activated-memory ids
+//!   in a durable retrieval-run row.
 //! * **Delete-at-close** — [`Vault::close_off_record_session`] deletes every
 //!   still-fenced turn through the pinned ARCH-0038 contract
 //!   ([`DeleteReason::PolicyDelete`]: CRDT tombstone FIRST, active-store
@@ -45,6 +53,26 @@
 //! persisted as vault entities by a caller ride the same fence + deletion by
 //! being tagged like any other turn (the fence keys on entity id, not
 //! entity type).
+//!
+//! # Known limitations (OFRC-2 scope)
+//!
+//! Ticketed follow-ups pending an owner design pass — deliberately named
+//! here, not silently absent:
+//!
+//! * **Fence rows do not sync.** The fence is a local `vault_meta` row; it
+//!   never rides the CRDT transport. A replica that received fenced turns
+//!   mid-session treats them as ordinary turns until close's tombstones
+//!   replay there: its extraction may surface them, replica-derived claims
+//!   survive the close, and a replica that goes offline before tombstone
+//!   replay retains the transcript indefinitely. True cross-device
+//!   evaporation needs the fence (or the session contract) on the wire.
+//! * **`export.rs` is fence-unaware.** A whole-vault export taken while an
+//!   off-record session is live serializes the fenced turns like any other
+//!   entity; the export bundle outlives close.
+//! * **Context-receipt registration is caller discipline.** See the MUST
+//!   above — auto-registration needs session plumbing at the
+//!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
+//!   that does not exist today.
 
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
@@ -143,6 +171,13 @@ pub struct OffRecordSessionRecord {
     pub promoted_turns: Vec<[u8; 16]>,
     /// Session-local context receipts (retrieval runs) deleted at close.
     pub context_receipt_runs: Vec<RetrievalRunId>,
+    /// Set by the first close transaction. While `true`, every mutator
+    /// (tag, promote, note-context-receipt, mode flip) rejects with
+    /// [`Error::OffRecordSessionClosing`] — close's multi-transaction
+    /// deletion pass must never race a record mutation (a stale snapshot
+    /// could hard-delete a just-promoted, user-consented turn).
+    #[serde(default)]
+    pub closing: bool,
 }
 
 /// Durable, user-initiated receipt minted by promote. Survives close: it is
@@ -171,6 +206,11 @@ pub struct OffRecordCloseOutcome {
     /// Emit-adjacent receipts dropped with the session's
     /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
     pub emit_receipts_deleted: usize,
+    /// Fence rows kept for turns that were MISSING at delete time
+    /// (tag-before-write where the write had not landed). The retained row
+    /// keeps a late-landing write permanently fenced instead of letting it
+    /// rejoin retrieval silently; equals `turns_missing`.
+    pub fence_rows_retained: usize,
     /// Promoted turns intentionally left in place.
     pub promoted_turns_kept: usize,
     /// REDACTION_AUDIT receipt ids minted by the per-turn deletions (floor
@@ -259,6 +299,27 @@ fn session_record_in_txn(
     Ok(Some(record))
 }
 
+/// Loads the record for a mutator: errors when the session is unknown, and
+/// rejects typed once close has stamped the closing flag — no record
+/// mutation may interleave with close's multi-transaction deletion pass.
+fn mutable_session_record_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    session_ref: &str,
+) -> Result<OffRecordSessionRecord> {
+    let record = session_record_in_txn(store, rtxn, session_ref)?.ok_or_else(|| {
+        Error::OffRecordSessionNotFound {
+            session_ref: session_ref.to_owned(),
+        }
+    })?;
+    if record.closing {
+        return Err(Error::OffRecordSessionClosing {
+            session_ref: session_ref.to_owned(),
+        });
+    }
+    Ok(record)
+}
+
 impl Vault {
     /// Explicitly enters off-record mode for `session_ref` (OF-326: enter is
     /// never implicit). Errors with [`Error::OffRecordSessionAlreadyExists`]
@@ -279,6 +340,7 @@ impl Vault {
             fenced_turns: Vec::new(),
             promoted_turns: Vec::new(),
             context_receipt_runs: Vec::new(),
+            closing: false,
         };
         let key = off_record_session_key(session_ref);
         let value = encode_off_record_session(&record)?;
@@ -309,12 +371,7 @@ impl Vault {
         mode: OffRecordMode,
     ) -> Result<OffRecordSessionRecord> {
         self.with_write_txn(|wtxn| {
-            let mut record =
-                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
-                    Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    }
-                })?;
+            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             record.mode = mode;
             self.store.vault_meta.put(
                 wtxn,
@@ -333,12 +390,7 @@ impl Vault {
     /// extraction pass. Idempotent for a turn already fenced by this session.
     pub fn tag_turn_off_record(&self, session_ref: &str, turn_id: &EntityId) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            let mut record =
-                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
-                    Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    }
-                })?;
+            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             if record.mode != OffRecordMode::OffRecord {
                 return Err(Error::InvariantViolation(
                     "off-record tag requires the session to be in off-record mode",
@@ -395,12 +447,7 @@ impl Vault {
         run_id: RetrievalRunId,
     ) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            let mut record =
-                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
-                    Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    }
-                })?;
+            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             if record.context_receipt_runs.contains(&run_id) {
                 return Ok(());
             }
@@ -429,12 +476,7 @@ impl Vault {
         turn_id: &EntityId,
     ) -> Result<OffRecordPromoteReceipt> {
         self.with_write_txn(|wtxn| {
-            let mut record =
-                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
-                    Error::OffRecordSessionNotFound {
-                        session_ref: session_ref.to_owned(),
-                    }
-                })?;
+            let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             let position = record
                 .fenced_turns
                 .iter()
@@ -513,10 +555,21 @@ impl Vault {
     /// transcript: the durable retrieval-run context receipts are deleted,
     /// and the session's [`SessionLocalReceiptLog`] is consumed here — the
     /// one close path — so its emit-adjacent receipts drop with the room.
-    /// Promoted turns and their promote receipts are kept. Fence rows and
-    /// the session record are removed LAST, so a close interrupted mid-way
-    /// can simply be called again (mint a fresh empty log via
-    /// [`Vault::off_record_receipt_log`] to retry).
+    /// Promoted turns and their promote receipts are kept.
+    ///
+    /// Concurrency contract: the FIRST transaction stamps `closing` on the
+    /// record, after which every mutator rejects with
+    /// [`Error::OffRecordSessionClosing`] — the multi-transaction deletion
+    /// pass can never race a tag or promote (a stale snapshot must not
+    /// hard-delete a just-promoted, user-consented turn). The FINAL
+    /// transaction re-reads the record and fails closed on drift instead of
+    /// trusting the snapshot. Fence rows for turns that were MISSING at
+    /// delete time are RETAINED: a tag-before-write turn whose write lands
+    /// after close stays permanently fenced instead of silently rejoining
+    /// retrieval. Fence rows for deleted turns and the session record are
+    /// removed LAST, so a close interrupted mid-way can simply be called
+    /// again (mint a fresh empty log via [`Vault::off_record_receipt_log`]
+    /// to retry).
     pub fn close_off_record_session(
         &self,
         session_ref: &str,
@@ -532,17 +585,31 @@ impl Vault {
                 "off-record close requires an off-record receipt log",
             ));
         }
-        let record = self.off_record_session(session_ref)?.ok_or_else(|| {
-            Error::OffRecordSessionNotFound {
-                session_ref: session_ref.to_owned(),
-            }
-        })?;
+        // Txn 1: stamp the closing flag. From here on the record is frozen
+        // (mutators reject), so the snapshot below cannot go stale. A retry
+        // of an interrupted close re-enters here idempotently.
+        let record =
+            self.with_write_txn(|wtxn| {
+                let mut record = session_record_in_txn(&self.store, wtxn, session_ref)?
+                    .ok_or_else(|| Error::OffRecordSessionNotFound {
+                        session_ref: session_ref.to_owned(),
+                    })?;
+                if !record.closing {
+                    record.closing = true;
+                    self.store.vault_meta.put(
+                        wtxn,
+                        &off_record_session_key(session_ref),
+                        &encode_off_record_session(&record)?,
+                    )?;
+                }
+                Ok(record)
+            })?;
         let receipt_close = receipt_log.close();
         debug_assert!(receipt_close.retained.is_empty());
         let emit_receipts_deleted = receipt_close.deleted;
 
         let mut turns_deleted = 0_usize;
-        let mut turns_missing = 0_usize;
+        let mut missing_turns: Vec<[u8; 16]> = Vec::new();
         let mut redaction_receipt_ids = Vec::new();
         for bytes in &record.fenced_turns {
             let id = EntityId::from_bytes(*bytes)?;
@@ -550,7 +617,9 @@ impl Vault {
             if outcome.existed {
                 turns_deleted += 1;
             } else {
-                turns_missing += 1;
+                // Fully-missing id: the ARCH-0038 delete is a strict no-op
+                // (no tombstone) — remember it so its fence row is retained.
+                missing_turns.push(*bytes);
             }
             if let Some(receipt_id) = outcome.receipt_id {
                 redaction_receipt_ids.push(receipt_id);
@@ -562,8 +631,30 @@ impl Vault {
         }
         let context_receipts_deleted = record.context_receipt_runs.len();
 
+        // Final txn: re-read and fail closed on drift (defense-in-depth —
+        // the closing flag already blocks mutators), then remove fence rows
+        // for DELETED turns only and drop the record. A missing turn keeps
+        // its fence row so a late-landing write stays fenced.
         self.with_write_txn(|wtxn| {
+            let current =
+                session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
+                    Error::OffRecordSessionNotFound {
+                        session_ref: session_ref.to_owned(),
+                    }
+                })?;
+            if !current.closing
+                || current.fenced_turns != record.fenced_turns
+                || current.promoted_turns != record.promoted_turns
+                || current.context_receipt_runs != record.context_receipt_runs
+            {
+                return Err(Error::InvariantViolation(
+                    "off-record session record drifted during close",
+                ));
+            }
             for bytes in &record.fenced_turns {
+                if missing_turns.contains(bytes) {
+                    continue;
+                }
                 let id = EntityId::from_bytes(*bytes)?;
                 self.store
                     .vault_meta
@@ -577,9 +668,10 @@ impl Vault {
 
         Ok(OffRecordCloseOutcome {
             turns_deleted,
-            turns_missing,
+            turns_missing: missing_turns.len(),
             context_receipts_deleted,
             emit_receipts_deleted,
+            fence_rows_retained: missing_turns.len(),
             promoted_turns_kept: record.promoted_turns.len(),
             redaction_receipt_ids,
         })
@@ -869,6 +961,7 @@ mod tests {
         assert_eq!(outcome.turns_missing, 0);
         assert_eq!(outcome.context_receipts_deleted, 1);
         assert_eq!(outcome.emit_receipts_deleted, 1);
+        assert_eq!(outcome.fence_rows_retained, 0);
         assert_eq!(outcome.promoted_turns_kept, 0);
         assert_eq!(outcome.redaction_receipt_ids.len(), 2);
 
@@ -964,5 +1057,120 @@ mod tests {
             .expect("receipt lookup")
             .expect("promote receipt persists");
         assert_eq!(persisted, receipt);
+    }
+
+    /// Simulates close-in-flight by stamping the closing flag exactly as
+    /// close's first transaction does, then interleaves every mutator at
+    /// the seam. The promote rejection is the load-bearing one: without the
+    /// flag, close's stale snapshot would hard-delete a just-promoted,
+    /// user-consented turn.
+    #[test]
+    fn off_record_closing_flag_freezes_record_against_mutators() {
+        let (_tmp, vault) = temp_vault();
+        let fenced = seed_turn(&vault, 1000);
+        let late = seed_turn(&vault, 1001);
+        vault
+            .enter_off_record_session("sess-toctou", OffRecordBackendClass::Local)
+            .expect("enter");
+        vault
+            .tag_turn_off_record("sess-toctou", &fenced)
+            .expect("tag");
+
+        // Stamp the closing flag the way close's txn 1 does.
+        vault
+            .with_write_txn(|wtxn| {
+                let mut record = session_record_in_txn(&vault.store, wtxn, "sess-toctou")?
+                    .expect("session record");
+                record.closing = true;
+                vault.store.vault_meta.put(
+                    wtxn,
+                    &off_record_session_key("sess-toctou"),
+                    &encode_off_record_session(&record)?,
+                )?;
+                Ok(())
+            })
+            .expect("stamp closing");
+
+        let tag = vault
+            .tag_turn_off_record("sess-toctou", &late)
+            .expect_err("tag during close");
+        assert_eq!(tag.kind(), ErrorKind::OffRecordSessionClosing);
+        let promote = vault
+            .promote_off_record_turn("sess-toctou", &fenced)
+            .expect_err("promote during close");
+        assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
+        let note = vault
+            .note_off_record_context_receipt("sess-toctou", crate::store::RetrievalRunId::now())
+            .expect_err("note during close");
+        assert_eq!(note.kind(), ErrorKind::OffRecordSessionClosing);
+        let flip = vault
+            .set_off_record_session_mode("sess-toctou", OffRecordMode::OnRecord)
+            .expect_err("flip during close");
+        assert_eq!(flip.kind(), ErrorKind::OffRecordSessionClosing);
+
+        // Close re-enters the closing state idempotently and completes.
+        let log = vault
+            .off_record_receipt_log("sess-toctou")
+            .expect("log during close retry");
+        let outcome = vault
+            .close_off_record_session("sess-toctou", log)
+            .expect("close completes");
+        assert_eq!(outcome.turns_deleted, 1);
+        assert!(vault.get(&fenced).expect("read fenced").is_none());
+        assert!(vault.get(&late).expect("read late").is_some());
+    }
+
+    /// Tag-before-write turn whose entity write lands AFTER close: the
+    /// fence row must be retained so the late write cannot silently rejoin
+    /// retrieval (the ARCH-0038 delete of a fully-missing id is a strict
+    /// no-op with no tombstone to block it).
+    #[test]
+    fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
+        let (_tmp, vault) = temp_vault();
+        let written = seed_turn(&vault, 1000);
+        let phantom = EntityId::now();
+        vault
+            .enter_off_record_session("sess-rejoin", OffRecordBackendClass::Local)
+            .expect("enter");
+        vault
+            .tag_turn_off_record("sess-rejoin", &written)
+            .expect("tag written");
+        // Tag-before-write: the entity does not exist yet.
+        vault
+            .tag_turn_off_record("sess-rejoin", &phantom)
+            .expect("tag phantom");
+
+        let log = vault
+            .off_record_receipt_log("sess-rejoin")
+            .expect("mint log");
+        let outcome = vault
+            .close_off_record_session("sess-rejoin", log)
+            .expect("close");
+        assert_eq!(outcome.turns_deleted, 1);
+        assert_eq!(outcome.turns_missing, 1);
+        assert_eq!(outcome.fence_rows_retained, 1);
+
+        // Deleted turn's fence row is gone; the missing turn's row remains.
+        assert!(!vault.is_turn_off_record_fenced(&written).expect("probe"));
+        assert!(vault.is_turn_off_record_fenced(&phantom).expect("probe"));
+
+        // The in-flight write lands late — it must stay fenced, not rejoin.
+        vault
+            .put_entity(
+                &phantom,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: 1001,
+                    end: 1001,
+                },
+                1001,
+                b"late-landing off-record turn",
+            )
+            .expect("late write");
+        assert!(
+            surfaced_turns(&vault).is_empty(),
+            "late-landing fenced turn must not rejoin retrieval"
+        );
+        assert!(dreamer_working_set_turns(&vault).is_empty());
     }
 }

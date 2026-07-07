@@ -240,6 +240,7 @@ pub enum ErrorKind {
     InvalidRedactionReceiptBody,
     OffRecordSessionAlreadyExists,
     OffRecordSessionNotFound,
+    OffRecordSessionClosing,
     OffRecordTurnNotFenced,
     OffRecordTalkOnly,
     #[cfg(feature = "sync")]
@@ -872,6 +873,12 @@ pub enum Error {
     /// no live record (never entered, or already closed).
     #[error("off-record session not found: {session_ref}")]
     OffRecordSessionNotFound { session_ref: String },
+    /// A mutator (tag, promote, note-context-receipt, mode flip) targeted an
+    /// off-record session whose close is in flight — the closing flag froze
+    /// the record so close's multi-transaction deletion pass cannot race a
+    /// mutation. Nothing was written; the session is evaporating.
+    #[error("off-record session {session_ref} is closing: the record is frozen")]
+    OffRecordSessionClosing { session_ref: String },
     /// Promote (OF-326) targeted a turn that is not fenced by this
     /// off-record session — promote lifts exactly one live fence.
     #[error("turn {turn_ref} is not fenced by off-record session {session_ref}")]
@@ -1078,6 +1085,7 @@ impl Error {
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             Self::OffRecordSessionAlreadyExists { .. } => ErrorKind::OffRecordSessionAlreadyExists,
             Self::OffRecordSessionNotFound { .. } => ErrorKind::OffRecordSessionNotFound,
+            Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
             Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             #[cfg(feature = "sync")]
