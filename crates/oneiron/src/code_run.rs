@@ -1860,6 +1860,7 @@ mod tests {
     use super::*;
     use crate::{
         ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
+        receipt::{ReceiptKind, ReceiptQuery},
         types::{
             ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
             WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
@@ -2037,6 +2038,12 @@ mod tests {
         Ok(vault.store.gate_decisions(100)?.len())
     }
 
+    fn gate_receipt_count(vault: &Vault) -> Result<usize> {
+        Ok(vault
+            .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?
+            .len())
+    }
+
     fn assert_latest_gate_decision(vault: &Vault, expected_id: EntityId) -> Result<()> {
         let decisions = vault.store.gate_decisions(1)?;
         let latest = decisions.first().expect("latest gate decision");
@@ -2049,6 +2056,52 @@ mod tests {
                 .iter()
                 .all(|code| code.starts_with("gate."))
         );
+        Ok(())
+    }
+
+    fn assert_gate_receipts_for_claim(
+        vault: &Vault,
+        expected_id: EntityId,
+        expected_actor: EntityId,
+        expected_outcome: &str,
+        expected_count: usize,
+    ) -> Result<()> {
+        let expected_trigger = format!("claim:{}", expected_id.to_hex());
+        let expected_actor = expected_actor.to_hex();
+        let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
+        let matching_receipts = receipts
+            .iter()
+            .filter(|receipt| {
+                receipt.trigger_ref.as_deref() == Some(expected_trigger.as_str())
+                    && receipt.outcome == expected_outcome
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching_receipts.len(),
+            expected_count,
+            "unexpected gate receipt count for {expected_trigger}"
+        );
+
+        for receipt in matching_receipts {
+            assert_eq!(receipt.receipt_kind, ReceiptKind::Gate);
+            assert_eq!(receipt.actor.as_deref(), Some(expected_actor.as_str()));
+            assert_eq!(
+                receipt.fields.get("content_kind").map(String::as_str),
+                Some("claim")
+            );
+            assert!(
+                receipt
+                    .fields
+                    .get("diff_handle")
+                    .is_some_and(|value| !value.is_empty())
+            );
+            assert!(
+                receipt
+                    .fields
+                    .get("read_frontier_hash")
+                    .is_some_and(|value| !value.is_empty())
+            );
+        }
         Ok(())
     }
 
@@ -2501,7 +2554,7 @@ mod tests {
     }
 
     #[test]
-    fn code_run_public_write_traps_route_per_op_through_gate() -> Result<()> {
+    fn code_run_full_access_write_traps_route_per_op_through_gate_and_receipts() -> Result<()> {
         let (_dir, vault) = open_test_vault();
         let actor = seed_first_party_actor(&vault);
         install_self_memory_allow_policy(&vault, actor)?;
@@ -2515,7 +2568,8 @@ mod tests {
             "run-write-traps",
         )?;
 
-        let before_old = gate_decision_count(&vault)?;
+        let before_old_decisions = gate_decision_count(&vault)?;
+        let before_old_receipts = gate_receipt_count(&vault)?;
         dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
             old,
             ClaimCandidate::new(
@@ -2527,10 +2581,13 @@ mod tests {
             range(10),
             11,
         )))?;
-        assert_eq!(gate_decision_count(&vault)?, before_old + 1);
+        assert_eq!(gate_decision_count(&vault)?, before_old_decisions + 1);
+        assert_eq!(gate_receipt_count(&vault)?, before_old_receipts + 1);
         assert_latest_gate_decision(&vault, old)?;
+        assert_gate_receipts_for_claim(&vault, old, actor, "allow", 1)?;
 
-        let before_new = gate_decision_count(&vault)?;
+        let before_new_decisions = gate_decision_count(&vault)?;
+        let before_new_receipts = gate_receipt_count(&vault)?;
         dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
             new,
             ClaimCandidate::new(
@@ -2542,10 +2599,13 @@ mod tests {
             range(12),
             13,
         )))?;
-        assert_eq!(gate_decision_count(&vault)?, before_new + 1);
+        assert_eq!(gate_decision_count(&vault)?, before_new_decisions + 1);
+        assert_eq!(gate_receipt_count(&vault)?, before_new_receipts + 1);
         assert_latest_gate_decision(&vault, new)?;
+        assert_gate_receipts_for_claim(&vault, new, actor, "allow", 1)?;
 
-        let before_supersede = gate_decision_count(&vault)?;
+        let before_supersede_decisions = gate_decision_count(&vault)?;
+        let before_supersede_receipts = gate_receipt_count(&vault)?;
         let supersedes_edge_gate_id = edge_operation_gate_id(
             SelfEffect::MemorySupersedeClaim,
             new,
@@ -2559,14 +2619,18 @@ mod tests {
             supersede_outcome,
             SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: new })
         );
-        assert_eq!(gate_decision_count(&vault)?, before_supersede + 2);
+        assert_eq!(gate_decision_count(&vault)?, before_supersede_decisions + 2);
+        assert_eq!(gate_receipt_count(&vault)?, before_supersede_receipts + 2);
         assert_recent_gate_decision_ids(&vault, &[supersedes_edge_gate_id, old])?;
+        assert_gate_receipts_for_claim(&vault, supersedes_edge_gate_id, actor, "allow", 1)?;
+        assert_gate_receipts_for_claim(&vault, old, actor, "allow", 2)?;
         let old_read = vault.get_claim(&old)?.expect("superseded claim");
         assert_eq!(old_read.lifecycle, ClaimLifecycleStatus::Superseded);
         assert_eq!(old_read.valid_to, Some(20));
         assert_eq!(vault.targets(&new, EdgeKind::Supersedes, None)?, vec![old]);
 
-        let before_edge = gate_decision_count(&vault)?;
+        let before_edge_decisions = gate_decision_count(&vault)?;
+        let before_edge_receipts = gate_receipt_count(&vault)?;
         let edge_gate_id = edge_operation_gate_id(
             SelfEffect::MemoryPutEdge,
             subject,
@@ -2584,8 +2648,10 @@ mod tests {
                 tgt: edge_target,
             })
         );
-        assert_eq!(gate_decision_count(&vault)?, before_edge + 1);
+        assert_eq!(gate_decision_count(&vault)?, before_edge_decisions + 1);
+        assert_eq!(gate_receipt_count(&vault)?, before_edge_receipts + 1);
         assert_latest_gate_decision(&vault, edge_gate_id)?;
+        assert_gate_receipts_for_claim(&vault, edge_gate_id, actor, "allow", 1)?;
         assert_eq!(
             vault.targets(&subject, EdgeKind::Mentions, None)?,
             vec![edge_target]

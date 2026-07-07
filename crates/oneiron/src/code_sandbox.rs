@@ -1108,6 +1108,7 @@ mod tests {
             first_party.runtime(),
             SandboxGuestRuntime::PlainJsQuickJsComponent
         );
+        assert_eq!(first_party.wit_world(), SANDBOX_WIT_WORLD_NAME);
         assert_eq!(
             first_party.guest_language(),
             SandboxGuestLanguage::PlainJavaScript
@@ -1122,6 +1123,23 @@ mod tests {
             SandboxCredentialEffect::ReadOnly
         );
         assert!(first_party.links_write_imports());
+        let all_imports = first_party
+            .linked_imports()
+            .iter()
+            .map(|import| import.name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_imports,
+            vec![
+                "sandbox.fs.read_file",
+                "sandbox.credential.call",
+                "oneiron.clock.now_unix_ms",
+                "oneiron.random.bytes",
+                "self.memory.put_claim",
+                "self.memory.supersede_claim",
+                "self.memory.put_edge",
+            ]
+        );
         let write_imports = first_party
             .linked_imports()
             .iter()
@@ -1164,12 +1182,24 @@ mod tests {
             deterministic_imports,
             vec!["oneiron.clock.now_unix_ms", "oneiron.random.bytes"]
         );
-        assert!(
-            first_party
-                .linked_imports()
-                .iter()
-                .all(|import| !import.name().contains("bulk") && !import.name().contains("batch"))
-        );
+        for import in first_party.linked_imports() {
+            for forbidden in [
+                "batch",
+                "bulk",
+                "raw",
+                "delete",
+                "put_entity",
+                "put_replicated",
+                "set_edge_weight",
+                "write_fixture",
+            ] {
+                assert!(
+                    !import.name().contains(forbidden),
+                    "code-mode WIT import {} must not expose {forbidden}",
+                    import.name()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1190,6 +1220,12 @@ mod tests {
         assert!(!dts.contains("approval"));
         assert!(!dts.contains("batch"));
         assert!(!dts.contains("bulk"));
+        assert!(!dts.contains("raw"));
+        assert!(!dts.contains("delete"));
+        assert!(!dts.contains("putEntity"));
+        assert!(!dts.contains("putReplicated"));
+        assert!(!dts.contains("setEdgeWeight"));
+        assert!(!dts.contains("writeFixture"));
         assert_eq!(
             SandboxGuestRuntime::PlainJsQuickJsComponent.prompt_side_dts(),
             PLAIN_JS_HOST_VERB_DTS

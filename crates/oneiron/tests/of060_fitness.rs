@@ -2,6 +2,11 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use oneiron::{
+    SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract, SandboxGuestTier, SandboxImportClass,
+    SelfEffect,
+};
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RawHit {
     path: String,
@@ -468,6 +473,70 @@ fn f2_surface_path(rel: &str) -> bool {
             rel,
             "crates/oneiron/src/code_run.rs" | "crates/oneiron/src/code_sandbox.rs"
         )
+}
+
+#[test]
+fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
+    let first_party = SandboxBoundaryContract::for_tier(SandboxGuestTier::FirstPartyDreamer);
+    assert_eq!(first_party.wit_world(), SANDBOX_WIT_WORLD_NAME);
+
+    let write_imports = first_party
+        .linked_imports()
+        .iter()
+        .filter(|import| import.class() == SandboxImportClass::WriteTrap)
+        .map(|import| import.name())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        write_imports,
+        vec![
+            "self.memory.put_claim",
+            "self.memory.supersede_claim",
+            "self.memory.put_edge",
+        ],
+        "OF-060 P3: code-mode WIT writes must stay on named memory verbs only"
+    );
+
+    let write_effects = first_party
+        .linked_imports()
+        .iter()
+        .filter(|import| import.class() == SandboxImportClass::WriteTrap)
+        .map(|import| import.write_trap_effect().expect("named write trap"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        write_effects,
+        vec![
+            SelfEffect::MemoryPutClaim,
+            SelfEffect::MemorySupersedeClaim,
+            SelfEffect::MemoryPutEdge,
+        ],
+        "OF-060 P3: every linked code-mode write import must resolve to a named effect"
+    );
+
+    for tier in [
+        SandboxGuestTier::FirstPartyDreamer,
+        SandboxGuestTier::Foreign,
+        SandboxGuestTier::Untrusted,
+    ] {
+        let contract = SandboxBoundaryContract::for_tier(tier);
+        for import in contract.linked_imports() {
+            for forbidden in [
+                "batch",
+                "bulk",
+                "raw",
+                "delete",
+                "put_entity",
+                "put_replicated",
+                "set_edge_weight",
+                "write_fixture",
+            ] {
+                assert!(
+                    !import.name().contains(forbidden),
+                    "OF-060 P3: {tier:?} code-mode WIT import {} exposes raw escape hatch fragment {forbidden}",
+                    import.name()
+                );
+            }
+        }
+    }
 }
 
 #[test]
