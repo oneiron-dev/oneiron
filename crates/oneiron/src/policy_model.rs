@@ -14,7 +14,9 @@ use crate::llm::{
     DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback, LlmBackend, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, ModelTierRef, ResponseFormat, SafeguardModelBinding,
 };
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord,
+};
 use crate::types::bytes_to_hex_lower;
 
 pub const POLICY_MODEL_REWORD_RETRY_BUDGET: usize = 2;
@@ -22,8 +24,20 @@ const POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY: &str =
     "I can keep this safe and general without using that detail.";
 const POLICY_MODEL_BLOCK_NOTICE: &str =
     "Oneiron blocked this outbound content before display or action.";
+const POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE: &str =
+    "Oneiron blocked this outbound content under the vault owner's policy.";
+const POLICY_MODEL_HELP_CARD_NOTICE: &str =
+    "Oneiron routed this turn to a help card with EF-304 handoff.";
 const POLICY_MODEL_HELP_MESSAGE: &str =
     "Support resources should be offered alongside the reply without diagnosing the person.";
+const SYSTEM_NOTICE_CHANNEL_EF196_OF221: &str = "EF-196/OF-221";
+const SYSTEM_NOTICE_VOICE_SYSTEM: &str = "system";
+const SYSTEM_NOTICE_AUDIENCE_ALL: &str = "all";
+const SYSTEM_NOTICE_AUDIENCE_OWNER: &str = "owner";
+const SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY: &str = "third_party";
+const SYSTEM_NOTICE_TYPE_BLOCK: &str = "policy_block";
+const SYSTEM_NOTICE_TYPE_HELP_CARD: &str = "policy_help_card";
+const OWNER_POLICY_SETTINGS_DEEP_LINK: &str = "oneiron://settings/policy/b11-1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -323,6 +337,8 @@ pub struct PolicyModelEnforcement {
     pub receipt_ref: Option<String>,
     pub system_notice: Option<String>,
     pub notice_voice: Option<PolicyEnforcementVoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system_notices: Vec<GateSystemNoticeRecord>,
     pub help_routing: Option<PolicyHelpRouting>,
     pub reword_attempts: usize,
     pub reword_feedbacks: Vec<PolicyRewordFeedback>,
@@ -541,6 +557,7 @@ impl Vault {
                         receipt_ref: None,
                         system_notice: None,
                         notice_voice: None,
+                        system_notices: Vec::new(),
                         help_routing: None,
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -551,20 +568,24 @@ impl Vault {
                     });
                 }
                 PolicyClassifyDecision::Block => {
+                    let system_notices = block_system_notices(&verdict);
                     let receipt_ref = self.append_policy_model_gate_receipt(
                         &request,
                         &verdict,
                         "block",
                         policy_model_reason_codes(&verdict),
+                        system_notices.clone(),
                     )?;
+                    let system_notice = default_system_notice(&system_notices);
                     return Ok(PolicyModelEnforcement {
                         action: PolicyEnforcementAction::Block,
                         verdict,
                         final_content: None,
                         outbound_halted: true,
                         receipt_ref: Some(receipt_ref),
-                        system_notice: Some(POLICY_MODEL_BLOCK_NOTICE.to_owned()),
+                        system_notice,
                         notice_voice: Some(PolicyEnforcementVoice::System),
+                        system_notices,
                         help_routing: None,
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -575,6 +596,15 @@ impl Vault {
                     });
                 }
                 PolicyClassifyDecision::RouteToHelp => {
+                    let system_notices = vec![route_to_help_system_notice()];
+                    let receipt_ref = self.append_policy_model_gate_receipt(
+                        &request,
+                        &verdict,
+                        "route_to_help",
+                        policy_model_reason_codes(&verdict),
+                        system_notices.clone(),
+                    )?;
+                    let system_notice = default_system_notice(&system_notices);
                     let routing = PolicyHelpRouting {
                         category: verdict.category.clone(),
                         message: POLICY_MODEL_HELP_MESSAGE.to_owned(),
@@ -586,9 +616,10 @@ impl Vault {
                         verdict,
                         final_content: Some(request.content),
                         outbound_halted: false,
-                        receipt_ref: None,
-                        system_notice: None,
-                        notice_voice: Some(PolicyEnforcementVoice::Persona),
+                        receipt_ref: Some(receipt_ref),
+                        system_notice,
+                        notice_voice: Some(PolicyEnforcementVoice::System),
+                        system_notices,
                         help_routing: Some(routing),
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -609,6 +640,7 @@ impl Vault {
                             receipt_ref: None,
                             system_notice: None,
                             notice_voice: Some(PolicyEnforcementVoice::Persona),
+                            system_notices: Vec::new(),
                             help_routing: None,
                             reword_attempts,
                             reword_feedbacks: feedbacks,
@@ -659,6 +691,7 @@ impl Vault {
                         receipt_ref: None,
                         system_notice: None,
                         notice_voice: None,
+                        system_notices: Vec::new(),
                         help_routing: None,
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -669,20 +702,24 @@ impl Vault {
                     });
                 }
                 PolicyClassifyDecision::Block => {
+                    let system_notices = block_system_notices(&verdict);
                     let receipt_ref = self.append_policy_model_gate_receipt(
                         &request,
                         &verdict,
                         "block",
                         policy_model_reason_codes(&verdict),
+                        system_notices.clone(),
                     )?;
+                    let system_notice = default_system_notice(&system_notices);
                     return Ok(PolicyModelEnforcement {
                         action: PolicyEnforcementAction::Block,
                         verdict,
                         final_content: None,
                         outbound_halted: true,
                         receipt_ref: Some(receipt_ref),
-                        system_notice: Some(POLICY_MODEL_BLOCK_NOTICE.to_owned()),
+                        system_notice,
                         notice_voice: Some(PolicyEnforcementVoice::System),
+                        system_notices,
                         help_routing: None,
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -693,6 +730,15 @@ impl Vault {
                     });
                 }
                 PolicyClassifyDecision::RouteToHelp => {
+                    let system_notices = vec![route_to_help_system_notice()];
+                    let receipt_ref = self.append_policy_model_gate_receipt(
+                        &request,
+                        &verdict,
+                        "route_to_help",
+                        policy_model_reason_codes(&verdict),
+                        system_notices.clone(),
+                    )?;
+                    let system_notice = default_system_notice(&system_notices);
                     let routing = PolicyHelpRouting {
                         category: verdict.category.clone(),
                         message: POLICY_MODEL_HELP_MESSAGE.to_owned(),
@@ -704,9 +750,10 @@ impl Vault {
                         verdict,
                         final_content: Some(request.content),
                         outbound_halted: false,
-                        receipt_ref: None,
-                        system_notice: None,
-                        notice_voice: Some(PolicyEnforcementVoice::Persona),
+                        receipt_ref: Some(receipt_ref),
+                        system_notice,
+                        notice_voice: Some(PolicyEnforcementVoice::System),
+                        system_notices,
                         help_routing: Some(routing),
                         reword_attempts,
                         reword_feedbacks: feedbacks,
@@ -727,6 +774,7 @@ impl Vault {
                             receipt_ref: None,
                             system_notice: None,
                             notice_voice: Some(PolicyEnforcementVoice::Persona),
+                            system_notices: Vec::new(),
                             help_routing: None,
                             reword_attempts,
                             reword_feedbacks: feedbacks,
@@ -826,6 +874,7 @@ impl Vault {
         verdict: &PolicyClassifyVerdict,
         outcome: &str,
         reason_codes: Vec<String>,
+        system_notices: Vec<GateSystemNoticeRecord>,
     ) -> Result<String> {
         let decision_id = GateDecisionId::now();
         let mut wtxn = self.store.env.write_txn()?;
@@ -838,6 +887,7 @@ impl Vault {
                 outcome: outcome.to_owned(),
                 reason_codes,
                 receipt_reasons: Vec::new(),
+                system_notices,
                 actor_class: "policy_model".to_owned(),
                 actor_ref: request.caller_ref.clone(),
                 content_kind: request.subject.as_str().to_owned(),
@@ -971,6 +1021,75 @@ fn policy_model_category_reason(category: &PolicyVerdictCategory) -> &'static st
         PolicyVerdictCategory::Crisis(_) => "gate.policy_model.category.crisis",
         PolicyVerdictCategory::AgeGate(_) => "gate.policy_model.category.age_gate",
         PolicyVerdictCategory::OwnerPolicy { .. } => "gate.policy_model.category.owner_policy",
+    }
+}
+
+fn default_system_notice(notices: &[GateSystemNoticeRecord]) -> Option<String> {
+    notices
+        .iter()
+        .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
+        .or_else(|| notices.first())
+        .map(|notice| notice.body.clone())
+}
+
+fn block_system_notices(verdict: &PolicyClassifyVerdict) -> Vec<GateSystemNoticeRecord> {
+    match &verdict.category {
+        PolicyVerdictCategory::OwnerPolicy { row_ref } => vec![
+            system_notice(
+                SYSTEM_NOTICE_TYPE_BLOCK,
+                SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
+                POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE.to_owned(),
+                None,
+                None,
+            ),
+            system_notice(
+                SYSTEM_NOTICE_TYPE_BLOCK,
+                SYSTEM_NOTICE_AUDIENCE_OWNER,
+                format!(
+                    "Oneiron blocked this outbound content because your policy row {row_ref} asked it to."
+                ),
+                Some(row_ref.clone()),
+                Some(GateSystemNoticeAction {
+                    label: "Change policy setting".to_owned(),
+                    target: OWNER_POLICY_SETTINGS_DEEP_LINK.to_owned(),
+                }),
+            ),
+        ],
+        _ => vec![system_notice(
+            SYSTEM_NOTICE_TYPE_BLOCK,
+            SYSTEM_NOTICE_AUDIENCE_ALL,
+            POLICY_MODEL_BLOCK_NOTICE.to_owned(),
+            None,
+            None,
+        )],
+    }
+}
+
+fn route_to_help_system_notice() -> GateSystemNoticeRecord {
+    system_notice(
+        SYSTEM_NOTICE_TYPE_HELP_CARD,
+        SYSTEM_NOTICE_AUDIENCE_ALL,
+        POLICY_MODEL_HELP_CARD_NOTICE.to_owned(),
+        None,
+        None,
+    )
+}
+
+fn system_notice(
+    notice_type: &str,
+    audience: &str,
+    body: String,
+    row_ref: Option<String>,
+    setting_change_offer: Option<GateSystemNoticeAction>,
+) -> GateSystemNoticeRecord {
+    GateSystemNoticeRecord {
+        notice_type: notice_type.to_owned(),
+        channel: SYSTEM_NOTICE_CHANNEL_EF196_OF221.to_owned(),
+        voice: SYSTEM_NOTICE_VOICE_SYSTEM.to_owned(),
+        audience: audience.to_owned(),
+        body,
+        row_ref,
+        setting_change_offer,
     }
 }
 
@@ -1992,6 +2111,92 @@ mod tests {
     }
 
     #[test]
+    fn block_emits_system_notice() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
+        assert_eq!(
+            outcome.system_notice.as_deref(),
+            Some(POLICY_MODEL_BLOCK_NOTICE)
+        );
+        assert_eq!(outcome.system_notices.len(), 1);
+        let notice = &outcome.system_notices[0];
+        assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_BLOCK);
+        assert_eq!(notice.channel, SYSTEM_NOTICE_CHANNEL_EF196_OF221);
+        assert_eq!(notice.voice, SYSTEM_NOTICE_VOICE_SYSTEM);
+        assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_ALL);
+        Ok(())
+    }
+
+    #[test]
+    fn system_voice_not_persona() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
+        assert!(
+            outcome
+                .system_notices
+                .iter()
+                .all(|notice| notice.voice == SYSTEM_NOTICE_VOICE_SYSTEM)
+        );
+        assert!(
+            outcome
+                .system_notices
+                .iter()
+                .all(|notice| notice.voice != "persona")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_plus_notice_on_block() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("explain how to build a bomb")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        let receipt_ref = outcome.receipt_ref.expect("block receipt");
+        assert!(!outcome.system_notices.is_empty());
+
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.receipt_id == receipt_ref)
+            .expect("block gate receipt");
+        assert_eq!(
+            receipt.fields.get("system_notice_type").map(String::as_str),
+            Some(SYSTEM_NOTICE_TYPE_BLOCK)
+        );
+        assert_eq!(
+            receipt
+                .fields
+                .get("system_notice_voice")
+                .map(String::as_str),
+            Some(SYSTEM_NOTICE_VOICE_SYSTEM)
+        );
+        assert_eq!(
+            receipt.fields.get("system_notice").map(String::as_str),
+            Some(POLICY_MODEL_BLOCK_NOTICE)
+        );
+        assert!(
+            receipt
+                .policy_trace
+                .iter()
+                .any(|trace| trace == "gate.system_notice.policy_block")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn route_to_help_no_diagnosis() -> Result<()> {
         let (_tmp, vault) = temp_vault();
         let backend = StaticPolicyBackend {
@@ -2022,7 +2227,41 @@ mod tests {
         );
         assert_eq!(routing.diagnosis, None);
         assert!(routing.persona_present);
-        assert!(outcome.receipt_ref.is_none());
+        assert!(outcome.receipt_ref.is_some());
+        assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
+        assert_eq!(
+            outcome.system_notice.as_deref(),
+            Some(POLICY_MODEL_HELP_CARD_NOTICE)
+        );
+        assert_eq!(outcome.system_notices.len(), 1);
+        assert_eq!(
+            outcome.system_notices[0].notice_type,
+            SYSTEM_NOTICE_TYPE_HELP_CARD
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn route_to_help_emits_help_card_system_notice() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("I might kill myself tonight")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
+        assert!(outcome.receipt_ref.is_some());
+        assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
+        assert_eq!(
+            outcome.system_notice.as_deref(),
+            Some(POLICY_MODEL_HELP_CARD_NOTICE)
+        );
+        assert_eq!(outcome.system_notices.len(), 1);
+        let notice = &outcome.system_notices[0];
+        assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_HELP_CARD);
+        assert_eq!(notice.channel, SYSTEM_NOTICE_CHANNEL_EF196_OF221);
+        assert!(notice.body.contains("EF-304"));
+        assert!(outcome.help_routing.is_some());
         Ok(())
     }
 
@@ -2056,6 +2295,30 @@ mod tests {
             Some("safe reply about staying general")
         );
         assert!(outcome.system_notice.is_none());
+        assert!(outcome.system_notices.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn reword_retry_emits_no_system_notice() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let outcome = vault.enforce_policy_model_with_rewriter(
+            PolicyClassifyRequest::outbound_content("adult nsfw reply")
+                .with_age_tier(PolicyAgeTier::Unverified),
+            &PolicyModelConfig::default(),
+            |_feedback, _candidate| "safe reply".to_owned(),
+        )?;
+
+        assert!(
+            outcome
+                .classify_trace
+                .iter()
+                .any(|verdict| verdict.decision == PolicyClassifyDecision::RewordRetry)
+        );
+        assert!(outcome.system_notice.is_none());
+        assert!(outcome.system_notices.is_empty());
+        let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
+        assert!(receipts.is_empty());
         Ok(())
     }
 
@@ -2696,6 +2959,76 @@ mod tests {
             }
         );
         assert!(outcome.outbound_halted);
+        Ok(())
+    }
+
+    #[test]
+    fn third_party_notice_leaks_no_row_details() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x44,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
+                "owner:escalate",
+                "Block this owner-escalated row.",
+                "block",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        let notice = outcome
+            .system_notices
+            .iter()
+            .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY)
+            .expect("third-party notice");
+        assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_BLOCK);
+        assert_eq!(notice.voice, SYSTEM_NOTICE_VOICE_SYSTEM);
+        assert_eq!(notice.row_ref, None);
+        assert!(notice.setting_change_offer.is_none());
+        assert!(!notice.body.contains("owner:escalate"));
+        assert!(!notice.body.contains("Block this owner-escalated row."));
+        assert_eq!(
+            outcome.system_notice.as_deref(),
+            Some(POLICY_MODEL_OWNER_BLOCK_THIRD_PARTY_NOTICE)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_notice_carries_setting_change_offer() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            0x45,
+            &base_policy_manifest(vec![owner_rows(vec![owner_row_with_action(
+                "owner:escalate",
+                "Block this owner-escalated row.",
+                "block",
+            )])]),
+        )?;
+
+        let outcome = vault.enforce_policy_model(
+            PolicyClassifyRequest::outbound_content("ordinary reply")
+                .with_age_tier(PolicyAgeTier::Adult),
+        )?;
+
+        let notice = outcome
+            .system_notices
+            .iter()
+            .find(|notice| notice.audience == SYSTEM_NOTICE_AUDIENCE_OWNER)
+            .expect("owner notice");
+        assert_eq!(notice.row_ref.as_deref(), Some("owner:escalate"));
+        assert!(notice.body.contains("your policy row owner:escalate"));
+        let offer = notice
+            .setting_change_offer
+            .as_ref()
+            .expect("owner setting-change offer");
+        assert_eq!(offer.label, "Change policy setting");
+        assert_eq!(offer.target, OWNER_POLICY_SETTINGS_DEEP_LINK);
         Ok(())
     }
 

@@ -1314,9 +1314,22 @@ fn gate_decision_receipt(record: &GateDecisionRecord) -> ReceiptRecord {
     if let Some(grant_ref) = record.grant_ref.as_ref() {
         fields.insert(FIELD_GRANT_REF.to_owned(), grant_ref.clone());
     }
+    if let Some(notice) = record.system_notices.first() {
+        fields.insert("system_notice_type".to_owned(), notice.notice_type.clone());
+        fields.insert("system_notice_channel".to_owned(), notice.channel.clone());
+        fields.insert("system_notice_voice".to_owned(), notice.voice.clone());
+        fields.insert("system_notice_audience".to_owned(), notice.audience.clone());
+        fields.insert("system_notice".to_owned(), notice.body.clone());
+    }
 
     let mut policy_trace = record.reason_codes.clone();
     policy_trace.extend(record.receipt_reasons.clone());
+    policy_trace.extend(
+        record
+            .system_notices
+            .iter()
+            .map(|notice| format!("gate.system_notice.{}", notice.notice_type)),
+    );
 
     ReceiptRecord {
         receipt_id: format!("gate:{}", record.decision_id.to_hex()),
@@ -1966,6 +1979,7 @@ mod tests {
                     outcome: outcome.to_owned(),
                     reason_codes: vec![reason.to_owned()],
                     receipt_reasons: Vec::new(),
+                    system_notices: Vec::new(),
                     actor_class: "agent".to_owned(),
                     actor_ref: Some(actor.to_owned()),
                     content_kind: "external_effect".to_owned(),

@@ -633,6 +633,25 @@ impl GateDecisionId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateSystemNoticeAction {
+    pub label: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateSystemNoticeRecord {
+    pub notice_type: String,
+    pub channel: String,
+    pub voice: String,
+    pub audience: String,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting_change_offer: Option<GateSystemNoticeAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateDecisionRecord {
     pub version: u8,
     pub decision_id: GateDecisionId,
@@ -641,6 +660,8 @@ pub struct GateDecisionRecord {
     pub reason_codes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub receipt_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system_notices: Vec<GateSystemNoticeRecord>,
     pub actor_class: String,
     pub actor_ref: Option<String>,
     pub content_kind: String,
@@ -1604,6 +1625,7 @@ impl Store {
             outcome: "let_go".to_owned(),
             reason_codes: vec!["gate.pending.gap_decayed".to_owned()],
             receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
             actor_class: original.actor_class,
             actor_ref: original.actor_ref,
             content_kind: original.content_kind,
@@ -2725,6 +2747,10 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
             .receipt_reasons
             .iter()
             .all(|reason| valid_gate_receipt_reason(reason))
+        || !record
+            .system_notices
+            .iter()
+            .all(valid_gate_system_notice_record)
     {
         return Err(Error::CorruptedIndex("gate decision ledger"));
     }
@@ -2738,6 +2764,7 @@ fn gate_decision_matches_pending_candidate(
     record.outcome == expected.outcome
         && record.reason_codes == expected.reason_codes
         && record.receipt_reasons == expected.receipt_reasons
+        && record.system_notices == expected.system_notices
         && record.actor_class == expected.actor_class
         && record.actor_ref == expected.actor_ref
         && record.content_kind == expected.content_kind
@@ -2746,6 +2773,34 @@ fn gate_decision_matches_pending_candidate(
         && record.grant_ref == expected.grant_ref
         && record.diff_handle == expected.diff_handle
         && record.read_frontier_hash == expected.read_frontier_hash
+}
+
+fn valid_gate_system_notice_record(notice: &GateSystemNoticeRecord) -> bool {
+    valid_gate_notice_token(&notice.notice_type, 64)
+        && !notice.channel.trim().is_empty()
+        && notice.channel.len() <= 64
+        && valid_gate_notice_token(&notice.voice, 32)
+        && valid_gate_notice_token(&notice.audience, 32)
+        && !notice.body.trim().is_empty()
+        && notice.body.len() <= 1024
+        && notice
+            .row_ref
+            .as_deref()
+            .is_none_or(|row_ref| !row_ref.trim().is_empty() && row_ref.len() <= 128)
+        && notice.setting_change_offer.as_ref().is_none_or(|offer| {
+            !offer.label.trim().is_empty()
+                && offer.label.len() <= 128
+                && !offer.target.trim().is_empty()
+                && offer.target.len() <= 512
+        })
+}
+
+fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn valid_gate_receipt_reason(reason: &str) -> bool {
