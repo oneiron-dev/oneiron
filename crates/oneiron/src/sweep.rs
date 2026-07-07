@@ -114,7 +114,9 @@ use crate::deletion::{
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
     validate_redaction_receipt_body,
 };
-use crate::error::{Error, Result};
+use crate::error::{
+    Error, Result, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
+};
 use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, EntityId};
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so
@@ -620,7 +622,7 @@ fn compact_window(
     let frontiers = doc.oplog_frontiers();
     let shallow = doc
         .export(ExportMode::shallow_snapshot(&frontiers))
-        .map_err(|e| Error::SyncProtocolError(format!("sweep shallow snapshot export: {e}")))?;
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
     let vv = doc_version_vector(&doc);
 
     let merged_keys: BTreeSet<String> = update_rows.iter().map(|(k, _)| k.clone()).collect();
@@ -628,9 +630,11 @@ fn compact_window(
     for k in &merged_keys {
         if !k.starts_with(&prefix) {
             // Surgical scope (fail closed): never touch another family.
-            return Err(Error::SyncProtocolError(format!(
-                "sweep u:w: prune scoped to {prefix}* refused foreign key {k}"
-            )));
+            return Err(Error::sync_protocol(SyncProtocolValidation::ScopedPrune {
+                scope: SyncProtocolPruneScope::SweepUpdateRows,
+                prefix,
+                key: k.clone(),
+            }));
         }
     }
 
@@ -661,8 +665,8 @@ fn compact_window(
             .map(<[u8]>::to_vec);
         if current_snapshot != snapshot_bytes {
             raced.set(true);
-            return Err(Error::SyncProtocolError(
-                "sweep raced: d:w: snapshot changed between read and write".to_owned(),
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::SweepSnapshotRace,
             ));
         }
 
@@ -680,8 +684,8 @@ fn compact_window(
         }
         if current_keys != merged_keys {
             raced.set(true);
-            return Err(Error::SyncProtocolError(
-                "sweep raced: u:w: row set changed between read and write".to_owned(),
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::SweepUpdateRowsRace,
             ));
         }
 
@@ -747,7 +751,7 @@ fn inject_race_before_compact_write(
             racer
                 .get_map("entities")
                 .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
-                .map_err(|e| Error::SyncProtocolError(format!("race inject insert: {e}")))?;
+                .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapInsert, e))?;
             racer.commit();
             let delta = export_updates_from(&racer, &base_vv)?;
             let mut wtxn = vault.store.env.write_txn()?;
@@ -764,7 +768,7 @@ fn inject_race_before_compact_write(
             benign
                 .get_map("entities")
                 .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
-                .map_err(|e| Error::SyncProtocolError(format!("race inject insert: {e}")))?;
+                .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapInsert, e))?;
             benign.commit();
             let snap = export_snapshot(&benign)?;
             let mut wtxn = vault.store.env.write_txn()?;
@@ -990,7 +994,7 @@ fn inject_uw_row_before_finalize(vault: &Vault) -> Result<()> {
     racer
         .get_map("entities")
         .insert(EntityId::now().to_hex().as_str(), RACE_BENIGN_MARKER)
-        .map_err(|e| Error::SyncProtocolError(format!("uw-row inject insert: {e}")))?;
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapInsert, e))?;
     racer.commit();
     let delta = export_updates_from(&racer, &base_vv)?;
     let mut wtxn = vault.store.env.write_txn()?;

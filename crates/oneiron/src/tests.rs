@@ -2528,6 +2528,34 @@ fn error_kind_and_retryable_classify_validation_errors() {
     assert!(timeout.is_retryable());
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn sync_protocol_errors_carry_typed_context_and_engine_source() {
+    let protocol = Error::sync_protocol(SyncProtocolValidation::Selector {
+        reason: SyncSelectorValidation::ForeignWorldId,
+    });
+    assert_eq!(protocol.kind(), ErrorKind::SyncProtocolError);
+    assert_matches!(
+        protocol,
+        Error::SyncProtocolError {
+            context: SyncProtocolValidation::Selector {
+                reason: SyncSelectorValidation::ForeignWorldId
+            }
+        }
+    );
+
+    let source = std::io::Error::from(std::io::ErrorKind::TimedOut);
+    let engine = Error::sync_engine(SyncEngineContext::LoroExportUpdates, source);
+    assert_eq!(engine.kind(), ErrorKind::SyncEngineError);
+    assert_matches!(
+        &engine,
+        Error::SyncEngineError {
+            context: SyncEngineContext::LoroExportUpdates,
+            source
+        } if source.downcast_ref::<std::io::Error>().is_some()
+    );
+}
+
 #[test]
 fn hnsw_recall_at_10_vs_bruteforce() -> Result<()> {
     const DIMENSIONS: usize = 128;
