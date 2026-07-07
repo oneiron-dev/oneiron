@@ -683,10 +683,10 @@ mod tests {
     use super::*;
     use crate::error::ErrorKind;
     use crate::outbound::{
-        OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate,
-        OutboundDispatchPipeline, OutboundDispatchRequest, OutboundExecutionOutcome,
-        OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-        OutboundIntentTrigger,
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
+        OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
+        OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
+        OutboundIntentDraft, OutboundIntentTrigger,
     };
     use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
     use crate::store::{GateDecisionId, GateDecisionRecord};
@@ -782,6 +782,7 @@ mod tests {
             OutboundDispatchActor::agent(EntityId::now()),
             OutboundDispatchGate::allow_when_policy_grants(),
             100,
+            OutboundDeliveryWindowDecision::DeliverNow,
         )
         .originating_session(session_ref)
     }
