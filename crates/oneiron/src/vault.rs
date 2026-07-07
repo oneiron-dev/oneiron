@@ -3219,7 +3219,7 @@ impl Vault {
         old_body.valid_to = Some(now);
         let data = encode_claim_body(&old_body)?;
 
-        apply_ops(
+        apply_ops_with_gate_mode(
             &self.store,
             &self.config,
             &self.analyzer,
@@ -3249,8 +3249,7 @@ impl Vault {
             ],
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
+            ApplyOpsGateMode::new(false, false),
         )?;
         wtxn.commit()?;
         Ok(())

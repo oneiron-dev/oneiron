@@ -1,18 +1,28 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::{
-    GrantReceiptProjection, PendingTrayAsk, ReceiptKind, ReceiptRecord, ReceiptView,
-    StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
-    project_receipts_by_brief, project_receipts_by_counterparty, project_receipts_by_grant,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DREAMER_RUNNER_JOB_KIND,
+    EdgeActorClass, EntityId, GrantMintIntent, GrantMintIntentScope, GrantReceiptProjection,
+    HnswConfig, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, Result,
+    StandingOutboundGrantsLensQuery, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance, project_receipts_by_brief, project_receipts_by_counterparty,
+    project_receipts_by_grant, types::ENTITY_TYPE_PERSON,
 };
+use rmpv::Value;
 
 const BRIEF_REF: &str = "brief:party";
-const PARTY_GRANT_REF: &str = "party-grant";
+const PENDING_DREAMER_RUN_ID: &str = "dreamer:party-planning";
 
 struct AnswerabilityFixture {
     receipts: Vec<ReceiptRecord>,
-    pending_tray: Vec<PendingTrayAsk>,
-    grants_lens: StandingOutboundGrantsLens,
+    grant_ref: String,
+}
+
+struct PublicSurfaceFixture {
+    _tmp: tempfile::TempDir,
+    vault: Vault,
+    grant_ref: String,
+    pending_claim_id: EntityId,
 }
 
 #[derive(Clone, Copy)]
@@ -27,39 +37,10 @@ struct ReceiptFixture<'a> {
     fields: &'a [(&'a str, &'a str)],
 }
 
-fn answerability_fixture() -> AnswerabilityFixture {
-    let receipts = vec![
-        receipt(ReceiptFixture {
-            receipt_id: "scoped_read:party-grant:created",
-            receipt_kind: ReceiptKind::ScopedRead,
-            occurred_at: 90,
-            outcome: "active",
-            job_ref: Some(BRIEF_REF),
-            trigger_ref: Some("grant:party-bundle"),
-            policy_trace: &[],
-            fields: &[
-                ("grant_ref", PARTY_GRANT_REF),
-                ("origin_receipt_ref", "gate:bundle-party"),
-                ("scope_dial", "always_this_brief_invites"),
-                ("status", "active"),
-                ("brief_ref", BRIEF_REF),
-            ],
-        }),
-        receipt(ReceiptFixture {
-            receipt_id: "gate:bundle-party",
-            receipt_kind: ReceiptKind::Gate,
-            occurred_at: 95,
-            outcome: "approved",
-            job_ref: Some(BRIEF_REF),
-            trigger_ref: Some("bundle:party-invites"),
-            policy_trace: &["gate.allow.owner_bundle_approval"],
-            fields: &[
-                ("run_ref", "run:planning-session"),
-                ("bundle_ref", "bundle:party-invites"),
-                ("event", "bundle"),
-                ("grant_ref", PARTY_GRANT_REF),
-            ],
-        }),
+fn answerability_fixture() -> Result<AnswerabilityFixture> {
+    let surfaces = public_surface_fixture()?;
+    let grant_ref = surfaces.grant_ref.clone();
+    let mut receipts = vec![
         receipt(ReceiptFixture {
             receipt_id: "outbound:intent:invite-yuki",
             receipt_kind: ReceiptKind::Outbound,
@@ -78,7 +59,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("intent_source", "agent_immediate"),
                 ("verb", "send"),
                 ("channel", "line"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "3"),
             ],
         }),
@@ -105,7 +86,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("retry_at", "2026-07-07T09:00:00+09:00"),
                 ("verb", "send"),
                 ("channel", "line"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "0"),
             ],
         }),
@@ -124,7 +105,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("suppression", "dedupe"),
                 ("dedupe_key", "party-invite:yuki"),
                 ("intent_source", "gap_queue"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "0"),
             ],
         }),
@@ -146,7 +127,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("degraded_from", "push:time_sensitive"),
                 ("degraded_to", "chat:passive"),
                 ("intent_source", "agent_immediate"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "1"),
             ],
         }),
@@ -188,7 +169,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("intent_source", "agent_immediate"),
                 ("verb", "send"),
                 ("channel", "email"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "8"),
             ],
         }),
@@ -207,7 +188,7 @@ fn answerability_fixture() -> AnswerabilityFixture {
                 ("channel_error", "smtp_tempfail"),
                 ("retry_state", "retry_after:300"),
                 ("intent_source", "agent_immediate"),
-                ("grant_ref", PARTY_GRANT_REF),
+                ("grant_ref", grant_ref.as_str()),
                 ("budget_debit", "0"),
             ],
         }),
@@ -234,21 +215,6 @@ fn answerability_fixture() -> AnswerabilityFixture {
             ],
         }),
         receipt(ReceiptFixture {
-            receipt_id: "gate:pending:guest-count",
-            receipt_kind: ReceiptKind::Gate,
-            occurred_at: 108,
-            outcome: "pending",
-            job_ref: Some(BRIEF_REF),
-            trigger_ref: Some("claim:guest-count"),
-            policy_trace: &["gate.pending.source_trust"],
-            fields: &[
-                ("run_ref", "run:planning-session"),
-                ("content_kind", "external_effect"),
-                ("receipt_reason", "gate.pending.source_trust"),
-                ("dreamer_run_id", "dreamer:party-planning"),
-            ],
-        }),
-        receipt(ReceiptFixture {
             receipt_id: "outbound:intent:venue-call-let-go",
             receipt_kind: ReceiptKind::Outbound,
             occurred_at: 109,
@@ -267,47 +233,101 @@ fn answerability_fixture() -> AnswerabilityFixture {
         }),
     ];
 
-    let pending_receipt = receipts
-        .iter()
-        .find(|receipt| receipt.receipt_id == "gate:pending:guest-count")
-        .expect("pending receipt fixture")
-        .clone();
-    let pending_tray = vec![PendingTrayAsk {
-        claim_id: "claim:guest-count".to_owned(),
-        created_at: pending_receipt.occurred_at,
-        age_secs: 60 * 60,
-        hold_reason: "gate.pending.source_trust".to_owned(),
-        hold_reasons: pending_receipt.policy_trace.clone(),
-        dreamer_run_id: Some("dreamer:party-planning".to_owned()),
-        receipt_view: ReceiptView::new(pending_receipt),
-    }];
+    receipts.extend(
+        surfaces
+            .vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::ScopedRead))?,
+    );
 
-    let receipt_join = project_receipts_by_grant(PARTY_GRANT_REF, receipts.clone());
-    let grants_lens = StandingOutboundGrantsLens {
-        grants: vec![StandingOutboundGrantLensRow {
-            grant_ref: PARTY_GRANT_REF.to_owned(),
-            origin_component_id: "bundle-approve-party".to_owned(),
-            origin_action_id: "approve_bundle_brief_verb_class".to_owned(),
-            origin_receipt_ref: Some("gate:bundle-party".to_owned()),
-            scope_dial: "always_this_brief_invites".to_owned(),
-            status: "active".to_owned(),
-            stale: false,
-            created_at: 90,
-            last_used_at: Some(105),
-            revoked_at: None,
-            receipt_join,
-            revoke_action: StandingOutboundGrantRevokeAction {
-                command: "revoke_standing_outbound_grant".to_owned(),
-                grant_ref: PARTY_GRANT_REF.to_owned(),
-            },
-        }],
-    };
-
-    AnswerabilityFixture {
+    Ok(AnswerabilityFixture {
         receipts,
-        pending_tray,
-        grants_lens,
-    }
+        grant_ref,
+    })
+}
+
+fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
+    let (_tmp, vault) = temp_vault()?;
+
+    let grant_id = entity(0xD9);
+    let grant_ref = format!("grant:{}", grant_id.to_hex());
+    let grant_intent = GrantMintIntent {
+        principal_ref: "owner".to_owned(),
+        origin_component_id: "bundle-approve-party".to_owned(),
+        origin_action_id: "approve_bundle_brief_verb_class".to_owned(),
+        origin_receipt_ref: Some("gate:bundle-party".to_owned()),
+        scope: GrantMintIntentScope::BriefVerbClass {
+            brief_ref: BRIEF_REF.to_owned(),
+            verb_class: "send".to_owned(),
+        },
+    };
+    vault.mint_standing_outbound_grant(&grant_id, &grant_intent, 90)?;
+
+    let actor = entity(0x90);
+    let subject = entity(0x92);
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"eiri agent actor",
+    )?;
+    vault.put_entity(
+        &subject,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"party guest-count subject",
+    )?;
+
+    let pending_claim_id = entity(0x91);
+    let candidate = ClaimCandidate::new(
+        "profile.party_guest_count",
+        ClaimSubject::Entity(subject),
+        Value::from("confirm final guest count before sending venue update"),
+        0.82,
+    );
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("runner"), Value::from(DREAMER_RUNNER_JOB_KIND)),
+            (Value::from("run_id"), Value::from(PENDING_DREAMER_RUN_ID)),
+        ]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate(&pending_claim_id, candidate, &envelope, test_time(108), 108)
+        .commit()?;
+
+    Ok(PublicSurfaceFixture {
+        _tmp,
+        vault,
+        grant_ref,
+        pending_claim_id,
+    })
+}
+
+fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.map_size = 16 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = Some("test-model-v1".to_owned());
+    config.max_readers = 16;
+    config.hnsw = HnswConfig::default();
+    let vault = Vault::open(dir.path(), config)?;
+    Ok((dir, vault))
+}
+
+fn entity(seed: u8) -> EntityId {
+    let mut bytes = [seed; 16];
+    bytes[0] = seed.max(1);
+    EntityId::from_bytes(bytes).expect("test entity id")
+}
+
+const fn test_time(ts: u64) -> TimeRange {
+    TimeRange { start: ts, end: ts }
 }
 
 fn receipt(fixture: ReceiptFixture<'_>) -> ReceiptRecord {
@@ -360,9 +380,9 @@ fn receipt_ids(projection: &GrantReceiptProjection) -> BTreeSet<&str> {
 }
 
 #[test]
-fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() {
+fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() -> Result<()> {
     let question = "Why didn't you send it?";
-    let fixture = answerability_fixture();
+    let fixture = answerability_fixture()?;
     let negative_space = fixture
         .receipts
         .iter()
@@ -410,12 +430,13 @@ fn answerability_test_pack_why_didnt_you_send_it_from_receipts_alone() {
                 && field(receipt, "retry_state", question) == "retry_after:300"),
         "{question}: failed receipt lacks retry_state"
     );
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_why_message_at_2am_from_receipts_alone() {
+fn answerability_test_pack_why_message_at_2am_from_receipts_alone() -> Result<()> {
     let question = "Why did you message at 2am?";
-    let fixture = answerability_fixture();
+    let fixture = answerability_fixture()?;
     let receipt = receipt_by_id(&fixture.receipts, "outbound:intent:late-reminder");
 
     assert_eq!(
@@ -440,12 +461,14 @@ fn answerability_test_pack_why_message_at_2am_from_receipts_alone() {
         Some("commitment:party-reminder"),
         "{question}: receipt does not link back to the triggering commitment"
     );
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_what_happened_with_the_party_from_brief_projection() {
+fn answerability_test_pack_what_happened_with_the_party_from_brief_projection() -> Result<()> {
     let question = "What happened with the party?";
-    let fixture = answerability_fixture();
+    let fixture = answerability_fixture()?;
+    let grant_ref = fixture.grant_ref.clone();
     let projection = project_receipts_by_brief(BRIEF_REF, fixture.receipts);
 
     assert_eq!(projection.brief_ref, BRIEF_REF, "{question}: wrong brief");
@@ -459,10 +482,17 @@ fn answerability_test_pack_what_happened_with_the_party_from_brief_projection() 
         1,
         "{question}: bundle grant is absent from the brief projection"
     );
+    let grant_receipt = projection
+        .consent_grants
+        .iter()
+        .find(|receipt| field(receipt, "grant_ref", question) == grant_ref)
+        .unwrap_or_else(|| panic!("{question}: real grant-created receipt is absent"));
+    assert_eq!(grant_receipt.receipt_kind, ReceiptKind::ScopedRead);
+    assert_eq!(grant_receipt.job_ref.as_deref(), Some(BRIEF_REF));
+    assert_eq!(field(grant_receipt, "scope", question), "brief_verb_class");
     assert_eq!(
-        projection.bundles.len(),
-        1,
-        "{question}: bundle event is absent from the brief projection"
+        field(grant_receipt, "origin_action_id", question),
+        "approve_bundle_brief_verb_class"
     );
 
     let outcomes = projection
@@ -486,12 +516,13 @@ fn answerability_test_pack_what_happened_with_the_party_from_brief_projection() 
             "{question}: brief projection is missing outcome {expected}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_who_contacted_on_my_behalf_from_counterparty_projection() {
+fn answerability_test_pack_who_contacted_on_my_behalf_from_counterparty_projection() -> Result<()> {
     let question = "Who have you contacted on my behalf?";
-    let fixture = answerability_fixture();
+    let fixture = answerability_fixture()?;
     let projections = project_receipts_by_counterparty(fixture.receipts);
     let counterparties = projections
         .iter()
@@ -518,14 +549,15 @@ fn answerability_test_pack_who_contacted_on_my_behalf_from_counterparty_projecti
     assert_eq!(mika.opt_out, Some(true));
     assert_eq!(mika.promo_consent, Some(false));
     assert_eq!(mika.budget_debit_total, 0);
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_what_did_that_cost_from_budget_debits() {
+fn answerability_test_pack_what_did_that_cost_from_budget_debits() -> Result<()> {
     let question = "What did that cost?";
-    let fixture = answerability_fixture();
+    let fixture = answerability_fixture()?;
     let brief = project_receipts_by_brief(BRIEF_REF, fixture.receipts.clone());
-    let grant = project_receipts_by_grant(PARTY_GRANT_REF, fixture.receipts);
+    let grant = project_receipts_by_grant(fixture.grant_ref, fixture.receipts);
 
     assert_eq!(
         brief.budget_debit_total, 13,
@@ -535,62 +567,79 @@ fn answerability_test_pack_what_did_that_cost_from_budget_debits() {
         grant.budget_debit_total, 12,
         "{question}: grant projection did not sum grant-scoped receipt debits"
     );
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_whats_waiting_on_me_from_pending_tray_surface() {
+fn answerability_test_pack_whats_waiting_on_me_from_pending_tray_surface() -> Result<()> {
     let question = "What's waiting on me?";
-    let fixture = answerability_fixture();
-    let ask = fixture
-        .pending_tray
+    let fixture = public_surface_fixture()?;
+    let pending_claim_ref = fixture.pending_claim_id.to_hex();
+    let initial_asks = fixture.vault.pending_tray(PendingTrayQuery::new(10))?;
+    let created_at = initial_asks
         .iter()
-        .find(|ask| ask.claim_id == "claim:guest-count")
+        .find(|ask| ask.claim_id == pending_claim_ref)
+        .unwrap_or_else(|| panic!("{question}: pending tray did not expose guest-count ask"))
+        .created_at;
+    let asks = fixture
+        .vault
+        .pending_tray(PendingTrayQuery::at(created_at + 60 * 60, 10))?;
+    let ask = asks
+        .iter()
+        .find(|ask| ask.claim_id == pending_claim_ref)
         .unwrap_or_else(|| panic!("{question}: pending tray did not expose guest-count ask"));
 
-    assert_eq!(ask.hold_reason, "gate.pending.source_trust");
-    assert_eq!(
-        ask.dreamer_run_id.as_deref(),
-        Some("dreamer:party-planning")
+    assert_eq!(ask.hold_reason, "gate.pending.actor_ceiling");
+    assert_eq!(ask.age_secs, 60 * 60);
+    assert!(
+        ask.hold_reasons
+            .iter()
+            .any(|reason| reason == "gate.pending.actor_ceiling"),
+        "{question}: pending tray does not expose the actor-ceiling hold"
     );
+    assert_eq!(ask.dreamer_run_id.as_deref(), Some(PENDING_DREAMER_RUN_ID));
     assert_eq!(ask.receipt_view.receipt.receipt_kind, ReceiptKind::Gate);
     assert_eq!(ask.receipt_view.receipt.outcome, "pending");
+    let pending_trigger_ref = format!("claim:{pending_claim_ref}");
     assert_eq!(
         ask.receipt_view.receipt.trigger_ref.as_deref(),
-        Some("claim:guest-count"),
+        Some(pending_trigger_ref.as_str()),
         "{question}: pending tray receipt does not deep-link to the waiting claim"
     );
+    Ok(())
 }
 
 #[test]
-fn answerability_test_pack_what_can_she_do_without_asking_from_grants_lens() {
+fn answerability_test_pack_what_can_she_do_without_asking_from_grants_lens() -> Result<()> {
     let question = "What can she do without asking?";
-    let fixture = answerability_fixture();
-    let row = fixture
-        .grants_lens
+    let fixture = public_surface_fixture()?;
+    let lens = fixture
+        .vault
+        .standing_outbound_grants_lens(StandingOutboundGrantsLensQuery::new(10, 10))?;
+    let row = lens
         .grants
         .iter()
-        .find(|row| row.grant_ref == PARTY_GRANT_REF)
+        .find(|row| row.grant_ref == fixture.grant_ref)
         .unwrap_or_else(|| panic!("{question}: grants lens is missing the party grant"));
 
     assert_eq!(row.status, "active");
     assert!(!row.stale, "{question}: active grant is unexpectedly stale");
-    assert_eq!(row.scope_dial, "always_this_brief_invites");
+    assert_eq!(row.scope_dial, "brief_verb_class");
     assert_eq!(row.origin_receipt_ref.as_deref(), Some("gate:bundle-party"));
-    assert_eq!(row.last_used_at, Some(105));
+    assert_eq!(row.created_at, 90);
+    assert_eq!(row.last_used_at, None);
+    assert_eq!(row.revoke_action.command, "revoke_standing_outbound_grant");
+    assert_eq!(row.revoke_action.grant_ref, fixture.grant_ref);
 
     let joined_receipts = receipt_ids(&row.receipt_join);
-    for expected in [
-        "scoped_read:party-grant:created",
-        "outbound:intent:invite-yuki",
-        "outbound:intent:venue-email",
-    ] {
-        assert!(
-            joined_receipts.contains(expected),
-            "{question}: grant receipt join is missing {expected}"
-        );
-    }
-    assert_eq!(
-        row.receipt_join.budget_debit_total, 12,
-        "{question}: grant receipt join did not preserve budget cost"
+    let created_receipt_id = format!("scoped_read:{}:created", fixture.grant_ref);
+    assert!(
+        joined_receipts.contains(created_receipt_id.as_str()),
+        "{question}: grant receipt join is missing the real grant-created receipt"
     );
+    assert_eq!(
+        row.receipt_join.budget_debit_total, 0,
+        "{question}: real grants-lens join should only include receipt-family rows it queries"
+    );
+    Ok(())
 }
