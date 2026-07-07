@@ -4,7 +4,11 @@
 //! intentionally contains no raw script, URL/network, browser-storage, or eval
 //! leaf types.
 
-use std::{collections::HashSet, fmt, marker::PhantomData};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    marker::PhantomData,
+};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer, de, de::DeserializeSeed, ser::SerializeMap,
@@ -13,12 +17,17 @@ use serde::{
 use crate::{
     Error, Result,
     claim::{ScopedRead, ScopedReadActorKey},
+    llm::ContentPart,
     types::{ENTITY_TYPE_CLAIM, EdgeActorClass, EntityId},
 };
 
-pub const LENS_ATOM_KIT_VERSION: u16 = 1;
+pub const LENS_ATOM_KIT_VERSION: u16 = 2;
+pub const GENERATED_UI_WIRE_VERSION: u16 = 1;
+pub const GENERATED_UI_SEGMENT_CONTENT_TYPE: &str =
+    "application/vnd.oneiron.generated-ui.segment+json";
 
 pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
+    "text_block",
     "ledger_row",
     "claim_line",
     "status_dot",
@@ -43,6 +52,7 @@ pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
     "inspector_rail",
     "inspector_trail",
     "self_ui",
+    "media",
 ];
 
 const MAX_LENS_TOKEN_BYTES: usize = 128;
@@ -123,6 +133,7 @@ lens_token_type!(LensAtomId, "lens atom id");
 lens_token_type!(LensHandleName, "lens handle name");
 lens_token_type!(LensRenderId, "lens render id");
 lens_token_type!(LensBackingRefId, "lens backing ref id");
+lens_token_type!(LensMediaHandle, "lens media handle");
 lens_token_type!(SelfUiControlId, "self.ui control id");
 lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
@@ -384,6 +395,8 @@ impl<'de> Deserialize<'de> for GeneratedLens {
 pub struct LensNode {
     pub id: LensAtomId,
     pub atom: LensAtom,
+    #[serde(rename = "fallbackText")]
+    pub fallback_text: LensText,
     #[serde(default)]
     pub bindings: Vec<LensHandleRef>,
     #[serde(default)]
@@ -393,9 +406,16 @@ pub struct LensNode {
 impl LensNode {
     #[must_use]
     pub fn new(id: LensAtomId, atom: LensAtom) -> Self {
+        let fallback_text = atom.default_fallback_text();
+        Self::with_fallback_text(id, atom, fallback_text)
+    }
+
+    #[must_use]
+    pub fn with_fallback_text(id: LensAtomId, atom: LensAtom, fallback_text: LensText) -> Self {
         Self {
             id,
             atom,
+            fallback_text,
             bindings: Vec::new(),
             children: Vec::new(),
         }
@@ -410,6 +430,690 @@ impl<'de> Deserialize<'de> for LensNode {
         let node = LensNodeSeed { depth: 1 }.deserialize(deserializer)?;
         validate_lens_tree(&node).map_err(de::Error::custom)?;
         Ok(node)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedUiCatalog {
+    LensAtomKit,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedUiCard {
+    pub protocol_version: u16,
+    pub catalog: GeneratedUiCatalog,
+    pub card_id: LensRenderId,
+    pub tree: GeneratedLens,
+}
+
+impl GeneratedUiCard {
+    pub fn card(card_id: LensRenderId, root: LensNode) -> Result<Self> {
+        Self::new(card_id, GeneratedLens::new(root)?)
+    }
+
+    pub fn new(card_id: LensRenderId, tree: GeneratedLens) -> Result<Self> {
+        let card = Self {
+            protocol_version: GENERATED_UI_WIRE_VERSION,
+            catalog: GeneratedUiCatalog::LensAtomKit,
+            card_id,
+            tree,
+        };
+        card.validate()?;
+        Ok(card)
+    }
+
+    pub fn render(&self) -> Result<GeneratedUiRender> {
+        let root = self.tree.root();
+        let mut nodes = Vec::new();
+        let mut stack = vec![(root, None::<LensAtomId>)];
+
+        while let Some((node, parent)) = stack.pop() {
+            let child_refs = node
+                .children
+                .iter()
+                .map(|child| child.id.clone())
+                .collect::<Vec<_>>();
+            nodes.push(GeneratedUiNode {
+                id: node.id.clone(),
+                parent,
+                atom: node.atom.clone(),
+                fallback_text: node.fallback_text.clone(),
+                bindings: node.bindings.clone(),
+                child_refs,
+            });
+
+            for child in node.children.iter().rev() {
+                stack.push((child, Some(node.id.clone())));
+            }
+        }
+
+        GeneratedUiRender::new(self.card_id.clone(), self.catalog, root.id.clone(), nodes)
+    }
+
+    pub fn segments(&self) -> Result<Vec<GeneratedUiSegment>> {
+        Ok(self.render()?.segments())
+    }
+
+    pub fn content_parts(&self) -> Result<Vec<ContentPart>> {
+        self.segments()?
+            .iter()
+            .map(GeneratedUiSegment::to_content_part)
+            .collect()
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.protocol_version != GENERATED_UI_WIRE_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported generated-ui wire version {}",
+                self.protocol_version
+            )));
+        }
+        self.tree.validate()
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCard {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardWire {
+            protocol_version: u16,
+            catalog: GeneratedUiCatalog,
+            card_id: LensRenderId,
+            tree: GeneratedLens,
+        }
+
+        let wire = GeneratedUiCardWire::deserialize(deserializer)?;
+        let card = Self {
+            protocol_version: wire.protocol_version,
+            catalog: wire.catalog,
+            card_id: wire.card_id,
+            tree: wire.tree,
+        };
+        card.validate().map_err(de::Error::custom)?;
+        Ok(card)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedUiRender {
+    pub protocol_version: u16,
+    pub catalog: GeneratedUiCatalog,
+    pub card_id: LensRenderId,
+    pub root: LensAtomId,
+    pub nodes: Vec<GeneratedUiNode>,
+}
+
+impl GeneratedUiRender {
+    pub fn new(
+        card_id: LensRenderId,
+        catalog: GeneratedUiCatalog,
+        root: LensAtomId,
+        nodes: Vec<GeneratedUiNode>,
+    ) -> Result<Self> {
+        let render = Self {
+            protocol_version: GENERATED_UI_WIRE_VERSION,
+            catalog,
+            card_id,
+            root,
+            nodes,
+        };
+        render.validate()?;
+        Ok(render)
+    }
+
+    #[must_use]
+    pub fn segments(&self) -> Vec<GeneratedUiSegment> {
+        let mut segments = Vec::with_capacity(self.nodes.len() + 2);
+        let fallback_text = self
+            .nodes
+            .iter()
+            .find(|node| node.id == self.root)
+            .map(|node| node.fallback_text.clone())
+            .unwrap_or_else(|| LensText::new("generated ui").expect("static fallback is valid"));
+        segments.push(GeneratedUiSegment::CardStart(GeneratedUiCardStart {
+            protocol_version: self.protocol_version,
+            catalog: self.catalog,
+            card_id: self.card_id.clone(),
+            root: self.root.clone(),
+            node_count: self.nodes.len(),
+            fallback_text,
+        }));
+        segments.extend(self.nodes.iter().cloned().map(|node| {
+            GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: self.protocol_version,
+                card_id: self.card_id.clone(),
+                node,
+            }))
+        }));
+        segments.push(GeneratedUiSegment::CardStateUpdate(
+            GeneratedUiCardStateUpdate {
+                protocol_version: self.protocol_version,
+                card_id: self.card_id.clone(),
+                data_model: GeneratedUiDataModel {
+                    root: self.root.clone(),
+                    node_count: self.nodes.len(),
+                    catalog: self.catalog,
+                },
+            },
+        ));
+        segments
+    }
+
+    pub fn content_parts(&self) -> Result<Vec<ContentPart>> {
+        self.segments()
+            .iter()
+            .map(GeneratedUiSegment::to_content_part)
+            .collect()
+    }
+
+    pub fn from_segments(segments: &[GeneratedUiSegment]) -> Result<Self> {
+        let Some((start_segment, rest)) = segments.split_first() else {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must contain card_start".to_string(),
+            ));
+        };
+        let GeneratedUiSegment::CardStart(start) = start_segment else {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must start with card_start".to_string(),
+            ));
+        };
+        start.validate()?;
+
+        let mut nodes = Vec::with_capacity(start.node_count);
+        let mut budget = LensBudget::default();
+        let mut saw_state_update = false;
+
+        for segment in rest {
+            match segment {
+                GeneratedUiSegment::CardStart(_) => {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui segment stream must contain exactly one card_start"
+                            .to_string(),
+                    ));
+                }
+                GeneratedUiSegment::CardElement(element) => {
+                    if saw_state_update {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_element segments must precede card_state_update"
+                                .to_string(),
+                        ));
+                    }
+                    validate_generated_ui_protocol_version(element.protocol_version)?;
+                    if element.card_id != start.card_id {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_element card_id must match card_start".to_string(),
+                        ));
+                    }
+                    element.node.validate_with_budget(&mut budget)?;
+                    nodes.push(element.node.clone());
+                }
+                GeneratedUiSegment::CardStateUpdate(state) => {
+                    if saw_state_update {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui segment stream must contain exactly one card_state_update"
+                                .to_string(),
+                        ));
+                    }
+                    state.validate()?;
+                    if state.card_id != start.card_id {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update card_id must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    if state.data_model.root != start.root {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update root must match card_start".to_string(),
+                        ));
+                    }
+                    if state.data_model.catalog != start.catalog {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update catalog must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    if state.data_model.node_count != start.node_count {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui card_state_update node count must match card_start"
+                                .to_string(),
+                        ));
+                    }
+                    saw_state_update = true;
+                }
+            }
+        }
+
+        if !saw_state_update {
+            return Err(Error::InvalidConfig(
+                "generated-ui segment stream must end with card_state_update".to_string(),
+            ));
+        }
+        if nodes.len() != start.node_count {
+            return Err(Error::InvalidConfig(
+                "generated-ui card_element count must match card_start node count".to_string(),
+            ));
+        }
+
+        let render = Self {
+            protocol_version: start.protocol_version,
+            catalog: start.catalog,
+            card_id: start.card_id.clone(),
+            root: start.root.clone(),
+            nodes,
+        };
+        render.validate()?;
+        Ok(render)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.protocol_version != GENERATED_UI_WIRE_VERSION {
+            return Err(Error::InvalidConfig(format!(
+                "unsupported generated-ui wire version {}",
+                self.protocol_version
+            )));
+        }
+        validate_lens_collection_len("generated-ui flat nodes", self.nodes.len())?;
+        if self.nodes.is_empty() {
+            return Err(Error::InvalidConfig(
+                "generated-ui flat tree must contain at least one node".to_string(),
+            ));
+        }
+
+        let mut ids = HashSet::with_capacity(self.nodes.len());
+        let mut id_to_index = HashMap::with_capacity(self.nodes.len());
+        let mut budget = LensBudget::default();
+        for node in &self.nodes {
+            node.validate_with_budget(&mut budget)?;
+            if !ids.insert(node.id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "generated-ui flat nodes must not contain duplicate ids".to_string(),
+                ));
+            }
+            id_to_index.insert(node.id.as_str(), id_to_index.len());
+        }
+        let root_index = *id_to_index.get(self.root.as_str()).ok_or_else(|| {
+            Error::InvalidConfig("generated-ui root must reference a declared node".to_string())
+        })?;
+
+        let mut rootless_count = 0usize;
+        let mut claimed_parents = HashMap::with_capacity(self.nodes.len().saturating_sub(1));
+        for node in &self.nodes {
+            match node.parent.as_ref() {
+                Some(parent) => {
+                    if !ids.contains(parent.as_str()) {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui parent refs must reference declared nodes".to_string(),
+                        ));
+                    }
+                }
+                None => {
+                    rootless_count += 1;
+                    if node.id != self.root {
+                        return Err(Error::InvalidConfig(
+                            "generated-ui flat tree must have exactly one root".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            let mut local_children = HashSet::with_capacity(node.child_refs.len());
+            for child_ref in &node.child_refs {
+                let Some(child_index) = id_to_index.get(child_ref.as_str()) else {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must reference declared nodes".to_string(),
+                    ));
+                };
+                if child_ref == &node.id {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must not reference their own node".to_string(),
+                    ));
+                }
+                if !local_children.insert(child_ref.as_str()) {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must not contain duplicates".to_string(),
+                    ));
+                }
+                let child = &self.nodes[*child_index];
+                if child.parent.as_ref().map(LensAtomId::as_str) != Some(node.id.as_str()) {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui child refs must agree with child parent refs".to_string(),
+                    ));
+                }
+                if claimed_parents
+                    .insert(child_ref.as_str(), node.id.as_str())
+                    .is_some()
+                {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui flat nodes must have at most one parent".to_string(),
+                    ));
+                }
+            }
+        }
+        if rootless_count != 1 || self.nodes[root_index].parent.is_some() {
+            return Err(Error::InvalidConfig(
+                "generated-ui flat tree must have exactly one root".to_string(),
+            ));
+        }
+        for node in &self.nodes {
+            if let Some(parent) = node.parent.as_ref() {
+                let parent_index = id_to_index[parent.as_str()];
+                let parent_node = &self.nodes[parent_index];
+                if !parent_node
+                    .child_refs
+                    .iter()
+                    .any(|child_ref| child_ref == &node.id)
+                {
+                    return Err(Error::InvalidConfig(
+                        "generated-ui parent refs must agree with parent child refs".to_string(),
+                    ));
+                }
+            }
+        }
+
+        let mut visited = HashSet::with_capacity(self.nodes.len());
+        let mut stack = vec![(root_index, 1usize)];
+        while let Some((node_index, depth)) = stack.pop() {
+            let node = &self.nodes[node_index];
+            if !visited.insert(node.id.as_str()) {
+                return Err(Error::InvalidConfig(
+                    "generated-ui flat tree must not contain cycles".to_string(),
+                ));
+            }
+            if depth > MAX_LENS_TREE_DEPTH {
+                return Err(Error::InvalidConfig(format!(
+                    "generated-ui flat tree depth must be at most {MAX_LENS_TREE_DEPTH}"
+                )));
+            }
+            for child_ref in node.child_refs.iter().rev() {
+                stack.push((id_to_index[child_ref.as_str()], depth + 1));
+            }
+        }
+        if visited.len() != self.nodes.len() {
+            return Err(Error::InvalidConfig(
+                "generated-ui flat tree must not contain orphan nodes".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiRender {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiRenderWire {
+            protocol_version: u16,
+            catalog: GeneratedUiCatalog,
+            card_id: LensRenderId,
+            root: LensAtomId,
+            #[serde(deserialize_with = "deserialize_limited_vec")]
+            nodes: Vec<GeneratedUiNode>,
+        }
+
+        let wire = GeneratedUiRenderWire::deserialize(deserializer)?;
+        let render = Self {
+            protocol_version: wire.protocol_version,
+            catalog: wire.catalog,
+            card_id: wire.card_id,
+            root: wire.root,
+            nodes: wire.nodes,
+        };
+        render.validate().map_err(de::Error::custom)?;
+        Ok(render)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiNode {
+    pub id: LensAtomId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<LensAtomId>,
+    pub atom: LensAtom,
+    pub fallback_text: LensText,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub bindings: Vec<LensHandleRef>,
+    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    pub child_refs: Vec<LensAtomId>,
+}
+
+impl GeneratedUiNode {
+    fn validate_with_budget(&self, budget: &mut LensBudget) -> Result<()> {
+        validate_required_lens_text("generated-ui node fallbackText", &self.fallback_text)?;
+        self.atom.validate()?;
+        self.atom.count_collection_items(budget)?;
+        budget.add_collection("generated-ui node bindings", self.bindings.len())?;
+        budget.add_collection("generated-ui child refs", self.child_refs.len())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "segment", content = "payload", rename_all = "snake_case")]
+pub enum GeneratedUiSegment {
+    CardStart(GeneratedUiCardStart),
+    CardElement(Box<GeneratedUiCardElement>),
+    CardStateUpdate(GeneratedUiCardStateUpdate),
+}
+
+impl GeneratedUiSegment {
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::CardStart(payload) => payload.validate(),
+            Self::CardElement(payload) => payload.validate(),
+            Self::CardStateUpdate(payload) => payload.validate(),
+        }
+    }
+
+    pub fn to_content_part(&self) -> Result<ContentPart> {
+        let text = serde_json::to_string(self).map_err(|error| {
+            Error::InvalidConfig(format!(
+                "generated-ui segment serialization failed: {error}"
+            ))
+        })?;
+        Ok(ContentPart::Text { text })
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiSegment {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "segment", content = "payload", rename_all = "snake_case")]
+        enum GeneratedUiSegmentWire {
+            #[serde(rename = "card_start")]
+            Start(GeneratedUiCardStart),
+            #[serde(rename = "card_element")]
+            Element(Box<GeneratedUiCardElement>),
+            #[serde(rename = "card_state_update")]
+            StateUpdate(GeneratedUiCardStateUpdate),
+        }
+
+        let wire = GeneratedUiSegmentWire::deserialize(deserializer)?;
+        let segment = match wire {
+            GeneratedUiSegmentWire::Start(payload) => Self::CardStart(payload),
+            GeneratedUiSegmentWire::Element(payload) => Self::CardElement(payload),
+            GeneratedUiSegmentWire::StateUpdate(payload) => Self::CardStateUpdate(payload),
+        };
+        segment.validate().map_err(de::Error::custom)?;
+        Ok(segment)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiCardStart {
+    pub protocol_version: u16,
+    pub catalog: GeneratedUiCatalog,
+    pub card_id: LensRenderId,
+    pub root: LensAtomId,
+    pub node_count: usize,
+    pub fallback_text: LensText,
+}
+
+impl GeneratedUiCardStart {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        validate_generated_ui_node_count("generated-ui segment node count", self.node_count)?;
+        validate_required_lens_text("generated-ui segment fallbackText", &self.fallback_text)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardStart {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardStartWire {
+            protocol_version: u16,
+            catalog: GeneratedUiCatalog,
+            card_id: LensRenderId,
+            root: LensAtomId,
+            node_count: usize,
+            fallback_text: LensText,
+        }
+
+        let wire = GeneratedUiCardStartWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            catalog: wire.catalog,
+            card_id: wire.card_id,
+            root: wire.root,
+            node_count: wire.node_count,
+            fallback_text: wire.fallback_text,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiCardElement {
+    pub protocol_version: u16,
+    pub card_id: LensRenderId,
+    pub node: GeneratedUiNode,
+}
+
+impl GeneratedUiCardElement {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        let mut budget = LensBudget::default();
+        self.node.validate_with_budget(&mut budget)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardElement {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardElementWire {
+            protocol_version: u16,
+            card_id: LensRenderId,
+            node: GeneratedUiNode,
+        }
+
+        let wire = GeneratedUiCardElementWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            card_id: wire.card_id,
+            node: wire.node,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiCardStateUpdate {
+    pub protocol_version: u16,
+    pub card_id: LensRenderId,
+    pub data_model: GeneratedUiDataModel,
+}
+
+impl GeneratedUiCardStateUpdate {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_protocol_version(self.protocol_version)?;
+        self.data_model.validate()
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiCardStateUpdate {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiCardStateUpdateWire {
+            protocol_version: u16,
+            card_id: LensRenderId,
+            data_model: GeneratedUiDataModel,
+        }
+
+        let wire = GeneratedUiCardStateUpdateWire::deserialize(deserializer)?;
+        let payload = Self {
+            protocol_version: wire.protocol_version,
+            card_id: wire.card_id,
+            data_model: wire.data_model,
+        };
+        payload.validate().map_err(de::Error::custom)?;
+        Ok(payload)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GeneratedUiDataModel {
+    pub root: LensAtomId,
+    pub node_count: usize,
+    pub catalog: GeneratedUiCatalog,
+}
+
+impl GeneratedUiDataModel {
+    fn validate(&self) -> Result<()> {
+        validate_generated_ui_node_count("generated-ui data model node count", self.node_count)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedUiDataModel {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct GeneratedUiDataModelWire {
+            root: LensAtomId,
+            node_count: usize,
+            catalog: GeneratedUiCatalog,
+        }
+
+        let wire = GeneratedUiDataModelWire::deserialize(deserializer)?;
+        let data_model = Self {
+            root: wire.root,
+            node_count: wire.node_count,
+            catalog: wire.catalog,
+        };
+        data_model.validate().map_err(de::Error::custom)?;
+        Ok(data_model)
     }
 }
 
@@ -431,10 +1135,11 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
         }
 
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
+        #[serde(field_identifier, rename_all = "camelCase")]
         enum Field {
             Id,
             Atom,
+            FallbackText,
             Bindings,
             Children,
         }
@@ -456,6 +1161,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
             {
                 let mut id = None;
                 let mut atom = None;
+                let mut fallback_text = None;
                 let mut bindings = None;
                 let mut children = None;
 
@@ -472,6 +1178,12 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                                 return Err(de::Error::duplicate_field("atom"));
                             }
                             atom = Some(map.next_value::<LensAtom>()?);
+                        }
+                        Field::FallbackText => {
+                            if fallback_text.is_some() {
+                                return Err(de::Error::duplicate_field("fallbackText"));
+                            }
+                            fallback_text = Some(map.next_value::<LensText>()?);
                         }
                         Field::Bindings => {
                             if bindings.is_some() {
@@ -496,6 +1208,8 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                 Ok(LensNode {
                     id: id.ok_or_else(|| de::Error::missing_field("id"))?,
                     atom: atom.ok_or_else(|| de::Error::missing_field("atom"))?,
+                    fallback_text: fallback_text
+                        .ok_or_else(|| de::Error::missing_field("fallbackText"))?,
                     bindings: bindings.unwrap_or_default(),
                     children: children.unwrap_or_default(),
                 })
@@ -511,6 +1225,9 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                 let atom = seq
                     .next_element::<LensAtom>()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let fallback_text = seq
+                    .next_element::<LensText>()?
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
                 let bindings = seq
                     .next_element_seed(LimitedVecSeed::<LensHandleRef> {
                         _marker: PhantomData,
@@ -528,6 +1245,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                 Ok(LensNode {
                     id,
                     atom,
+                    fallback_text,
                     bindings,
                     children,
                 })
@@ -536,7 +1254,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
 
         deserializer.deserialize_struct(
             "LensNode",
-            &["id", "atom", "bindings", "children"],
+            &["id", "atom", "fallbackText", "bindings", "children"],
             LensNodeVisitor { depth: self.depth },
         )
     }
@@ -1234,6 +1952,7 @@ impl LensExecutionBoundary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LensAtom {
+    TextBlock(TextBlockAtom),
     LedgerRow(LedgerRowAtom),
     ClaimLine(ClaimLineAtom),
     StatusDot(StatusDotAtom),
@@ -1258,6 +1977,7 @@ pub enum LensAtom {
     InspectorRail(InspectorAtom),
     InspectorTrail(InspectorAtom),
     SelfUi(SelfUiControl),
+    Media(MediaAtom),
 }
 
 #[derive(Debug, Deserialize)]
@@ -1268,6 +1988,7 @@ pub enum LensAtom {
     deny_unknown_fields
 )]
 enum LensAtomWire {
+    TextBlock(TextBlockAtom),
     LedgerRow(LedgerRowAtom),
     ClaimLine(ClaimLineAtom),
     StatusDot(StatusDotAtom),
@@ -1292,11 +2013,13 @@ enum LensAtomWire {
     InspectorRail(InspectorAtom),
     InspectorTrail(InspectorAtom),
     SelfUi(SelfUiControl),
+    Media(MediaAtom),
 }
 
 impl From<LensAtomWire> for LensAtom {
     fn from(value: LensAtomWire) -> Self {
         match value {
+            LensAtomWire::TextBlock(atom) => Self::TextBlock(atom),
             LensAtomWire::LedgerRow(atom) => Self::LedgerRow(atom),
             LensAtomWire::ClaimLine(atom) => Self::ClaimLine(atom),
             LensAtomWire::StatusDot(atom) => Self::StatusDot(atom),
@@ -1321,6 +2044,7 @@ impl From<LensAtomWire> for LensAtom {
             LensAtomWire::InspectorRail(atom) => Self::InspectorRail(atom),
             LensAtomWire::InspectorTrail(atom) => Self::InspectorTrail(atom),
             LensAtomWire::SelfUi(control) => Self::SelfUi(control),
+            LensAtomWire::Media(atom) => Self::Media(atom),
         }
     }
 }
@@ -1347,6 +2071,9 @@ impl Serialize for LensAtom {
         S: Serializer,
     {
         match self {
+            Self::TextBlock(props) => {
+                serialize_tagged(serializer, "kind", "text_block", "props", props)
+            }
             Self::LedgerRow(props) => {
                 serialize_tagged(serializer, "kind", "ledger_row", "props", props)
             }
@@ -1407,8 +2134,55 @@ impl Serialize for LensAtom {
                 serialize_tagged(serializer, "kind", "inspector_trail", "props", props)
             }
             Self::SelfUi(props) => serialize_tagged(serializer, "kind", "self_ui", "props", props),
+            Self::Media(props) => serialize_tagged(serializer, "kind", "media", "props", props),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TextBlockAtom {
+    pub spans: Vec<LensTextSpan>,
+}
+
+impl<'de> Deserialize<'de> for TextBlockAtom {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TextBlockAtomWire {
+            #[serde(deserialize_with = "deserialize_limited_vec")]
+            spans: Vec<LensTextSpan>,
+        }
+
+        let wire = TextBlockAtomWire::deserialize(deserializer)?;
+        let atom = Self { spans: wire.spans };
+        atom.validate().map_err(de::Error::custom)?;
+        Ok(atom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum LensTextSpan {
+    Literal(LensText),
+    Interpolation {
+        key: LensHandleName,
+        fallback: LensText,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaAtom {
+    pub handle: LensMediaHandle,
+    pub alt: LensText,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1459,6 +2233,22 @@ pub enum LensStatus {
     Missing,
     Running,
     Complete,
+}
+
+impl LensStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Auto => "auto",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Stale => "stale",
+            Self::Missing => "missing",
+            Self::Running => "running",
+            Self::Complete => "complete",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2104,6 +2894,7 @@ impl LensAtom {
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::TextBlock(_) => "text_block",
             Self::LedgerRow(_) => "ledger_row",
             Self::ClaimLine(_) => "claim_line",
             Self::StatusDot(_) => "status_dot",
@@ -2128,11 +2919,64 @@ impl LensAtom {
             Self::InspectorRail(_) => "inspector_rail",
             Self::InspectorTrail(_) => "inspector_trail",
             Self::SelfUi(_) => "self_ui",
+            Self::Media(_) => "media",
         }
+    }
+
+    #[must_use]
+    pub fn default_fallback_text(&self) -> LensText {
+        let fallback = match self {
+            Self::TextBlock(atom) => atom.fallback_text(),
+            Self::LedgerRow(atom) => atom
+                .cells
+                .first()
+                .map(|cell| format!("{}: {}", cell.label.as_str(), cell.value.as_str()))
+                .unwrap_or_else(|| "ledger row".to_string()),
+            Self::ClaimLine(atom) => format!(
+                "{} {} {}",
+                atom.subject.as_str(),
+                atom.predicate.as_str(),
+                atom.value.as_str()
+            ),
+            Self::StatusDot(atom) => atom.label.as_ref().map_or_else(
+                || atom.status.as_str().to_string(),
+                |label| label.as_str().to_string(),
+            ),
+            Self::Seal(atom) => atom.label.as_str().to_string(),
+            Self::MetaLine(atom) => format!("{}: {}", atom.label.as_str(), atom.value.as_str()),
+            Self::DossierSection(atom) | Self::Slip(atom) | Self::Charter(atom) => {
+                atom.title.as_str().to_string()
+            }
+            Self::ThreadEntry(atom) => format!("{}: {}", atom.author.as_str(), atom.body.as_str()),
+            Self::Sheet(atom) => atom.title.as_str().to_string(),
+            Self::Receipt(atom) => atom.title.as_str().to_string(),
+            Self::Postmark(atom) => format!("{} {}", atom.label.as_str(), atom.timestamp.as_str()),
+            Self::PackLine(atom) => atom.summary.as_str().to_string(),
+            Self::AnswerSheet(atom) => atom.answer.as_str().to_string(),
+            Self::TwoClocks(atom) => {
+                format!(
+                    "{} / {}",
+                    atom.occurred_at.as_str(),
+                    atom.learned_at.as_str()
+                )
+            }
+            Self::NeighborhoodGraph(atom) => format!("{} nodes", atom.nodes.len()),
+            Self::AsofScrubber(atom) => atom.value.as_str().to_string(),
+            Self::Throbber(atom) => atom.label.as_str().to_string(),
+            Self::VoiceLine(atom) => atom.text.as_str().to_string(),
+            Self::QuickFilter(atom) => atom.label.as_str().to_string(),
+            Self::InspectorSheet(atom) | Self::InspectorRail(atom) | Self::InspectorTrail(atom) => {
+                atom.title.as_str().to_string()
+            }
+            Self::SelfUi(control) => control.fallback_text(),
+            Self::Media(atom) => atom.alt.as_str().to_string(),
+        };
+        fallback_lens_text(self.kind(), fallback)
     }
 
     fn validate(&self) -> Result<()> {
         match self {
+            Self::TextBlock(atom) => atom.validate(),
             Self::LedgerRow(atom) => atom.validate(),
             Self::ClaimLine(_) | Self::StatusDot(_) | Self::Seal(_) | Self::MetaLine(_) => Ok(()),
             Self::DossierSection(atom) | Self::Slip(atom) | Self::Charter(atom) => atom.validate(),
@@ -2150,11 +2994,13 @@ impl LensAtom {
                 atom.validate()
             }
             Self::SelfUi(control) => control.validate(),
+            Self::Media(atom) => atom.validate(),
         }
     }
 
     fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
         match self {
+            Self::TextBlock(atom) => budget.add_collection("text block spans", atom.spans.len()),
             Self::LedgerRow(atom) => budget.add_collection("ledger row cells", atom.cells.len()),
             Self::ClaimLine(_) | Self::StatusDot(_) | Self::Seal(_) | Self::MetaLine(_) => Ok(()),
             Self::DossierSection(atom) | Self::Slip(atom) | Self::Charter(atom) => {
@@ -2179,7 +3025,49 @@ impl LensAtom {
                 atom.count_collection_items(budget)
             }
             Self::SelfUi(control) => control.count_collection_items(budget),
+            Self::Media(_) => Ok(()),
         }
+    }
+}
+
+impl TextBlockAtom {
+    fn validate(&self) -> Result<()> {
+        validate_lens_collection_len("text block spans", self.spans.len())?;
+        if self.spans.is_empty() {
+            return Err(Error::InvalidConfig(
+                "text block must contain at least one span".to_string(),
+            ));
+        }
+        let mut interpolation_count = 0usize;
+        for span in &self.spans {
+            if let LensTextSpan::Interpolation { fallback, .. } = span {
+                interpolation_count += 1;
+                validate_required_lens_text("text block interpolation fallback", fallback)?;
+            }
+        }
+        if interpolation_count > 1 {
+            return Err(Error::InvalidConfig(
+                "text block must contain at most one escaped interpolation".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn fallback_text(&self) -> String {
+        let mut out = String::new();
+        for span in &self.spans {
+            match span {
+                LensTextSpan::Literal(text) => out.push_str(text.as_str()),
+                LensTextSpan::Interpolation { fallback, .. } => out.push_str(fallback.as_str()),
+            }
+        }
+        out
+    }
+}
+
+impl MediaAtom {
+    fn validate(&self) -> Result<()> {
+        validate_required_lens_text("media alt text", &self.alt)
     }
 }
 
@@ -2293,6 +3181,17 @@ impl InspectorAtom {
 }
 
 impl SelfUiControl {
+    fn fallback_text(&self) -> String {
+        match self {
+            Self::Button(control) => control.label.as_str().to_string(),
+            Self::Toggle(control) => control.label.as_str().to_string(),
+            Self::Segmented(control) => control.label.as_str().to_string(),
+            Self::Select(control) => control.label.as_str().to_string(),
+            Self::Slider(control) => control.label.as_str().to_string(),
+            Self::TextInput(control) => control.label.as_str().to_string(),
+        }
+    }
+
     fn validate(&self) -> Result<()> {
         match self {
             Self::Button(control) => control.action.validate(),
@@ -2362,6 +3261,7 @@ fn validate_lens_tree(root: &LensNode) -> Result<()> {
 
         budget.add_collection("lens node bindings", node.bindings.len())?;
         budget.add_collection("lens node children", node.children.len())?;
+        validate_required_lens_text("lens node fallbackText", &node.fallback_text)?;
         node.atom.validate()?;
         node.atom.count_collection_items(&mut budget)?;
 
@@ -2400,6 +3300,34 @@ fn validate_lens_collection_len(context: &str, len: usize) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_generated_ui_node_count(context: &str, len: usize) -> Result<()> {
+    validate_lens_collection_len(context, len)?;
+    if len == 0 {
+        return Err(Error::InvalidConfig(format!("{context} must be non-zero")));
+    }
+    Ok(())
+}
+
+fn validate_required_lens_text(context: &str, value: &LensText) -> Result<()> {
+    if value.as_str().trim().is_empty() {
+        return Err(Error::InvalidConfig(format!("{context} must not be empty")));
+    }
+    Ok(())
+}
+
+fn validate_generated_ui_protocol_version(protocol_version: u16) -> Result<()> {
+    if protocol_version != GENERATED_UI_WIRE_VERSION {
+        return Err(Error::InvalidConfig(format!(
+            "unsupported generated-ui wire version {protocol_version}"
+        )));
+    }
+    Ok(())
+}
+
+fn fallback_lens_text(kind: &'static str, value: String) -> LensText {
+    LensText::new(value).unwrap_or_else(|_| LensText::new(kind).expect("static fallback is valid"))
 }
 
 fn validate_self_ui_options(context: &str, options: &[SelfUiOption]) -> Result<()> {
@@ -2511,6 +3439,7 @@ fn normalize_lens_capability_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use serde_json::json;
 
     use super::*;
@@ -2531,6 +3460,10 @@ mod tests {
         LensBackingRefId::new(value).expect("valid backing ref id")
     }
 
+    fn media_handle(value: &str) -> LensMediaHandle {
+        LensMediaHandle::new(value).expect("valid media handle")
+    }
+
     fn control_id(value: &str) -> SelfUiControlId {
         SelfUiControlId::new(value).expect("valid control id")
     }
@@ -2545,6 +3478,21 @@ mod tests {
 
     fn text(value: &str) -> LensText {
         LensText::new(value).expect("valid text")
+    }
+
+    fn generated_ui_node(
+        value: &str,
+        parent: Option<&str>,
+        child_refs: &[&str],
+    ) -> GeneratedUiNode {
+        GeneratedUiNode {
+            id: id(value),
+            parent: parent.map(id),
+            atom: LensAtom::StatusDot(status()),
+            fallback_text: text(value),
+            bindings: Vec::new(),
+            child_refs: child_refs.iter().map(|child| id(child)).collect(),
+        }
     }
 
     fn action(command: &str) -> SelfUiAction {
@@ -2661,6 +3609,9 @@ mod tests {
 
     fn sample_atoms() -> Vec<LensAtom> {
         vec![
+            LensAtom::TextBlock(TextBlockAtom {
+                spans: vec![LensTextSpan::Literal(text("Hello Ada"))],
+            }),
             LensAtom::LedgerRow(LedgerRowAtom {
                 cells: vec![LedgerCell {
                     label: text("predicate"),
@@ -2780,6 +3731,10 @@ mod tests {
                 label: text("Refresh"),
                 action: action("refresh_lens"),
             })),
+            LensAtom::Media(MediaAtom {
+                handle: media_handle("engine-media-1"),
+                alt: text("Portrait"),
+            }),
         ]
     }
 
@@ -3106,6 +4061,600 @@ mod tests {
     }
 
     #[test]
+    fn generated_ui_card_round_trips_segments_and_content_parts() -> Result<()> {
+        let mut root = LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Sheet(CollectionAtom {
+                title: text("Card"),
+                rows: Vec::new(),
+            }),
+            text("Card fallback"),
+        );
+        root.children.push(LensNode::with_fallback_text(
+            id("body"),
+            LensAtom::TextBlock(TextBlockAtom {
+                spans: vec![
+                    LensTextSpan::Literal(text("Hello ")),
+                    LensTextSpan::Interpolation {
+                        key: handle("display_name"),
+                        fallback: text("Ada"),
+                    },
+                ],
+            }),
+            text("Hello Ada"),
+        ));
+        root.children.push(LensNode::with_fallback_text(
+            id("image"),
+            LensAtom::Media(MediaAtom {
+                handle: media_handle("engine-media-portrait"),
+                alt: text("Portrait of Ada"),
+            }),
+            text("Portrait of Ada"),
+        ));
+
+        let card = GeneratedUiCard::card(render_id("card-1"), root)?;
+        let encoded = serde_json::to_vec(&card).expect("card encodes");
+        let decoded: GeneratedUiCard = serde_json::from_slice(&encoded).expect("card decodes");
+        assert_eq!(decoded, card);
+
+        let render = decoded.render()?;
+        assert_eq!(render.root, id("root"));
+        assert_eq!(render.nodes.len(), 3);
+        assert_eq!(render.nodes[1].parent, Some(id("root")));
+        assert_eq!(render.nodes[0].child_refs, vec![id("body"), id("image")]);
+
+        let render_value = serde_json::to_value(&render).expect("render encodes");
+        assert!(
+            render_value.to_string().contains("fallbackText"),
+            "flat wire must expose fallbackText per node"
+        );
+        let render_round_trip: GeneratedUiRender =
+            serde_json::from_value(render_value).expect("render decodes");
+        assert_eq!(render_round_trip, render);
+
+        let segments = render.segments();
+        assert_eq!(segments.len(), 5);
+        assert!(matches!(segments[0], GeneratedUiSegment::CardStart(_)));
+        assert!(matches!(segments[1], GeneratedUiSegment::CardElement(_)));
+        assert!(matches!(
+            segments.last(),
+            Some(GeneratedUiSegment::CardStateUpdate(_))
+        ));
+        assert_eq!(GeneratedUiRender::from_segments(&segments)?, render);
+
+        let content_parts = render.content_parts()?;
+        assert_eq!(content_parts.len(), segments.len());
+        for (part, segment) in content_parts.iter().zip(segments.iter()) {
+            let crate::llm::ContentPart::Text { text } = part else {
+                panic!("generated-ui segments must lower to OF-126 text content parts");
+            };
+            assert_eq!(
+                serde_json::from_str::<GeneratedUiSegment>(text).expect("segment decodes"),
+                *segment
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn generated_ui_segment_stream_rejects_incoherent_sequences() -> Result<()> {
+        let mut root = LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Sheet(CollectionAtom {
+                title: text("Card"),
+                rows: Vec::new(),
+            }),
+            text("Card fallback"),
+        );
+        root.children.push(LensNode::with_fallback_text(
+            id("body"),
+            LensAtom::StatusDot(status()),
+            text("Body"),
+        ));
+
+        let render = GeneratedUiCard::card(render_id("card-1"), root)?.render()?;
+        let segments = render.segments();
+
+        let mut wrong_element_card = segments.clone();
+        if let GeneratedUiSegment::CardElement(element) = &mut wrong_element_card[1] {
+            element.card_id = render_id("foreign-card");
+        } else {
+            panic!("expected card element");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_element_card).is_err(),
+            "streamed elements must not belong to another card"
+        );
+
+        let mut wrong_state_root = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_root.last_mut() {
+            state.data_model.root = id("foreign-root");
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_root).is_err(),
+            "stream state root must agree with card_start"
+        );
+
+        let mut wrong_state_card = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_card.last_mut() {
+            state.card_id = render_id("foreign-card");
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_card).is_err(),
+            "stream state card_id must agree with card_start"
+        );
+
+        let mut wrong_state_count = segments.clone();
+        if let Some(GeneratedUiSegment::CardStateUpdate(state)) = wrong_state_count.last_mut() {
+            state.data_model.node_count += 1;
+        } else {
+            panic!("expected state update");
+        }
+        assert!(
+            GeneratedUiRender::from_segments(&wrong_state_count).is_err(),
+            "stream state nodeCount must agree with card_start"
+        );
+
+        let mut duplicate_start = segments.clone();
+        duplicate_start.insert(1, duplicate_start[0].clone());
+        assert!(
+            GeneratedUiRender::from_segments(&duplicate_start).is_err(),
+            "a stream must contain exactly one card_start"
+        );
+
+        let mut state_before_elements = segments.clone();
+        let state = state_before_elements.pop().expect("state update");
+        state_before_elements.insert(1, state);
+        assert!(
+            GeneratedUiRender::from_segments(&state_before_elements).is_err(),
+            "state update must not arrive before all card elements"
+        );
+
+        let mut missing_element = segments.clone();
+        missing_element.remove(1);
+        assert!(
+            GeneratedUiRender::from_segments(&missing_element).is_err(),
+            "element count must match card_start nodeCount"
+        );
+
+        let mut missing_state = segments;
+        missing_state.pop();
+        assert!(
+            GeneratedUiRender::from_segments(&missing_state).is_err(),
+            "stream must end with card_state_update"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn generated_ui_segment_stream_enforces_aggregate_budget() {
+        let mut root = generated_ui_node("root", None, &["child"]);
+        root.bindings = (0..(MAX_LENS_COLLECTION_ITEMS - 1))
+            .map(|index| LensHandleRef {
+                name: handle(&format!("binding-{index}")),
+                role: LensHandleRole::ClaimSet,
+            })
+            .collect();
+
+        let mut child = generated_ui_node("child", Some("root"), &[]);
+        child.atom = LensAtom::TextBlock(TextBlockAtom {
+            spans: vec![LensTextSpan::Literal(text("x"))],
+        });
+
+        let segments = vec![
+            GeneratedUiSegment::CardStart(GeneratedUiCardStart {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                catalog: GeneratedUiCatalog::LensAtomKit,
+                card_id: render_id("card-1"),
+                root: id("root"),
+                node_count: 2,
+                fallback_text: text("root"),
+            }),
+            GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                node: root,
+            })),
+            GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                node: child,
+            })),
+            GeneratedUiSegment::CardStateUpdate(GeneratedUiCardStateUpdate {
+                protocol_version: GENERATED_UI_WIRE_VERSION,
+                card_id: render_id("card-1"),
+                data_model: GeneratedUiDataModel {
+                    root: id("root"),
+                    node_count: 2,
+                    catalog: GeneratedUiCatalog::LensAtomKit,
+                },
+            }),
+        ];
+
+        assert!(
+            segments.iter().all(|segment| segment.validate().is_ok()),
+            "individual segments stay under per-segment limits"
+        );
+        assert!(
+            GeneratedUiRender::from_segments(&segments).is_err(),
+            "stream validation must preserve one aggregate lens budget across elements"
+        );
+    }
+
+    #[test]
+    fn generated_ui_flat_tree_rejects_non_tree_topologies() {
+        assert!(
+            GeneratedUiRender::new(
+                render_id("self-ref"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![generated_ui_node("root", None, &["root"])],
+            )
+            .is_err(),
+            "flat tree must reject self-referencing child refs"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("multi-parent"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &["left", "right"]),
+                    generated_ui_node("left", Some("root"), &["leaf"]),
+                    generated_ui_node("right", Some("root"), &["leaf"]),
+                    generated_ui_node("leaf", Some("left"), &[]),
+                ],
+            )
+            .is_err(),
+            "flat tree must reject multiple parents for a node"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("parent-mismatch"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &[]),
+                    generated_ui_node("child", Some("root"), &[]),
+                ],
+            )
+            .is_err(),
+            "flat tree parent refs must be reciprocal with child refs"
+        );
+
+        assert!(
+            GeneratedUiRender::new(
+                render_id("orphan-cycle"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![
+                    generated_ui_node("root", None, &[]),
+                    generated_ui_node("orphan-a", Some("orphan-b"), &["orphan-b"]),
+                    generated_ui_node("orphan-b", Some("orphan-a"), &["orphan-a"]),
+                ],
+            )
+            .is_err(),
+            "flat tree must reject disconnected orphan islands"
+        );
+    }
+
+    #[test]
+    fn generated_ui_flat_tree_enforces_depth_and_aggregate_budget() {
+        let mut deep_nodes = Vec::with_capacity(MAX_LENS_TREE_DEPTH + 1);
+        for index in 0..=MAX_LENS_TREE_DEPTH {
+            let name = format!("node-{index}");
+            let parent = (index > 0).then(|| format!("node-{}", index - 1));
+            let child = (index < MAX_LENS_TREE_DEPTH).then(|| format!("node-{}", index + 1));
+            deep_nodes.push(GeneratedUiNode {
+                id: id(&name),
+                parent: parent.as_deref().map(id),
+                atom: LensAtom::StatusDot(status()),
+                fallback_text: text(&name),
+                bindings: Vec::new(),
+                child_refs: child.iter().map(|child| id(child)).collect(),
+            });
+        }
+        assert!(
+            GeneratedUiRender::new(
+                render_id("too-deep"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("node-0"),
+                deep_nodes,
+            )
+            .is_err(),
+            "flat tree depth must share the nested tree cap"
+        );
+
+        let mut over_budget = generated_ui_node("root", None, &[]);
+        over_budget.atom = LensAtom::TextBlock(TextBlockAtom {
+            spans: vec![LensTextSpan::Literal(text("x"))],
+        });
+        over_budget.bindings = (0..MAX_LENS_COLLECTION_ITEMS)
+            .map(|index| LensHandleRef {
+                name: handle(&format!("binding-{index}")),
+                role: LensHandleRole::ClaimSet,
+            })
+            .collect();
+        assert!(
+            GeneratedUiRender::new(
+                render_id("over-budget"),
+                GeneratedUiCatalog::LensAtomKit,
+                id("root"),
+                vec![over_budget],
+            )
+            .is_err(),
+            "flat tree must enforce one aggregate lens collection budget"
+        );
+    }
+
+    #[test]
+    fn generated_lens_requires_fallback_text_per_node() {
+        let missing = json!({
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "root": {
+                "id": "root",
+                "atom": {
+                    "kind": "text_block",
+                    "props": {
+                        "spans": [{ "type": "literal", "value": "hello" }]
+                    }
+                }
+            }
+        });
+        assert!(
+            serde_json::from_value::<GeneratedLens>(missing).is_err(),
+            "fallbackText must be mandatory on every node"
+        );
+
+        let blank = json!({
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "root": {
+                "id": "root",
+                "fallbackText": " ",
+                "atom": {
+                    "kind": "text_block",
+                    "props": {
+                        "spans": [{ "type": "literal", "value": "hello" }]
+                    }
+                }
+            }
+        });
+        assert!(
+            serde_json::from_value::<GeneratedLens>(blank).is_err(),
+            "fallbackText must not be blank"
+        );
+    }
+
+    #[test]
+    fn fallback_text_requirement_bumps_atom_kit_version() {
+        let lens = GeneratedLens::new(LensNode::with_fallback_text(
+            id("root"),
+            LensAtom::Throbber(ThrobberAtom {
+                label: text("loading"),
+            }),
+            text("loading"),
+        ))
+        .expect("valid lens");
+        assert_eq!(lens.kit_version(), 2);
+
+        let legacy_v1_without_fallback = json!({
+            "kit_version": 1,
+            "root": {
+                "id": "root",
+                "atom": {
+                    "kind": "throbber",
+                    "props": { "label": "loading" }
+                }
+            }
+        });
+        let error = serde_json::from_value::<GeneratedLens>(legacy_v1_without_fallback)
+            .expect_err("legacy v1 wire shape must not decode as v2");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported generated lens atom kit version 1"),
+            "legacy incompatible node shape must fail by version, not share v2 semantics: {error}"
+        );
+    }
+
+    #[test]
+    fn text_block_allows_one_escaped_interpolation_only() {
+        let ok = LensAtom::TextBlock(TextBlockAtom {
+            spans: vec![
+                LensTextSpan::Literal(text("Hello ")),
+                LensTextSpan::Interpolation {
+                    key: handle("display_name"),
+                    fallback: text("Ada"),
+                },
+            ],
+        });
+        assert!(ok.validate().is_ok());
+
+        let bad = json!({
+            "kind": "text_block",
+            "props": {
+                "spans": [
+                    { "type": "interpolation", "value": { "key": "first", "fallback": "First" } },
+                    { "type": "interpolation", "value": { "key": "second", "fallback": "Second" } }
+                ]
+            }
+        });
+        assert!(
+            serde_json::from_value::<LensAtom>(bad).is_err(),
+            "text blocks must expose a single escaped interpolation point"
+        );
+    }
+
+    #[test]
+    fn generated_ui_rejects_unknown_segment_and_raw_media_url_shapes() {
+        let unknown_segment = json!({
+            "segment": "open_url",
+            "payload": { "url": "https://attacker.example" }
+        });
+        assert!(
+            serde_json::from_value::<GeneratedUiSegment>(unknown_segment).is_err(),
+            "segment kind must be a closed enum"
+        );
+
+        for segment in [
+            json!({
+                "segment": "card_start",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "catalog": "lens_atom_kit",
+                    "cardId": "card-1",
+                    "root": "root",
+                    "nodeCount": 1,
+                    "fallbackText": "root"
+                }
+            }),
+            json!({
+                "segment": "card_element",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "cardId": "card-1",
+                    "node": {
+                        "id": "root",
+                        "atom": {
+                            "kind": "throbber",
+                            "props": { "label": "loading" }
+                        },
+                        "fallbackText": "loading"
+                    }
+                }
+            }),
+            json!({
+                "segment": "card_state_update",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION + 1,
+                    "cardId": "card-1",
+                    "dataModel": {
+                        "root": "root",
+                        "nodeCount": 1,
+                        "catalog": "lens_atom_kit"
+                    }
+                }
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<GeneratedUiSegment>(segment).is_err(),
+                "segment payloads must reject unsupported generated-ui wire versions"
+            );
+        }
+
+        for segment in [
+            json!({
+                "segment": "card_start",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION,
+                    "catalog": "lens_atom_kit",
+                    "cardId": "card-1",
+                    "root": "root",
+                    "nodeCount": 0,
+                    "fallbackText": "root"
+                }
+            }),
+            json!({
+                "segment": "card_state_update",
+                "payload": {
+                    "protocolVersion": GENERATED_UI_WIRE_VERSION,
+                    "cardId": "card-1",
+                    "dataModel": {
+                        "root": "root",
+                        "nodeCount": 0,
+                        "catalog": "lens_atom_kit"
+                    }
+                }
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<GeneratedUiSegment>(segment).is_err(),
+                "segment payloads must reject zero nodeCount"
+            );
+        }
+
+        let zero_node_data_model = json!({
+            "root": "root",
+            "nodeCount": 0,
+            "catalog": "lens_atom_kit"
+        });
+        assert!(
+            serde_json::from_value::<GeneratedUiDataModel>(zero_node_data_model).is_err(),
+            "generated-ui data model must reject zero nodeCount"
+        );
+
+        let raw_url_handle = json!({
+            "kind": "media",
+            "props": {
+                "handle": "https://attacker.example/pixel.png",
+                "alt": "pixel"
+            }
+        });
+        assert!(
+            serde_json::from_value::<LensAtom>(raw_url_handle).is_err(),
+            "media handles must be engine-owned tokens, not raw URLs"
+        );
+
+        let raw_url_prop = json!({
+            "kit_version": LENS_ATOM_KIT_VERSION,
+            "root": {
+                "id": "root",
+                "fallbackText": "pixel",
+                "atom": {
+                    "kind": "media",
+                    "props": {
+                        "handle": "engine-media-pixel",
+                        "url": "https://attacker.example/pixel.png",
+                        "alt": "pixel"
+                    }
+                }
+            }
+        });
+        assert!(
+            serde_json::from_value::<GeneratedLens>(raw_url_prop).is_err(),
+            "media atoms must not accept raw URL leaves"
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn generated_ui_fuzz_rejects_url_shaped_media_handles(
+            scheme in "https?",
+            host in "[a-z]{1,12}",
+            path in "[a-z0-9/_-]{0,24}",
+        ) {
+            let url = format!("{scheme}://{host}.example/{path}");
+            let attempted = json!({
+                "kit_version": LENS_ATOM_KIT_VERSION,
+                "root": {
+                    "id": "root",
+                    "fallbackText": "remote media",
+                    "atom": {
+                        "kind": "media",
+                        "props": {
+                            "handle": url,
+                            "alt": "remote media"
+                        }
+                    }
+                }
+            });
+
+            prop_assert!(
+                serde_json::from_value::<GeneratedLens>(attempted).is_err(),
+                "URL-shaped media handles must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn unsafe_raw_atom_variants_are_rejected() {
         for kind in [
             "raw_script",
@@ -3118,6 +4667,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "unsafe atom",
                     "atom": {
                         "kind": kind,
                         "props": {
@@ -3143,6 +4693,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "refresh",
                     "atom": {
                         "kind": "self_ui",
                         "props": {
@@ -3167,6 +4718,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "refresh",
                     "atom": {
                         "kind": "self_ui",
                         "props": {
@@ -3191,6 +4743,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "refresh",
                     "atom": {
                         "kind": "self_ui",
                         "props": {
@@ -3242,6 +4795,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "refresh",
                     "atom": {
                         "kind": "self_ui",
                         "props": {
@@ -3269,6 +4823,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION,
             "root": {
                 "id": "fetch",
+                "fallbackText": "Backend",
                 "atom": {
                     "kind": "quick_filter",
                     "props": {
@@ -3300,6 +4855,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION,
             "root": {
                 "id": "root",
+                "fallbackText": "Status",
                 "atom": {
                     "kind": "quick_filter",
                     "props": {
@@ -3365,6 +4921,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION,
             "root": {
                 "id": "root",
+                "fallbackText": "Status",
                 "atom": {
                     "kind": "quick_filter",
                     "props": props
@@ -3467,6 +5024,7 @@ mod tests {
                 "kit_version": LENS_ATOM_KIT_VERSION,
                 "root": {
                     "id": "root",
+                    "fallbackText": "Slider",
                     "atom": {
                         "kind": "self_ui",
                         "props": {
@@ -3659,6 +5217,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION,
             "root": {
                 "id": "root",
+                "fallbackText": "too-wide",
                 "atom": {
                     "kind": "sheet",
                     "props": {
@@ -3765,6 +5324,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION + 1,
             "root": {
                 "id": "root",
+                "fallbackText": "loading",
                 "atom": {
                     "kind": "throbber",
                     "props": {
@@ -3783,6 +5343,7 @@ mod tests {
             "kit_version": LENS_ATOM_KIT_VERSION,
             "root": {
                 "id": "root",
+                "fallbackText": "loading",
                 "atom": {
                     "kind": "throbber",
                     "props": {

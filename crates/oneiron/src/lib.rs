@@ -306,17 +306,21 @@ pub use crate::job_queue::{
 };
 pub use crate::lens::{
     AnswerSheetAtom, AsofScrubberAtom, ButtonControl, ClaimLineAtom, CollectionAtom, FiniteF64,
-    GENERATED_LENS_ATOM_KINDS, GeneratedLens, GraphEdge, GraphNode, InspectorAtom,
+    GENERATED_LENS_ATOM_KINDS, GENERATED_UI_SEGMENT_CONTENT_TYPE, GENERATED_UI_WIRE_VERSION,
+    GeneratedLens, GeneratedUiCard, GeneratedUiCardElement, GeneratedUiCardStart,
+    GeneratedUiCardStateUpdate, GeneratedUiCatalog, GeneratedUiDataModel, GeneratedUiNode,
+    GeneratedUiRender, GeneratedUiSegment, GraphEdge, GraphNode, InspectorAtom,
     LENS_ATOM_KIT_VERSION, LedgerCell, LedgerRowAtom, LensActingPrincipalKind, LensApprovedAction,
     LensApprovedActionArg, LensAtom, LensAtomId, LensBackingRefId, LensBackingRefToken,
     LensBackingTarget, LensBackingTargetKind, LensExecutionBoundary, LensGateWriteChokepoint,
     LensHandleName, LensHandleRef, LensHandleRole, LensHostBackingRef, LensHostImport,
-    LensHostMediatedWrite, LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId,
-    LensStatus, LensText, MetaLineAtom, NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom,
-    QuickFilterAtom, ReceiptAtom, SealAtom, SealLevel, SectionAtom, SegmentedControl,
-    SelectControl, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiOption,
-    SelfUiOptionValue, SelfUiValue, SliderControl, StatusDotAtom, TextInputControl,
-    ThreadEntryAtom, ThrobberAtom, ToggleControl, TwoClocksAtom, VadBadge, VoiceLineAtom,
+    LensHostMediatedWrite, LensMediaHandle, LensNode, LensPrincipalBinding, LensRenderFrame,
+    LensRenderId, LensStatus, LensText, LensTextSpan, MediaAtom, MetaLineAtom,
+    NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom, QuickFilterAtom, ReceiptAtom, SealAtom,
+    SealLevel, SectionAtom, SegmentedControl, SelectControl, SelfUiAction, SelfUiActionId,
+    SelfUiControl, SelfUiControlId, SelfUiOption, SelfUiOptionValue, SelfUiValue, SliderControl,
+    StatusDotAtom, TextBlockAtom, TextInputControl, ThreadEntryAtom, ThrobberAtom, ToggleControl,
+    TwoClocksAtom, VadBadge, VoiceLineAtom,
 };
 pub use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
