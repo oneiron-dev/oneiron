@@ -11,8 +11,8 @@ use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeKind, EntityId,
-    ScoredEntity, decode_edge_value_for_kind,
+    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
+    parse_strict_edge_record, parse_strict_edge_record_key,
 };
 
 const SEED_HASH_LEN: usize = 16;
@@ -520,10 +520,7 @@ fn inbound_mentions_count(store: &Store, txn: &RoTxn<'_>, seed: &EntityId) -> Re
     let mut count = 0_u64;
     for entry in store.edges_in.prefix_iter(txn, seed.as_bytes())? {
         let (key, _) = entry?;
-        if key.len() != EDGE_KEY_LEN {
-            return Err(Error::CorruptedIndex("edge record"));
-        }
-        let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
+        let (_, kind, _) = parse_strict_edge_record_key(key)?;
         if kind == EdgeKind::Mentions {
             count = count
                 .checked_add(1)
@@ -1124,25 +1121,11 @@ fn gate_edge(
     value: &[u8],
     hops: u32,
 ) -> Result<Option<GatedEdge>> {
-    if key.len() != EDGE_KEY_LEN {
-        return Err(Error::CorruptedIndex("edge record"));
-    }
-
-    let current = EntityId::from_bytes(
-        key[..ENTITY_ID_LEN]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let kind = EdgeKind::try_from_u8(key[16]).ok_or(Error::CorruptedIndex("edge record"))?;
-    let neighbor = EntityId::from_bytes(
-        key[17..33]
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("edge record"))?,
-    )
-    .map_err(|_| Error::CorruptedIndex("edge record"))?;
-    let decoded = decode_edge_value_for_kind(kind, value)
-        .map_err(|_| Error::CorruptedIndex("edge record"))?;
+    let edge = parse_strict_edge_record(key, value)?;
+    let current = edge.source;
+    let kind = edge.kind;
+    let neighbor = edge.target;
+    let decoded = edge.decoded;
 
     // Gate 1 — not-traversed kinds: `child_of` and `assigned_to` are NEVER
     // traversed, regardless of the stored weight bytes (contract
