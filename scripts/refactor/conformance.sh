@@ -654,13 +654,35 @@ exit 0
 #>
 #>
 #>def edit_delta_ok(old, new):
-#>    """True iff old→new is a legal declared edit: token-identical except exactly
-#>    ONE contiguous changed region, both sides pure `::`-path text — OR the single
-#>    visibility-promotion exception (empty→`pub(crate)` prepended)."""
+#>    """True iff old→new is a legal declared edit: every changed region is pure
+#>    `::`-path text — OR the single visibility-promotion exception (empty→
+#>    `pub(crate)` prepended). Multiple regions are allowed (a line may carry more
+#>    than one `types::X` occurrence re-pointed at once); each must be pure-path."""
 #>    ot = _TOKEN.findall(old)
 #>    nt = _TOKEN.findall(new)
 #>    if ot == nt:
 #>        return False  # a no-op edit is not a valid declared edit
+#>    if len(ot) == len(nt):
+#>        # position-wise: collect maximal runs of differing tokens; each must be
+#>        # a pure ::-path segment on both sides (e.g. `types` -> `registry`).
+#>        i = 0
+#>        n = len(ot)
+#>        while i < n:
+#>            if ot[i] == nt[i]:
+#>                i += 1
+#>                continue
+#>            j = i
+#>            while j < n and ot[j] != nt[j]:
+#>                j += 1
+#>            if not (_PATH_RE.match("".join(ot[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
+#>                return False
+#>            # must be a genuine path SEGMENT: adjacent to `::` on one side
+#>            # (rejects a bare identifier / variable rename)
+#>            if not ((i > 0 and ot[i - 1] == "::") or (j < n and ot[j] == "::")):
+#>                return False
+#>            i = j
+#>        return True
+#>    # length differs: single-region prefix/suffix (covers the vis exception)
 #>    p = 0
 #>    while p < len(ot) and p < len(nt) and ot[p] == nt[p]:
 #>        p += 1
@@ -669,11 +691,10 @@ exit 0
 #>        s += 1
 #>    old_reg = ot[p:len(ot) - s]
 #>    new_reg = nt[p:len(nt) - s]
-#>    # visibility-promotion exception
 #>    if old_reg == [] and "".join(new_reg) in ("pub(crate)", "pub"):
 #>        return True
 #>    if not old_reg or not new_reg:
-#>        return False  # pure insertion/deletion that isn't the vis exception
+#>        return False
 #>    return bool(_PATH_RE.match("".join(old_reg)) and _PATH_RE.match("".join(new_reg)))
 #>
 #>
@@ -923,6 +944,17 @@ exit 0
 #>
 #>def _strip_nonblank(text):
 #>    return [ln.strip() for ln in text.split("\n") if ln.strip()]
+#>
+#>
+#>def _is_use(s):
+#>    return s.startswith("use ") or s.startswith("pub use ") or s.startswith("pub(crate) use ")
+#>
+#>
+#>def _content_lines(text):
+#>    """Stripped non-blank lines EXCLUDING `use` statements — check-8 accounting
+#>    ignores imports (executor-reconciled per TS D2.3, gate-verified; a private
+#>    `use` cannot smuggle code behavior, and smuggled items are still caught)."""
+#>    return [s for s in (ln.strip() for ln in text.split("\n")) if s and not _is_use(s)]
 #>
 #>
 #># ---- check 1: forbidden zone + allowed files -----------------------------
@@ -1281,22 +1313,23 @@ exit 0
 #>            raise Violation(8, f"dst missing at HEAD: {dst}")
 #>        hdoc = R.Doc(ht)
 #>        drop = _excise_items(hdoc, rows)
-#>        remaining = [ln for i, ln in enumerate(hdoc.lines) if i not in drop]
-#>        head_set = collections.Counter(s for s in (x.strip() for x in remaining) if s)
+#>        remaining = "\n".join(ln for i, ln in enumerate(hdoc.lines) if i not in drop)
+#>        head_set = collections.Counter(_content_lines(remaining))
 #>
 #>        bt = base_file(root, base, dst)
 #>        base_edited = R.apply_edits(bt, _edits_for_file(edits, dst)) if bt is not None else ""
-#>        base_set = collections.Counter(_strip_nonblank(base_edited))
+#>        base_set = collections.Counter(_content_lines(base_edited))
 #>
-#>        add_set = collections.Counter(a.strip() for a in adds.get(dst, []) if a.strip())
+#>        add_set = collections.Counter(s for s in (a.strip() for a in adds.get(dst, []))
+#>                                      if s and not _is_use(s))
 #>        for (csrc, ca, cb, cdst) in comments:
 #>            if cdst != dst:
 #>                continue
 #>            cbt = base_file(root, base, csrc)
 #>            if cbt is None:
 #>                raise Violation(8, f"comment src missing at base: {csrc}")
-#>            clines = cbt.split("\n")[ca - 1:cb]
-#>            add_set.update(s for s in (x.strip() for x in clines) if s)
+#>            clines = "\n".join(cbt.split("\n")[ca - 1:cb])
+#>            add_set.update(_content_lines(clines))
 #>
 #>        expected = base_set + add_set
 #>        if head_set != expected:
@@ -1334,6 +1367,49 @@ exit 0
 #>                               f"(relocation must be byte-identical)")
 #>        n += 1
 #>    return f"OK check F (file relocation): {n} file(s) relocated byte-identically"
+#>
+#>
+#># ---- check C: consumer-diff-shape (anti-smuggle net) ---------------------
+#>
+#>def _git_diff_file(root, base, f):
+#>    p = subprocess.run(["git", "-C", root, "diff", "--no-color", "-U0", base, "HEAD", "--", f],
+#>                       capture_output=True, text=True)
+#>    return p.stdout if p.returncode == 0 else ""
+#>
+#>
+#>def checkC(root, base, tsv, decls):
+#>    """Every changed line of a CONSUMER file (a changed file that receives no
+#>    manifest items and is neither a move src nor lib.rs) must be import-shaped
+#>    (`use`/`pub use`), a declared `## edit`/`## frag-edit` region, or a use-line
+#>    deletion. Restores byte-verification where Codex touches the most files."""
+#>    edits = _parse_edits(decls)
+#>    fragedits = _parse_fragedits(decls)
+#>    edit_new = set(nw for (_, _, nw) in edits) | set(nw for (_, _, nw) in fragedits)
+#>    edit_old = set(o for (_, o, _) in edits) | set(o for (_, o, _) in fragedits)
+#>    dst = set(r["dst_file"] for r in tsv)
+#>    src = set(r["src_file"] for r in tsv)
+#>    exempt = dst | src | {"crates/oneiron/src/lib.rs"}
+#>    n = 0
+#>    for f in changed_files(root, base):
+#>        if not f.endswith(".rs") or f in exempt:
+#>            continue
+#>        n += 1
+#>        for ln in _git_diff_file(root, base, f).split("\n"):
+#>            if ln.startswith("+++") or ln.startswith("---") or ln.startswith("@@"):
+#>                continue
+#>            if ln.startswith("+"):
+#>                s = ln[1:].strip()
+#>                if s == "" or _is_use(s) or s in edit_new:
+#>                    continue
+#>                raise Violation("C", f"consumer-diff smuggle in {f}: non-import ADDED line "
+#>                                   f"(not use/declared-edit): {s!r}")
+#>            if ln.startswith("-"):
+#>                s = ln[1:].strip()
+#>                if s == "" or _is_use(s) or s in edit_old:
+#>                    continue
+#>                raise Violation("C", f"consumer-diff smuggle in {f}: non-use REMOVED line "
+#>                                   f"(not use/declared-edit): {s!r}")
+#>    return f"OK check C (consumer-diff-shape): {n} consumer file(s) import-only"
 #>
 #>
 #># ---- check X: src-exhaustion (T12 finale) --------------------------------
@@ -1390,6 +1466,7 @@ exit 0
 #>        check5(root, stage, decls),
 #>        check6(root, base, decls),
 #>        check8(root, base, tsv, decls),
+#>        checkC(root, base, tsv, decls),
 #>        checkF(root, base, decls),
 #>        check_exhaustion(root, base, decls),
 #>    ]

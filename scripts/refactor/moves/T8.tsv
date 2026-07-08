@@ -1,0 +1,24 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	ScoredEntity	-	crates/oneiron/src/types.rs	crates/oneiron/src/pipeline.rs	no
+enum	-	Signal	-	crates/oneiron/src/types.rs	crates/oneiron/src/pipeline.rs	no
+enum	-	PackFormat	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+enum	-	FieldProfile	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	ContextEntity	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	PackStats	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	PackTokenStats	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	PackSectionTokenStats	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	PackItemTokenStats	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+enum	-	PackItemAccountingReason	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+impl	-	impl PackItemAccountingReason	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	PackItemAccounting	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+impl	-	impl PackItemAccounting	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+enum	-	EmptyReason	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	EmptyContext	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	ContextPack	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	TokenAllocation	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+impl	-	impl Default for TokenAllocation	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+struct	-	ContextPackRetrievalBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+impl	-	impl ContextPackRetrievalBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+fn	-	allocate_context_pack_item_budgets	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
+fn	mod tests	context_pack_retrieval_budget_default_token_allocation_splits_other_weight	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
+fn	mod tests	context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
