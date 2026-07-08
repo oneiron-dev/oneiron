@@ -62,7 +62,12 @@ def head_file(root, path):
 
 
 def changed_files(root, base):
-    p = subprocess.run(["git", "-C", root, "diff", "--name-only", base, "HEAD"],
+    # --no-renames: git's rename detection collapses a pure `git mv` to the
+    # dst path only, which would hide the src side from every inventory diff
+    # (check 2 would read all of a relocated file's decls as undeclared adds).
+    # The gate always needs both sides listed.
+    p = subprocess.run(["git", "-C", root, "diff", "--name-only", "--no-renames",
+                        base, "HEAD"],
                        capture_output=True, text=True)
     if p.returncode != 0:
         raise Violation(0, f"git diff failed: {p.stderr.strip()}")
@@ -255,9 +260,25 @@ def _parse_signed_impl(lines):
     return added, removed
 
 
+def _parse_filemoves(decls):
+    out = []
+    for ln in decls.get("filemove", []):
+        parts = ln.split("\t")
+        if len(parts) != 2:
+            raise Violation("F", f"bad filemove row (src<TAB>dst): {ln!r}")
+        out.append((parts[0].strip(), parts[1].strip()))
+    return out
+
+
 def check2(root, base, decls):
     changed = [f for f in changed_files(root, base)
                if f.endswith(".rs") and f.startswith("crates/")]
+    # `## filemove` (dst -> src): check F proves dst is byte-identical to
+    # src at base, so a relocated file's impl headers are keyed under the
+    # base path — the per-file (f, h) keys then net out instead of reading
+    # as one file's removals plus another file's additions. The global decl
+    # Counter needs no remap: identical decl strings cancel on their own.
+    fm = {d: s for (s, d) in _parse_filemoves(decls)}
     base_inv, head_inv = collections.Counter(), collections.Counter()
     base_impl, head_impl = collections.Counter(), collections.Counter()
     lib_touched = False
@@ -273,7 +294,7 @@ def check2(root, base, decls):
         if ht is not None:
             d = R.Doc(ht)
             head_inv.update(R.inventory(d))
-            head_impl.update((f, h) for h in R.impl_headers(d))
+            head_impl.update((fm.get(f, f), h) for h in R.impl_headers(d))
 
     add, rem = _counter_diff(base_inv, head_inv)
     exp_add, exp_rem = _parse_signed(decls.get("decl", []))
@@ -634,13 +655,8 @@ def check8(root, base, tsv, decls):
 # ---- check F: file relocation (B1 git mv) --------------------------------
 
 def checkF(root, base, decls):
-    rows = decls.get("filemove", [])
     n = 0
-    for ln in rows:
-        parts = ln.split("\t")
-        if len(parts) != 2:
-            raise Violation("F", f"bad filemove row (src<TAB>dst): {ln!r}")
-        src, dst = parts[0].strip(), parts[1].strip()
+    for src, dst in _parse_filemoves(decls):
         bsrc = base_file(root, base, src)
         hdst = head_file(root, dst)
         hsrc = head_file(root, src)
@@ -685,7 +701,10 @@ def checkC(root, base, tsv, decls):
     # `## exhaust`: whole-file deletions validated by check_exhaustion, which
     # runs after this check — without the exemption the deletion false-fails
     # here first.
-    exempt = dst | src | {"crates/oneiron/src/lib.rs"} | set(
+    # `## filemove`: both sides of a relocation are verified byte-identical
+    # by check F, which is strictly stronger than this check.
+    fm_files = {p for sd in _parse_filemoves(decls) for p in sd}
+    exempt = dst | src | fm_files | {"crates/oneiron/src/lib.rs"} | set(
         x.strip() for x in decls.get("consumer-exempt", [])) | set(
         x.strip() for x in decls.get("exhaust", []))
     n = 0
