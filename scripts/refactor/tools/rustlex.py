@@ -630,7 +630,10 @@ def edit_delta_ok(old, new):
         s += 1
     old_reg = old_toks[p:len(old_toks) - s]
     new_reg = nt[p:len(nt) - s]
-    if old_reg == [] and "".join(new_reg) in ("pub(crate)", "pub"):
+    # the ONLY visibility exception is pub(crate) (TS D2 promotions); a bare
+    # `pub` insertion is public-API widening and must never validate as a
+    # declared edit
+    if old_reg == [] and "".join(new_reg) == "pub(crate)":
         return True
     if not old_reg or not new_reg:
         return False

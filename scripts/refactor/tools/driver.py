@@ -135,9 +135,12 @@ def _parse_comments(decls):
         if len(parts) != 2:
             raise Violation(0, f"bad comment row (src:start-end<TAB>dst): {ln!r}")
         loc, dst = parts[0].strip(), parts[1].strip()
-        src, rng = loc.rsplit(":", 1)
-        a, b = rng.split("-")
-        out.append((src, int(a), int(b), dst))
+        try:
+            src, rng = loc.rsplit(":", 1)
+            a, b = rng.split("-")
+            out.append((src, int(a), int(b), dst))
+        except ValueError:
+            raise Violation(0, f"bad comment row (src:start-end<TAB>dst): {ln!r}")
     return out
 
 
@@ -554,6 +557,23 @@ def check8(root, base, tsv, decls):
         base_edited = R.apply_edits(bt, _edits_for_file(edits, dst)) if bt is not None else ""
         base_set = collections.Counter(_content_lines(base_edited))
 
+        # dst import delta: plain imports stay executor-reconciled (they are
+        # compile-verified and moved code is byte-identical), but the sharp
+        # shadow vectors must be DECLARED in ## add — aliases (`as`) and glob
+        # imports can silently re-bind bare names in pre-existing dst code
+        # (explicit use beats `use super::*`), and `pub use` changes API surface
+        base_uses = collections.Counter(
+            ln.strip() for ln in base_edited.split("\n") if _is_use(ln.strip()))
+        head_uses = collections.Counter(
+            ln.strip() for ln in remaining.split("\n") if _is_use(ln.strip()))
+        declared_uses = collections.Counter(
+            s for s in (a.strip() for a in adds.get(dst, [])) if _is_use(s))
+        for u in (head_uses - base_uses - declared_uses):
+            if (" as " in u or "::*" in u
+                    or u.startswith("pub use") or u.startswith("pub(crate) use")):
+                raise Violation(8, f"undeclared hazardous import in dst {dst}: {u!r} "
+                                   f"(aliases, globs, and re-exports must be declared in ## add)")
+
         add_set = collections.Counter(s for s in (a.strip() for a in adds.get(dst, []))
                                       if s and not _is_use(s))
         for (csrc, ca, cb, cdst) in comments:
@@ -739,6 +759,9 @@ def main(argv):
         return 1
     except RuntimeError as e:
         print(f"CONFORMANCE ERROR (tooling, not a manifest verdict): {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"CONFORMANCE ERROR (manifest parse): {e}", file=sys.stderr)
         return 1
     print(f"CONFORMANCE checks 1-8 PASSED for stage {stage}")
     return 0
