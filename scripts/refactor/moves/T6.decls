@@ -53,6 +53,7 @@ crates/oneiron/src/sync/queue/tests.rs
 crates/oneiron/src/sync/selector.rs
 crates/oneiron/src/sync/selector/tests.rs
 crates/oneiron/src/sync/window.rs
+crates/oneiron/src/sync/window/tests.rs
 crates/oneiron/src/temporal.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs

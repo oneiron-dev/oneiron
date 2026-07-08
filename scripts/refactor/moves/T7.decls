@@ -14,6 +14,7 @@ crates/oneiron/src/blob_artifact/tests.rs
 crates/oneiron/src/bm25/tests.rs
 crates/oneiron/src/channel_identity/tests.rs
 crates/oneiron/src/channel_identity_lifecycle/tests.rs
+crates/oneiron/src/code_artifact.rs
 crates/oneiron/src/code_revision/tests.rs
 crates/oneiron/src/code_symbol/tests.rs
 crates/oneiron/src/codebase/tests.rs

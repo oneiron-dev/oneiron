@@ -39,6 +39,7 @@ crates/oneiron/src/edit_roundtrip.rs
 crates/oneiron/src/edit_settle.rs
 crates/oneiron/src/embed.rs
 crates/oneiron/src/embed/tests.rs
+crates/oneiron/src/engine_executor.rs
 crates/oneiron/src/entity_id.rs
 crates/oneiron/src/error.rs
 crates/oneiron/src/federation.rs
@@ -49,6 +50,7 @@ crates/oneiron/src/hnsw.rs
 crates/oneiron/src/identity_reputation.rs
 crates/oneiron/src/inbox.rs
 crates/oneiron/src/ingest.rs
+crates/oneiron/src/lens.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/llm.rs
 crates/oneiron/src/maintain.rs

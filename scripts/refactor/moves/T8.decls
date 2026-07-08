@@ -5,6 +5,7 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron-bench/src/beam.rs
 crates/oneiron-server/src/api.rs
 crates/oneiron/src/bm25.rs
 crates/oneiron/src/claim.rs

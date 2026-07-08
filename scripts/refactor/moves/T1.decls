@@ -31,6 +31,7 @@ crates/oneiron/src/claim.rs
 crates/oneiron/src/code_artifact.rs
 crates/oneiron/src/code_revision.rs
 crates/oneiron/src/code_revision/tests.rs
+crates/oneiron/src/code_run/tests.rs
 crates/oneiron/src/code_symbol.rs
 crates/oneiron/src/code_symbol/tests.rs
 crates/oneiron/src/codebase.rs
@@ -49,6 +50,7 @@ crates/oneiron/src/edit_settle.rs
 crates/oneiron/src/edit_settle/tests.rs
 crates/oneiron/src/embed.rs
 crates/oneiron/src/embed/tests.rs
+crates/oneiron/src/engine_executor/tests.rs
 crates/oneiron/src/error.rs
 crates/oneiron/src/federation/tests.rs
 crates/oneiron/src/gate.rs
@@ -58,6 +60,7 @@ crates/oneiron/src/graph_fs/tests.rs
 crates/oneiron/src/inbox.rs
 crates/oneiron/src/inbox/tests.rs
 crates/oneiron/src/ingest/tests.rs
+crates/oneiron/src/lens.rs
 crates/oneiron/src/lens/tests.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/off_record/tests.rs
@@ -89,12 +92,15 @@ crates/oneiron/src/sync/queue/tests.rs
 crates/oneiron/src/sync/selector.rs
 crates/oneiron/src/sync/selector/tests.rs
 crates/oneiron/src/sync/window.rs
+crates/oneiron/src/sync/window/tests.rs
 crates/oneiron/src/tests.rs
 crates/oneiron/src/tests_bug.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
 crates/oneiron/src/vault/tests.rs
 crates/oneiron/tests/gate_regression.rs
+crates/oneiron/tests/receipt_answerability.rs
+crates/oneiron/tests/receipt_context.rs
 crates/oneiron/tests/sync_bridge.rs
 crates/oneiron/tests/sync_convergence_props.rs
 crates/oneiron/tests/sync_delete_propagation.rs
