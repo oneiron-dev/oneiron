@@ -967,8 +967,7 @@ fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Re
 }
 
 #[test]
-fn companion_export_expression_register_updates_and_fails_closed_on_future_values() -> Result<()>
-{
+fn companion_export_expression_register_updates_and_fails_closed_on_future_values() -> Result<()> {
     assert_eq!(
         CompanionExpression::parse("professional"),
         Some(CompanionExpression::Professional)
@@ -1208,8 +1207,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         Value::from("note"),
         Value::from("updated-private-note"),
     )]);
-    let updated_personal =
-        vault.update_companion_record(&personal_id, &updated_personal, 14)?;
+    let updated_personal = vault.update_companion_record(&personal_id, &updated_personal, 14)?;
     let stored_personal = vault
         .get_companion_record(&personal_id)?
         .expect("updated personal record");
