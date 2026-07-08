@@ -8,13 +8,15 @@ yes
 crates/oneiron/src/affect.rs
 crates/oneiron/src/batch.rs
 crates/oneiron/src/code_revision.rs
-crates/oneiron/src/context_pack.rs
+crates/oneiron/src/context_pack/tests.rs
 crates/oneiron/src/error.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/repo_mutation.rs
 crates/oneiron/src/sync/bridge.rs
 crates/oneiron/src/sync/convergence_props_internal.rs
-crates/oneiron/src/sync/quarantine.rs
+crates/oneiron/src/sync/quarantine/tests.rs
+crates/oneiron/src/sync/selector/tests.rs
+crates/oneiron/src/sync/window/tests.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
 crates/oneiron/tests/sync_bridge.rs
@@ -41,11 +43,11 @@ crates/oneiron/src/affect.rs
 + crates/oneiron/src/affect.rs	impl VadAnnotationSource
 
 ## edit
-crates/oneiron/src/context_pack.rs	crate::types::Vad::NEUTRAL,	crate::affect::Vad::NEUTRAL,
-crates/oneiron/src/context_pack.rs	crate::types::Vad {	crate::affect::Vad {
-crates/oneiron/src/context_pack.rs	crate::types::Vad::NEUTRAL,	crate::affect::Vad::NEUTRAL,
-crates/oneiron/src/sync/quarantine.rs	Some(crate::types::Vad::NEUTRAL),	Some(crate::affect::Vad::NEUTRAL),
-crates/oneiron/src/sync/quarantine.rs	Some(crate::types::Vad::NEUTRAL),	Some(crate::affect::Vad::NEUTRAL),
+crates/oneiron/src/context_pack/tests.rs	crate::types::Vad::NEUTRAL,	crate::affect::Vad::NEUTRAL,
+crates/oneiron/src/context_pack/tests.rs	crate::types::Vad {	crate::affect::Vad {
+crates/oneiron/src/context_pack/tests.rs	crate::types::Vad::NEUTRAL,	crate::affect::Vad::NEUTRAL,
+crates/oneiron/src/sync/quarantine/tests.rs	Some(crate::types::Vad::NEUTRAL),	Some(crate::affect::Vad::NEUTRAL),
+crates/oneiron/src/sync/quarantine/tests.rs	Some(crate::types::Vad::NEUTRAL),	Some(crate::affect::Vad::NEUTRAL),
 
 ## frag-edit
 
