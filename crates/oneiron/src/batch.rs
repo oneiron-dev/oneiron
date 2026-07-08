@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
 
-#[path = "export.rs"]
 pub mod export;
-#[path = "secret_scan.rs"]
 pub(crate) mod secret_scan;
 
 use heed::RwTxn;
