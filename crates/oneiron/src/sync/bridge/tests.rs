@@ -1,15 +1,15 @@
 use super::*;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::companion::{
+    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
+    ENTITY_TYPE_COMPANION_REGISTER, encode_companion_record_body,
+};
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
     map_contains_binary, map_insert_bytes,
 };
-use crate::types::{
-    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_TASK, EdgeActorClass, TimeRange, VaultConfig,
-    encode_companion_record_body,
-};
+use crate::types::{ENTITY_TYPE_TASK, EdgeActorClass, TimeRange, VaultConfig};
 use core::assert_matches;
 use ed25519_dalek::{Signer, SigningKey};
 use rmpv::Value;

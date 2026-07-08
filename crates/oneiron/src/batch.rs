@@ -15,21 +15,24 @@ use crate::affect::{AffectTriggerValue, affect_trigger_claim_candidate};
 use crate::claim::{
     ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
 };
+use crate::companion::{
+    CompanionExportClassification, CompanionRecord, CompanionRecordKey, CompanionSubject,
+    ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
+};
+use crate::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
 use crate::error::{Error, ErrorKind, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::store::Store;
-use crate::types::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
 use crate::types::{
-    ClaimCandidate, CompanionExportClassification, CompanionRecord, CompanionRecordKey,
-    CompanionSubject, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
+    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
     EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags,
-    EntityId, TaskRole, TimeRange, Vad, WriteEnvelope, decode_companion_record_body,
-    encode_edge_value, parse_strict_edge_record, validate_edge_weight,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole,
+    TimeRange, Vad, WriteEnvelope, encode_edge_value, parse_strict_edge_record,
+    validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -2591,7 +2594,7 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_OUTBOUND_GRANT {
         crate::outbound_grant::validate_standing_outbound_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PSYCH_PROFILE {
-        crate::types::psych_profile::validate_psych_profile_body_bytes(data)?;
+        crate::psych_profile::validate_psych_profile_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT {
         crate::persona_snapshot::validate_persona_snapshot_export_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_SKILL {

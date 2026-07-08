@@ -1,10 +1,10 @@
 use super::*;
 use crate::claim::ClaimSource;
-use crate::deletion::DeleteReason;
-use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::types::companion::{
+use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
+use crate::deletion::DeleteReason;
+use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::types::{ENTITY_TYPE_PERSON, EdgeActorClass, VaultConfig};
 use crate::{ErrorKind, Vault};
 

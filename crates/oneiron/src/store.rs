@@ -110,13 +110,14 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::batch::secret_scan;
+use crate::companion::{
+    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
+};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::types::{
-    COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EntityId, Signal, StructuralKindRegistration,
-    TypeByteBand, VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry,
-    short_id_prefix, static_short_id_prefix_collision,
-    validate_entity_type as validate_static_entity_type,
+    ENTITY_TYPE_CLAIM, EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand,
+    VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
+    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
 

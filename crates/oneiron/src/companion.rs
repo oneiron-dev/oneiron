@@ -21,13 +21,13 @@ use crate::job_queue::{
     FailOutcome, JobId, JobQueue, JobRecord, RetryJob, RetryOutcome,
 };
 
-use super::{EdgeActorClass, EntityId, WriteEnvelope};
+use crate::types::{EdgeActorClass, EntityId, WriteEnvelope};
 
 /// Dedicated companion-register structural kind byte.
 ///
 /// The companion pack owns bytes 64..=79; this API pins the register substrate
 /// to the first byte in that band and registers it lazily per vault.
-pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = super::TYPE_BYTE_BAND_COMPANION_START;
+pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::types::TYPE_BYTE_BAND_COMPANION_START;
 /// Short-id prefix for companion-register rows.
 pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
 /// Pack id recorded in the vault-scoped structural-kind registry.
@@ -2015,10 +2015,10 @@ fn entity_from_value(value: &Value, context: &'static str) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
         return Err(invalid_companion(context));
     };
-    if bytes.len() != super::ENTITY_ID_LEN {
+    if bytes.len() != crate::types::ENTITY_ID_LEN {
         return Err(invalid_companion(context));
     }
-    let mut arr = [0_u8; super::ENTITY_ID_LEN];
+    let mut arr = [0_u8; crate::types::ENTITY_ID_LEN];
     arr.copy_from_slice(bytes);
     EntityId::from_bytes(arr).map_err(|_| invalid_companion(context))
 }

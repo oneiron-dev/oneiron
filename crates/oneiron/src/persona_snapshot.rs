@@ -33,8 +33,8 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead,
     ScopedReadActorKey, claim_sensitivity_band, decode_claim_body,
 };
+use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 use crate::error::{Error, Result};
-use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 use crate::types::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EntityId,
     TimeRange, bytes_to_hex_lower,
@@ -959,7 +959,7 @@ impl crate::Vault {
             {
                 continue;
             }
-            let crate::types::companion::CompanionSubject::Relationship {
+            let crate::companion::CompanionSubject::Relationship {
                 source_ref,
                 target_ref,
             } = &record.subject

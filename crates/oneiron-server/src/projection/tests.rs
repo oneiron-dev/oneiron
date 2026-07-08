@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-use oneiron::types::{ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_REGISTRY};
+use oneiron::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use oneiron::types::ENTITY_TYPE_REGISTRY;
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, CompanionExportClassification, CompanionProvenance,
     CompanionRecord, CompanionScope, EdgeActorClass, companion_value_from_json,
