@@ -594,9 +594,11 @@ def apply_edits(text, edits):
 
 def edit_delta_ok(old, new):
     """True iff old→new is a legal declared edit: every changed region is pure
-    `::`-path text — OR the single visibility-promotion exception (empty→
-    `pub(crate)` prepended). Multiple regions are allowed (a line may carry more
-    than one `types::X` occurrence re-pointed at once); each must be pure-path."""
+    `::`-path text, a single string-literal token swapped for a string-literal
+    token (relative include_str!/include_bytes! paths broken by a directory-depth
+    change), or the single visibility-promotion exception (empty→`pub(crate)`
+    prepended). Multiple regions are allowed (a line may carry more than one
+    `types::X` occurrence re-pointed at once); each must be pure-path."""
     old_toks = _TOKEN.findall(old)
     nt = _TOKEN.findall(new)
     if old_toks == nt:
@@ -613,6 +615,10 @@ def edit_delta_ok(old, new):
             j = i
             while j < n and old_toks[j] != nt[j]:
                 j += 1
+            if j - i == 1 and old_toks[i].startswith('"') and nt[i].startswith('"'):
+                # string-literal → string-literal single-token swap
+                i = j
+                continue
             if not (_PATH_RE.match("".join(old_toks[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
                 return False
             # must be a genuine path SEGMENT: adjacent to `::` on one side
