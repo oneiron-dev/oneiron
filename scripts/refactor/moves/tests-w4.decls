@@ -46,3 +46,5 @@ crates/oneiron-server/src/usage/tests.rs
 + crates/oneiron-server/src/usage/tests.rs	impl TelemetryCapture
 + crates/oneiron-server/src/usage/tests.rs	impl tracing :: Subscriber for TelemetryCapture
 + crates/oneiron-server/src/usage/tests.rs	impl tracing :: field :: Visit for TelemetryVisitor < ' _ >
+## frag-edit
+crates/oneiron-server/src/mcp.rs	"../tests/fixtures/mcp_tool_args.validation.json"	"../../tests/fixtures/mcp_tool_args.validation.json"

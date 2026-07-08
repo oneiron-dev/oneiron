@@ -60,3 +60,7 @@ crates/oneiron/src/sync/window/tests.rs
 + crates/oneiron/src/sync/connection/tests.rs	impl FakeServer
 + crates/oneiron/src/sync/queue/tests.rs	impl Drop for PurgeFailureReset
 + crates/oneiron/src/sync/queue/tests.rs	impl Drop for ReceiverScrubFailureReset
+## frag-edit
+crates/oneiron/src/sync/transport.rs	production_source(include_str!("client.rs")),	production_source(include_str!("../client.rs")),
+crates/oneiron/src/sync/transport.rs	production_source(include_str!("connection.rs")),	production_source(include_str!("../connection.rs")),
+crates/oneiron/src/sync/transport.rs	production_source(include_str!("../../../oneiron-server/src/handler.rs")),	production_source(include_str!("../../../../oneiron-server/src/handler.rs")),

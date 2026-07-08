@@ -360,11 +360,16 @@ def check3(root, base, tsv, decls):
             bm = _exactly_one(R.find_item(bdoc, "mod", "-", row["item_name"], row["cfg"]),
                               f"BASE {row['src_file']}", row)
             base_frag = mod_inner(bdoc, bm)
+            fe = [(o, nw) for (s, o, nw) in fragedits if s == row["src_file"]]
+            base_frag = R.apply_edits(base_frag, fe)
             ht = head_file(root, row["dst_file"])
             if ht is None:
                 raise Violation(3, f"dst not present — item not yet moved: {row['dst_file']}")
-            base_norm = R.rustfmt(base_frag + "\n").rstrip("\n")
-            head_norm = R.rustfmt(ht + ("" if ht.endswith("\n") else "\n")).rstrip("\n")
+            # mod_inner starts right after `{`, so the fragment carries a leading
+            # newline that rustfmt preserves — strip outer blank lines on both
+            # sides before comparing.
+            base_norm = R.rustfmt(base_frag.strip("\n") + "\n").rstrip("\n")
+            head_norm = R.rustfmt(ht.strip("\n") + "\n").rstrip("\n")
             if base_norm != head_norm:
                 raise Violation(3, f"MOD body mismatch: {row['src_file']}:mod {row['item_name']} "
                                    f"!= {row['dst_file']}")

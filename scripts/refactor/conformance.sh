@@ -655,9 +655,11 @@ exit 0
 #>
 #>def edit_delta_ok(old, new):
 #>    """True iff old→new is a legal declared edit: every changed region is pure
-#>    `::`-path text — OR the single visibility-promotion exception (empty→
-#>    `pub(crate)` prepended). Multiple regions are allowed (a line may carry more
-#>    than one `types::X` occurrence re-pointed at once); each must be pure-path."""
+#>    `::`-path text, a single string-literal token swapped for a string-literal
+#>    token (relative include_str!/include_bytes! paths broken by a directory-depth
+#>    change), or the single visibility-promotion exception (empty→`pub(crate)`
+#>    prepended). Multiple regions are allowed (a line may carry more than one
+#>    `types::X` occurrence re-pointed at once); each must be pure-path."""
 #>    old_toks = _TOKEN.findall(old)
 #>    nt = _TOKEN.findall(new)
 #>    if old_toks == nt:
@@ -674,6 +676,10 @@ exit 0
 #>            j = i
 #>            while j < n and old_toks[j] != nt[j]:
 #>                j += 1
+#>            if j - i == 1 and old_toks[i].startswith('"') and nt[i].startswith('"'):
+#>                # string-literal → string-literal single-token swap
+#>                i = j
+#>                continue
 #>            if not (_PATH_RE.match("".join(old_toks[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
 #>                return False
 #>            # must be a genuine path SEGMENT: adjacent to `::` on one side
@@ -1156,11 +1162,16 @@ exit 0
 #>            bm = _exactly_one(R.find_item(bdoc, "mod", "-", row["item_name"], row["cfg"]),
 #>                              f"BASE {row['src_file']}", row)
 #>            base_frag = mod_inner(bdoc, bm)
+#>            fe = [(o, nw) for (s, o, nw) in fragedits if s == row["src_file"]]
+#>            base_frag = R.apply_edits(base_frag, fe)
 #>            ht = head_file(root, row["dst_file"])
 #>            if ht is None:
 #>                raise Violation(3, f"dst not present — item not yet moved: {row['dst_file']}")
-#>            base_norm = R.rustfmt(base_frag + "\n").rstrip("\n")
-#>            head_norm = R.rustfmt(ht + ("" if ht.endswith("\n") else "\n")).rstrip("\n")
+#>            # mod_inner starts right after `{`, so the fragment carries a leading
+#>            # newline that rustfmt preserves — strip outer blank lines on both
+#>            # sides before comparing.
+#>            base_norm = R.rustfmt(base_frag.strip("\n") + "\n").rstrip("\n")
+#>            head_norm = R.rustfmt(ht.strip("\n") + "\n").rstrip("\n")
 #>            if base_norm != head_norm:
 #>                raise Violation(3, f"MOD body mismatch: {row['src_file']}:mod {row['item_name']} "
 #>                                   f"!= {row['dst_file']}")
