@@ -175,16 +175,18 @@ def _nonuse_lines(text):
     """Stripped non-blank lines excluding whole use STATEMENTS — multi-line
     aware, unlike _content_lines: a `use …::{` header pulls its continuation
     lines (through the terminating `;`) out of the remainder too. A use
-    statement cannot contain an interior `;`, so scanning to the first `;`
-    is exact."""
+    statement cannot contain an interior `;` in code, but a comment on a
+    continuation line can — so the terminator scan runs on masked text
+    (comment/string interiors blanked) to stay exact."""
     lines = text.split("\n")
+    masked = R.mask(text).split("\n")
     skip = set()
     i = 0
     while i < len(lines):
         if _is_use(lines[i].strip()):
             j = i
             skip.add(j)
-            while ";" not in lines[j] and j + 1 < len(lines):
+            while ";" not in masked[j] and j + 1 < len(lines):
                 j += 1
                 skip.add(j)
             i = j + 1
@@ -664,7 +666,8 @@ def _git_diff_file(root, base, f):
 
 
 def checkC(root, base, tsv, decls):
-    """A CONSUMER file's non-import content must be byte-identical to BASE
+    """A CONSUMER file's non-import content must match BASE line-for-line
+    (compared as stripped non-blank lines, the gate-wide granularity)
     modulo the `## edit` rows declared for THAT file. Import statements —
     including the continuation lines of multi-line `use …::{…};` blocks —
     are executor-reconciled and verified by the build, check 2 and the
@@ -719,6 +722,9 @@ def check_exhaustion(root, base, decls):
         bt = base_file(root, base, src)
         if bt is None:
             raise Violation("X", f"exhaustion src missing at base: {src}")
+        if head_file(root, src) is not None:
+            raise Violation("X", f"exhaustion src still present at HEAD "
+                                 f"(must be deleted): {src}")
         doc = R.Doc(bt)
         drop = set()
         for st in union_stages:
