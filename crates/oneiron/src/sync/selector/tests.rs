@@ -166,13 +166,13 @@ fn companion_record_body_in_scope_with_lifecycle(
         ClaimLifecycleStatus::Active => {
             record = record.created_at(1_772_400_000).unwrap();
         }
-        ClaimLifecycleStatus::Superseded => record
-            .lifecycle_events
-            .push(crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),
+        ClaimLifecycleStatus::Superseded => {
+            let ev = crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000);
+            record.lifecycle_events.push(ev);
+        }
         ClaimLifecycleStatus::Retracted => {
-            record.lifecycle_events.push(
-                crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),
-            );
+            let ev = crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000);
+            record.lifecycle_events.push(ev);
         }
     }
     encode_companion_record_body(&record).unwrap()
