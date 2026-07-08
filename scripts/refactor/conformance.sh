@@ -658,38 +658,38 @@ exit 0
 #>    `::`-path text — OR the single visibility-promotion exception (empty→
 #>    `pub(crate)` prepended). Multiple regions are allowed (a line may carry more
 #>    than one `types::X` occurrence re-pointed at once); each must be pure-path."""
-#>    ot = _TOKEN.findall(old)
+#>    old_toks = _TOKEN.findall(old)
 #>    nt = _TOKEN.findall(new)
-#>    if ot == nt:
+#>    if old_toks == nt:
 #>        return False  # a no-op edit is not a valid declared edit
-#>    if len(ot) == len(nt):
+#>    if len(old_toks) == len(nt):
 #>        # position-wise: collect maximal runs of differing tokens; each must be
 #>        # a pure ::-path segment on both sides (e.g. `types` -> `registry`).
 #>        i = 0
-#>        n = len(ot)
+#>        n = len(old_toks)
 #>        while i < n:
-#>            if ot[i] == nt[i]:
+#>            if old_toks[i] == nt[i]:
 #>                i += 1
 #>                continue
 #>            j = i
-#>            while j < n and ot[j] != nt[j]:
+#>            while j < n and old_toks[j] != nt[j]:
 #>                j += 1
-#>            if not (_PATH_RE.match("".join(ot[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
+#>            if not (_PATH_RE.match("".join(old_toks[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
 #>                return False
 #>            # must be a genuine path SEGMENT: adjacent to `::` on one side
 #>            # (rejects a bare identifier / variable rename)
-#>            if not ((i > 0 and ot[i - 1] == "::") or (j < n and ot[j] == "::")):
+#>            if not ((i > 0 and old_toks[i - 1] == "::") or (j < n and old_toks[j] == "::")):
 #>                return False
 #>            i = j
 #>        return True
 #>    # length differs: single-region prefix/suffix (covers the vis exception)
 #>    p = 0
-#>    while p < len(ot) and p < len(nt) and ot[p] == nt[p]:
+#>    while p < len(old_toks) and p < len(nt) and old_toks[p] == nt[p]:
 #>        p += 1
 #>    s = 0
-#>    while s < len(ot) - p and s < len(nt) - p and ot[-1 - s] == nt[-1 - s]:
+#>    while s < len(old_toks) - p and s < len(nt) - p and old_toks[-1 - s] == nt[-1 - s]:
 #>        s += 1
-#>    old_reg = ot[p:len(ot) - s]
+#>    old_reg = old_toks[p:len(old_toks) - s]
 #>    new_reg = nt[p:len(nt) - s]
 #>    if old_reg == [] and "".join(new_reg) in ("pub(crate)", "pub"):
 #>        return True
@@ -761,10 +761,10 @@ exit 0
 #>    assert lines and lines[0].strip() == _DUMMY_OPEN, "wrap missing open"
 #>    assert lines[-1].strip() == "}", "wrap missing close"
 #>    inner = lines[1:-1]
-#>    ded = []
+#>    dedented = []
 #>    for ln in inner:
-#>        ded.append(ln[4:] if ln.startswith("    ") else ln.lstrip() if ln.strip() == "" else ln)
-#>    return "\n".join(ded).rstrip("\n")
+#>        dedented.append(ln[4:] if ln.startswith("    ") else ln.lstrip() if ln.strip() == "" else ln)
+#>    return "\n".join(dedented).rstrip("\n")
 #>
 #>
 #>_SIG_LINE = re.compile(r"^(\s*)(pub(?:\s*\([^)]*\))?\s+)((?:async\s+|unsafe\s+|const\s+|default\s+|extern[^ ]*\s+)*(?:fn|struct|enum|trait|type|const|static|union|mod|use)\b)")
