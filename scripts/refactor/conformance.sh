@@ -657,9 +657,11 @@ exit 0
 #>    """True iff old→new is a legal declared edit: every changed region is pure
 #>    `::`-path text, a single string-literal token swapped for a string-literal
 #>    token (relative include_str!/include_bytes! paths broken by a directory-depth
-#>    change), or the single visibility-promotion exception (empty→`pub(crate)`
-#>    prepended). Multiple regions are allowed (a line may carry more than one
-#>    `types::X` occurrence re-pointed at once); each must be pure-path."""
+#>    change), a pure path-segment removal (`crate::types::X` → `crate::X`, the
+#>    module-un-mount class), or the single visibility-promotion exception
+#>    (empty→`pub(crate)` prepended). Multiple regions are allowed (a line may
+#>    carry more than one `types::X` occurrence re-pointed at once); each must be
+#>    pure-path."""
 #>    old_toks = _TOKEN.findall(old)
 #>    nt = _TOKEN.findall(new)
 #>    if old_toks == nt:
@@ -701,6 +703,12 @@ exit 0
 #>    # `pub` insertion is public-API widening and must never validate as a
 #>    # declared edit
 #>    if old_reg == [] and "".join(new_reg) == "pub(crate)":
+#>        return True
+#>    if new_reg == [] and "::" in old_reg and _PATH_RE.match("".join(old_reg)):
+#>        # pure ::-path segment REMOVAL (module un-mount: crate::types::X ->
+#>        # crate::X). The removed run must include its `::` separator so the
+#>        # surviving path stays well-formed; _PATH_RE's trailing-`::` form
+#>        # covers the `types ::` shape the prefix/suffix split produces.
 #>        return True
 #>    if not old_reg or not new_reg:
 #>        return False
