@@ -12,7 +12,7 @@ import collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 
-ROOT = "/Volumes/Cinema/pink-worktrees/t1443"
+ROOT = os.environ.get("GEN_ROOT", "/Volumes/Cinema/pink-worktrees/t1443")
 BASE_REV = os.environ.get("BASE_REV", "b2437d700")
 OUT = os.path.join(ROOT, "scripts/refactor/moves")
 TYPES = "crates/oneiron/src/types.rs"
