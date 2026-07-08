@@ -1523,8 +1523,9 @@ exit 0
 #>        m = _RELOC_UNSAFE.search(R.mask(bsrc))
 #>        if m:
 #>            raise Violation("F", f"filemove src contains relocation-unsafe "
-#>                                 f"construct {m.group(0)!r} (include_str!/"
-#>                                 f"include_bytes!/#[path]/`mod x;`): {src}")
+#>                                 f"construct {m.group(0)!r} (include!/"
+#>                                 f"include_str!/include_bytes!/#[path]/"
+#>                                 f"`mod x;`): {src}")
 #>        n += 1
 #>    return f"OK check F (file relocation): {n} file(s) relocated byte-identically"
 #>
