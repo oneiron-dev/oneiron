@@ -1,0 +1,8 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+method	impl Vault	create_channel_identity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	create_own_app_channel_identity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	transition_channel_identity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	get_channel_identity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	channel_identity_by_assignment	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	channel_identity_assignment_conflict_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no
+method	impl Vault	apply_channel_identity_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/channel_identity.rs	no

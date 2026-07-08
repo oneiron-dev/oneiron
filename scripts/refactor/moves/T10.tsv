@@ -1,0 +1,10 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+enum	-	HydratedShortIdDeletionReason	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+enum	-	HydratedShortIdDeletionSource	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+struct	-	HydratedShortIdDeletion	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+enum	-	MemoryTimelineRecordState	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+struct	-	MemoryTimelineRecord	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+struct	-	MemoryTimeline	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+enum	-	NamedMemoryVerb	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+impl	-	impl NamedMemoryVerb	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no
+enum	-	MemoryOperationKind	-	crates/oneiron/src/types.rs	crates/oneiron/src/deletion.rs	no

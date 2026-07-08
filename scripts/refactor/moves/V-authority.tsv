@@ -1,0 +1,6 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+method	impl Vault	put_authority_log_entry	-	crates/oneiron/src/vault.rs	crates/oneiron/src/authority.rs	no
+method	impl Vault	get_authority_log_entry	-	crates/oneiron/src/vault.rs	crates/oneiron/src/authority.rs	no
+method	impl Vault	backfill_authority_first_seen_sidecars	-	crates/oneiron/src/vault.rs	crates/oneiron/src/authority.rs	no
+method	impl Vault	authority_fold	-	crates/oneiron/src/vault.rs	crates/oneiron/src/authority.rs	no
+method	impl Vault	apply_authority_log_entry_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/authority.rs	no

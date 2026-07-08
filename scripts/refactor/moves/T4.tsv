@@ -1,0 +1,31 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	EDGE_KEY_LEN	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+const	-	EDGE_VALUE_STRUCTURAL_LEN	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+const	-	EDGE_VALUE_SEMANTIC_LEN	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+const	-	EDGE_VALUE_SEMANTIC_PROVENANCED_LEN	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+enum	-	EdgeKind	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+impl	-	impl EdgeKind	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+enum	-	EdgeValueLayout	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+impl	-	impl EdgeValueLayout	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+enum	-	EdgeConfirmationStatus	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+impl	-	impl EdgeConfirmationStatus	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+enum	-	EdgeActorClass	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+impl	-	impl EdgeActorClass	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+struct	-	EdgeProvenanceFlags	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+struct	-	DecodedEdgeValue	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	edge_value_layout_for_kind	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+struct	-	EdgeInfo	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	read_f32_le	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	read_u64_le	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	read_vad	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	decode_edge_value	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	decode_edge_value_for_kind	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+struct	-	StrictEdgeRecord	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+impl	-	impl StrictEdgeRecord	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	parse_strict_edge_record	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	parse_strict_edge_record_key	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	edge_record_error	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	validate_edge_weight	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	-	encode_edge_value	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	mod tests	strict_edge_record_parser_decodes_key_and_value	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no
+fn	mod tests	strict_edge_record_parser_normalizes_corruption_errors	-	crates/oneiron/src/types.rs	crates/oneiron/src/edge.rs	no

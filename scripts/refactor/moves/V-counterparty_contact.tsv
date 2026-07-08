@@ -1,0 +1,9 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+method	impl Vault	create_counterparty_contact	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	opt_out_counterparty_contact	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	revoke_counterparty_contact	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	get_counterparty_contact	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	find_counterparty_contact	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	counterparty_contacts_for_identity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	counterparty_contact_assignment_conflict_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no
+method	impl Vault	apply_counterparty_contact_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/counterparty_contact.rs	no

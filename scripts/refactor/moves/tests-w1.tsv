@@ -1,0 +1,9 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+mod	-	tests	-	crates/oneiron/src/claim.rs	crates/oneiron/src/claim/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/authority.rs	crates/oneiron/src/authority/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/persona_snapshot.rs	crates/oneiron/src/persona_snapshot/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/channel_identity.rs	crates/oneiron/src/channel_identity/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/counterparty_contact.rs	crates/oneiron/src/counterparty_contact/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/federation.rs	crates/oneiron/src/federation/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/outbound_grant.rs	crates/oneiron/src/outbound_grant/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/access_grant.rs	crates/oneiron/src/access_grant/tests.rs	no

@@ -1,0 +1,8 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	Vad	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+enum	-	VadComponent	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+impl	-	impl Vad	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+enum	-	VadAnnotationSource	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+impl	-	impl VadAnnotationSource	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+struct	-	VadAnnotation	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no
+impl	-	impl VadAnnotation	-	crates/oneiron/src/types.rs	crates/oneiron/src/affect.rs	no

@@ -1,0 +1,18 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+fn	-	companion_record_id_for_key_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+fn	-	companion_record_any_id_for_key_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+struct	-	CompanionRecordKeyLookup	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+fn	-	companion_record_key_lookup_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	companion_profile_access_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	create_companion_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	update_companion_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	get_companion_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	retire_companion_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	end_companion_relationship	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	revive_companion_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	companion_record_id_for_key	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	companion_register	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	ensure_companion_register_kind	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	companion_register_kind_registered	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	read_companion_record_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no
+method	impl Vault	apply_companion_record_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/companion.rs	no

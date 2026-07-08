@@ -1,0 +1,36 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	TimeRange	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+const	-	TEMPORAL_SECONDS_PER_DAY	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+const	-	TEMPORAL_RECENT_DAYS	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+enum	-	TemporalExpression	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+impl	-	impl TemporalExpression	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+enum	-	TemporalExpressionParseError	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	parse_temporal_expression	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	temporal_expression_from_query	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	normalize_temporal_expression	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	temporal_query_tokens	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	is_temporal_unit_token	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	is_temporal_quantity_token	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	unsupported_last_quantity_expression	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	is_weekday_token	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	utc_day_start	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	previous_calendar_month_range	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	previous_calendar_year_range	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	unix_seconds_from_civil_saturating	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	unix_seconds_from_civil	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	unix_days_from_timestamp	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	civil_from_unix_days	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	-	unix_days_from_civil	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+enum	-	TemporalGranularity	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+impl	-	impl TemporalGranularity	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+enum	-	TemporalAnchorMode	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+const	mod tests	FROZEN_NOW	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_parser_resolves_supported_forms_from_frozen_clock	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_query_parser_rejects_unsupported_last_forms	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_query_parser_ignores_non_temporal_last_nouns	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_query_parser_rejects_multiple_hints	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_query_parser_rejects_unsupported_non_last_forms	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	unix_seconds_from_civil_keeps_epoch_boundary_at_zero	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	unix_seconds_from_civil_rejects_pre_epoch_dates	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_calendar_ranges_saturate_at_epoch_boundary	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no
+fn	mod tests	temporal_expression_rejects_extreme_timestamp_without_wrapping	-	crates/oneiron/src/types.rs	crates/oneiron/src/temporal.rs	no

@@ -1,0 +1,13 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	StoredProvenanceClaim	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	yes
+impl	-	impl StoredProvenanceClaim	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+fn	-	closed_claim_put_payload	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	put_edge_provenance	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	supersede_edge_provenance	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	retract_edge_provenance	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	ensure_model_substrate	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	write_edge_provenance	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	load_provenance_claim_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no
+method	impl Vault	live_edge_provenance_claims_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	yes
+method	impl Vault	retracted_edge_provenance_claims_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	yes
+method	impl Vault	edge_provenance_claims_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/provenance.rs	no

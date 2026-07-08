@@ -1,0 +1,14 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	WriteActor	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+impl	-	impl WriteActor	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+struct	-	WriteProvenance	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+impl	-	impl WriteProvenance	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+struct	-	WriteEnvelope	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+impl	-	impl WriteEnvelope	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+struct	-	ClaimCandidate	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+impl	-	impl ClaimCandidate	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+const	-	WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+const	-	WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+const	-	WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+const	-	WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no
+fn	-	write_envelope_evidence	-	crates/oneiron/src/types.rs	crates/oneiron/src/write_envelope.rs	no

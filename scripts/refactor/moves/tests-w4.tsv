@@ -1,0 +1,12 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+mod	-	tests	-	crates/oneiron-server/src/mcp.rs	crates/oneiron-server/src/mcp/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/handler.rs	crates/oneiron-server/src/handler/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/server.rs	crates/oneiron-server/src/server/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/usage.rs	crates/oneiron-server/src/usage/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/config.rs	crates/oneiron-server/src/config/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/runtime.rs	crates/oneiron-server/src/runtime/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/error.rs	crates/oneiron-server/src/error/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/idempotency.rs	crates/oneiron-server/src/idempotency/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/commands.rs	crates/oneiron-server/src/commands/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/projection.rs	crates/oneiron-server/src/projection/tests.rs	no
+mod	-	tests	-	crates/oneiron-server/src/auth.rs	crates/oneiron-server/src/auth/tests.rs	no

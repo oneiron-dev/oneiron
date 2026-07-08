@@ -1,0 +1,38 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	MAX_MEMORY_TIMELINE_RECORDS	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+static	-	AFTER_HEADER_READ	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	install_after_header_read_signal	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	signal_after_header_read	test	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	signal_after_header_read	not(test)	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	is_delete_protected_engine_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	memory_timeline_record_cmp	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+struct	-	CapturedProvenanceDelete	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+fn	-	sweep_extras	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	delete_entity	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	delete_entity_with_reason	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	delete_entity_without_header	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	capture_provenance_delete	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	refresh_subject_edge_after_claim_delete_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	refresh_to_retracted_survivor_or_bare	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	purge_entity_active_store_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	soft_erase_active_store_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	apply_replayed_tombstone	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	apply_replayed_tombstone_for_sync	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	local_hard_delete_marker_exists_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	active_delete_scope_exists_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	write_crdt_tombstone	feature = "sync"	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	finish_crdt_tombstone_persist	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	write_crdt_tombstone	not(feature = "sync")	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	put_pending_tombstone_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	clear_pending_tombstone	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	put_redaction_audit_receipt_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	write_redaction_receipt_and_sweep_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	enqueue_hard_erase_sweep_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	allocate_next_hard_erase_sweep_seq	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	max_hard_erase_sweep_seq	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	memory_timeline	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	memory_timeline_record	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	entity_deletion_metadata	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	yes
+method	impl Vault	deletion_metadata_from_tombstone_value	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	hydrate_deletion_reason	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no
+method	impl Vault	select_tombstone_metadata_value	-	crates/oneiron/src/vault.rs	crates/oneiron/src/deletion.rs	no

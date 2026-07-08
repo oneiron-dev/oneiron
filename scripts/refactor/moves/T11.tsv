@@ -1,0 +1,7 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	TASK_BODY_ROLE_KEY	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
+enum	-	TaskRole	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
+impl	-	impl TaskRole	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
+fn	-	task_body_for_test	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
+fn	-	task_role_from_body_bytes	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
+fn	mod tests	task_role_from_body_bytes_rejects_malformed_bodies	-	crates/oneiron/src/types.rs	crates/oneiron/src/habit.rs	no
