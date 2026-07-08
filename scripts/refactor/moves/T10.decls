@@ -7,7 +7,7 @@ yes
 ## allowed
 crates/oneiron/src/claim.rs
 crates/oneiron/src/deletion.rs
-crates/oneiron/src/gate.rs
+crates/oneiron/src/gate/tests.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
@@ -25,10 +25,10 @@ crates/oneiron/src/deletion.rs
 + crates/oneiron/src/deletion.rs	impl NamedMemoryVerb
 
 ## edit
-crates/oneiron/src/gate.rs	crate::types::HydratedShortIdDeletionSource::DanglingShortId	crate::deletion::HydratedShortIdDeletionSource::DanglingShortId
-crates/oneiron/src/gate.rs	crate::types::HydratedShortIdDeletionSource::Tombstone	crate::deletion::HydratedShortIdDeletionSource::Tombstone
-crates/oneiron/src/gate.rs	| crate::types::HydratedShortIdDeletionSource::PendingTombstone	| crate::deletion::HydratedShortIdDeletionSource::PendingTombstone
-crates/oneiron/src/gate.rs	Some(crate::types::HydratedShortIdDeletionReason::UserDelete)	Some(crate::deletion::HydratedShortIdDeletionReason::UserDelete)
+crates/oneiron/src/gate/tests.rs	crate::types::HydratedShortIdDeletionSource::DanglingShortId	crate::deletion::HydratedShortIdDeletionSource::DanglingShortId
+crates/oneiron/src/gate/tests.rs	crate::types::HydratedShortIdDeletionSource::Tombstone	crate::deletion::HydratedShortIdDeletionSource::Tombstone
+crates/oneiron/src/gate/tests.rs	| crate::types::HydratedShortIdDeletionSource::PendingTombstone	| crate::deletion::HydratedShortIdDeletionSource::PendingTombstone
+crates/oneiron/src/gate/tests.rs	Some(crate::types::HydratedShortIdDeletionReason::UserDelete)	Some(crate::deletion::HydratedShortIdDeletionReason::UserDelete)
 
 ## frag-edit
 

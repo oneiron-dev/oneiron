@@ -9,16 +9,18 @@ crates/oneiron-server/src/api.rs
 crates/oneiron/src/bm25.rs
 crates/oneiron/src/claim.rs
 crates/oneiron/src/code_symbol.rs
+crates/oneiron/src/codebase/tests.rs
 crates/oneiron/src/context_pack.rs
 crates/oneiron/src/context_pack/tests.rs
 crates/oneiron/src/fusion.rs
-crates/oneiron/src/gate.rs
+crates/oneiron/src/gate/tests.rs
 crates/oneiron/src/hnsw.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/pipeline.rs
 crates/oneiron/src/ppr.rs
-crates/oneiron/src/psych_profile.rs
+crates/oneiron/src/psych_profile/tests.rs
 crates/oneiron/src/serialize.rs
+crates/oneiron/src/serialize/tests.rs
 crates/oneiron/src/store.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
@@ -53,22 +55,23 @@ crates/oneiron/src/context_pack.rs	items_truncated: crate::types::PackItemAccoun
 crates/oneiron/src/context_pack.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
 crates/oneiron/src/context_pack.rs	crate::types::PackItemAccountingReason::TokenBudget => {	crate::context_pack::PackItemAccountingReason::TokenBudget => {
 crates/oneiron/src/context_pack.rs	crate::types::PackItemAccountingReason::ItemBudget => {	crate::context_pack::PackItemAccountingReason::ItemBudget => {
-crates/oneiron/src/context_pack.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
-crates/oneiron/src/context_pack.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
-crates/oneiron/src/context_pack.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
-crates/oneiron/src/gate.rs	.retrieval_budget(crate::types::ContextPackRetrievalBudget::new(	.retrieval_budget(crate::context_pack::ContextPackRetrievalBudget::new(
+crates/oneiron/src/context_pack/tests.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
+crates/oneiron/src/context_pack/tests.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+crates/oneiron/src/context_pack/tests.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+crates/oneiron/src/gate/tests.rs	.retrieval_budget(crate::types::ContextPackRetrievalBudget::new(	.retrieval_budget(crate::context_pack::ContextPackRetrievalBudget::new(
 crates/oneiron/src/serialize.rs	stats.items_dropped.reason = crate::types::PackItemAccountingReason::ItemBudget;	stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
 crates/oneiron/src/serialize.rs	prepared.stats.items_dropped.reason = crate::types::PackItemAccountingReason::TokenBudget;	prepared.stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::TokenBudget;
 crates/oneiron/src/serialize.rs	fn item_accounting_json(accounting: crate::types::PackItemAccounting) -> Value {	fn item_accounting_json(accounting: crate::context_pack::PackItemAccounting) -> Value {
-crates/oneiron/src/serialize.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
-crates/oneiron/src/serialize.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
-crates/oneiron/src/serialize.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
-crates/oneiron/src/serialize.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
-crates/oneiron/src/serialize.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
-crates/oneiron/src/serialize.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
-crates/oneiron/src/serialize.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
-crates/oneiron/src/serialize.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
-crates/oneiron/src/serialize.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+crates/oneiron/src/serialize/tests.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
+crates/oneiron/src/serialize/tests.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+crates/oneiron/src/serialize/tests.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+crates/oneiron/src/serialize/tests.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
+crates/oneiron/src/serialize/tests.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+crates/oneiron/src/serialize/tests.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+crates/oneiron/src/serialize/tests.rs	tokens: crate::types::PackTokenStats::default(),	tokens: crate::context_pack::PackTokenStats::default(),
+crates/oneiron/src/serialize/tests.rs	items_truncated: crate::types::PackItemAccounting::item_budget(),	items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+crates/oneiron/src/serialize/tests.rs	items_dropped: crate::types::PackItemAccounting::token_budget(),	items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+crates/oneiron/src/psych_profile/tests.rs	use crate::types::ContextEntity;	use crate::context_pack::ContextEntity;
 
 ## frag-edit
 
