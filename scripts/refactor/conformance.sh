@@ -1176,7 +1176,16 @@ exit 0
 #>        ht = head_file(root, f)
 #>        head_lines = _strip_nonblank(ht) if ht is not None else []
 #>        if head_lines.count(new) == 0:
-#>            raise Violation("E", f"edit new-line not present at HEAD {f}: {new!r}")
+#>            # rustfmt reflows an applied edit across lines when the ::-path
+#>            # swap pushes the line past the width limit (types->registry on a
+#>            # 99-char guard). Fall back to token-form matching: canon is
+#>            # whitespace/reflow-insensitive but keeps string literals intact,
+#>            # so a reflowed application passes and content changes still fail.
+#>            cht = " " + R.canon(ht or "") + " "
+#>            if " " + R.canon(new) + " " not in cht:
+#>                raise Violation("E", f"edit new-line not present at HEAD {f}: {new!r}")
+#>            if " " + R.canon(old) + " " in cht:
+#>                raise Violation("E", f"edit old-line still present at HEAD {f}: {old!r}")
 #>        if head_lines.count(old) != 0:
 #>            raise Violation("E", f"edit old-line still present at HEAD {f}: {old!r}")
 #>    for src, old, new in fragedits:
@@ -1576,6 +1585,12 @@ exit 0
 #>        base_rem = _nonuse_lines(R.apply_edits(bt, fe)) if fe else _nonuse_lines(bt)
 #>        head_rem = _nonuse_lines(ht)
 #>        if base_rem != head_rem:
+#>            # rustfmt may reflow a line the declared edit lengthened past the
+#>            # width limit — the line lists then differ only in wrapping. canon
+#>            # compares the joined token streams (string literals kept intact),
+#>            # so pure reflow passes and any token change still fails.
+#>            if R.canon("\n".join(base_rem)) == R.canon("\n".join(head_rem)):
+#>                continue
 #>            import difflib
 #>            d = [ln for ln in difflib.unified_diff(base_rem, head_rem, lineterm="", n=0)
 #>                 if not ln.startswith(("---", "+++"))]
