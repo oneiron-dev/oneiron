@@ -227,3 +227,7 @@ crates/oneiron-server/src/api/*.rs
 ## impl-delta
 - crates/oneiron-server/src/api.rs	impl EiriSessionRagStore
 + crates/oneiron-server/src/api/context_pack.rs	impl EiriSessionRagStore
+## frag-edit
+crates/oneiron-server/src/api.rs	include_str!("../tests/fixtures/v1_core_openapi_contract.snapshot.json");	include_str!("../../tests/fixtures/v1_core_openapi_contract.snapshot.json");
+crates/oneiron-server/src/api.rs	include_str!("../tests/fixtures/v1_core_success_contract.snapshot.json");	include_str!("../../tests/fixtures/v1_core_success_contract.snapshot.json");
+crates/oneiron-server/src/api.rs	include_str!("../tests/fixtures/v1_core_error_contract.snapshot.json");	include_str!("../../tests/fixtures/v1_core_error_contract.snapshot.json");

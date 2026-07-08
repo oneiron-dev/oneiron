@@ -168,3 +168,7 @@ crates/oneiron/src/vault/tests.rs
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for FailingPolicyBackend
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for RecordingPolicyBackend
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for StaticPolicyBackend
+## frag-edit
+crates/oneiron/src/ingest.rs	include_str!("../tests/fixtures/ingest/minimal_transcript.jsonl");	include_str!("../../tests/fixtures/ingest/minimal_transcript.jsonl");
+crates/oneiron/src/ingest.rs	include_str!("../tests/fixtures/ingest/null_optional_metadata.jsonl");	include_str!("../../tests/fixtures/ingest/null_optional_metadata.jsonl");
+crates/oneiron/src/pipeline.rs	let source = include_str!("pipeline.rs");	let source = include_str!("../pipeline.rs");
