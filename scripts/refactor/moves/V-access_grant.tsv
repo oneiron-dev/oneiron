@@ -1,0 +1,7 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+method	impl Vault	put_access_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no
+method	impl Vault	create_access_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no
+method	impl Vault	revoke_access_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no
+method	impl Vault	get_access_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no
+method	impl Vault	write_access_grant_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no
+method	impl Vault	apply_access_grant_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/access_grant.rs	no

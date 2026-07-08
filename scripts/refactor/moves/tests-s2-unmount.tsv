@@ -1,0 +1,3 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+mod	-	tests	-	crates/oneiron/src/companion.rs	crates/oneiron/src/companion/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/psych_profile.rs	crates/oneiron/src/psych_profile/tests.rs	no

@@ -1,0 +1,21 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	EIRI_CONTEXT_VERSION_V4	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+enum	-	EiriMemoryBoardSlot	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl EiriMemoryBoardSlot	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+enum	-	EiriMemoryBoardSource	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl EiriMemoryBoardSource	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	EiriMemoryBoardBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl EiriMemoryBoardBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	EiriCompanionAssembly	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	EiriMemoryBoardRow	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	EiriMemoryBoard	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	EiriSessionRagState	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl EiriSessionRagState	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl Default for EiriSessionRagState	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	SessionContext	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	NotificationItem	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	UnprocessedItem	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	ResumeBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl ResumeBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+struct	-	ResumeBundle	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no
+impl	-	impl ResumeBundle	-	crates/oneiron/src/types.rs	crates/oneiron/src/eiri.rs	no

@@ -1,0 +1,5 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+method	impl Vault	mint_standing_outbound_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/outbound_grant.rs	no
+method	impl Vault	revoke_standing_outbound_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/outbound_grant.rs	no
+method	impl Vault	get_standing_outbound_grant	-	crates/oneiron/src/vault.rs	crates/oneiron/src/outbound_grant.rs	no
+method	impl Vault	apply_standing_outbound_grant_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/outbound_grant.rs	no

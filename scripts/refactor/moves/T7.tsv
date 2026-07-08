@@ -1,0 +1,11 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+struct	-	HnswConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+impl	-	impl Default for HnswConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+struct	-	VaultConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+struct	-	TextAnalyzerConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+struct	-	TextIndexOptions	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+struct	-	Bm25RankProfile	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+impl	-	impl Default for Bm25RankProfile	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+impl	-	impl Bm25RankProfile	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+impl	-	impl Default for VaultConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no
+impl	-	impl VaultConfig	-	crates/oneiron/src/types.rs	crates/oneiron/src/config.rs	no

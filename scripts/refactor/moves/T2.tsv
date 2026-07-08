@@ -1,0 +1,20 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	ENTITY_ID_LEN	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+struct	-	EntityId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+impl	-	impl EntityId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+const	-	FOREIGN_WORLD_ID_RANGE_START_BYTE	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	-	is_foreign_world_id_range	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+struct	-	LocalWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+impl	-	impl LocalWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+impl	-	impl TryFrom < EntityId > for LocalWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+struct	-	ForeignWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+impl	-	impl ForeignWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+impl	-	impl TryFrom < EntityId > for ForeignWorldId	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	-	parse_entity_id	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	-	is_reserved_entity_id_bytes	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	-	bytes_to_hex_lower	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	-	hex_nibble	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	mod tests	entity_id_hex_round_trip	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	mod tests	entity_id_from_hex_rejects_invalid	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	mod tests	local_world_id_rejects_foreign_range	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
+fn	mod tests	foreign_world_id_accepts_only_foreign_range	-	crates/oneiron/src/types.rs	crates/oneiron/src/entity_id.rs	no
