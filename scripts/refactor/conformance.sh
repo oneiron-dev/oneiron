@@ -1086,6 +1086,13 @@ exit 0
 #>        if len(parts) != 2:
 #>            raise Violation("F", f"bad filemove row (src<TAB>dst): {ln!r}")
 #>        out.append((parts[0].strip(), parts[1].strip()))
+#>    # one-to-one: a shared src duplicates a file, a shared dst drops one —
+#>    # neither is a relocation, and check C's exemption would hide the rest.
+#>    srcs = [s for s, _ in out]
+#>    dsts = [d for _, d in out]
+#>    if len(set(srcs)) != len(srcs) or len(set(dsts)) != len(dsts):
+#>        raise Violation("F", f"filemove rows must be one-to-one "
+#>                             f"(duplicate src or dst): {out}")
 #>    return out
 #>
 #>
@@ -1485,6 +1492,9 @@ exit 0
 #>            raise Violation("F", f"filemove dst missing at HEAD: {dst}")
 #>        if hsrc is not None:
 #>            raise Violation("F", f"filemove src still present at HEAD: {src}")
+#>        if base_file(root, base, dst) is not None:
+#>            raise Violation("F", f"filemove dst already exists at base "
+#>                                 f"(relocation cannot overwrite): {dst}")
 #>        if bsrc != hdst:
 #>            raise Violation("F", f"filemove content changed: {src} != {dst} "
 #>                               f"(relocation must be byte-identical)")
