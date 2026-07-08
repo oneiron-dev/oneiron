@@ -1388,7 +1388,11 @@ exit 0
 #>    edit_old = set(o for (_, o, _) in edits) | set(o for (_, o, _) in fragedits)
 #>    dst = set(r["dst_file"] for r in tsv)
 #>    src = set(r["src_file"] for r in tsv)
-#>    exempt = dst | src | {"crates/oneiron/src/lib.rs"}
+#>    # `## consumer-exempt`: files with declared STRUCTURAL edits that aren't
+#>    # import-shaped (e.g. the U stage deleting #[path] mod mounts in types.rs).
+#>    # Verified elsewhere: gate compile + conventions-gate #[path]==0 + flat-name set.
+#>    exempt = dst | src | {"crates/oneiron/src/lib.rs"} | set(
+#>        x.strip() for x in decls.get("consumer-exempt", []))
 #>    n = 0
 #>    for f in changed_files(root, base):
 #>        if not f.endswith(".rs") or f in exempt:
