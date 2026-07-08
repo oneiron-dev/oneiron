@@ -9,28 +9,62 @@ crates/oneiron-bench/src/beam.rs
 crates/oneiron-bench/src/retrieval_trace_export.rs
 crates/oneiron-server/src/api.rs
 crates/oneiron-server/src/handler.rs
+crates/oneiron-server/src/projection.rs
+crates/oneiron-server/tests/core_discover.rs
+crates/oneiron-server/tests/ws_sync.rs
+crates/oneiron/src/agent_def.rs
+crates/oneiron/src/agent_def/tests.rs
+crates/oneiron/src/anchored_annotation.rs
 crates/oneiron/src/batch.rs
+crates/oneiron/src/blob_artifact.rs
 crates/oneiron/src/bm25.rs
+crates/oneiron/src/channel_identity_lifecycle.rs
+crates/oneiron/src/claim.rs
+crates/oneiron/src/code_artifact.rs
+crates/oneiron/src/code_revision.rs
+crates/oneiron/src/code_symbol.rs
+crates/oneiron/src/codebase.rs
 crates/oneiron/src/context_pack.rs
 crates/oneiron/src/critic.rs
 crates/oneiron/src/deletion.rs
+crates/oneiron/src/dreamer_runner.rs
+crates/oneiron/src/edit_settle.rs
+crates/oneiron/src/edit_settle/tests.rs
 crates/oneiron/src/embed.rs
+crates/oneiron/src/error.rs
 crates/oneiron/src/gate.rs
 crates/oneiron/src/graph_fs.rs
+crates/oneiron/src/inbox.rs
 crates/oneiron/src/lens.rs
 crates/oneiron/src/lib.rs
+crates/oneiron/src/persona_snapshot.rs
 crates/oneiron/src/pipeline.rs
+crates/oneiron/src/ppr.rs
+crates/oneiron/src/provenance.rs
 crates/oneiron/src/receipt.rs
 crates/oneiron/src/registry.rs
 crates/oneiron/src/repo_mutation.rs
+crates/oneiron/src/serialize.rs
+crates/oneiron/src/skill.rs
 crates/oneiron/src/store.rs
+crates/oneiron/src/sweep.rs
 crates/oneiron/src/sync/bridge.rs
+crates/oneiron/src/sync/selector.rs
 crates/oneiron/src/sync/window.rs
 crates/oneiron/src/tests.rs
+crates/oneiron/src/tests_bug.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
+crates/oneiron/tests/gate_regression.rs
+crates/oneiron/tests/sync_bridge.rs
+crates/oneiron/tests/sync_convergence_props.rs
+crates/oneiron/tests/sync_delete_propagation.rs
 crates/oneiron/tests/sync_edge_kind_gating.rs
 crates/oneiron/tests/sync_harness/mod.rs
+crates/oneiron/tests/sync_quarantine.rs
+crates/oneiron/tests/sync_receipt_replay.rs
+crates/oneiron/tests/sync_remat_correctness.rs
+crates/oneiron/tests/sync_replay_reason.rs
 crates/oneiron/tests/sync_sweep_executor.rs
 
 ## error-literal
@@ -202,6 +236,8 @@ crates/oneiron/src/vault.rs	vault.count_entities_by_type(crate::types::ENTITY_TY
 crates/oneiron/tests/sync_harness/mod.rs	.entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)	.entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
 crates/oneiron/tests/sync_sweep_executor.rs	.entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)	.entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
 crates/oneiron/tests/sync_sweep_executor.rs	.entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)	.entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
+crates/oneiron/tests/gate_regression.rs	use oneiron::types::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};	use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+crates/oneiron/tests/sync_edge_kind_gating.rs	use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;	use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 
 ## frag-edit
 

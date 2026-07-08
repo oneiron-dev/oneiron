@@ -134,6 +134,20 @@ def main():
             new = re.sub(r"\bsuper::", "crate::types::", s)
             add_edit(path, s, new)
 
+    # 4) use-tree consumers the inline regex missed (single + multi-line) — most
+    # importantly oneiron-server/projection.rs (cross-crate, TS D4.1 item 6).
+    import gen
+    name_to_dest = {n: "companion" for n in comp_set}
+    name_to_dest.update({n: "psych_profile" for n in psych_set})
+    for pfx in ("crate::types", "oneiron::types"):
+        ut_a, ut_e = gen.use_tree_scan(pfx, name_to_dest)
+        for dstm, fs in ut_a.items():
+            for f in fs:
+                allow.add(f)
+        for dstm, es in ut_e.items():
+            for (f, o, n) in es:
+                add_edit(f, o, n)
+
     allow |= {"crates/oneiron/src/types.rs", "crates/oneiron/src/lib.rs",
               "crates/oneiron/src/companion.rs", "crates/oneiron/src/psych_profile.rs"}
 
@@ -146,8 +160,10 @@ def main():
     with open(os.path.join(OUT, "U.decls"), "w") as f:
         f.write("## crate\ncrates/oneiron\n\n## flat-name-check\nyes\n\n")
         f.write("## allowed\n" + "".join(a + "\n" for a in sorted(allow)) + "\n")
-        f.write("## consumer-exempt\ncrates/oneiron/src/types.rs\ncrates/oneiron/src/companion.rs\n"
-                "crates/oneiron/src/psych_profile.rs\n\n")
+        # MAJOR 1: exempt types.rs ONLY (its #[path] deletion is non-import-shaped).
+        # companion.rs/psych_profile.rs pass check C via their declared super:: edits —
+        # exempting them would drop the anti-smuggle net from two large modules.
+        f.write("## consumer-exempt\ncrates/oneiron/src/types.rs\n\n")
         f.write("## decl\n" + "".join(d + "\n" for d in sorted(decl)) + "\n")
         f.write("## edit\n" + "".join(f"{e[0]}\t{e[1]}\t{e[2]}\n" for e in sorted(set(edits))))
         f.write("\n## add\ncrates/oneiron/src/types.rs\t" + ugap + "\n")

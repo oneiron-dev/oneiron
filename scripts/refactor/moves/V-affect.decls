@@ -4,6 +4,7 @@ crates/oneiron
 ## allowed
 crates/oneiron/src/affect.rs
 crates/oneiron/src/batch.rs
+crates/oneiron/src/tests.rs
 crates/oneiron/src/vault.rs
 
 ## anchors
@@ -23,6 +24,7 @@ impl	-	impl ActorBound<'_>	-	crates/oneiron/src/vault.rs
 crates/oneiron/src/batch.rs	let cleanup = crate::vault::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;	let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
 crates/oneiron/src/batch.rs	let mut cleanup = crate::vault::VadAnnotationCleanup::default();	let mut cleanup = crate::affect::VadAnnotationCleanup::default();
 crates/oneiron/src/batch.rs	crate::vault::delete_vad_annotation_metadata_for_type_in_txn(	crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
+crates/oneiron/src/tests.rs	use crate::vault::{vad_annotation_claim_id, vad_annotation_meta_key};	use crate::affect::{vad_annotation_claim_id, vad_annotation_meta_key};
 
 ## frag-edit
 

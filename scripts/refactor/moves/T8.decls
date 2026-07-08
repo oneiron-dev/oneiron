@@ -6,14 +6,22 @@ yes
 
 ## allowed
 crates/oneiron-server/src/api.rs
+crates/oneiron/src/bm25.rs
+crates/oneiron/src/claim.rs
+crates/oneiron/src/code_symbol.rs
 crates/oneiron/src/context_pack.rs
 crates/oneiron/src/context_pack/tests.rs
+crates/oneiron/src/fusion.rs
 crates/oneiron/src/gate.rs
+crates/oneiron/src/hnsw.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/pipeline.rs
+crates/oneiron/src/ppr.rs
 crates/oneiron/src/psych_profile.rs
 crates/oneiron/src/serialize.rs
+crates/oneiron/src/store.rs
 crates/oneiron/src/types.rs
+crates/oneiron/src/vault.rs
 
 ## error-literal
 crates/oneiron/src/context_pack.rs

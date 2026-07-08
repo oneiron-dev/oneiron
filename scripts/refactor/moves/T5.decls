@@ -5,12 +5,22 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron/src/affect.rs
+crates/oneiron/src/affect/coping.rs
+crates/oneiron/src/anchored_annotation.rs
+crates/oneiron/src/batch.rs
+crates/oneiron/src/blob_artifact.rs
 crates/oneiron/src/code_run.rs
 crates/oneiron/src/dreamer_runner.rs
+crates/oneiron/src/dreamer_tournament.rs
+crates/oneiron/src/edit_settle.rs
+crates/oneiron/src/edit_settle/tests.rs
+crates/oneiron/src/gate.rs
 crates/oneiron/src/inbox.rs
 crates/oneiron/src/ingest.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/types.rs
+crates/oneiron/src/vault.rs
 crates/oneiron/src/write_envelope.rs
 
 ## error-literal

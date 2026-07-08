@@ -5,8 +5,11 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron/src/context_pack.rs
 crates/oneiron/src/eiri.rs
 crates/oneiron/src/lib.rs
+crates/oneiron/src/receipt.rs
+crates/oneiron/src/serialize.rs
 crates/oneiron/src/types.rs
 
 ## error-literal

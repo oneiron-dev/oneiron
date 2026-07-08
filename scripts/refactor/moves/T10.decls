@@ -5,10 +5,12 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron/src/claim.rs
 crates/oneiron/src/deletion.rs
 crates/oneiron/src/gate.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/types.rs
+crates/oneiron/src/vault.rs
 
 ## error-literal
 crates/oneiron/src/deletion.rs

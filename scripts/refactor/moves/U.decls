@@ -6,21 +6,25 @@ yes
 
 ## allowed
 crates/oneiron-server/src/api.rs
+crates/oneiron-server/src/projection.rs
 crates/oneiron/src/batch.rs
 crates/oneiron/src/companion.rs
 crates/oneiron/src/context_pack.rs
+crates/oneiron/src/export.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/persona_snapshot.rs
 crates/oneiron/src/psych_profile.rs
+crates/oneiron/src/receipt.rs
 crates/oneiron/src/serialize.rs
+crates/oneiron/src/store.rs
+crates/oneiron/src/sync/bridge.rs
 crates/oneiron/src/sync/selector.rs
+crates/oneiron/src/sync/window.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
 
 ## consumer-exempt
 crates/oneiron/src/types.rs
-crates/oneiron/src/companion.rs
-crates/oneiron/src/psych_profile.rs
 
 ## decl
 + pub use crate :: companion :: { COMPANION_TASK_JOB_KIND , COMPANION_TASK_PAYLOAD_KEYS , COMPANION_TASK_PAYLOAD_SCHEMA_VERSION , ClaimCompanionTask , ClaimCompanionTaskOutcome , CompanionExportClassification , CompanionExpression , CompanionExpressionRegister , CompanionProvenance , CompanionQueue , CompanionRecord , CompanionRecordKey , CompanionRecordKind , CompanionRegister , CompanionScope , CompanionScopeResolution , CompanionScopeResolutionSource , CompanionSubject , CompanionTask , CompanionTaskKind , CompanionTaskStatus , CompleteCompanionTask , CompleteCompanionTaskOutcome , ENTITY_TYPE_COMPANION_REGISTER , EndCompanionRelationship , EndCompanionRelationshipOutcome , EnqueueCompanionTask , EnqueueCompanionTaskOutcome , FailCompanionTask , FailCompanionTaskOutcome , RetryCompanionTask , RetryCompanionTaskOutcome , companion_value_from_json , companion_value_to_json , decode_companion_record_body , decode_companion_task_payload , encode_companion_record_body , encode_companion_task_payload }
@@ -43,6 +47,7 @@ crates/oneiron/src/companion.rs	use super::{EdgeActorClass, EntityId, WriteEnvel
 crates/oneiron/src/context_pack.rs	use crate::types::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};	use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 crates/oneiron/src/persona_snapshot.rs	let crate::types::companion::CompanionSubject::Relationship {	let crate::companion::CompanionSubject::Relationship {
 crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{	use crate::companion::{
+crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};	use crate::companion::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};	use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 crates/oneiron/src/psych_profile.rs	use super::*;	use crate::types::*;
 crates/oneiron/src/psych_profile.rs	use super::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};	use crate::types::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};

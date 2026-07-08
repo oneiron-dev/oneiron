@@ -6,14 +6,43 @@ yes
 
 ## allowed
 crates/oneiron-server/src/api.rs
+crates/oneiron/src/agent_def.rs
+crates/oneiron/src/anchored_annotation.rs
+crates/oneiron/src/batch.rs
+crates/oneiron/src/blob_artifact.rs
+crates/oneiron/src/code_artifact.rs
+crates/oneiron/src/code_symbol.rs
+crates/oneiron/src/codebase.rs
+crates/oneiron/src/context_pack.rs
+crates/oneiron/src/dreamer_runner.rs
+crates/oneiron/src/dreamer_tournament.rs
+crates/oneiron/src/edit_settle.rs
+crates/oneiron/src/error.rs
+crates/oneiron/src/inbox.rs
+crates/oneiron/src/ingest.rs
 crates/oneiron/src/lens.rs
 crates/oneiron/src/lib.rs
+crates/oneiron/src/persona_snapshot.rs
+crates/oneiron/src/pipeline.rs
+crates/oneiron/src/repo_mutation.rs
+crates/oneiron/src/skill.rs
 crates/oneiron/src/sync/bridge.rs
+crates/oneiron/src/sync/convergence_props_internal.rs
 crates/oneiron/src/sync/selector.rs
 crates/oneiron/src/sync/window.rs
 crates/oneiron/src/temporal.rs
 crates/oneiron/src/types.rs
+crates/oneiron/src/vault.rs
+crates/oneiron/tests/sync_bridge.rs
+crates/oneiron/tests/sync_byzantine_lww.rs
+crates/oneiron/tests/sync_delete_propagation.rs
+crates/oneiron/tests/sync_harness/mod.rs
+crates/oneiron/tests/sync_quarantine.rs
+crates/oneiron/tests/sync_receipt_replay.rs
+crates/oneiron/tests/sync_remat_correctness.rs
+crates/oneiron/tests/sync_replay_reason.rs
 crates/oneiron/tests/sync_sweep_executor.rs
+crates/oneiron/tests/sync_tombstone_v2.rs
 crates/oneiron/tests/sync_window_manager.rs
 
 ## error-literal
@@ -40,6 +69,8 @@ crates/oneiron/src/sync/selector.rs	crate::types::TimeRange {	crate::temporal::T
 crates/oneiron/src/sync/window.rs	crate::types::TimeRange {	crate::temporal::TimeRange {
 crates/oneiron/src/sync/window.rs	crate::types::TimeRange {	crate::temporal::TimeRange {
 crates/oneiron/src/sync/window.rs	crate::types::TimeRange {	crate::temporal::TimeRange {
+crates/oneiron/tests/sync_sweep_executor.rs	use oneiron::types::TimeRange;	use oneiron::temporal::TimeRange;
+crates/oneiron/tests/sync_window_manager.rs	use oneiron::types::TimeRange;	use oneiron::temporal::TimeRange;
 
 ## frag-edit
 

@@ -22,6 +22,64 @@ REPORT_DIR = "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp/linereports"
 
 BUMPABLE = {"fn", "struct", "enum", "type", "const", "static"}
 
+BASE_REV = os.environ.get("BASE_REV", "b2437d700")
+
+
+def _git_show_base(path):
+    import subprocess
+    p = subprocess.run(["git", "-C", ROOT, "show", f"{BASE_REV}:{path}"],
+                       capture_output=True, text=True)
+    return p.stdout if p.returncode == 0 else None
+
+
+def use_tree_scan(prefix, name_to_dest):
+    """Robust consumer scan for `use PREFIX::{...}` (single AND multi-line) — the
+    git-grep `::NAME` regex can't see brace-nested / continuation-line use-trees,
+    which dropped ~25 T files + tests.rs (V-affect) + projection.rs (U) from allowed.
+    prefix e.g. 'crate::types' / 'crate::vault' / 'oneiron::types'; name_to_dest maps
+    a leaf name -> its destination module. Returns (allowed[dest]->set(files),
+    edits[dest]->[(file,old,new)]). A SINGLE-LINE use-tree whose names all map to ONE
+    dest becomes a byte-verified prefix re-point edit; every other use-tree is
+    allowed-only (gate-verified split via check C)."""
+    import subprocess
+    allowed = collections.defaultdict(set)
+    edits = collections.defaultdict(list)
+    prefix_canon = R.canon(prefix)
+    dest_base = prefix.rsplit("::", 1)[0]  # 'crate' / 'oneiron'
+    p = subprocess.run(["git", "-C", ROOT, "grep", "-l", "-I", "-F", prefix + "::",
+                        BASE_REV, "--", "*.rs"], capture_output=True, text=True)
+    cand = [ln.split(":", 1)[1] for ln in p.stdout.splitlines() if ":" in ln]
+    for f in cand:
+        txt = _git_show_base(f)
+        if txt is None:
+            continue
+        doc = R.Doc(txt)
+        for it in R.enumerate_items(doc):
+            if it["kind"] != "use":
+                continue
+            h = R.logical_head(doc, it["sig_line"])
+            if prefix_canon + " ::" not in h:
+                continue
+            if "{" in h:
+                names = [x.strip() for x in h[h.index("{") + 1:h.rindex("}")].split(",")]
+            else:
+                names = [h.split()[-1]]
+            names = [n for n in names if n and n not in ("*",)]
+            hit = [n for n in names if n in name_to_dest]
+            if not hit:
+                continue
+            dests = {name_to_dest[n] for n in hit}
+            for dstm in dests:
+                allowed[dstm].add(f)
+            if (len(dests) == 1 and it["sig_line"] == it["end_line"]
+                    and all(n in name_to_dest for n in names)):
+                dstm = next(iter(dests))
+                old = doc.lines[it["sig_line"]].strip()
+                new = old.replace(prefix + "::", f"{dest_base}::{dstm}::", 1)
+                if new != old:
+                    edits[dstm].append((f, old, new))
+    return allowed, edits
+
 # --- stage specs ----------------------------------------------------------
 # move entry: (kind, name, cfg)  kind in {method, fn, struct, enum, type, const,
 # static, impl}. For method: container is impl Vault (vault) or given.

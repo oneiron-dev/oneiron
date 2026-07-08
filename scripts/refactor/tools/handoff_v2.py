@@ -143,6 +143,9 @@ def build(stage):
     ed = d.get("edit", [])
     if ed:
         out.append(f"## Consumer edits ({len(ed)}) — single-line `::`-path re-points, apply verbatim")
+        out.append(f"**`{stage}.decls` (`## edit` section) is the AUTHORITATIVE complete list of all "
+                   f"{len(ed)} edits — the excerpt below is illustrative. Apply every edit from the "
+                   f"manifest, not just the ones shown here.**")
         out.append("Each is `file` → change the old line to the new line. Every OTHER changed line "
                    "in a consumer file must be `use`-shaped (use-tree splits) or these edits — the "
                    "consumer-diff-shape check hard-fails any smuggled change.")

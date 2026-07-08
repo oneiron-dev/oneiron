@@ -300,8 +300,20 @@ def sweep():
 
 
 def emit(doc, by_dest):
+    import gen
     libgroups = parse_lib_groups()
     edits, allowed = sweep()
+    # use-tree consumer files (single + multi-line) the inline sweep's ::NAME regex
+    # missed — in-crate AND cross-crate. allowed-only unless a single-line use-tree
+    # maps to one module (then a byte-verified prefix re-point edit).
+    ut_allow = collections.defaultdict(set)
+    ut_edits = collections.defaultdict(list)
+    for pfx in ("crate::types", "oneiron::types"):
+        a, e = gen.use_tree_scan(pfx, DEST)
+        for d, fs in a.items():
+            ut_allow[d] |= fs
+        for d, es in e.items():
+            ut_edits[d] += es
     # running types-group flat-name set (post-U 71 = union of FLAT)
     types_group = set()
     for names in FLAT.values():
@@ -318,6 +330,11 @@ def emit(doc, by_dest):
         fragedit = []
         allow = {TYPES, "crates/oneiron/src/lib.rs"}
         allow |= allowed[b]
+        for dest in dests:
+            allow |= ut_allow[dest]
+            for row in ut_edits[dest]:
+                if row not in edits[b]:
+                    edits[b].append(row)
         errlit = set()
         # moves
         for dest in dests:

@@ -5,16 +5,39 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron/src/anchored_annotation.rs
+crates/oneiron/src/batch.rs
 crates/oneiron/src/claim.rs
+crates/oneiron/src/code_revision.rs
+crates/oneiron/src/code_symbol.rs
 crates/oneiron/src/context_pack.rs
 crates/oneiron/src/edge.rs
+crates/oneiron/src/edit_settle/tests.rs
+crates/oneiron/src/gate.rs
+crates/oneiron/src/graph_fs.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/pipeline.rs
 crates/oneiron/src/ppr.rs
+crates/oneiron/src/provenance.rs
+crates/oneiron/src/repo_mutation.rs
+crates/oneiron/src/store.rs
 crates/oneiron/src/sync/bridge.rs
+crates/oneiron/src/sync/convergence_props_internal.rs
 crates/oneiron/src/sync/quarantine.rs
+crates/oneiron/src/sync/selector.rs
+crates/oneiron/src/sync/window.rs
+crates/oneiron/src/tests.rs
+crates/oneiron/src/tests_bug.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
+crates/oneiron/tests/sync_bridge.rs
+crates/oneiron/tests/sync_byzantine_lww.rs
+crates/oneiron/tests/sync_convergence_props.rs
+crates/oneiron/tests/sync_harness/mod.rs
+crates/oneiron/tests/sync_quarantine.rs
+crates/oneiron/tests/sync_remat_correctness.rs
+crates/oneiron/tests/sync_replay_reason.rs
+crates/oneiron/tests/sync_tombstone_v2.rs
 
 ## error-literal
 crates/oneiron/src/edge.rs
@@ -96,6 +119,7 @@ crates/oneiron/src/sync/quarantine.rs	let kind = crate::types::EdgeKind::Mention
 crates/oneiron/src/sync/quarantine.rs	let kind = crate::types::EdgeKind::Mentions;	let kind = crate::edge::EdgeKind::Mentions;
 crates/oneiron/src/sync/quarantine.rs	let kind = crate::types::EdgeKind::Mentions;	let kind = crate::edge::EdgeKind::Mentions;
 crates/oneiron/src/vault.rs	/// Compatibility wrapper over [`crate::types::parse_strict_edge_record`] so	/// Compatibility wrapper over [`crate::edge::parse_strict_edge_record`] so
+crates/oneiron/src/ppr.rs	use crate::types::EDGE_VALUE_STRUCTURAL_LEN;	use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
 
 ## frag-edit
 

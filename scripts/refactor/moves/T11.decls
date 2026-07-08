@@ -5,6 +5,8 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron-server/tests/ws_sync.rs
+crates/oneiron/src/anchored_annotation.rs
 crates/oneiron/src/batch.rs
 crates/oneiron/src/critic.rs
 crates/oneiron/src/dreamer_runner.rs
@@ -15,8 +17,12 @@ crates/oneiron/src/sync/bridge.rs
 crates/oneiron/src/sync/client.rs
 crates/oneiron/src/sync/quarantine.rs
 crates/oneiron/src/sync/queue.rs
+crates/oneiron/src/tests.rs
+crates/oneiron/src/tests_bug.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
+crates/oneiron/tests/sync_convergence_props.rs
+crates/oneiron/tests/sync_quarantine.rs
 
 ## error-literal
 crates/oneiron/src/habit.rs

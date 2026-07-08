@@ -5,11 +5,14 @@ crates/oneiron
 yes
 
 ## allowed
+crates/oneiron/src/agent_def/tests.rs
 crates/oneiron/src/batch.rs
 crates/oneiron/src/bm25.rs
 crates/oneiron/src/config.rs
 crates/oneiron/src/context_pack.rs
+crates/oneiron/src/edit_settle/tests.rs
 crates/oneiron/src/gate.rs
+crates/oneiron/src/hnsw.rs
 crates/oneiron/src/identity.rs
 crates/oneiron/src/lens.rs
 crates/oneiron/src/lib.rs
@@ -20,6 +23,7 @@ crates/oneiron/src/store.rs
 crates/oneiron/src/surface_event.rs
 crates/oneiron/src/sync/client.rs
 crates/oneiron/src/sync/connection.rs
+crates/oneiron/src/sync/convergence_props_internal.rs
 crates/oneiron/src/sync/lease.rs
 crates/oneiron/src/sync/manager.rs
 crates/oneiron/src/sync/quota.rs
@@ -76,6 +80,7 @@ crates/oneiron/src/sync/client.rs	let config = crate::types::VaultConfig::device
 crates/oneiron/src/vault.rs	&crate::types::Bm25RankProfile::default(),	&crate::config::Bm25RankProfile::default(),
 crates/oneiron/src/vault.rs	profile: &crate::types::Bm25RankProfile,	profile: &crate::config::Bm25RankProfile,
 crates/oneiron/src/vault.rs	profile: &crate::types::Bm25RankProfile,	profile: &crate::config::Bm25RankProfile,
+crates/oneiron/src/ppr.rs	use crate::types::VaultConfig;	use crate::config::VaultConfig;
 
 ## frag-edit
 

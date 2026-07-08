@@ -233,6 +233,14 @@ def gen_intricate(entity, spec):
                             decl.append("+ pub ( crate ) " + R.logical_head(vdoc, mm["sig_line"]))
     # D3 consumer sweep (crate::vault::<pub moved name> -> crate::<entity>::)
     edits, allow = sweep_vault_consumers(pub_names, entity) if pub_names else ([], set())
+    # use-tree consumers the inline sweep's ::NAME regex missed (e.g. tests.rs:45
+    # `use crate::vault::{vad_annotation_claim_id, vad_annotation_meta_key}`)
+    if pub_names:
+        ut_a, ut_e = gen.use_tree_scan("crate::vault", {n: entity for n in pub_names})
+        allow |= ut_a.get(entity, set())
+        for row in ut_e.get(entity, []):
+            if row not in edits:
+                edits.append(row)
     allowed = {V, dst} | allow
     # write
     with open(os.path.join(OUT, f"V-{entity}.tsv"), "w") as f:
@@ -254,8 +262,52 @@ def gen_intricate(entity, spec):
     return len(tsv), len(edits)
 
 
+def gen_v0():
+    """V-0: 9 pub(crate) promotions in vault.rs. Emits BOTH `## edit` (the first-line
+    visibility change) AND `## decl` (the pub-inventory additions) — omitting decl was
+    BLOCKER 1 / H1: a visibility-only stage IS a pub-inventory change, invisible to smoke
+    (base=HEAD zeroes the delta) but caught by apply-then-check-2."""
+    vdoc = R.Doc(gen.git_show(V))
+    free = [("fn", "edge_kind_prefix"), ("fn", "require_key_len"),
+            ("fn", "entity_id_from_type_index_key"), ("const", "CLAIM_OF_DEFAULT_WEIGHT"),
+            ("const", "SUPERSEDES_DEFAULT_WEIGHT"), ("const", "MAX_EDGE_QUERY_RESULTS")]
+    meths = [("read_entity_header", "-"), ("live_window", 'feature = "sync"'),
+             ("filtered_edge_peers", "-")]
+    edits, decl = [], []
+    for k, n in free:
+        m = R.find_item(vdoc, k, "-", n, "-")
+        if len(m) != 1:
+            STOPS.append(f"V-0: {k} {n} {len(m)}x")
+            continue
+        old = vdoc.lines[m[0]["sig_line"]].strip()
+        if old.startswith("pub"):
+            STOPS.append(f"V-0: {n} already pub")
+            continue
+        edits.append((V, old, "pub(crate) " + old))
+        decl.append("+ pub ( crate ) " + R.logical_head(vdoc, m[0]["sig_line"]))
+    for n, cfg in meths:
+        m = R.find_item(vdoc, "method", "impl Vault", n, cfg)
+        if len(m) != 1:
+            STOPS.append(f"V-0: method {n} {len(m)}x")
+            continue
+        old = vdoc.lines[m[0]["sig_line"]].strip()
+        edits.append((V, old, "pub(crate) " + old))
+        decl.append("+ pub ( crate ) " + R.logical_head(vdoc, m[0]["sig_line"]))
+    for _, o, nw in edits:
+        assert R.edit_delta_ok(o, nw), o
+    with open(os.path.join(OUT, "V-0.tsv"), "w") as f:
+        f.write("# V-0: visibility-only, no item moves (9 pub(crate) promotions in vault.rs)\n")
+    with open(os.path.join(OUT, "V-0.decls"), "w") as f:
+        f.write("## crate\ncrates/oneiron\n\n## allowed\n" + V + "\n\n")
+        f.write(ANCHORS)
+        f.write("## decl\n" + "".join(d + "\n" for d in sorted(decl)) + "\n")
+        f.write("## edit\n" + "".join(f"{e[0]}\t{e[1]}\t{e[2]}\n" for e in edits))
+    return len(edits)
+
+
 if __name__ == "__main__":
     counts = {}
+    counts["V-0"] = gen_v0()
     for entity, moves in CLEAN.items():
         counts[entity] = gen_clean(entity, moves)
     for entity, spec in INTRICATE.items():
