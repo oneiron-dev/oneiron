@@ -388,10 +388,12 @@ def emit(doc, by_dest):
                 else:  # new group
                     decl.append("+ " + R.norm_head("pub use crate :: " + dest + " :: { " + " , ".join(sorted(fl)) + " }"))
             types_group -= batch_flat
-        # T1 comment rows (the two orphan interstitials)
+        # T1 comment rows (the two orphan interstitials). Ranges are valid for
+        # the post-S2 base (re-derived after #412 removed 24 lines above them);
+        # re-derive again if types.rs shifts before T1 lands.
         if b == "T1":
-            comment.append("crates/oneiron/src/types.rs:96-100\tcrates/oneiron/src/registry.rs")
-            comment.append("crates/oneiron/src/types.rs:107-109\tcrates/oneiron/src/registry.rs")
+            comment.append("crates/oneiron/src/types.rs:72-76\tcrates/oneiron/src/registry.rs")
+            comment.append("crates/oneiron/src/types.rs:83-85\tcrates/oneiron/src/registry.rs")
         # T2 ForeignWorldId doctest frag-edit
         if b == "T2":
             fragedit.append("crates/oneiron/src/types.rs\t"
