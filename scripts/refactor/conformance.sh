@@ -704,6 +704,15 @@ exit 0
 #>    # declared edit
 #>    if old_reg == [] and "".join(new_reg) == "pub(crate)":
 #>        return True
+#>    # every length-changing path edit must sit at a `::` boundary OUTSIDE the
+#>    # changed region: the unchanged token just before or just after the region
+#>    # must be `::` (mirrors the equal-length branch guard). Rejects bare
+#>    # identifier rewrites (`old` -> `crate::new`), leading-qualifier removals
+#>    # (`crate::types::Foo` -> `types::Foo`), and non-path deletions
+#>    # (`foo(crate::types::X)` -> `foo()`).
+#>    if not ((p > 0 and old_toks[p - 1] == "::")
+#>            or (s > 0 and old_toks[len(old_toks) - s] == "::")):
+#>        return False
 #>    if new_reg == [] and "::" in old_reg and _PATH_RE.match("".join(old_reg)):
 #>        # pure ::-path segment REMOVAL (module un-mount: crate::types::X ->
 #>        # crate::X). The removed run must include its `::` separator so the
@@ -979,6 +988,35 @@ exit 0
 #>    ignores imports (executor-reconciled per TS D2.3, gate-verified; a private
 #>    `use` cannot smuggle code behavior, and smuggled items are still caught)."""
 #>    return [s for s in (ln.strip() for ln in text.split("\n")) if s and not _is_use(s)]
+#>
+#>
+#>def _nonuse_lines(text):
+#>    """Stripped non-blank lines excluding whole use STATEMENTS — multi-line
+#>    aware, unlike _content_lines: a `use …::{` header pulls its continuation
+#>    lines (through the terminating `;`) out of the remainder too. A use
+#>    statement cannot contain an interior `;` in code, but a comment on a
+#>    continuation line can — so the terminator scan runs on masked text
+#>    (comment/string interiors blanked) to stay exact."""
+#>    lines = text.split("\n")
+#>    masked = R.mask(text).split("\n")
+#>    skip = set()
+#>    i = 0
+#>    while i < len(lines):
+#>        if _is_use(lines[i].strip()):
+#>            j = i
+#>            skip.add(j)
+#>            while ";" not in masked[j] and j + 1 < len(lines):
+#>                j += 1
+#>                skip.add(j)
+#>            i = j + 1
+#>        else:
+#>            i += 1
+#>    out = []
+#>    for k, ln in enumerate(lines):
+#>        s = ln.strip()
+#>        if s and k not in skip:
+#>            out.append(s)
+#>    return out
 #>
 #>
 #># ---- check 1: forbidden zone + allowed files -----------------------------
@@ -1447,42 +1485,47 @@ exit 0
 #>
 #>
 #>def checkC(root, base, tsv, decls):
-#>    """Every changed line of a CONSUMER file (a changed file that receives no
-#>    manifest items and is neither a move src nor lib.rs) must be import-shaped
-#>    (`use`/`pub use`), a declared `## edit`/`## frag-edit` region, or a use-line
-#>    deletion. Restores byte-verification where Codex touches the most files."""
+#>    """A CONSUMER file's non-import content must match BASE line-for-line
+#>    (compared as stripped non-blank lines, the gate-wide granularity)
+#>    modulo the `## edit` rows declared for THAT file. Import statements —
+#>    including the continuation lines of multi-line `use …::{…};` blocks —
+#>    are executor-reconciled and verified by the build, check 2 and the
+#>    flat-name set instead. Replaces the per-diff-line shape check, which
+#>    (a) could not recognize multi-line use-block continuation lines and
+#>    (b) keyed declared edits globally, letting an edit for file A authorize
+#>    the same-looking change in file B."""
 #>    edits = _parse_edits(decls)
 #>    fragedits = _parse_fragedits(decls)
-#>    edit_new = set(nw for (_, _, nw) in edits) | set(nw for (_, _, nw) in fragedits)
-#>    edit_old = set(o for (_, o, _) in edits) | set(o for (_, o, _) in fragedits)
 #>    dst = set(r["dst_file"] for r in tsv)
 #>    src = set(r["src_file"] for r in tsv)
 #>    # `## consumer-exempt`: files with declared STRUCTURAL edits that aren't
 #>    # import-shaped (e.g. the U stage deleting #[path] mod mounts in types.rs).
 #>    # Verified elsewhere: gate compile + conventions-gate #[path]==0 + flat-name set.
+#>    # `## exhaust`: whole-file deletions validated by check_exhaustion, which
+#>    # runs after this check — without the exemption the deletion false-fails
+#>    # here first.
 #>    exempt = dst | src | {"crates/oneiron/src/lib.rs"} | set(
-#>        x.strip() for x in decls.get("consumer-exempt", []))
+#>        x.strip() for x in decls.get("consumer-exempt", [])) | set(
+#>        x.strip() for x in decls.get("exhaust", []))
 #>    n = 0
 #>    for f in changed_files(root, base):
 #>        if not f.endswith(".rs") or f in exempt:
 #>            continue
 #>        n += 1
-#>        for ln in _git_diff_file(root, base, f).split("\n"):
-#>            if ln.startswith("+++") or ln.startswith("---") or ln.startswith("@@"):
-#>                continue
-#>            if ln.startswith("+"):
-#>                s = ln[1:].strip()
-#>                if s == "" or _is_use(s) or s in edit_new:
-#>                    continue
-#>                raise Violation("C", f"consumer-diff smuggle in {f}: non-import ADDED line "
-#>                                   f"(not use/declared-edit): {s!r}")
-#>            if ln.startswith("-"):
-#>                s = ln[1:].strip()
-#>                if s == "" or _is_use(s) or s in edit_old:
-#>                    continue
-#>                raise Violation("C", f"consumer-diff smuggle in {f}: non-use REMOVED line "
-#>                                   f"(not use/declared-edit): {s!r}")
-#>    return f"OK check C (consumer-diff-shape): {n} consumer file(s) import-only"
+#>        bt = base_file(root, base, f) or ""
+#>        ht = head_file(root, f) or ""
+#>        fe = ([(o, nw) for (ef, o, nw) in edits if ef == f]
+#>              + [(o, nw) for (sf, o, nw) in fragedits if sf == f])
+#>        base_rem = _nonuse_lines(R.apply_edits(bt, fe)) if fe else _nonuse_lines(bt)
+#>        head_rem = _nonuse_lines(ht)
+#>        if base_rem != head_rem:
+#>            import difflib
+#>            d = [ln for ln in difflib.unified_diff(base_rem, head_rem, lineterm="", n=0)
+#>                 if not ln.startswith(("---", "+++"))]
+#>            raise Violation("C", f"consumer non-import content changed beyond declared "
+#>                               f"edits in {f} (first divergences, base-with-edits vs HEAD):\n"
+#>                               + "\n".join(d[:12]))
+#>    return f"OK check C (consumer-diff-shape): {n} consumer file(s) import-only beyond declared edits"
 #>
 #>
 #># ---- check X: src-exhaustion (T12 finale) --------------------------------
@@ -1498,6 +1541,9 @@ exit 0
 #>        bt = base_file(root, base, src)
 #>        if bt is None:
 #>            raise Violation("X", f"exhaustion src missing at base: {src}")
+#>        if head_file(root, src) is not None:
+#>            raise Violation("X", f"exhaustion src still present at HEAD "
+#>                                 f"(must be deleted): {src}")
 #>        doc = R.Doc(bt)
 #>        drop = set()
 #>        for st in union_stages:

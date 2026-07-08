@@ -643,6 +643,15 @@ def edit_delta_ok(old, new):
     # declared edit
     if old_reg == [] and "".join(new_reg) == "pub(crate)":
         return True
+    # every length-changing path edit must sit at a `::` boundary OUTSIDE the
+    # changed region: the unchanged token just before or just after the region
+    # must be `::` (mirrors the equal-length branch guard). Rejects bare
+    # identifier rewrites (`old` -> `crate::new`), leading-qualifier removals
+    # (`crate::types::Foo` -> `types::Foo`), and non-path deletions
+    # (`foo(crate::types::X)` -> `foo()`).
+    if not ((p > 0 and old_toks[p - 1] == "::")
+            or (s > 0 and old_toks[len(old_toks) - s] == "::")):
+        return False
     if new_reg == [] and "::" in old_reg and _PATH_RE.match("".join(old_reg)):
         # pure ::-path segment REMOVAL (module un-mount: crate::types::X ->
         # crate::X). The removed run must include its `::` separator so the

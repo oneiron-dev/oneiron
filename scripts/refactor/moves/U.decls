@@ -7,6 +7,7 @@ yes
 ## allowed
 crates/oneiron-server/src/api.rs
 crates/oneiron-server/src/projection.rs
+crates/oneiron-server/src/projection/tests.rs
 crates/oneiron/src/batch.rs
 crates/oneiron/src/companion.rs
 crates/oneiron/src/context_pack.rs
