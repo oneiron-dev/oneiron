@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::registry::short_id_prefix;
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 pub(crate) const EDGE_KEY_LEN: usize = 33;

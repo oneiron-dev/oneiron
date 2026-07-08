@@ -4,11 +4,11 @@ use crate::claim::{
 };
 use crate::deletion::DeleteReason;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::types::{
-    ClaimCandidate, ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass,
-    HnswConfig, VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
-    WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    ClaimCandidate, EdgeActorClass, HnswConfig, VaultConfig,
+    WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
+    WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use core::assert_matches;
 #[cfg(feature = "sync")]

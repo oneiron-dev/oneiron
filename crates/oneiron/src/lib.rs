@@ -538,6 +538,12 @@ pub use crate::recovery::{
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
+pub use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration, TypeByteBand,
+};
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,
     REPO_CONFLICT_RESOLUTION_VALUE_KEYS, REPO_MUTATION_ALLOWED_OPERATION_KINDS,
@@ -589,12 +595,6 @@ pub use crate::thread_lens::{
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
     PackTokenizer, count_context_pack_tokens,
-};
-pub use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
-    ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration, TypeByteBand,
 };
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, ContextPackRetrievalBudget,

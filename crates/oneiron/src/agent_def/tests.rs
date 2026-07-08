@@ -6,11 +6,12 @@
 
 use super::*;
 use crate::error::ErrorKind;
-use crate::skill::{SkillRecord, encode_skill_record};
-use crate::types::{
-    ENTITY_TYPE_SKILL, EntityClassification, HnswConfig, TextAnalyzerConfig, TypeByteBand,
-    VaultConfig, band_of, entity_type_registry_entry, is_structural_kind, short_id_prefix,
+use crate::registry::{
+    ENTITY_TYPE_SKILL, EntityClassification, TypeByteBand, band_of, entity_type_registry_entry,
+    is_structural_kind, short_id_prefix,
 };
+use crate::skill::{SkillRecord, encode_skill_record};
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

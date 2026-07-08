@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::types::{
+use oneiron::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use oneiron::{

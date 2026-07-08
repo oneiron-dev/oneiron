@@ -1,7 +1,8 @@
 use super::*;
 use crate::batch::export::companion_export_layer;
 use crate::claim::ClaimSource;
-use crate::types::{ENTITY_TYPE_TURN, TimeRange, WriteActor, WriteProvenance};
+use crate::registry::ENTITY_TYPE_TURN;
+use crate::types::{TimeRange, WriteActor, WriteProvenance};
 use crate::{EnqueueJob, EnqueueOutcome, JobQueue, JobState, Vault, VaultConfig};
 
 fn entity(seed: u8) -> EntityId {

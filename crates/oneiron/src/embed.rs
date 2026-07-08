@@ -314,7 +314,7 @@ fn pending_input_in_txn(
     };
     let header = crate::batch::EntityMetadataHeader::parse(raw)
         .ok_or(Error::CorruptedIndex("entity header"))?;
-    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
     Ok(Some(PendingEmbeddingInput {

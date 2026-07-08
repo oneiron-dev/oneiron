@@ -4,10 +4,9 @@ use super::*;
 use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
 use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
 use crate::receipt::ReceiptQuery;
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
-use crate::types::{
-    ENTITY_TYPE_PERSON, EdgeActorClass, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::types::{EdgeActorClass, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance};
 
 const REASON_CEILING: &str = "gate.pending.actor_ceiling";
 const REASON_CRITICAL: &str = "gate.pending.criticality_floor";

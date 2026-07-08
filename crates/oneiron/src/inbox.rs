@@ -45,10 +45,11 @@ use crate::job_queue::{JobId, JobQueue};
 use crate::receipt::{
     MAX_RECEIPT_QUERY_SCAN, ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower,
 };
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, PendingGateConsentRecord,
 };
-use crate::types::{ENTITY_TYPE_CLAIM, EntityId, TimeRange, bytes_to_hex_lower};
+use crate::types::{EntityId, TimeRange, bytes_to_hex_lower};
 
 /// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;

@@ -10,10 +10,10 @@ use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body,
 };
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::types::{
-    ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
-    WriteEnvelope, WriteProvenance,
+    EdgeActorClass, HnswConfig, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
 fn test_config() -> VaultConfig {
@@ -1112,9 +1112,9 @@ fn test_memory_board(claim_score: f32) -> EiriMemoryBoard {
             short_id: format!("mem{seed:02x}"),
             content_hash: format!("{seed:02x}"),
             entity_type: if slot == EiriMemoryBoardSlot::Claims {
-                crate::types::ENTITY_TYPE_CLAIM
+                crate::registry::ENTITY_TYPE_CLAIM
             } else {
-                crate::types::ENTITY_TYPE_SUMMARY
+                crate::registry::ENTITY_TYPE_SUMMARY
             },
             asset_ref: None,
             score,

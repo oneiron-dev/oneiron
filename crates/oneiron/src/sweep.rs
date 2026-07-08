@@ -117,7 +117,8 @@ use crate::deletion::{
 use crate::error::{Error, Result};
 #[cfg(feature = "sync")]
 use crate::error::{SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::types::{ENTITY_TYPE_REDACTION_AUDIT, EntityId};
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::types::EntityId;
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so
 /// the ≤30 d `deadline_at` SLA cannot be silently outwaited by backoff.

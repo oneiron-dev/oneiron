@@ -2,14 +2,12 @@ use core::assert_matches;
 use std::path::PathBuf;
 
 use super::*;
+use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
     TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
     TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
-use crate::types::{
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, HnswConfig,
-    TextAnalyzerConfig, TimeRange, VaultConfig,
-};
+use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {
@@ -133,7 +131,7 @@ fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK_LIST)?, 2);
     assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK)?, 1);
     assert_eq!(
-        vault.count_entities_by_type(crate::types::ENTITY_TYPE_MACHINE)?,
+        vault.count_entities_by_type(crate::registry::ENTITY_TYPE_MACHINE)?,
         0
     );
     Ok(())

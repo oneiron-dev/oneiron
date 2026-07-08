@@ -5,16 +5,17 @@ use std::str;
 use std::time::Instant;
 
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+};
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
-    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
-    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeProvenanceFlags, TaskRole, decode_edge_value, decode_edge_value_for_kind,
-    encode_edge_value,
+    ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, TaskRole,
+    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -6294,7 +6295,7 @@ fn encode_edge_value_rejects_structural_non_neutral_vad() {
 
 #[test]
 fn all_entity_type_prefixes() {
-    use crate::types::{
+    use crate::registry::{
         ENTITY_TYPE_REGISTRY, EntityClassification, TypeByteBand, band_of, is_structural_kind,
         short_id_prefix,
     };
@@ -6632,7 +6633,7 @@ fn all_entity_type_prefixes() {
 
 #[test]
 fn type_byte_band_allocation_matches_contract() {
-    use crate::types::{
+    use crate::registry::{
         TYPE_BYTE_BAND_COMPANION_END, TYPE_BYTE_BAND_COMPANION_START, TYPE_BYTE_BAND_CORE_END,
         TYPE_BYTE_BAND_CORE_START, TYPE_BYTE_BAND_CRM_END, TYPE_BYTE_BAND_CRM_START,
         TYPE_BYTE_BAND_MAINTENANCE_START, TYPE_BYTE_BAND_PRODUCTIVITY_END,
@@ -6776,7 +6777,7 @@ fn type_byte_band_allocation_matches_contract() {
 
 #[test]
 fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> Result<()> {
-    use crate::types::{TypeByteBand, entity_type_registry_entry};
+    use crate::registry::{TypeByteBand, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
 
@@ -6937,7 +6938,7 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
 
 #[test]
 fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
-    use crate::types::TypeByteBand;
+    use crate::registry::TypeByteBand;
 
     let dir = tempfile::tempdir()?;
     {
@@ -6968,7 +6969,7 @@ fn structural_kind_registration_persists_and_loads_on_reopen() -> Result<()> {
 
 #[test]
 fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
-    use crate::types::TypeByteBand;
+    use crate::registry::TypeByteBand;
 
     let (_dir, vault) = open_test_vault();
     let before = EntityId::now();
@@ -7004,7 +7005,7 @@ fn registered_structural_kind_unblocks_writes_and_short_ids() -> Result<()> {
 
 #[test]
 fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
-    use crate::types::{TypeByteBand, band_of, entity_type_registry_entry};
+    use crate::registry::{TypeByteBand, band_of, entity_type_registry_entry};
 
     let (_dir, vault) = open_test_vault();
     vault.register_structural_kind(72, "np", TypeByteBand::Companion, "notes-pack")?;
@@ -7031,7 +7032,7 @@ fn persisted_structural_kind_registry_matches_runtime_config() -> Result<()> {
 
 #[test]
 fn legacy_dynamic_registration_on_static_byte_is_tolerated_on_open() -> Result<()> {
-    use crate::types::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteBand, short_id_prefix};
+    use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, TypeByteBand, short_id_prefix};
 
     let (dir, vault) = open_test_vault();
     // A vault written by an older engine, where byte 85 was still free for
@@ -12327,7 +12328,7 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
             .batch_in()
             .put_replicated(
                 &txn_id,
-                crate::types::ENTITY_TYPE_CLAIM,
+                crate::registry::ENTITY_TYPE_CLAIM,
                 test_time_range(1, 1),
                 2,
                 &bytes,
@@ -12343,7 +12344,7 @@ fn replicated_door_admits_reserved_claim_on_both_builders() -> Result<()> {
         .batch()
         .put_replicated(
             &batch_id,
-            crate::types::ENTITY_TYPE_CLAIM,
+            crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
             &bytes,
@@ -12390,7 +12391,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
                 .batch_in()
                 .put_replicated(
                     &bad_txn,
-                    crate::types::ENTITY_TYPE_CLAIM,
+                    crate::registry::ENTITY_TYPE_CLAIM,
                     test_time_range(1, 1),
                     2,
                     &ungrammatical,
@@ -12406,7 +12407,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
         .batch()
         .put_replicated(
             &bad_batch,
-            crate::types::ENTITY_TYPE_CLAIM,
+            crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
             &ungrammatical,
@@ -12422,7 +12423,7 @@ fn replicated_door_still_fails_typed_on_structural_violations() -> Result<()> {
         .batch()
         .put_replicated(
             &bad_body,
-            crate::types::ENTITY_TYPE_CLAIM,
+            crate::registry::ENTITY_TYPE_CLAIM,
             test_time_range(1, 1),
             2,
             b"not a msgpack map",

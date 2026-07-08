@@ -1,6 +1,7 @@
 use super::*;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
-use crate::types::{ENTITY_TYPE_PERSON, HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

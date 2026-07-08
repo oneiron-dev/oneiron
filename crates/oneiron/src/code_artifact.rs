@@ -3,7 +3,8 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_TYPE_CODE_ARTIFACT, EntityId, TimeRange};
+use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::types::{EntityId, TimeRange};
 
 pub const CODE_ARTIFACT_BODY_KEYS: [&str; 4] =
     ["summary_prompt", "summary_hash", "repo_ref", "class"];
@@ -262,10 +263,10 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::error::ErrorKind;
-    use crate::types::{
-        EntityClassification, HnswConfig, TextAnalyzerConfig, TypeByteBand, VaultConfig,
-        entity_type_registry_entry, short_id_prefix,
+    use crate::registry::{
+        EntityClassification, TypeByteBand, entity_type_registry_entry, short_id_prefix,
     };
+    use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
     fn test_config() -> VaultConfig {
         let mut config = VaultConfig::device();

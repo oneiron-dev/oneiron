@@ -41,8 +41,9 @@ use heed::{RoTxn, RwTxn};
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token, TokenKind};
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
+use crate::registry::short_id_prefix;
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity, short_id_prefix};
+use crate::types::{EntityId, ScoredEntity};
 
 // === Layout constants ===
 
@@ -1288,7 +1289,7 @@ fn resolve_lexical_query_hint_record(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Err(corrupted("entity header"));
     };
-    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(LexicalQueryHintResolution::NonHint);
     }
     if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
@@ -1325,7 +1326,7 @@ fn lexical_query_hint_target_is_live_claim(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Err(corrupted("entity header"));
     };
-    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(false);
     }
     let Ok(body) =

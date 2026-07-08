@@ -18,7 +18,8 @@ use crate::{
     Error, Result,
     claim::{ScopedRead, ScopedReadActorKey},
     llm::ContentPart,
-    types::{ENTITY_TYPE_CLAIM, EdgeActorClass, EntityId},
+    registry::ENTITY_TYPE_CLAIM,
+    types::{EdgeActorClass, EntityId},
 };
 
 pub const LENS_ATOM_KIT_VERSION: u16 = 2;

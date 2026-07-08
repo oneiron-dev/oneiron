@@ -27,10 +27,11 @@ use crate::job_queue::{
     FailOutcome, InterveneJob, JobId, JobInterventionEffect, JobInterventionKind, JobQueue,
     JobRecord,
 };
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
-use crate::types::{ClaimCandidate, ENTITY_TYPE_CLAIM, EntityId, TimeRange, WriteEnvelope};
+use crate::types::{ClaimCandidate, EntityId, TimeRange, WriteEnvelope};
 
 /// Generic [`JobQueue`] kind used by Dreamer runner jobs.
 pub const DREAMER_RUNNER_JOB_KIND: &str = "dreamer";

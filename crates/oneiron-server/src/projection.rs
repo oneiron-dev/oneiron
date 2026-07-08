@@ -4,7 +4,7 @@ use oneiron::companion::{
     CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
     decode_companion_record_body,
 };
-use oneiron::types::{
+use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
     ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST,
     ENTITY_TYPE_TURN, entity_type_registry_entry,

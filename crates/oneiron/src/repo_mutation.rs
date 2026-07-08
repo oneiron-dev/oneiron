@@ -24,7 +24,8 @@ use crate::claim::{
 use crate::codebase::CODEBASE_COMMIT_HASH_HEX_LEN;
 use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_TYPE_CLAIM, EdgeKind, EntityId, TimeRange, Vad};
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::types::{EdgeKind, EntityId, TimeRange, Vad};
 
 use rmpv::Value;
 

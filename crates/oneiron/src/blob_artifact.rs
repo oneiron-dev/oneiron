@@ -29,10 +29,10 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::ppr;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::store::Store;
 use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, EntityId,
-    TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, ENTITY_ID_LEN, EntityId, TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use heed::{RoTxn, RwTxn};
 

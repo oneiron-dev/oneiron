@@ -33,10 +33,11 @@ use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHead
 use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
 use crate::types::{
-    DecodedEdgeValue, ENTITY_TYPE_AUTHORITY_LOG, EdgeKind, EdgeProvenanceFlags, EntityId, Vad,
-    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, EntityId, Vad, decode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::{Error, Result, SyncProtocolValidation, Vault};
 
@@ -1523,7 +1524,7 @@ fn materialize_entity_blob_in_txn(
     // receipt's bytes remain in the CRDT map, so the next forward
     // rematerialization re-admits it once the lease mirror catches up
     // (OD-10 lazy re-admission — no new scheduling machinery).
-    let quota_debit = if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+    let quota_debit = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
         crate::deletion::validate_redaction_receipt_body(data)?;
         if let Some(existing) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
             if existing == blob {
