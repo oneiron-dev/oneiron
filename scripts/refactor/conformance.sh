@@ -374,11 +374,14 @@ exit 0
 #>        ms = doc.mlines[cur].strip()
 #>        if s == "":
 #>            break
-#>        if s.startswith("///") or s.startswith("//!"):
+#>        # `///` outer doc + `#[...]` outer attr attach to the FOLLOWING item.
+#>        # `//!` inner doc + `#![...]` inner attr document the ENCLOSING module and
+#>        # must NOT be swallowed by the first item below them.
+#>        if s.startswith("///") and not s.startswith("////"):
 #>            top = cur
 #>            cur -= 1
 #>            continue
-#>        if ms.startswith("#[") or ms.startswith("#!["):
+#>        if ms.startswith("#[") and not ms.startswith("#!["):
 #>            top = cur
 #>            cur -= 1
 #>            continue
@@ -584,12 +587,122 @@ exit 0
 #>            if it["kind"] == "mod" and it["name"] == name:
 #>                if cfgc is None or cfgc in it["cfgs"]:
 #>                    matches.append(it)
+#>    elif container and container not in ("-", "") and container.split()[0] == "mod":
+#>        # container = "mod tests" (or another named mod): item lives inside that mod body
+#>        modname = container.split()[-1]
+#>        for it in items:
+#>            if it["kind"] == "mod" and it["name"] == modname and it["body_open_line"] is not None:
+#>                for m in items_in_mod(doc, it):
+#>                    mk = "method" if m["kind"] == "fn" and kind == "method" else m["kind"]
+#>                    if (mk == kind or m["kind"] == kind) and m["name"] == name:
+#>                        if cfgc is None or cfgc in m["cfgs"]:
+#>                            matches.append(m)
 #>    else:
 #>        for it in items:
 #>            if it["kind"] == kind and it["name"] == name:
 #>                if cfgc is None or cfgc in it["cfgs"]:
 #>                    matches.append(it)
 #>    return matches
+#>
+#>
+#>def items_in_mod(doc, mod_item):
+#>    """Enumerate fn/const/type/struct/enum/impl items directly inside a mod body."""
+#>    out = []
+#>    inner_depth = doc.depth0[mod_item["sig_line"]] + 1
+#>    j = mod_item["body_open_line"] + 1
+#>    while j <= mod_item["end_line"]:
+#>        if doc.depth0[j] == inner_depth:
+#>            mjs = doc.mlines[j].lstrip()
+#>            msig = _match_sig(mjs)
+#>            if msig:
+#>                mkind, mname = msig
+#>                mstart = doc.loff[j] + (len(doc.mlines[j]) - len(mjs))
+#>                mbo, meo = _scan_extent(doc, mstart)
+#>                mel = doc.line_of_offset(meo)
+#>                mlead = _leading_block(doc, j)
+#>                out.append({
+#>                    "kind": mkind, "name": mname, "sig_line": j, "lead_start": mlead,
+#>                    "end_line": mel,
+#>                    "body_open_line": doc.line_of_offset(mbo) if mbo is not None else None,
+#>                    "vis": _vis_of(doc, j), "cfgs": _cfgs_of(doc, mlead, j),
+#>                })
+#>                j = mel + 1
+#>                continue
+#>        j += 1
+#>    return out
+#>
+#>
+#># ---------------------------------------------------------------------------
+#># declared-edit application + delta-shape validation (TS D6 #3/#4, D9.4 #2)
+#># ---------------------------------------------------------------------------
+#>
+#>_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*(::)?$")
+#>
+#>
+#>def apply_edits(text, edits):
+#>    """edits = list of (old_stripped, new_stripped). Replace each fragment line
+#>    whose stripped form == old with new (indentation preserved)."""
+#>    lines = text.split("\n")
+#>    for i, ln in enumerate(lines):
+#>        s = ln.strip()
+#>        for old, new in edits:
+#>            if s == old:
+#>                indent = ln[:len(ln) - len(ln.lstrip())]
+#>                lines[i] = indent + new
+#>                break
+#>    return "\n".join(lines)
+#>
+#>
+#>def edit_delta_ok(old, new):
+#>    """True iff old→new is a legal declared edit: token-identical except exactly
+#>    ONE contiguous changed region, both sides pure `::`-path text — OR the single
+#>    visibility-promotion exception (empty→`pub(crate)` prepended)."""
+#>    ot = _TOKEN.findall(old)
+#>    nt = _TOKEN.findall(new)
+#>    if ot == nt:
+#>        return False  # a no-op edit is not a valid declared edit
+#>    p = 0
+#>    while p < len(ot) and p < len(nt) and ot[p] == nt[p]:
+#>        p += 1
+#>    s = 0
+#>    while s < len(ot) - p and s < len(nt) - p and ot[-1 - s] == nt[-1 - s]:
+#>        s += 1
+#>    old_reg = ot[p:len(ot) - s]
+#>    new_reg = nt[p:len(nt) - s]
+#>    # visibility-promotion exception
+#>    if old_reg == [] and "".join(new_reg) in ("pub(crate)", "pub"):
+#>        return True
+#>    if not old_reg or not new_reg:
+#>        return False  # pure insertion/deletion that isn't the vis exception
+#>    return bool(_PATH_RE.match("".join(old_reg)) and _PATH_RE.match("".join(new_reg)))
+#>
+#>
+#># ---------------------------------------------------------------------------
+#># flat-name set from lib.rs (TS D6 #6 / CONV D3.2 contract check)
+#># ---------------------------------------------------------------------------
+#>
+#>def flat_names(doc):
+#>    """Set of names exported by lib.rs's `pub use` groups (the flat façade).
+#>    Handles `pub use crate::m::{A, B as C};` and `pub use crate::m::Name;`."""
+#>    names = set()
+#>    for it in enumerate_items(doc):
+#>        if it["kind"] != "use" or it["vis"] != "pub":
+#>            continue
+#>        head = logical_head(doc, it["sig_line"])  # canon, e.g. "pub use crate :: m :: { A , B }"
+#>        if "{" in head:
+#>            inner = head[head.index("{") + 1:head.rindex("}")]
+#>            parts = [p.strip() for p in inner.split(",") if p.strip()]
+#>        else:
+#>            # trailing single name after last ::
+#>            toks = head.split()
+#>            parts = [toks[-1]] if toks else []
+#>        for part in parts:
+#>            t = part.split()
+#>            if "as" in t:
+#>                names.add(t[t.index("as") + 1])
+#>            elif t:
+#>                names.add(t[-1])
+#>    return names
 #>
 #>
 #># ---------------------------------------------------------------------------
@@ -683,15 +796,15 @@ exit 0
 #>import glob
 #>R = sys.modules[__name__]
 #>
-#>GLOBAL_FORBID = [
-#>    "crates/oneiron/src/batch.rs",
-#>    "crates/oneiron/src/outbound.rs",
-#>    "crates/oneiron/src/anchored_annotation.rs",
-#>    "crates/oneiron/src/agent_def.rs",
-#>    "crates/oneiron/src/agent_def/",
-#>    "crates/oneiron/src/edit_settle.rs",
-#>    "crates/oneiron/src/edit_settle/",
+#># Guard zone (in-flight collision guard, TS D6 #1). LIFTED by owner 2026-07-08
+#># (ONE-1443=063340de5, ONE-1554=b2437d700 both landed). When lifted, these files
+#># are allowed iff a stage lists them; when not, they are globally forbidden.
+#># The old batch/outbound/anchored_annotation LEAVE-ALONE fence is GONE.
+#>GUARD = [
+#>    "crates/oneiron/src/agent_def.rs", "crates/oneiron/src/agent_def/",
+#>    "crates/oneiron/src/edit_settle.rs", "crates/oneiron/src/edit_settle/",
 #>]
+#>LIFTED = True
 #>
 #>
 #>class Violation(Exception):
@@ -753,19 +866,70 @@ exit 0
 #>                cur = ln[3:].strip()
 #>                sections.setdefault(cur, [])
 #>                continue
-#>            if cur is None:
-#>                continue
-#>            if ln.strip() == "":
+#>            if cur is None or ln.strip() == "":
 #>                continue
 #>            sections[cur].append(ln)
 #>    return sections
+#>
+#>
+#>def _parse_edits(decls):
+#>    """`## edit` rows: file<TAB>old<TAB>new (old/new stripped). Returns list."""
+#>    out = []
+#>    for ln in decls.get("edit", []):
+#>        parts = ln.split("\t")
+#>        if len(parts) != 3:
+#>            raise Violation(0, f"bad edit row (file<TAB>old<TAB>new): {ln!r}")
+#>        out.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+#>    return out
+#>
+#>
+#>def _parse_fragedits(decls):
+#>    """`## frag-edit` rows: src_file<TAB>old<TAB>new — applied to a moved item's
+#>    base fragment (TS D9.4 #2, the ForeignWorldId doctest class)."""
+#>    out = []
+#>    for ln in decls.get("frag-edit", []):
+#>        parts = ln.split("\t")
+#>        if len(parts) != 3:
+#>            raise Violation(0, f"bad frag-edit row: {ln!r}")
+#>        out.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+#>    return out
+#>
+#>
+#>def _parse_comments(decls):
+#>    """`## comment` rows: src:start-end<TAB>dst (interstitial // blocks)."""
+#>    out = []
+#>    for ln in decls.get("comment", []):
+#>        parts = ln.split("\t")
+#>        if len(parts) != 2:
+#>            raise Violation(0, f"bad comment row (src:start-end<TAB>dst): {ln!r}")
+#>        loc, dst = parts[0].strip(), parts[1].strip()
+#>        src, rng = loc.rsplit(":", 1)
+#>        a, b = rng.split("-")
+#>        out.append((src, int(a), int(b), dst))
+#>    return out
+#>
+#>
+#>def _parse_adds(decls):
+#>    """`## add` rows: file<TAB>exact-stripped-line — non-item lines a stage adds to
+#>    a dst (module doc, imports, `impl Vault {`, `}`, `mod tests;`)."""
+#>    out = collections.defaultdict(list)
+#>    for ln in decls.get("add", []):
+#>        parts = ln.split("\t", 1)
+#>        if len(parts) != 2:
+#>            raise Violation(0, f"bad add row (file<TAB>line): {ln!r}")
+#>        out[parts[0].strip()].append(parts[1])
+#>    return out
+#>
+#>
+#>def _strip_nonblank(text):
+#>    return [ln.strip() for ln in text.split("\n") if ln.strip()]
 #>
 #>
 #># ---- check 1: forbidden zone + allowed files -----------------------------
 #>
 #>def check1(root, base, decls):
 #>    changed = changed_files(root, base)
-#>    forbid = list(GLOBAL_FORBID) + [x.strip() for x in decls.get("forbid", [])]
+#>    forbid = ([] if LIFTED else list(GUARD)) + [x.strip() for x in decls.get("forbid", [])]
 #>    allowed = set(x.strip() for x in decls.get("allowed", []))
 #>    for f in changed:
 #>        for fb in forbid:
@@ -776,20 +940,18 @@ exit 0
 #>                raise Violation(1, f"forbidden-zone file touched: {f}")
 #>        if f not in allowed:
 #>            raise Violation(1, f"changed file not in allowed list: {f}")
-#>    return f"OK check 1 (forbidden-zone + allowed-files): {len(changed)} changed file(s)"
+#>    return (f"OK check 1 (forbidden-zone{' [guard lifted]' if LIFTED else ''} + "
+#>            f"allowed-files): {len(changed)} changed file(s)")
 #>
 #>
-#># ---- check 2: surface inventory (declarations + impl headers) ------------
+#># ---- check 2: surface inventory + flat-name-set --------------------------
 #>
 #>def _counter_diff(base_c, head_c):
-#>    added = head_c - base_c
-#>    removed = base_c - head_c
-#>    return added, removed
+#>    return head_c - base_c, base_c - head_c
 #>
 #>
 #>def _parse_signed(lines):
-#>    added = collections.Counter()
-#>    removed = collections.Counter()
+#>    added, removed = collections.Counter(), collections.Counter()
 #>    for ln in lines:
 #>        if not ln:
 #>            continue
@@ -803,12 +965,28 @@ exit 0
 #>    return added, removed
 #>
 #>
+#>def _parse_signed_impl(lines):
+#>    added, removed = collections.Counter(), collections.Counter()
+#>    for ln in lines:
+#>        if not ln:
+#>            continue
+#>        sign, content = ln[0], ln[1:].strip()
+#>        parts = content.split("\t")
+#>        if len(parts) != 2:
+#>            raise Violation(2, f"bad impl-delta line (file<TAB>header): {ln!r}")
+#>        (added if sign == "+" else removed)[(parts[0].strip(), parts[1].strip())] += 1
+#>    return added, removed
+#>
+#>
 #>def check2(root, base, decls):
 #>    changed = [f for f in changed_files(root, base)
 #>               if f.endswith(".rs") and f.startswith("crates/")]
 #>    base_inv, head_inv = collections.Counter(), collections.Counter()
 #>    base_impl, head_impl = collections.Counter(), collections.Counter()
+#>    lib_touched = False
 #>    for f in changed:
+#>        if f.endswith("/lib.rs"):
+#>            lib_touched = True
 #>        bt = base_file(root, base, f)
 #>        if bt is not None:
 #>            d = R.Doc(bt)
@@ -824,39 +1002,70 @@ exit 0
 #>    exp_add, exp_rem = _parse_signed(decls.get("decl", []))
 #>    if add != exp_add or rem != exp_rem:
 #>        _report_diff(2, "declaration inventory (2a)", add, rem, exp_add, exp_rem)
-#>
 #>    add_i, rem_i = _counter_diff(base_impl, head_impl)
 #>    exp_add_i, exp_rem_i = _parse_signed_impl(decls.get("impl-delta", []))
 #>    if add_i != exp_add_i or rem_i != exp_rem_i:
 #>        _report_diff(2, "impl-header inventory (2b)", add_i, rem_i, exp_add_i, exp_rem_i,
 #>                     fmt=lambda t: f"{t[0]}\t{t[1]}")
-#>    return f"OK check 2 (surface inventory): {len(add)} decl+ / {len(rem)} decl- / {len(add_i)} impl+ / {len(rem_i)} impl-"
 #>
-#>
-#>def _parse_signed_impl(lines):
-#>    added, removed = collections.Counter(), collections.Counter()
-#>    for ln in lines:
-#>        if not ln:
-#>            continue
-#>        sign, content = ln[0], ln[1:].strip()
-#>        parts = content.split("\t")
-#>        if len(parts) != 2:
-#>            raise Violation(2, f"bad impl-delta line (need file<TAB>header): {ln!r}")
-#>        key = (parts[0].strip(), parts[1].strip())
-#>        (added if sign == "+" else removed)[key] += 1
-#>    return added, removed
+#>    flat_note = ""
+#>    if lib_touched or decls.get("flat-name-check"):
+#>        libpath = "crates/oneiron/src/lib.rs"
+#>        bt = base_file(root, base, libpath)
+#>        ht = head_file(root, libpath)
+#>        if bt is not None and ht is not None:
+#>            bset = R.flat_names(R.Doc(bt))
+#>            hset = R.flat_names(R.Doc(ht))
+#>            if bset != hset:
+#>                raise Violation(2, "flat-name façade SET changed (must diff empty):\n"
+#>                                   f"  removed: {sorted(bset - hset)}\n  added: {sorted(hset - bset)}")
+#>            flat_note = f", flat-name set stable ({len(bset)})"
+#>    return (f"OK check 2 (surface inventory): {len(add)} decl+ / {len(rem)} decl- / "
+#>            f"{len(add_i)} impl+ / {len(rem_i)} impl-{flat_note}")
 #>
 #>
 #>def _report_diff(check, label, add, rem, exp_add, exp_rem, fmt=str):
 #>    lines = [f"{label} mismatch (actual HEAD-vs-BASE vs manifest):"]
 #>    for tag, actual, expected in (("added(+)", add, exp_add), ("removed(-)", rem, exp_rem)):
-#>        missing = expected - actual   # declared but not observed
-#>        extra = actual - expected     # observed but not declared
-#>        for k in sorted(missing, key=fmt):
+#>        for k in sorted(expected - actual, key=fmt):
 #>            lines.append(f"  {tag} declared but MISSING: {fmt(k)}")
-#>        for k in sorted(extra, key=fmt):
+#>        for k in sorted(actual - expected, key=fmt):
 #>            lines.append(f"  {tag} observed but UNDECLARED: {fmt(k)}")
 #>    raise Violation(check, "\n".join(lines))
+#>
+#>
+#># ---- check E: declared-edit validation -----------------------------------
+#>
+#>def checkE(root, base, decls, tsv):
+#>    edits = _parse_edits(decls)
+#>    fragedits = _parse_fragedits(decls)
+#>    for f, old, new in edits:
+#>        if not R.edit_delta_ok(old, new):
+#>            raise Violation("E", f"illegal edit delta (not a single ::-path region): "
+#>                               f"{f}: {old!r} -> {new!r}")
+#>        bt = base_file(root, base, f)
+#>        if bt is None:
+#>            raise Violation("E", f"edit base file missing: {f}")
+#>        base_lines = _strip_nonblank(bt)
+#>        if base_lines.count(old) == 0:
+#>            raise Violation("E", f"edit old-line not present at BASE {f}: {old!r}")
+#>        ht = head_file(root, f)
+#>        head_lines = _strip_nonblank(ht) if ht is not None else []
+#>        if head_lines.count(new) == 0:
+#>            raise Violation("E", f"edit new-line not present at HEAD {f}: {new!r}")
+#>        if head_lines.count(old) != 0:
+#>            raise Violation("E", f"edit old-line still present at HEAD {f}: {old!r}")
+#>    for src, old, new in fragedits:
+#>        if not R.edit_delta_ok(old, new):
+#>            raise Violation("E", f"illegal frag-edit delta: {src}: {old!r} -> {new!r}")
+#>        bt = base_file(root, base, src)
+#>        if bt is None or old not in _strip_nonblank(bt):
+#>            raise Violation("E", f"frag-edit old-line not at BASE {src}: {old!r}")
+#>    return f"OK check E (declared edits): {len(edits)} consumer edit(s), {len(fragedits)} frag-edit(s)"
+#>
+#>
+#>def _edits_for_file(edits, f):
+#>    return [(old, new) for (ef, old, new) in edits if ef == f]
 #>
 #>
 #># ---- check 3: moved-block byte equivalence -------------------------------
@@ -868,8 +1077,7 @@ exit 0
 #>                           f"name={row['item_name']!r} cfg={row['cfg']!r}")
 #>    if len(matches) > 1:
 #>        raise Violation(3, f"AMBIGUOUS: {len(matches)} matches in {where}: "
-#>                           f"kind={row['kind']} container={row['container']!r} "
-#>                           f"name={row['item_name']!r} cfg={row['cfg']!r}")
+#>                           f"kind={row['kind']} name={row['item_name']!r}")
 #>    return matches[0]
 #>
 #>
@@ -885,10 +1093,14 @@ exit 0
 #>        return R.find_item(doc, "method", row["container"], row["item_name"], row["cfg"])
 #>    if row["kind"] == "impl":
 #>        return R.find_item(doc, "impl", "-", row["item_name"], row["cfg"])
+#>    if row["container"] and row["container"] not in ("-", ""):
+#>        return R.find_item(doc, row["kind"], row["container"], row["item_name"], row["cfg"])
 #>    return R.find_item(doc, row["kind"], "-", row["item_name"], row["cfg"])
 #>
 #>
-#>def check3(root, base, tsv):
+#>def check3(root, base, tsv, decls):
+#>    edits = _parse_edits(decls)
+#>    fragedits = _parse_fragedits(decls)
 #>    n = 0
 #>    for row in tsv:
 #>        bt = base_file(root, base, row["src_file"])
@@ -902,7 +1114,7 @@ exit 0
 #>            base_frag = mod_inner(bdoc, bm)
 #>            ht = head_file(root, row["dst_file"])
 #>            if ht is None:
-#>                raise Violation(3, f"dst_file not present — item not yet moved: {row['dst_file']}")
+#>                raise Violation(3, f"dst not present — item not yet moved: {row['dst_file']}")
 #>            base_norm = R.rustfmt(base_frag + "\n").rstrip("\n")
 #>            head_norm = R.rustfmt(ht + ("" if ht.endswith("\n") else "\n")).rstrip("\n")
 #>            if base_norm != head_norm:
@@ -913,13 +1125,25 @@ exit 0
 #>
 #>        bm = _exactly_one(_find_row(bdoc, row), f"BASE {row['src_file']}", row)
 #>        base_text = R.item_text(bdoc, bm)
+#>        fe = [(o, nw) for (s, o, nw) in fragedits if s == row["src_file"]]
+#>        base_text = R.apply_edits(base_text, _edits_for_file(edits, row["src_file"]) + fe)
+#>
 #>        ht = head_file(root, row["dst_file"])
 #>        if ht is None:
-#>            raise Violation(3, f"dst_file not present — item not yet moved: {row['dst_file']} "
+#>            raise Violation(3, f"dst not present — item not yet moved: {row['dst_file']} "
 #>                               f"(item {row['item_name']})")
 #>        hdoc = R.Doc(ht)
 #>        hm = _exactly_one(_find_row(hdoc, row), f"HEAD {row['dst_file']}", row)
 #>        head_text = R.item_text(hdoc, hm)
+#>
+#>        if row["src_file"] != row["dst_file"]:
+#>            hsrc = head_file(root, row["src_file"])
+#>            if hsrc is not None:
+#>                still = _find_row(R.Doc(hsrc), row)
+#>                if len(still) != 0:
+#>                    raise Violation(3, f"item STILL present in src at HEAD "
+#>                                       f"({row['src_file']}): {row['item_name']} — copy left behind")
+#>
 #>        is_fn = row["kind"] in ("method", "fn")
 #>        hc = row["header_change"] == "yes"
 #>        try:
@@ -948,9 +1172,9 @@ exit 0
 #># ---- check 4: frozen anchors ---------------------------------------------
 #>
 #>def check4(root, base, decls):
-#>    anchors = decls.get("anchors", [])
+#>    edits = _parse_edits(decls)
 #>    n = 0
-#>    for ln in anchors:
+#>    for ln in decls.get("anchors", []):
 #>        parts = ln.split("\t")
 #>        if len(parts) != 5:
 #>            raise Violation(4, f"bad anchor row (need 5 cols): {ln!r}")
@@ -964,10 +1188,12 @@ exit 0
 #>        bm = _exactly_one(_find_row(bdoc, row), f"BASE {f}", row)
 #>        hm = _exactly_one(_find_row(hdoc, row), f"HEAD {f}", row)
 #>        is_fn = kind in ("method", "fn")
-#>        base_norm = R.normalized_fragment(R.item_text(bdoc, bm), is_fn, False)
+#>        base_text = R.apply_edits(R.item_text(bdoc, bm), _edits_for_file(edits, f))
+#>        base_norm = R.normalized_fragment(base_text, is_fn, False)
 #>        head_norm = R.normalized_fragment(R.item_text(hdoc, hm), is_fn, False)
 #>        if base_norm != head_norm:
-#>            raise Violation(4, f"FROZEN ANCHOR changed: {kind} {name} in {f}\n" + _first_diff(base_norm, head_norm))
+#>            raise Violation(4, f"FROZEN ANCHOR changed: {kind} {name} in {f}\n"
+#>                               + _first_diff(base_norm, head_norm))
 #>        n += 1
 #>    return f"OK check 4 (frozen anchors): {n} anchor(s) unchanged"
 #>
@@ -977,33 +1203,30 @@ exit 0
 #>def check5(root, stage, decls):
 #>    globs = [g.strip() for g in decls.get("uniqueness", [])]
 #>    if not globs:
-#>        return "OK check 5 (name-uniqueness): skipped (not an api stage)"
+#>        return "OK check 5 (name-uniqueness): skipped"
 #>    names = collections.Counter()
-#>    seen_files = 0
+#>    seen = 0
 #>    for g in globs:
 #>        for f in sorted(glob.glob(os.path.join(root, g))):
 #>            rel = os.path.relpath(f, root)
 #>            ht = head_file(root, rel)
 #>            if ht is None:
 #>                continue
-#>            seen_files += 1
+#>            seen += 1
 #>            for it in R.enumerate_items(R.Doc(ht)):
-#>                # mod/use/impl don't participate in `use self::<domain>::*` glob
-#>                # ambiguity (module names live in a different namespace than the
-#>                # value/type items the glob re-exports).
 #>                if it["kind"] in ("impl", "use", "mod") or not it["name"]:
 #>                    continue
 #>                names[it["name"]] += 1
 #>    dups = {k: v for k, v in names.items() if v > 1}
 #>    if dups:
-#>        raise Violation(5, "duplicate top-level item names across api modules (glob re-export "
-#>                           "ambiguity): " + ", ".join(f"{k}×{v}" for k, v in sorted(dups.items())))
-#>    return f"OK check 5 (name-uniqueness): {seen_files} file(s), no duplicates"
+#>        raise Violation(5, "duplicate top-level names across modules: "
+#>                           + ", ".join(f"{k}×{v}" for k, v in sorted(dups.items())))
+#>    return f"OK check 5 (name-uniqueness): {seen} file(s), no duplicates"
 #>
 #>
-#># ---- check 6: error-literal inventory (codec stages) ---------------------
+#># ---- check 6: error-literal inventory ------------------------------------
 #>
-#>_ERRLIT = re.compile(r'Error::(?:Invalid\w+Body|InvariantViolation)\(\s*"(?:\\.|[^"\\])*"')
+#>_ERRLIT = re.compile(r'Error::(?:Invalid\w+Body|InvariantViolation|CorruptedIndex|Invalid\w+|MaintenanceKindNotWritable)\(\s*"(?:\\.|[^"\\])*"')
 #>
 #>
 #>def _strip_line_comments(text):
@@ -1013,7 +1236,7 @@ exit 0
 #>def check6(root, base, decls):
 #>    files = [x.strip() for x in decls.get("error-literal", [])]
 #>    if not files:
-#>        return "OK check 6 (error-literal): skipped (not a codec stage)"
+#>        return "OK check 6 (error-literal): skipped"
 #>    for f in files:
 #>        bt = base_file(root, base, f) or ""
 #>        ht = head_file(root, f) or ""
@@ -1025,18 +1248,151 @@ exit 0
 #>    return f"OK check 6 (error-literal): {len(files)} module(s) unchanged"
 #>
 #>
+#># ---- check 8: insertion integrity ----------------------------------------
+#>
+#>def _excise_items(doc, rows_for_dst):
+#>    drop = set()
+#>    for row in rows_for_dst:
+#>        if row["kind"] == "mod":
+#>            continue
+#>        m = _find_row(doc, row)
+#>        if len(m) != 1:
+#>            raise Violation(8, f"check8 could not uniquely locate {row['item_name']} "
+#>                               f"in dst {row['dst_file']} ({len(m)} matches)")
+#>        it = m[0]
+#>        drop.update(range(it["lead_start"], it["end_line"] + 1))
+#>    return drop
+#>
+#>
+#>def check8(root, base, tsv, decls):
+#>    edits = _parse_edits(decls)
+#>    adds = _parse_adds(decls)
+#>    comments = _parse_comments(decls)
+#>    by_dst = collections.defaultdict(list)
+#>    for row in tsv:
+#>        by_dst[row["dst_file"]].append(row)
+#>
+#>    n = 0
+#>    for dst, rows in by_dst.items():
+#>        if all(r["kind"] == "mod" for r in rows):
+#>            continue  # pure tests-mod move: check 3 covers it (whole-file compare)
+#>        ht = head_file(root, dst)
+#>        if ht is None:
+#>            raise Violation(8, f"dst missing at HEAD: {dst}")
+#>        hdoc = R.Doc(ht)
+#>        drop = _excise_items(hdoc, rows)
+#>        remaining = [ln for i, ln in enumerate(hdoc.lines) if i not in drop]
+#>        head_set = collections.Counter(s for s in (x.strip() for x in remaining) if s)
+#>
+#>        bt = base_file(root, base, dst)
+#>        base_edited = R.apply_edits(bt, _edits_for_file(edits, dst)) if bt is not None else ""
+#>        base_set = collections.Counter(_strip_nonblank(base_edited))
+#>
+#>        add_set = collections.Counter(a.strip() for a in adds.get(dst, []) if a.strip())
+#>        for (csrc, ca, cb, cdst) in comments:
+#>            if cdst != dst:
+#>                continue
+#>            cbt = base_file(root, base, csrc)
+#>            if cbt is None:
+#>                raise Violation(8, f"comment src missing at base: {csrc}")
+#>            clines = cbt.split("\n")[ca - 1:cb]
+#>            add_set.update(s for s in (x.strip() for x in clines) if s)
+#>
+#>        expected = base_set + add_set
+#>        if head_set != expected:
+#>            lines = [f"insertion integrity FAIL in {dst}:"]
+#>            for k in sorted(head_set - expected):
+#>                lines.append(f"  UNDECLARED line present in dst: {k!r}")
+#>            for k in sorted(expected - head_set):
+#>                lines.append(f"  declared/base line MISSING from dst: {k!r}")
+#>            raise Violation(8, "\n".join(lines))
+#>        n += 1
+#>    return f"OK check 8 (insertion integrity): {n} dst file(s) clean"
+#>
+#>
+#># ---- check F: file relocation (B1 git mv) --------------------------------
+#>
+#>def checkF(root, base, decls):
+#>    rows = decls.get("filemove", [])
+#>    n = 0
+#>    for ln in rows:
+#>        parts = ln.split("\t")
+#>        if len(parts) != 2:
+#>            raise Violation("F", f"bad filemove row (src<TAB>dst): {ln!r}")
+#>        src, dst = parts[0].strip(), parts[1].strip()
+#>        bsrc = base_file(root, base, src)
+#>        hdst = head_file(root, dst)
+#>        hsrc = head_file(root, src)
+#>        if bsrc is None:
+#>            raise Violation("F", f"filemove src missing at base: {src}")
+#>        if hdst is None:
+#>            raise Violation("F", f"filemove dst missing at HEAD: {dst}")
+#>        if hsrc is not None:
+#>            raise Violation("F", f"filemove src still present at HEAD: {src}")
+#>        if bsrc != hdst:
+#>            raise Violation("F", f"filemove content changed: {src} != {dst} "
+#>                               f"(relocation must be byte-identical)")
+#>        n += 1
+#>    return f"OK check F (file relocation): {n} file(s) relocated byte-identically"
+#>
+#>
+#># ---- check X: src-exhaustion (T12 finale) --------------------------------
+#>
+#>def check_exhaustion(root, base, decls):
+#>    ex = [x.strip() for x in decls.get("exhaust", [])]
+#>    if not ex:
+#>        return "OK check X (src-exhaustion): skipped"
+#>    movesdir = decls["_movesdir"][0]
+#>    union_stages = decls["_exhaust_stages"]
+#>    n = 0
+#>    for src in ex:
+#>        bt = base_file(root, base, src)
+#>        if bt is None:
+#>            raise Violation("X", f"exhaustion src missing at base: {src}")
+#>        doc = R.Doc(bt)
+#>        drop = set()
+#>        for st in union_stages:
+#>            stsv = parse_tsv(os.path.join(movesdir, f"{st}.tsv"))
+#>            sdecls = parse_decls(os.path.join(movesdir, f"{st}.decls"))
+#>            for row in stsv:
+#>                if row["src_file"] != src:
+#>                    continue
+#>                if row["kind"] == "mod":
+#>                    m = R.find_item(doc, "mod", "-", row["item_name"], row["cfg"])
+#>                else:
+#>                    m = _find_row(doc, row)
+#>                if len(m) == 1:
+#>                    drop.update(range(m[0]["lead_start"], m[0]["end_line"] + 1))
+#>            for (csrc, ca, cb, cdst) in _parse_comments(sdecls):
+#>                if csrc == src:
+#>                    drop.update(range(ca - 1, cb))
+#>        residue = [ln for i, ln in enumerate(doc.lines) if i not in drop and ln.strip()]
+#>        if residue:
+#>            raise Violation("X", f"src-exhaustion FAIL: {src} has {len(residue)} "
+#>                               f"non-excised line(s), first: {residue[0]!r}")
+#>        n += 1
+#>    return f"OK check X (src-exhaustion): {n} src file(s) fully accounted"
+#>
+#>
 #># ---- driver --------------------------------------------------------------
 #>
 #>def run_checks(root, stage, base, movesdir):
 #>    tsv = parse_tsv(os.path.join(movesdir, f"{stage}.tsv"))
 #>    decls = parse_decls(os.path.join(movesdir, f"{stage}.decls"))
-#>    results = []
-#>    results.append(check1(root, base, decls))
-#>    results.append(check2(root, base, decls))
-#>    results.append(check3(root, base, tsv))
-#>    results.append(check4(root, base, decls))
-#>    results.append(check5(root, stage, decls))
-#>    results.append(check6(root, base, decls))
+#>    decls["_movesdir"] = [movesdir]
+#>    decls["_exhaust_stages"] = [x.strip() for x in decls.get("exhaust-stages", [])]
+#>    results = [
+#>        check1(root, base, decls),
+#>        check2(root, base, decls),
+#>        checkE(root, base, decls, tsv),
+#>        check3(root, base, tsv, decls),
+#>        check4(root, base, decls),
+#>        check5(root, stage, decls),
+#>        check6(root, base, decls),
+#>        check8(root, base, tsv, decls),
+#>        checkF(root, base, decls),
+#>        check_exhaustion(root, base, decls),
+#>    ]
 #>    return results
 #>
 #>
@@ -1052,7 +1408,7 @@ exit 0
 #>    except Violation as v:
 #>        print(f"CONFORMANCE FAILED at check {v.check}:\n{v}", file=sys.stderr)
 #>        return 1
-#>    print(f"CONFORMANCE checks 1-6 PASSED for stage {stage}")
+#>    print(f"CONFORMANCE checks 1-8 PASSED for stage {stage}")
 #>    return 0
 #>
 #>
