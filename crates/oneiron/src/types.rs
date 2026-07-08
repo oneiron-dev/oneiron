@@ -1350,7 +1350,7 @@ pub enum EdgeActorClass {
 }
 
 impl EdgeActorClass {
-    fn try_from_u8(value: u8) -> Option<Self> {
+    pub(crate) fn try_from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Human),
             1 => Some(Self::Agent),

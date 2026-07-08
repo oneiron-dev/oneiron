@@ -13,6 +13,10 @@ crates/oneiron/src/context_pack.rs
 crates/oneiron/src/export.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/persona_snapshot.rs
+crates/oneiron/src/tests.rs
+crates/oneiron/src/receipt/tests.rs
+crates/oneiron/src/sync/bridge/tests.rs
+crates/oneiron/src/sync/window/tests.rs
 crates/oneiron/src/persona_snapshot/tests.rs
 crates/oneiron/src/psych_profile.rs
 crates/oneiron/src/receipt.rs
@@ -57,9 +61,9 @@ crates/oneiron/src/serialize.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELD
 crates/oneiron/src/serialize/tests.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
 crates/oneiron/src/serialize/tests.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION),
 crates/oneiron/src/serialize/tests.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL	crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
-crates/oneiron/src/sync/selector/tests.rs	.push(crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),	.push(crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),
-crates/oneiron/src/sync/selector/tests.rs	crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),	crate::companion::CompanionLifecycleEvent::retired(1_772_400_000),
-crates/oneiron/src/vault.rs	crate::types::companion::CompanionLifecycleEvent::created(learned_at),	crate::companion::CompanionLifecycleEvent::created(learned_at),
+crates/oneiron/src/sync/selector/tests.rs	let ev = crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000);	let ev = crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000);
+crates/oneiron/src/sync/selector/tests.rs	let ev = crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000);	let ev = crate::companion::CompanionLifecycleEvent::retired(1_772_400_000);
+crates/oneiron/src/vault.rs	let ev = crate::types::companion::CompanionLifecycleEvent::created(learned_at);	let ev = crate::companion::CompanionLifecycleEvent::created(learned_at);
 crates/oneiron/src/vault.rs	use crate::types::companion::CompanionLifecycleEvent;	use crate::companion::CompanionLifecycleEvent;
 
 ## add

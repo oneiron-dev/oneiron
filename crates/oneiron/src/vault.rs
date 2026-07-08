@@ -1771,9 +1771,8 @@ impl Vault {
         let mut updated = record.clone();
         updated.lifecycle_events = existing.lifecycle_events;
         if updated.lifecycle_events.is_empty() {
-            updated.lifecycle_events.push(
-                crate::types::companion::CompanionLifecycleEvent::created(learned_at),
-            );
+            let ev = crate::types::companion::CompanionLifecycleEvent::created(learned_at);
+            updated.lifecycle_events.push(ev);
         }
         let data = encode_companion_record_body(&updated)?;
         self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
