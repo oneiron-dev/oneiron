@@ -1,0 +1,44 @@
+# kind	container	item_name	cfg	src_file	dst_file	header_change
+const	-	VAD_ANNOTATION_META_KEY_PREFIX	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_ANNOTATION_META_KEY_LEN	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_ANNOTATION_CLAIM_PREDICATE	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_ANNOTATION_CLAIM_ID_DOMAIN	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_KEY_VALENCE	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_KEY_AROUSAL	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_KEY_DOMINANCE	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_KEY_SOURCE	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+const	-	VAD_KEY_ANNOTATED_AT	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_meta_key	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_claim_id	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_value	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_claim_body	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	decode_vad_annotation_claim_body_if_present	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_source_from_str	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_f32	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_from_value	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+struct	-	VadAnnotationCleanup	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+impl	-	impl VadAnnotationCleanup	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	delete_vad_annotation_metadata_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	delete_vad_annotation_metadata_for_type_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_claim_matches_subject	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+fn	-	vad_annotation_delete_scope_exists_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	yes
+struct	-	StoredClaimVadState	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	annotate_turn_vad	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	get_turn_vad_annotation	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	annotate_message_vad	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	get_message_vad_annotation	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	consolidate_claim_vad	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	consolidate_claim_vad_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	clear_claim_vad_outputs_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	close_claim_vad_states	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	claim_body_for_claim_vad_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	turn_vad_annotation_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	claim_vad_incident_edges_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	record_claim_vad_edge	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	active_claim_vad_states_in_txn	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	update_coping_outcome_from_turn_vad	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	update_coping_outcome_from_turn_vad_delta	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	update_coping_outcome_from_turn_vad_delta_checked	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	annotate_entity_vad	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	guard_vad_annotation_claim_slot	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
+method	impl Vault	get_entity_vad_annotation	-	crates/oneiron/src/vault.rs	crates/oneiron/src/affect.rs	no
