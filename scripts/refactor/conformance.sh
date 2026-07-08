@@ -747,6 +747,10 @@ exit 0
 #>        out = p.stdout
 #>        # rustfmt --emit stdout prepends a filename banner line on some versions;
 #>        # strip a leading "stdin:\n" style banner if present.
+#>        if out.startswith("stdin:\n") or out.startswith("<stdin>:\n"):
+#>            out = out.split("\n", 1)[1]
+#>            if out.startswith("\n"):
+#>                out = out[1:]
 #>        return out
 #>
 #>
@@ -1003,6 +1007,8 @@ exit 0
 #>        if not ln:
 #>            continue
 #>        sign, content = ln[0], ln[1:].strip()
+#>        if sign not in "+-":
+#>            raise Violation(2, f"bad impl-delta sign (expected leading +/-): {ln!r}")
 #>        parts = content.split("\t")
 #>        if len(parts) != 2:
 #>            raise Violation(2, f"bad impl-delta line (file<TAB>header): {ln!r}")
@@ -1152,6 +1158,18 @@ exit 0
 #>            if base_norm != head_norm:
 #>                raise Violation(3, f"MOD body mismatch: {row['src_file']}:mod {row['item_name']} "
 #>                                   f"!= {row['dst_file']}")
+#>            # src-side: the inline mod must be gone, replaced by a declaration-only
+#>            # mount (`mod NAME;`) so cargo actually wires the new dst file — without
+#>            # this a copy-left-behind (or unwired dst) passes as a "move".
+#>            hsrc = head_file(root, row["src_file"])
+#>            if hsrc is None:
+#>                raise Violation(3, f"src missing at HEAD for mod row: {row['src_file']}")
+#>            hm = _exactly_one(R.find_item(R.Doc(hsrc), "mod", "-", row["item_name"], row["cfg"]),
+#>                              f"HEAD {row['src_file']}", row)
+#>            if hm["body_open_line"] is not None:
+#>                raise Violation(3, f"inline mod {row['item_name']} still has a body in src at HEAD "
+#>                                   f"({row['src_file']}) — expected declaration-only mount "
+#>                                   f"(mod {row['item_name']};)")
 #>            n += 1
 #>            continue
 #>
@@ -1248,11 +1266,16 @@ exit 0
 #>            for it in R.enumerate_items(R.Doc(ht)):
 #>                if it["kind"] in ("impl", "use", "mod") or not it["name"]:
 #>                    continue
-#>                names[it["name"]] += 1
+#>                # key by Rust namespace: a type and a value sharing a name do not
+#>                # collide under glob re-exports, so they must not trip the gate
+#>                ns = {"struct": "type", "enum": "type", "trait": "type", "type": "type",
+#>                      "union": "type", "fn": "value", "const": "value",
+#>                      "static": "value"}.get(it["kind"], it["kind"])
+#>                names[(ns, it["name"])] += 1
 #>    dups = {k: v for k, v in names.items() if v > 1}
 #>    if dups:
 #>        raise Violation(5, "duplicate top-level names across modules: "
-#>                           + ", ".join(f"{k}×{v}" for k, v in sorted(dups.items())))
+#>                           + ", ".join(f"{k[1]} ({k[0]})×{v}" for k, v in sorted(dups.items())))
 #>    return f"OK check 5 (name-uniqueness): {seen} file(s), no duplicates"
 #>
 #>
@@ -1506,6 +1529,9 @@ exit 0
 #>            print(line)
 #>    except Violation as v:
 #>        print(f"CONFORMANCE FAILED at check {v.check}:\n{v}", file=sys.stderr)
+#>        return 1
+#>    except RuntimeError as e:
+#>        print(f"CONFORMANCE ERROR (tooling, not a manifest verdict): {e}", file=sys.stderr)
 #>        return 1
 #>    print(f"CONFORMANCE checks 1-8 PASSED for stage {stage}")
 #>    return 0

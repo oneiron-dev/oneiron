@@ -686,6 +686,10 @@ def rustfmt(fragment):
         out = p.stdout
         # rustfmt --emit stdout prepends a filename banner line on some versions;
         # strip a leading "stdin:\n" style banner if present.
+        if out.startswith("stdin:\n") or out.startswith("<stdin>:\n"):
+            out = out.split("\n", 1)[1]
+            if out.startswith("\n"):
+                out = out[1:]
         return out
 
 

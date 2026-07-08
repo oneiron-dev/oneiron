@@ -59,7 +59,7 @@ bracket-matched extractor handles the 257-line `ENTITY_TYPE_REGISTRY` const
 test-distribution rows; `item_name` is the full normalised header for `kind=impl`
 rows; `cfg` disambiguates cfg-gated duplicates.
 
-`<stage>.decls` — labelled sections: `## allowed`, `## forbid`, `## anchors`
+`<stage>.decls` — labelled sections: `## crate`, `## allowed`, `## forbid`, `## anchors`
 (`kind<TAB>container<TAB>item<TAB>cfg<TAB>file`), `## uniqueness`,
 `## error-literal`, `## decl` (`±` declaration heads, check 2a), `## impl-delta`
 (`±` `file<TAB>header`, check 2b), `## edit` (`file<TAB>old<TAB>new`),
