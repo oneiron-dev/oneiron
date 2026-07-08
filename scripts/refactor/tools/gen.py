@@ -16,7 +16,7 @@ import collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 
-ROOT = "/Volumes/Cinema/pink-worktrees/t1443"
+ROOT = os.environ.get("GEN_ROOT") or "/Volumes/Cinema/pink-worktrees/t1443"
 OUT = os.path.join(ROOT, "scripts/refactor/moves")
 REPORT_DIR = "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp/linereports"
 

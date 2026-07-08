@@ -2,9 +2,10 @@
 
 The machinery that produced `../conformance.sh` and everything under `../moves/`.
 Committed so the manifests are reproducible and reviewable (not tmp-only). All
-scripts hardcode `ROOT = /Volumes/Cinema/pink-worktrees/t1443` and
-`BASE_REV = b2437d700` (the cut worktree/base) — re-point those two constants to
-reuse elsewhere. Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PATH).
+scripts default to `ROOT = /Volumes/Cinema/pink-worktrees/t1443` and
+`BASE_REV = b2437d700` (the cut worktree/base) — override with the `GEN_ROOT`
+and `BASE_REV` env vars (empty values fall back to the defaults) to reuse
+elsewhere. Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt on PATH).
 
 | file | purpose | invocation |
 |---|---|---|
