@@ -2,8 +2,12 @@
 crates/oneiron
 
 ## allowed
+crates/oneiron/src/anchored_annotation.rs
+crates/oneiron/src/anchored_annotation/tests.rs
 crates/oneiron/src/artifact_hosting.rs
 crates/oneiron/src/artifact_hosting/tests.rs
+crates/oneiron/src/batch.rs
+crates/oneiron/src/batch/tests.rs
 crates/oneiron/src/blob_artifact.rs
 crates/oneiron/src/blob_artifact/tests.rs
 crates/oneiron/src/bm25.rs
@@ -38,8 +42,6 @@ crates/oneiron/src/embed.rs
 crates/oneiron/src/embed/tests.rs
 crates/oneiron/src/engine_executor.rs
 crates/oneiron/src/engine_executor/tests.rs
-crates/oneiron/src/export.rs
-crates/oneiron/src/export/tests.rs
 crates/oneiron/src/extraction_eval.rs
 crates/oneiron/src/extraction_eval/tests.rs
 crates/oneiron/src/fusion.rs
@@ -68,6 +70,8 @@ crates/oneiron/src/maintain.rs
 crates/oneiron/src/maintain/tests.rs
 crates/oneiron/src/off_record.rs
 crates/oneiron/src/off_record/tests.rs
+crates/oneiron/src/outbound.rs
+crates/oneiron/src/outbound/tests.rs
 crates/oneiron/src/pipeline.rs
 crates/oneiron/src/pipeline/tests.rs
 crates/oneiron/src/policy_model.rs
@@ -98,8 +102,8 @@ crates/oneiron/src/sweep.rs
 crates/oneiron/src/sweep/tests.rs
 crates/oneiron/src/thread_lens.rs
 crates/oneiron/src/thread_lens/tests.rs
-crates/oneiron/src/types.rs
-crates/oneiron/src/types/tests.rs
+crates/oneiron/src/vault.rs
+crates/oneiron/src/vault/tests.rs
 
 ## forbid
 
@@ -130,6 +134,11 @@ crates/oneiron/src/types/tests.rs
 - crates/oneiron/src/llm.rs	impl Stream for EmptyLlmStream
 - crates/oneiron/src/llm.rs	impl Stream for ReadyLlmStream
 - crates/oneiron/src/off_record.rs	impl OutboundExecutionSink for PanicSink
+- crates/oneiron/src/outbound.rs	impl Default for RecordingExecutor
+- crates/oneiron/src/outbound.rs	impl LinkedInMcpSendTransport for ScriptedLinkedInTransport
+- crates/oneiron/src/outbound.rs	impl LinkedInSandboxHostHarness for RecordingLinkedInSandboxHarness
+- crates/oneiron/src/outbound.rs	impl OutboundExecutionSink for RecordingExecutor
+- crates/oneiron/src/outbound.rs	impl ScriptedLinkedInTransport
 - crates/oneiron/src/policy_model.rs	impl LlmBackend for FailingPolicyBackend
 - crates/oneiron/src/policy_model.rs	impl LlmBackend for RecordingPolicyBackend
 - crates/oneiron/src/policy_model.rs	impl LlmBackend for StaticPolicyBackend
@@ -151,6 +160,11 @@ crates/oneiron/src/types/tests.rs
 + crates/oneiron/src/llm/tests.rs	impl Stream for EmptyLlmStream
 + crates/oneiron/src/llm/tests.rs	impl Stream for ReadyLlmStream
 + crates/oneiron/src/off_record/tests.rs	impl OutboundExecutionSink for PanicSink
++ crates/oneiron/src/outbound/tests.rs	impl Default for RecordingExecutor
++ crates/oneiron/src/outbound/tests.rs	impl LinkedInMcpSendTransport for ScriptedLinkedInTransport
++ crates/oneiron/src/outbound/tests.rs	impl LinkedInSandboxHostHarness for RecordingLinkedInSandboxHarness
++ crates/oneiron/src/outbound/tests.rs	impl OutboundExecutionSink for RecordingExecutor
++ crates/oneiron/src/outbound/tests.rs	impl ScriptedLinkedInTransport
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for FailingPolicyBackend
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for RecordingPolicyBackend
 + crates/oneiron/src/policy_model/tests.rs	impl LlmBackend for StaticPolicyBackend

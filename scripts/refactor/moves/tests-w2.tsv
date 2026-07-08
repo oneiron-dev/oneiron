@@ -1,5 +1,4 @@
 # kind	container	item_name	cfg	src_file	dst_file	header_change
-mod	-	tests	-	crates/oneiron/src/types.rs	crates/oneiron/src/types/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/store.rs	crates/oneiron/src/store/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/serialize.rs	crates/oneiron/src/serialize/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/gate.rs	crates/oneiron/src/gate/tests.rs	no
@@ -41,10 +40,13 @@ mod	-	tests	-	crates/oneiron/src/ingest.rs	crates/oneiron/src/ingest/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/extraction_eval.rs	crates/oneiron/src/extraction_eval/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/identity_reputation.rs	crates/oneiron/src/identity_reputation/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/artifact_hosting.rs	crates/oneiron/src/artifact_hosting/tests.rs	no
-mod	-	tests	-	crates/oneiron/src/export.rs	crates/oneiron/src/export/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/thread_lens.rs	crates/oneiron/src/thread_lens/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/recovery.rs	crates/oneiron/src/recovery/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/surface_event.rs	crates/oneiron/src/surface_event/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/embed.rs	crates/oneiron/src/embed/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/settings.rs	crates/oneiron/src/settings/tests.rs	no
 mod	-	tests	-	crates/oneiron/src/fusion.rs	crates/oneiron/src/fusion/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/batch.rs	crates/oneiron/src/batch/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/outbound.rs	crates/oneiron/src/outbound/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/anchored_annotation.rs	crates/oneiron/src/anchored_annotation/tests.rs	no
+mod	-	tests	-	crates/oneiron/src/vault.rs	crates/oneiron/src/vault/tests.rs	no

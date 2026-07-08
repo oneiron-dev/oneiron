@@ -10,8 +10,6 @@ crates/oneiron/src/channel_identity.rs
 crates/oneiron/src/channel_identity/tests.rs
 crates/oneiron/src/claim.rs
 crates/oneiron/src/claim/tests.rs
-crates/oneiron/src/companion.rs
-crates/oneiron/src/companion/tests.rs
 crates/oneiron/src/counterparty_contact.rs
 crates/oneiron/src/counterparty_contact/tests.rs
 crates/oneiron/src/federation.rs
@@ -20,8 +18,6 @@ crates/oneiron/src/outbound_grant.rs
 crates/oneiron/src/outbound_grant/tests.rs
 crates/oneiron/src/persona_snapshot.rs
 crates/oneiron/src/persona_snapshot/tests.rs
-crates/oneiron/src/psych_profile.rs
-crates/oneiron/src/psych_profile/tests.rs
 
 ## forbid
 
