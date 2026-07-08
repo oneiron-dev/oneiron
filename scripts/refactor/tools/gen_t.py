@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 
 ROOT = os.environ.get("GEN_ROOT") or "/Volumes/Cinema/pink-worktrees/t1443"
-BASE_REV = os.environ.get("BASE_REV", "b2437d700")
+BASE_REV = os.environ.get("BASE_REV", "da0458dda")  # T manifests recut base (#419)
 OUT = os.path.join(ROOT, "scripts/refactor/moves")
 TYPES = "crates/oneiron/src/types.rs"
 
@@ -301,6 +301,7 @@ def sweep():
 
 def emit(doc, by_dest):
     import gen
+    gen.ROOT, gen.BASE_REV = ROOT, BASE_REV  # keep the shared scan on our tree/base
     libgroups = parse_lib_groups()
     edits, allowed = sweep()
     # use-tree consumer files (single + multi-line) the inline sweep's ::NAME regex
