@@ -315,6 +315,10 @@ def emit(doc, by_dest):
             ut_allow[d] |= fs
         for d, es in e.items():
             ut_edits[d] += es
+    # grouped/nested (`use crate::{types::{X}, ...}`) and fn-local imports —
+    # invisible to both the ::NAME grep and use_tree_scan's candidate grep.
+    for d, fs in gen.grouped_use_scan("types", DEST).items():
+        ut_allow[d] |= fs
     # running types-group flat-name set (post-U 71 = union of FLAT)
     types_group = set()
     for names in FLAT.values():
