@@ -29,6 +29,7 @@ crates/oneiron/src/gate/tests.rs
 crates/oneiron/src/graph_fs.rs
 crates/oneiron/src/inbox/tests.rs
 crates/oneiron/src/ingest/tests.rs
+crates/oneiron/src/lens.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/maintain/tests.rs
 crates/oneiron/src/off_record/tests.rs

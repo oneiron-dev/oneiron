@@ -10,6 +10,7 @@ the ratified move lists, validating every row against the BASE checkout.
 Run from repo root. rustlex.py must be importable (same dir).
 """
 import os
+import re
 import sys
 import collections
 
@@ -87,6 +88,47 @@ def use_tree_scan(prefix, name_to_dest):
                 if new != old:
                     edits[dstm].append((f, old, new))
     return allowed, edits
+
+
+def grouped_use_scan(seg, name_to_dest):
+    """Allowed-membership sweep for import forms use_tree_scan can't see: a
+    `seg::{...}` group nested inside `use crate::{...}` / `use oneiron::{...}`
+    (single or multi-line) and fn-local use statements. use_tree_scan's
+    candidate grep needs the literal `crate::types::`, which a grouped head
+    like `use crate::{types::{X}, io::Y}` never contains — those consumers
+    were silently dropped from `## allowed` (T1: lens.rs, code_run/tests.rs,
+    engine_executor/tests.rs, sync/window/tests.rs, receipt_*.rs).
+    Allowed-only by design: every such rewrite is a use-tree split,
+    gate-verified via check C, so no edit rows are emitted.
+    Returns allowed[dest] -> set(files)."""
+    import subprocess
+    allowed = collections.defaultdict(set)
+    p = subprocess.run(["git", "-C", ROOT, "grep", "-l", "-I", "-E",
+                        seg + r"\s*::", BASE_REV, "--", "*.rs"],
+                       capture_output=True, text=True)
+    cand = [ln.split(":", 1)[1] for ln in p.stdout.splitlines() if ":" in ln]
+    grp = re.compile(seg + r"\s*::\s*\{([^{}]*)\}")
+    one = re.compile(seg + r"\s*::\s*([A-Za-z_]\w*)\b(?!\s*::)")
+    for f in cand:
+        txt = _git_show_base(f)
+        if txt is None:
+            continue
+        masked = R.mask(txt)
+        for stmt in re.findall(r"\buse\s[^;]*;", masked):
+            if not re.match(r"use\s+(?:crate|oneiron)\b", stmt.strip()):
+                continue
+            if seg + "::" not in re.sub(r"\s+", "", stmt):
+                continue
+            names = set()
+            for m in grp.finditer(stmt):
+                names.update(x.strip().split(" as ")[0].strip()
+                             for x in m.group(1).split(","))
+            for m in one.finditer(stmt):
+                names.add(m.group(1))
+            for n in names:
+                if n in name_to_dest:
+                    allowed[name_to_dest[n]].add(f)
+    return allowed
 
 # --- stage specs ----------------------------------------------------------
 # move entry: (kind, name, cfg)  kind in {method, fn, struct, enum, type, const,

@@ -14,6 +14,7 @@ crates/oneiron/src/batch/tests.rs
 crates/oneiron/src/blob_artifact.rs
 crates/oneiron/src/bm25/tests.rs
 crates/oneiron/src/code_run.rs
+crates/oneiron/src/code_run/tests.rs
 crates/oneiron/src/codebase/tests.rs
 crates/oneiron/src/companion.rs
 crates/oneiron/src/companion/tests.rs
