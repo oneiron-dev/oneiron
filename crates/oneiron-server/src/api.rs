@@ -4137,7 +4137,7 @@ fn companion_profile_drift_anchors(
     previous_source_revision_ids: &[oneiron::EntityId],
     selected_source_revision_ids: &[oneiron::EntityId],
 ) -> Vec<CompanionProfileDriftAnchor> {
-    oneiron::types::psych_profile::psych_mirror_drift_anchor_events(
+    oneiron::psych_profile::psych_mirror_drift_anchor_events(
         previous_source_revision_ids,
         selected_source_revision_ids,
     )

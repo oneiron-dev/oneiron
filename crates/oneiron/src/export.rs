@@ -2,15 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::claim::ClaimLifecycleStatus;
+use crate::companion::{
+    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
+    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
+};
 use crate::error::{Error, Result};
 use crate::serialize::{WHOLE_VAULT_EXPORT_SERIALIZER, WHOLE_VAULT_EXPORT_SERIALIZER_VERSION};
 use crate::store::{
     DB_MANIFEST, DB_MANIFEST_VERSION, DbManifestEntry, MAX_DBS, STORAGE_ABI_VERSION,
     STORAGE_SCHEMA_VERSION,
-};
-use crate::types::{
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionRecord, CompanionRecordKey, CompanionRecordKind, CompanionRegister, CompanionScope,
 };
 
 pub const EXPORT_MANIFEST_ARTIFACT_NAME: &str = "manifest.json";
@@ -444,9 +444,8 @@ impl From<DbManifestEntry> for ExportDbManifestEntry {
 mod tests {
     use super::*;
     use crate::claim::{ClaimApprovalStatus, ClaimSource};
-    use crate::types::{
-        CompanionProvenance, EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance,
-    };
+    use crate::companion::CompanionProvenance;
+    use crate::types::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
     use rmpv::Value;
 
     fn entity(seed: u8) -> EntityId {

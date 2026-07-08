@@ -2126,7 +2126,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     let persona_fields = HashMap::from([
         (
             "schema_version".to_owned(),
-            serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION),
         ),
         ("kind".to_owned(), Value::String("persona".to_owned())),
         ("scope".to_owned(), serde_json::json!({ "kind": "neutral" })),
@@ -2160,7 +2160,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
     let relationship_fields = HashMap::from([
         (
             "schema_version".to_owned(),
-            serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),
+            serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION),
         ),
         ("kind".to_owned(), Value::String("relationship".to_owned())),
         (
@@ -2263,7 +2263,7 @@ fn companion_register_records_serialize_as_first_class_export_group() {
         serde_json::from_slice(&serialize_pack(&pack, &cfg_full)).expect("json parse");
     assert_eq!(
         full["companion_records"][0]["schema_version"],
-        serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)
+        serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
     );
     assert!(full["companion_records"][0].get("provenance").is_some());
     assert_eq!(
@@ -2549,7 +2549,7 @@ fn test_group_labels_sparse_ids() {
     assert_eq!(psych_profile.title, "Psych Profiles");
     assert_eq!(
         fields_for_profile(ENTITY_TYPE_PSYCH_PROFILE, FieldProfile::Minimal),
-        crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
+        crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
     );
 
     // Types outside the known set should fall back to OTHER_GROUP_LABELS.

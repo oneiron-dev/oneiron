@@ -2,10 +2,11 @@ use super::*;
 use rmpv::Value;
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::types::{
+use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    EdgeActorClass, EdgeKind, Vad, VaultConfig, encode_companion_record_body,
+    encode_companion_record_body,
 };
+use crate::types::{EdgeActorClass, EdgeKind, Vad, VaultConfig};
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();

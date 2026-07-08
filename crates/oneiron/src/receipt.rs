@@ -10,6 +10,13 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::companion::{
+    ENTITY_TYPE_COMPANION_REGISTER,
+    {
+        CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
+        decode_companion_record_body,
+    },
+};
 use crate::counterparty_contact::CounterpartyContactRecord;
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
@@ -24,13 +31,8 @@ use crate::store::{
     PendingGateConsentRecord,
 };
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
-    EiriMemoryBoard, EntityId,
-    companion::{
-        CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
-        decode_companion_record_body,
-    },
+    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EiriMemoryBoard, EntityId,
 };
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;

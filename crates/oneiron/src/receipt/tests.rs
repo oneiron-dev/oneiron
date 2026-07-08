@@ -2,6 +2,9 @@ use super::*;
 use crate::access_grant::AccessGrant;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::companion::{
+    CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
+};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
@@ -11,9 +14,6 @@ use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::types::{
     ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
     WriteEnvelope, WriteProvenance,
-    companion::{
-        CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
-    },
 };
 
 fn test_config() -> VaultConfig {

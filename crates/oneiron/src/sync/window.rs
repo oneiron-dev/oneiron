@@ -24,13 +24,14 @@ use super::schema::create_window_doc;
 use super::types::WindowKey;
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EdgeValueFields, EntityMetadataHeader};
+use crate::companion::{
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
+};
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_COMPANION_REGISTER,
-    ENTITY_TYPE_POLICY_MANIFEST, EntityId, decode_companion_record_body,
-    decode_edge_value_for_kind,
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, EntityId, decode_edge_value_for_kind,
 };
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 

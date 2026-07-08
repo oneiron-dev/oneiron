@@ -22,6 +22,10 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimLifecycleStatus, restamp_federated_claim_source, validate_claim_body_and_decode,
 };
+use crate::companion::{
+    CompanionExportClassification, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
+    decode_companion_record_body,
+};
 use crate::error::{
     Error, Result, SyncEngineContext, SyncProtocolValidation,
     SyncSelectorValidation as SelectorError,
@@ -31,10 +35,8 @@ use crate::federation::{
     sign_guest_share_envelope,
 };
 use crate::types::{
-    CompanionExportClassification, CompanionScope, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM,
-    ENTITY_TYPE_COMPANION_REGISTER, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_WORLD, EdgeKind, EntityId, LocalWorldId, TypeByteBand, band_of,
-    decode_companion_record_body,
 };
 
 use super::bridge::parse_edge_key;
