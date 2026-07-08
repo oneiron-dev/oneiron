@@ -1233,9 +1233,11 @@ mod tests {
             ClaimLifecycleStatus::Superseded => record
                 .lifecycle_events
                 .push(crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),
-            ClaimLifecycleStatus::Retracted => record.lifecycle_events.push(
-                crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),
-            ),
+            ClaimLifecycleStatus::Retracted => {
+                record.lifecycle_events.push(
+                    crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),
+                );
+            }
         }
         encode_companion_record_body(&record).unwrap()
     }
