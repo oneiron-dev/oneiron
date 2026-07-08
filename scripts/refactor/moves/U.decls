@@ -13,12 +13,15 @@ crates/oneiron/src/context_pack.rs
 crates/oneiron/src/export.rs
 crates/oneiron/src/lib.rs
 crates/oneiron/src/persona_snapshot.rs
+crates/oneiron/src/persona_snapshot/tests.rs
 crates/oneiron/src/psych_profile.rs
 crates/oneiron/src/receipt.rs
 crates/oneiron/src/serialize.rs
+crates/oneiron/src/serialize/tests.rs
 crates/oneiron/src/store.rs
 crates/oneiron/src/sync/bridge.rs
 crates/oneiron/src/sync/selector.rs
+crates/oneiron/src/sync/selector/tests.rs
 crates/oneiron/src/sync/window.rs
 crates/oneiron/src/types.rs
 crates/oneiron/src/vault.rs
@@ -42,21 +45,20 @@ crates/oneiron/src/batch.rs	use crate::types::companion::{CompanionLifecycleEven
 crates/oneiron/src/companion.rs	if bytes.len() != super::ENTITY_ID_LEN {	if bytes.len() != crate::types::ENTITY_ID_LEN {
 crates/oneiron/src/companion.rs	let mut arr = [0_u8; super::ENTITY_ID_LEN];	let mut arr = [0_u8; crate::types::ENTITY_ID_LEN];
 crates/oneiron/src/companion.rs	pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = super::TYPE_BYTE_BAND_COMPANION_START;	pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::types::TYPE_BYTE_BAND_COMPANION_START;
-crates/oneiron/src/companion.rs	use super::*;	use crate::types::*;
 crates/oneiron/src/companion.rs	use super::{EdgeActorClass, EntityId, WriteEnvelope};	use crate::types::{EdgeActorClass, EntityId, WriteEnvelope};
 crates/oneiron/src/context_pack.rs	use crate::types::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};	use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 crates/oneiron/src/persona_snapshot.rs	let crate::types::companion::CompanionSubject::Relationship {	let crate::companion::CompanionSubject::Relationship {
-crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{	use crate::companion::{
+crates/oneiron/src/persona_snapshot/tests.rs	use crate::types::companion::{	use crate::companion::{
 crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};	use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
-crates/oneiron/src/psych_profile.rs	use super::*;	use crate::types::*;
 crates/oneiron/src/psych_profile.rs	use super::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};	use crate::types::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};
 crates/oneiron/src/serialize.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELDS_FULL	crate::psych_profile::PSYCH_PROFILE_FIELDS_FULL
 crates/oneiron/src/serialize.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL	crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
 crates/oneiron/src/serialize.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELDS_STANDARD	crate::psych_profile::PSYCH_PROFILE_FIELDS_STANDARD
-crates/oneiron/src/serialize.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
-crates/oneiron/src/serialize.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION),
-crates/oneiron/src/sync/selector.rs	.push(crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),	.push(crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),
-crates/oneiron/src/sync/selector.rs	crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),	crate::companion::CompanionLifecycleEvent::retired(1_772_400_000),
+crates/oneiron/src/serialize/tests.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION)	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION)
+crates/oneiron/src/serialize/tests.rs	serde_json::json!(crate::types::COMPANION_RECORD_SCHEMA_VERSION),	serde_json::json!(crate::companion::COMPANION_RECORD_SCHEMA_VERSION),
+crates/oneiron/src/serialize/tests.rs	crate::types::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL	crate::psych_profile::PSYCH_PROFILE_FIELDS_MINIMAL
+crates/oneiron/src/sync/selector/tests.rs	.push(crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),	.push(crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000)),
+crates/oneiron/src/sync/selector/tests.rs	crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000),	crate::companion::CompanionLifecycleEvent::retired(1_772_400_000),
 crates/oneiron/src/vault.rs	crate::types::companion::CompanionLifecycleEvent::created(learned_at),	crate::companion::CompanionLifecycleEvent::created(learned_at),
 crates/oneiron/src/vault.rs	use crate::types::companion::CompanionLifecycleEvent;	use crate::companion::CompanionLifecycleEvent;
 
