@@ -662,12 +662,12 @@ def check8(root, base, tsv, decls):
 # ---- check F: file relocation (B1 git mv) --------------------------------
 
 # source-relative constructs rebind against the new directory while staying
-# byte-identical: include_str!/include_bytes! paths, #[path] mounts, and
-# declaration-only `mod x;` rows can compile green against the WRONG file if
-# one exists at the destination-relative location. Such files need an
+# byte-identical: include!/include_str!/include_bytes! paths, #[path] mounts,
+# and declaration-only `mod x;` rows can compile green against the WRONG file
+# if one exists at the destination-relative location. Such files need an
 # edit-based stage, not a filemove.
 _RELOC_UNSAFE = re.compile(
-    r"\binclude_(?:str|bytes)!|#\s*\[\s*path\b"
+    r"\binclude(?:_str|_bytes)?!|#\s*\[\s*path\b"
     r"|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;", re.M)
 
 
