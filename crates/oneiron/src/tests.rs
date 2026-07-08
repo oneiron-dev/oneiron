@@ -6882,7 +6882,7 @@ fn structural_kind_registration_vets_bands_and_collisions_transactionally() -> R
 
 #[test]
 fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()> {
-    use crate::types::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
+    use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
 
     fn legacy_row(prefix: &str, pack: &str) -> Vec<u8> {
         let mut raw = vec![1, 64, 2, 2];

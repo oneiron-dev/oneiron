@@ -9,31 +9,7 @@ use uuid::Uuid;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-
-#[path = "companion.rs"]
-pub mod companion;
-pub use companion::{
-    COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, COMPANION_REGISTER_PACK_ID,
-    COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_JOB_KIND, COMPANION_TASK_PAYLOAD_KEYS,
-    COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ClaimCompanionTask, ClaimCompanionTaskOutcome,
-    CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
-    CompanionProvenance, CompanionQueue, CompanionRecord, CompanionRecordKey, CompanionRecordKind,
-    CompanionRegister, CompanionScope, CompanionScopeResolution, CompanionScopeResolutionSource,
-    CompanionSubject, CompanionTask, CompanionTaskKind, CompanionTaskStatus, CompleteCompanionTask,
-    CompleteCompanionTaskOutcome, ENTITY_TYPE_COMPANION_REGISTER, EndCompanionRelationship,
-    EndCompanionRelationshipOutcome, EnqueueCompanionTask, EnqueueCompanionTaskOutcome,
-    FailCompanionTask, FailCompanionTaskOutcome, RetryCompanionTask, RetryCompanionTaskOutcome,
-    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
-    decode_companion_task_payload, encode_companion_record_body, encode_companion_task_payload,
-};
-
-#[path = "psych_profile.rs"]
-pub mod psych_profile;
-pub use psych_profile::{
-    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState,
-    decode_psych_profile_body, encode_psych_profile_body,
-};
+use crate::companion::{COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER};
 
 pub(crate) const ENTITY_ID_LEN: usize = 16;
 pub(crate) const EDGE_KEY_LEN: usize = 33;

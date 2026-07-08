@@ -30,11 +30,13 @@ use super::queue::{SyncQueue, scrub_receiver_outbox_on_remote_hard_delete_in_txn
 use super::quota;
 use super::types::LocalUpdate;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::companion::{
+    CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
+};
 use crate::store::Store;
 use crate::types::{
-    CompanionExportClassification, DecodedEdgeValue, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_COMPANION_REGISTER, EdgeKind, EdgeProvenanceFlags, EntityId, Vad,
-    decode_companion_record_body, decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    DecodedEdgeValue, ENTITY_TYPE_AUTHORITY_LOG, EdgeKind, EdgeProvenanceFlags, EntityId, Vad,
+    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::{Error, Result, SyncProtocolValidation, Vault};
 

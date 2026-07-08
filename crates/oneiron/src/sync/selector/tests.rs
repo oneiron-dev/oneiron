@@ -12,6 +12,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     decode_claim_body, encode_claim_body,
 };
+use crate::companion::{
+    CompanionProvenance, CompanionRecord, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
+    encode_companion_record_body,
+};
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body, encode_guest_share_envelope, encode_guest_share_envelope_body,
@@ -24,9 +28,8 @@ use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::loro_support::map_get_bytes;
 use crate::types::{
-    CompanionProvenance, CompanionRecord, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
     ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
-    EdgeActorClass, TimeRange, Vad, encode_companion_record_body,
+    EdgeActorClass, TimeRange, Vad,
 };
 
 fn entity_id(byte: u8) -> EntityId {
@@ -167,11 +170,11 @@ fn companion_record_body_in_scope_with_lifecycle(
             record = record.created_at(1_772_400_000).unwrap();
         }
         ClaimLifecycleStatus::Superseded => {
-            let ev = crate::types::companion::CompanionLifecycleEvent::superseded(1_772_400_000);
+            let ev = crate::companion::CompanionLifecycleEvent::superseded(1_772_400_000);
             record.lifecycle_events.push(ev);
         }
         ClaimLifecycleStatus::Retracted => {
-            let ev = crate::types::companion::CompanionLifecycleEvent::retired(1_772_400_000);
+            let ev = crate::companion::CompanionLifecycleEvent::retired(1_772_400_000);
             record.lifecycle_events.push(ev);
         }
     }
