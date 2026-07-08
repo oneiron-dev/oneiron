@@ -1260,6 +1260,10 @@ exit 0
 #>
 #>_ERRLIT = re.compile(r'Error::(?:Invalid\w+Body|InvariantViolation|CorruptedIndex|Invalid\w+|MaintenanceKindNotWritable)\(\s*"(?:\\.|[^"\\])*"')
 #>
+#># scaffolding lines that legitimately remain after every item is excised from a
+#># deleted file (check X): module doc, imports, attrs, mod decls, mod-tests shell braces.
+#>_SCAFFOLD = re.compile(r'^(//!|use\s|pub\s+use\s|pub\(crate\)\s+use\s|#!?\[|(pub(\([^)]*\))?\s+)?mod\b|\})')
+#>
 #>
 #>def _strip_line_comments(text):
 #>    return "\n".join(re.sub(r"//.*$", "", ln) for ln in text.split("\n"))
@@ -1446,10 +1450,24 @@ exit 0
 #>            for (csrc, ca, cb, cdst) in _parse_comments(sdecls):
 #>                if csrc == src:
 #>                    drop.update(range(ca - 1, cb))
-#>        residue = [ln for i, ln in enumerate(doc.lines) if i not in drop and ln.strip()]
+#>        # excise whole `use` items (multi-line import trees) and SAFE `mod` items: the
+#>        # `mod tests` shell (its fns were moved individually above) + declaration-only
+#>        # `#[path] pub mod` mounts. A non-tests mod WITH a body is NOT auto-excised — its
+#>        # items must be moved individually or they surface as residue (MINOR: prevents a
+#>        # future missed mod's contents being silently swallowed).
+#>        for it in R.enumerate_items(doc):
+#>            if it["kind"] == "use":
+#>                drop.update(range(it["lead_start"], it["end_line"] + 1))
+#>            elif it["kind"] == "mod" and (it["name"] == "tests" or it["body_open_line"] is None):
+#>                drop.update(range(it["lead_start"], it["end_line"] + 1))
+#>        # residue must be SCAFFOLDING only (D9.4 #3): module doc, imports, attrs, mod
+#>        # decls, and the emptied `mod tests { use super::*; }` shell all vanish with the
+#>        # deleted file — they are not items. Anything else = an item that wasn't moved.
+#>        residue = [ln.strip() for i, ln in enumerate(doc.lines)
+#>                   if i not in drop and ln.strip() and not _SCAFFOLD.match(ln.strip())]
 #>        if residue:
 #>            raise Violation("X", f"src-exhaustion FAIL: {src} has {len(residue)} "
-#>                               f"non-excised line(s), first: {residue[0]!r}")
+#>                               f"non-scaffolding line(s) — item not moved, first: {residue[0]!r}")
 #>        n += 1
 #>    return f"OK check X (src-exhaustion): {n} src file(s) fully accounted"
 #>

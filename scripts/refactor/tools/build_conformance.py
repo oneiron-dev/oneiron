@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Assemble scripts/refactor/conformance.sh from the tested rustlex.py + driver.py.
-The python payload (checks 1-6) is embedded verbatim; bash adds the check-7 gate."""
+"""Assemble ../conformance.sh from THIS directory's rustlex.py + driver.py (the
+committed source of truth — NOT the ephemeral job tmp). The python payload is
+embedded verbatim; bash adds the check-7 gate.
+
+Usage: build_conformance.py           # (re)build ../conformance.sh
+       build_conformance.py --check   # assert the shipped script is fresh (else exit 1)
+
+`--check` closes the D-2 class: it bit twice (a stale conformance.sh silently ran an
+old driver). Wire it into the gate / a selftest so drift hard-fails."""
 import os
+import sys
 
-TMP = "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp"
-OUT = "/Volumes/Cinema/pink-worktrees/t1443/scripts/refactor/conformance.sh"
+SELF = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.normpath(os.path.join(SELF, "..", "conformance.sh"))
 
-rustlex = open(os.path.join(TMP, "rustlex.py")).read()
-driver = open(os.path.join(TMP, "driver.py")).read()
+rustlex = open(os.path.join(SELF, "rustlex.py")).read()
+driver = open(os.path.join(SELF, "driver.py")).read()
 
 # strip rustlex CLI trailer (keep only library code)
 i = rustlex.index("\ndef main(argv):")
@@ -93,8 +101,28 @@ __PAYLOAD__
 pref = "\n".join("#>" + ln for ln in payload.split("\n"))
 script = BASH.replace("__PAYLOAD__", pref)
 
-os.makedirs(os.path.dirname(OUT), exist_ok=True)
-with open(OUT, "w") as f:
-    f.write(script)
-os.chmod(OUT, 0o755)
-print(f"wrote {OUT} ({len(script)} bytes, payload {payload.count(chr(10))} lines)")
+
+def _embedded_payload(text):
+    lines = text.split("\n")
+    try:
+        a = lines.index("#PYEOF_BEGIN") + 1
+        b = lines.index("#PYEOF_END")
+    except ValueError:
+        return None
+    return "\n".join(ln[2:] if ln.startswith("#>") else ln for ln in lines[a:b])
+
+
+if __name__ == "__main__":
+    if "--check" in sys.argv[1:]:
+        cur = open(OUT).read() if os.path.exists(OUT) else ""
+        if _embedded_payload(cur) != payload:
+            print(f"STALE: {OUT} does not embed the current rustlex.py+driver.py — "
+                  f"run build_conformance.py and commit.", file=sys.stderr)
+            sys.exit(1)
+        print("FRESH: conformance.sh embeds the current rustlex+driver payload")
+        sys.exit(0)
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "w") as f:
+        f.write(script)
+    os.chmod(OUT, 0o755)
+    print(f"wrote {OUT} ({len(script)} bytes, payload {payload.count(chr(10))} lines)")

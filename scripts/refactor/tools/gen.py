@@ -60,10 +60,18 @@ def use_tree_scan(prefix, name_to_dest):
             h = R.logical_head(doc, it["sig_line"])
             if prefix_canon + " ::" not in h:
                 continue
+            # the module path the leaf names hang off (up to '{' or minus last segment).
+            # ONLY direct children of `prefix` are flat-name consumers; a NESTED path
+            # like `crate::types::companion::{X}` belongs to the nested sweep — mishandling
+            # it produced the D-1 `crate::companion::companion::` regression.
             if "{" in h:
+                mod_path = R.canon(h[4:h.index("{")]).rstrip(": ").strip()
                 names = [x.strip() for x in h[h.index("{") + 1:h.rindex("}")].split(",")]
             else:
+                mod_path = R.canon(h[4:].rsplit("::", 1)[0]).strip()
                 names = [h.split()[-1]]
+            if mod_path != prefix_canon:
+                continue
             names = [n for n in names if n and n not in ("*",)]
             hit = [n for n in names if n in name_to_dest]
             if not hit:

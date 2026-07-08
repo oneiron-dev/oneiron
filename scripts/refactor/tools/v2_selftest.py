@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Synthetic proof of the v2 conformance checks (edit / check8 / comment /
 flat-name / HEAD-src removal / exhaustion / filemove) on constructed trees."""
+import os
 import sys
-sys.path.insert(0, "/Users/olety/.claude-pink/jobs/0b1ef39f/tmp")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rustlex as R
 import driver as D
 
@@ -188,6 +189,13 @@ def run():
 
 
 if __name__ == "__main__":
+    import subprocess
+    # D-2 freshness guard: the shipped conformance.sh must embed the CURRENT
+    # rustlex.py + driver.py (a stale gate silently ran an old driver — twice).
+    print("### freshness: conformance.sh embeds current rustlex+driver")
+    fr = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__),
+                        "build_conformance.py"), "--check"])
     print("### v2 synthetic (move-to-new-file + insertion + edit + comment + flat-name):")
-    ok = run()
+    ok = run() and fr.returncode == 0
     print("\nRESULT:", "PASS" if ok else "PROBLEM")
+    sys.exit(0 if ok else 1)

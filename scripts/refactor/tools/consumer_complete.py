@@ -71,7 +71,19 @@ def inline_consumer_files(prefixes, names):
     return files
 
 
-def check(stage, prefixes, name_to_dest, src):
+def nested_consumer_files(nested_prefixes):
+    """files with a bare `PFX::submodule::` path — catches NON-flat nested consumers
+    (D-3: e.g. oneiron::types::psych_profile::psych_mirror_drift_anchor_events, whose
+    leaf name is invisible to the flat-name scan)."""
+    files = set()
+    for np in nested_prefixes:
+        p = subprocess.run(["git", "-C", ROOT, "grep", "-l", "-I", "-F", np, BASE, "--", "*.rs"],
+                           capture_output=True, text=True)
+        files |= {ln.split(":", 1)[1] for ln in p.stdout.splitlines() if ":" in ln}
+    return files
+
+
+def check(stage, prefixes, name_to_dest, src, nested_prefixes=()):
     names = list(name_to_dest)
     allowed = allowed_of(stage)
     consumers = set()
@@ -82,6 +94,8 @@ def check(stage, prefixes, name_to_dest, src):
         a, _ = gen.use_tree_scan(pfx, name_to_dest)
         for dstm, fs in a.items():
             consumers |= fs
+    # nested-path (non-flat) consumers
+    consumers |= nested_consumer_files(nested_prefixes)
     consumers.discard(src)
     consumers.discard("crates/oneiron/src/lib.rs")
     missing = sorted(c for c in consumers if c not in allowed)
@@ -122,7 +136,10 @@ def main(stages):
                         psych = [x.strip() for x in h[h.index("{")+1:h.rindex("}")].split(",")]
             n2d = {n: "companion" for n in comp}
             n2d.update({n: "psych_profile" for n in psych})
-            ok &= check("U", ["crate::types", "oneiron::types"], n2d, "crates/oneiron/src/types.rs")
+            nested = ["crate::types::companion::", "crate::types::psych_profile::",
+                      "oneiron::types::companion::", "oneiron::types::psych_profile::"]
+            ok &= check("U", ["crate::types", "oneiron::types"], n2d,
+                        "crates/oneiron/src/types.rs", nested_prefixes=nested)
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

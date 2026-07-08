@@ -661,11 +661,15 @@ def check_exhaustion(root, base, decls):
             for (csrc, ca, cb, cdst) in _parse_comments(sdecls):
                 if csrc == src:
                     drop.update(range(ca - 1, cb))
-        # excise whole `use` items (multi-line import trees) + `mod` items (the emptied
-        # `mod tests` shell, and any surviving `#[path] pub mod` mounts) — they vanish
-        # with the deleted file and their continuation lines aren't per-line scaffold.
+        # excise whole `use` items (multi-line import trees) and SAFE `mod` items: the
+        # `mod tests` shell (its fns were moved individually above) + declaration-only
+        # `#[path] pub mod` mounts. A non-tests mod WITH a body is NOT auto-excised — its
+        # items must be moved individually or they surface as residue (MINOR: prevents a
+        # future missed mod's contents being silently swallowed).
         for it in R.enumerate_items(doc):
-            if it["kind"] in ("use", "mod"):
+            if it["kind"] == "use":
+                drop.update(range(it["lead_start"], it["end_line"] + 1))
+            elif it["kind"] == "mod" and (it["name"] == "tests" or it["body_open_line"] is None):
                 drop.update(range(it["lead_start"], it["end_line"] + 1))
         # residue must be SCAFFOLDING only (D9.4 #3): module doc, imports, attrs, mod
         # decls, and the emptied `mod tests { use super::*; }` shell all vanish with the

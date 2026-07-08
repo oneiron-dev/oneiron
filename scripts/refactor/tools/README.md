@@ -22,3 +22,24 @@ reuse elsewhere. Run with `RUSTFMT_BIN=$(rustup which rustfmt)` (or any rustfmt 
 **Regenerate everything from base:** `gen_s1.py && gen_t.py && gen_v.py && gen_u.py`
 then B1/tests-s2-export (inline snippets in the state doc), then `build_conformance.py`,
 then `handoff_v2.py`. See `../../../fable-queue/oneiron/handoffs/S0-CONTINUATION-STATE.md`.
+
+## Freshness (D-2 guard)
+
+`conformance.sh` embeds `rustlex.py` + `driver.py` as a payload. **After ANY edit to
+either, re-run `build_conformance.py`** or the shipped gate silently runs the old code.
+`build_conformance.py --check` asserts freshness (exit 1 if stale) and is wired into
+`v2_selftest.py`.
+
+## check-X precondition (review round 2)
+
+`check_exhaustion` (T12) auto-excises `use` items + the `mod tests` shell + declaration-
+only `#[path]` mounts. A **non-`tests` mod WITH a body is NOT auto-excised** — its items
+must be moved individually (manifest rows) or they surface as residue and fail the check.
+For a future file whose dissolution moves a bodied non-tests submodule, add that
+submodule's items as manifest rows; do not rely on shell excision.
+
+## Consumer-completeness (H3)
+
+`consumer_complete.py` asserts every moved pub/pub(crate) item's cross-module consumers —
+inline paths, brace-nested + multi-line use-trees, AND nested-module paths (non-flat
+names) — appear in the stage's `## allowed`. Run at every package-cut (T/V/U).

@@ -47,7 +47,6 @@ crates/oneiron/src/companion.rs	use super::{EdgeActorClass, EntityId, WriteEnvel
 crates/oneiron/src/context_pack.rs	use crate::types::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};	use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
 crates/oneiron/src/persona_snapshot.rs	let crate::types::companion::CompanionSubject::Relationship {	let crate::companion::CompanionSubject::Relationship {
 crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{	use crate::companion::{
-crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};	use crate::companion::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 crates/oneiron/src/persona_snapshot.rs	use crate::types::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};	use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 crates/oneiron/src/psych_profile.rs	use super::*;	use crate::types::*;
 crates/oneiron/src/psych_profile.rs	use super::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};	use crate::types::{ENTITY_TYPE_PSYCH_PROFILE, EntityId, TimeRange};
