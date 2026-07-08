@@ -1480,9 +1480,31 @@ exit 0
 #>
 #># ---- check F: file relocation (B1 git mv) --------------------------------
 #>
-#>def checkF(root, base, decls):
+#># source-relative constructs rebind against the new directory while staying
+#># byte-identical: include_str!/include_bytes! paths, #[path] mounts, and
+#># declaration-only `mod x;` rows can compile green against the WRONG file if
+#># one exists at the destination-relative location. Such files need an
+#># edit-based stage, not a filemove.
+#>_RELOC_UNSAFE = re.compile(
+#>    r"\binclude_(?:str|bytes)!|#\s*\[\s*path\b"
+#>    r"|^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;", re.M)
+#>
+#>
+#>def checkF(root, base, decls, tsv):
 #>    n = 0
+#>    moved = set(r["src_file"] for r in tsv) | set(r["dst_file"] for r in tsv)
+#>    edited = ({f for (f, _, _) in _parse_edits(decls)}
+#>              | {f for (f, _, _) in _parse_fragedits(decls)})
 #>    for src, dst in _parse_filemoves(decls):
+#>        # no overlap with item-move or edit rows: this check proves dst equals
+#>        # src-at-base byte-for-byte, so an item ALSO moved out of (or edited
+#>        # in) the same file would survive in dst silently duplicated — the
+#>        # TSV absence check runs against the deleted src path and trivially
+#>        # passes.
+#>        for p in (src, dst):
+#>            if p in moved or p in edited:
+#>                raise Violation("F", f"filemove path overlaps item-move/edit "
+#>                                     f"rows (must be a pure relocation): {p}")
 #>        bsrc = base_file(root, base, src)
 #>        hdst = head_file(root, dst)
 #>        hsrc = head_file(root, src)
@@ -1498,6 +1520,11 @@ exit 0
 #>        if bsrc != hdst:
 #>            raise Violation("F", f"filemove content changed: {src} != {dst} "
 #>                               f"(relocation must be byte-identical)")
+#>        m = _RELOC_UNSAFE.search(R.mask(bsrc))
+#>        if m:
+#>            raise Violation("F", f"filemove src contains relocation-unsafe "
+#>                                 f"construct {m.group(0)!r} (include_str!/"
+#>                                 f"include_bytes!/#[path]/`mod x;`): {src}")
 #>        n += 1
 #>    return f"OK check F (file relocation): {n} file(s) relocated byte-identically"
 #>
@@ -1629,7 +1656,7 @@ exit 0
 #>        check6(root, base, decls),
 #>        check8(root, base, tsv, decls),
 #>        checkC(root, base, tsv, decls),
-#>        checkF(root, base, decls),
+#>        checkF(root, base, decls, tsv),
 #>        check_exhaustion(root, base, decls),
 #>    ]
 #>    return results
