@@ -242,8 +242,8 @@ crates/oneiron/tests/sync_edge_kind_gating.rs	use oneiron::types::ENTITY_TYPE_PO
 ## frag-edit
 
 ## comment
-crates/oneiron/src/types.rs:96-100	crates/oneiron/src/registry.rs
-crates/oneiron/src/types.rs:107-109	crates/oneiron/src/registry.rs
+crates/oneiron/src/types.rs:72-76	crates/oneiron/src/registry.rs
+crates/oneiron/src/types.rs:83-85	crates/oneiron/src/registry.rs
 
 ## add
 crates/oneiron/src/registry.rs	//! Entity-type registry: type bytes, bands, classification, the registry array + lookups/validators.
