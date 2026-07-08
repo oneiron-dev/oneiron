@@ -58,9 +58,11 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn production_file(rel: &str) -> bool {
+    // `<module>/tests.rs` siblings are test mounts (`#[cfg(test)] mod tests;`),
+    // never production code — same standing as an inline `mod tests` body.
     !rel.contains("/tests/")
         && !rel.contains("/benches/")
-        && !rel.ends_with("/src/tests.rs")
+        && !rel.ends_with("/tests.rs")
         && !rel.ends_with("/src/tests_bug.rs")
 }
 
