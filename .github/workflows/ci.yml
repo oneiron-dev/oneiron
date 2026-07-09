@@ -10,10 +10,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings -Cdebuginfo=0"
 
-# A superseded PR push's in-flight run is pure spend — cancel it. Never
-# cancel main-push runs (record of truth).
+# A superseded PR push's in-flight run is pure spend — cancel it. Main
+# pushes get a per-sha group: never cancelled, never queued behind each
+# other on rapid merges.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Cost layout (2026-07-09): Rust jobs are gated off PRs whose diff can't
@@ -25,6 +26,11 @@ jobs:
   changes:
     name: Detect changed paths
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # paths-filter reads PR changed-files via the REST API — grant it
+    # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
     steps:
@@ -32,6 +38,9 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # docs/ops/** and the root skills pack are include_str!'d /
+          # compared by contract tests (ops_docs.rs, skills_pack.rs) —
+          # they are rust-relevant despite living outside crates/.
           filters: |
             rust:
               - 'crates/**'
@@ -43,6 +52,8 @@ jobs:
               - 'deny.toml'
               - '.config/nextest.toml'
               - '.github/workflows/ci.yml'
+              - 'docs/ops/**'
+              - 'oneiron.skills.md'
 
   fmt:
     name: Format
@@ -92,8 +103,9 @@ jobs:
     name: Test
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: changes
-    # Always on main pushes (record of truth); on PRs only for rust-relevant diffs.
-    if: github.event_name == 'push' || needs.changes.outputs.rust == 'true'
+    # Always on main pushes (record of truth) — always() keeps that true
+    # even if the detector job itself fails; on PRs only for rust diffs.
+    if: always() && (github.event_name == 'push' || needs.changes.outputs.rust == 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
