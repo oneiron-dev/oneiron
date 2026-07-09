@@ -26,7 +26,8 @@ DEP = {"T1": "S2 (U + B1 + deferred test-splits)", "T2": "T1", "T3": "T2", "T4":
        "V-channel_identity": "V-0 + tests-w1", "V-counterparty_contact": "V-0 + tests-w1",
        "V-authority": "V-0 + tests-w1", "V-claim": "V-0 + tests-w1",
        "V-companion": "V-0 + tests-s2-unmount", "V-affect": "V-0 + T3",
-       "V-provenance": "V-0 + T (before V-deletion)", "V-deletion": "V-0 + V-affect + V-provenance"}
+       "V-provenance": "V-0 + V-deletion (provenance-machinery visibility promotions land in V-deletion; this stage relocates the already-promoted items)",
+       "V-deletion": "V-0 + V-affect (carries the StoredProvenanceClaim/query-helper pub(crate) promotions — runs BEFORE V-provenance)"}
 SCOPE = {}
 for i in range(1, 12):
     SCOPE[f"T{i}"] = "Move the types.rs items below into their concept module, byte-identically, and re-point the declared consumers."
