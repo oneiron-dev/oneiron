@@ -621,7 +621,7 @@ fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
         kind,
         0.75,
         12_345,
-        Some(crate::types::Vad::NEUTRAL),
+        Some(crate::affect::Vad::NEUTRAL),
         None,
     )
     .unwrap();
@@ -725,7 +725,7 @@ fn one_1147_edge_value() -> Vec<u8> {
         crate::types::EdgeKind::Mentions,
         0.75,
         12_345,
-        Some(crate::types::Vad::NEUTRAL),
+        Some(crate::affect::Vad::NEUTRAL),
         None,
     )
     .unwrap()

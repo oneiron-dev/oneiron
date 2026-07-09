@@ -3,10 +3,11 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::affect::VadComponent;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::registry::{ENTITY_TYPE_FACET, TypeByteBand};
-use crate::types::{TemporalExpressionParseError, VadComponent};
+use crate::types::TemporalExpressionParseError;
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
