@@ -664,7 +664,7 @@ def apply_edits(text, edits):
     return "\n".join(lines)
 
 
-def edit_delta_ok(old, new):
+def _edit_delta_ok_core(old, new):
     """True iff old→new is a legal declared edit: every changed region is pure
     `::`-path text, a single string-literal token swapped for a string-literal
     token (relative include_str!/include_bytes! paths broken by a directory-depth
@@ -733,6 +733,22 @@ def edit_delta_ok(old, new):
     if not old_reg or not new_reg:
         return False
     return bool(_PATH_RE.match("".join(old_reg)) and _PATH_RE.match("".join(new_reg)))
+
+
+def edit_delta_ok(old, new):
+    """_edit_delta_ok_core, plus the comment-interior class: comment-atomic
+    lexing makes a `///` doctest line ONE token, so an interior path re-point
+    (the ForeignWorldId doctest frag-edit class) can never satisfy the token
+    rules on the raw line. When both sides carry the SAME comment marker,
+    validate the interiors under the identical strict rules instead — a
+    marker change (`///`→`//`) or any non-path interior delta still fails."""
+    if _edit_delta_ok_core(old, new):
+        return True
+    o, n = old.lstrip(), new.lstrip()
+    for pre in ("///", "//!", "//"):
+        if o.startswith(pre) and n.startswith(pre):
+            return _edit_delta_ok_core(o[len(pre):], n[len(pre):])
+    return False
 
 
 # ---------------------------------------------------------------------------
