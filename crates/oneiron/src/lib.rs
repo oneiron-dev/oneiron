@@ -22,6 +22,7 @@ pub mod code_sandbox;
 pub mod code_symbol;
 pub mod codebase;
 pub mod companion;
+pub mod config;
 pub mod context_pack;
 pub mod counterparty_contact;
 pub mod critic;
@@ -246,6 +247,9 @@ pub use crate::companion::{
     RetryCompanionTask, RetryCompanionTaskOutcome, companion_value_from_json,
     companion_value_to_json, decode_companion_record_body, decode_companion_task_payload,
     encode_companion_record_body, encode_companion_task_payload,
+};
+pub use crate::config::{
+    Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
 };
 pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
 pub use crate::counterparty_contact::{
@@ -607,15 +611,14 @@ pub use crate::tokenizer::{
     PackTokenizer, count_context_pack_tokens,
 };
 pub use crate::types::{
-    Bm25RankProfile, ContextEntity, ContextPack, ContextPackRetrievalBudget,
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
-    EmptyContext, EmptyReason, FieldProfile, HnswConfig, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
-    NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
-    PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
-    TextAnalyzerConfig, TextIndexOptions, TokenAllocation, UnprocessedItem, VaultConfig,
+    ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
+    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
+    EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
+    FieldProfile, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
+    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity,
+    SessionContext, Signal, TokenAllocation, UnprocessedItem,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
@@ -653,7 +656,7 @@ pub(crate) mod test_util {
     //! Shared test helpers. Centralized to avoid drift between per-module
     //! copies of `open_test_vault`. Each module keeps its own `test_config()`
     //! because configs diverge (map sizes, dimensions, embedding model).
-    use crate::types::VaultConfig;
+    use crate::config::VaultConfig;
     use crate::vault::Vault;
 
     /// Opens a temporary vault with the supplied config. Returns the

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::types::VaultConfig;
+use crate::config::VaultConfig;
 
 fn key(value: &str) -> WindowKey {
     WindowKey::new(value)

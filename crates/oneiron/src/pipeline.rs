@@ -464,7 +464,7 @@ pub struct PipelineBuilder<'a> {
     vault: &'a Vault,
     vector_search: Option<(Vec<f32>, usize)>,
     text_search: Option<(String, usize)>,
-    rank_profile: Option<crate::types::Bm25RankProfile>,
+    rank_profile: Option<crate::config::Bm25RankProfile>,
     phonetic_search: Option<Vec<String>>,
     temporal_search: Option<TemporalSearchConfig>,
     ppr_search: Option<(Vec<EntityId>, u32)>,
@@ -559,7 +559,7 @@ impl<'a> PipelineBuilder<'a> {
     /// validated fail-closed when the pipeline runs; an invalid
     /// parameter returns [`crate::Error::InvalidRankProfile`], even when
     /// no text search is configured.
-    pub fn rank_profile(mut self, profile: crate::types::Bm25RankProfile) -> Self {
+    pub fn rank_profile(mut self, profile: crate::config::Bm25RankProfile) -> Self {
         self.rank_profile = Some(profile);
         self
     }

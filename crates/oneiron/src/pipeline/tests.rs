@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use heed::types::Bytes;
 
-use crate::types::{HnswConfig, VaultConfig};
+use crate::config::{HnswConfig, VaultConfig};
 
 use super::*;
 
@@ -18,7 +18,7 @@ fn test_config() -> VaultConfig {
             ef_construction: 200,
             ef_search: 128,
         },
-        text_analyzer: crate::types::TextAnalyzerConfig::default(),
+        text_analyzer: crate::config::TextAnalyzerConfig::default(),
         dict_search_paths: Vec::new(),
         skip_text_index_manifest_check: false,
     }
@@ -1240,7 +1240,7 @@ fn retrieval_trace_fork_hash_changes_for_query_config_flags_weights_and_candidat
             .search_text("forkhash alpha", 10)
             .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
             .rank_profile(
-                crate::types::Bm25RankProfile::default()
+                crate::config::Bm25RankProfile::default()
                     .with_channel_weight(crate::analyzer::AnalyzerChannel::Surface, 0.5),
             )
             .limit(10),

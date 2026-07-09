@@ -191,7 +191,7 @@ pub fn persisted_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
 mod tests {
     use super::super::loro_support::{export_all_updates, map_get_bytes, map_insert_bytes};
     use super::*;
-    use crate::types::VaultConfig;
+    use crate::config::VaultConfig;
     use core::assert_matches;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {

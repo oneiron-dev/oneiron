@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::Vault;
+use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::bridge::Materializer;
@@ -9,7 +10,6 @@ use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{LoadedWindow, forward_rematerialize, reverse_rematerialize};
 use crate::temporal::TimeRange;
-use crate::types::VaultConfig;
 use loro::LoroDoc;
 
 /// `learned_at` inside the 2026-03 window used throughout.

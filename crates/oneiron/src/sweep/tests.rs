@@ -1,10 +1,10 @@
 use super::*;
+use crate::config::{HnswConfig, VaultConfig};
 use crate::deletion::{
     DeleteReason, HardEraseSweepExtras, RedactionScope, encode_hard_erase_sweep_job,
     encode_hard_erase_sweep_key,
 };
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, VaultConfig};
 #[cfg(feature = "sync")]
 use core::assert_matches;
 

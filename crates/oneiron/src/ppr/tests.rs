@@ -19,7 +19,7 @@ fn test_config() -> VaultConfig {
             ef_construction: 200,
             ef_search: 128,
         },
-        text_analyzer: crate::types::TextAnalyzerConfig::default(),
+        text_analyzer: crate::config::TextAnalyzerConfig::default(),
         dict_search_paths: Vec::new(),
         skip_text_index_manifest_check: false,
     }

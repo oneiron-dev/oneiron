@@ -119,7 +119,7 @@ fn backing_target_for(
 }
 
 fn test_vault() -> (tempfile::TempDir, crate::Vault) {
-    crate::test_util::open_test_vault_with(crate::types::VaultConfig::default())
+    crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
 }
 
 fn status() -> StatusDotAtom {

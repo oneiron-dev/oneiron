@@ -14,6 +14,7 @@ use loro::ExportMode;
 use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::LONG_INTERVAL_THRESHOLD_SECS;
+use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::store::{GRAPH_VERSION_KEY, Store, VECTOR_VERSION_KEY};
@@ -23,7 +24,6 @@ use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
 use crate::temporal::TimeRange;
-use crate::types::VaultConfig;
 
 /// 2026-03-15 00:00 UTC — matches `tests/sync_harness::T0`.
 const T0: u64 = 1_773_532_800;

@@ -55,6 +55,7 @@ use crate::companion::{
     EnqueueCompanionTaskOutcome, decode_companion_record_body, encode_companion_record_body,
     encode_companion_task_payload,
 };
+use crate::config::VaultConfig;
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyOptOutReason, counterparty_contact_index_key,
     counterparty_contact_index_key_for_record, decode_counterparty_contact_body,
@@ -110,7 +111,7 @@ use crate::store::{
 use crate::temporal::TimeRange;
 use crate::types::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, VaultConfig,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
 };
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
@@ -5806,7 +5807,7 @@ impl Vault {
         self.search_text_with_profile_and_telemetry(
             query,
             limit,
-            &crate::types::Bm25RankProfile::default(),
+            &crate::config::Bm25RankProfile::default(),
         )
     }
 
@@ -5820,7 +5821,7 @@ impl Vault {
         &self,
         query: &str,
         limit: usize,
-        profile: &crate::types::Bm25RankProfile,
+        profile: &crate::config::Bm25RankProfile,
     ) -> Result<Vec<ScoredEntity>> {
         Ok(self
             .search_text_with_profile_and_telemetry(query, limit, profile)?
@@ -5834,7 +5835,7 @@ impl Vault {
         &self,
         query: &str,
         limit: usize,
-        profile: &crate::types::Bm25RankProfile,
+        profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;

@@ -5,13 +5,13 @@
 //! contract.
 
 use super::*;
+use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteBand, band_of, entity_type_registry_entry,
     is_structural_kind, short_id_prefix,
 };
 use crate::skill::{SkillRecord, encode_skill_record};
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

@@ -3,8 +3,8 @@ use crate::channel_identity::{
     CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
     ChannelIdentityShape,
 };
+use crate::config::VaultConfig;
 use crate::test_util::open_test_vault_with;
-use crate::types::VaultConfig;
 
 fn entity(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid entity id")
