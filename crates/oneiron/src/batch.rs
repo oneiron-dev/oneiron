@@ -2233,7 +2233,7 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     delete_short_id_rows_for_id(store, wtxn, id)?;
 
     let Some(entity_record) = store.entities.get(wtxn, id.as_bytes())? else {
-        let cleanup = crate::vault::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
+        let cleanup = crate::affect::delete_vad_annotation_metadata_in_txn(store, wtxn, id)?;
         had_vector |= cleanup.had_vector;
         had_graph_mutation |= cleanup.had_graph_mutation;
         neighbors.extend(cleanup.neighbors);
@@ -2244,8 +2244,8 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
-    let mut cleanup = crate::vault::VadAnnotationCleanup::default();
-    crate::vault::delete_vad_annotation_metadata_for_type_in_txn(
+    let mut cleanup = crate::affect::VadAnnotationCleanup::default();
+    crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
         wtxn,
         id,

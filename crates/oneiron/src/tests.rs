@@ -27,6 +27,7 @@ use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
 use super::*;
+use crate::affect::{vad_annotation_claim_id, vad_annotation_meta_key};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
@@ -45,7 +46,6 @@ use crate::store::{
     VECTOR_VERSION_KEY, lmdb_database_open_guard, short_id_counter_key,
     structural_kind_registry_key,
 };
-use crate::vault::{vad_annotation_claim_id, vad_annotation_meta_key};
 
 fn test_config() -> VaultConfig {
     // Build from the public preset so tests exercise the same construction
