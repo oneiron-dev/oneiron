@@ -12,6 +12,7 @@ use crate::context_pack::PackSectionTokenStats;
 use crate::context_pack::PackStats;
 use crate::context_pack::PackTokenStats;
 use crate::context_pack::TokenAllocation;
+use crate::eiri::ResumeBundle;
 use crate::pipeline::Signal;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
@@ -24,7 +25,6 @@ use crate::registry::{
     ENTITY_TYPE_WORLD,
 };
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
-use crate::types::ResumeBundle;
 
 const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_CLAIM,
