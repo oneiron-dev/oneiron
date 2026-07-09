@@ -34,6 +34,7 @@ pub mod dreamer_tournament;
 pub mod edge;
 pub mod edit_roundtrip;
 pub mod edit_settle;
+pub mod eiri;
 pub mod embed;
 pub mod engine_executor;
 pub mod entity_id;
@@ -335,6 +336,11 @@ pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
 };
+pub use crate::eiri::{
+    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
+    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
+    NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+};
 #[cfg(feature = "sync")]
 pub use crate::embed::{
     DEFAULT_PENDING_EMBEDDING_LEASE_MS, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler,
@@ -615,11 +621,9 @@ pub use crate::tokenizer::{
     PackTokenizer, count_context_pack_tokens,
 };
 pub use crate::types::{
-    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
-    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    NamedMemoryVerb, NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
+    NamedMemoryVerb,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
