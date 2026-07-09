@@ -26,6 +26,7 @@ use crate::edge::{
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, ErrorKind, Result};
+use crate::habit::TaskRole;
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
 use crate::registry::{
@@ -36,7 +37,6 @@ use crate::registry::{
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::types::TaskRole;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 
@@ -1256,7 +1256,7 @@ fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
 }
 
 fn validate_habit_checkin_body(data: &[u8]) -> Result<()> {
-    match crate::types::task_role_from_body_bytes(data)? {
+    match crate::habit::task_role_from_body_bytes(data)? {
         TaskRole::HabitCheckin => Ok(()),
         _ => Err(Error::InvalidTaskBody(
             "habit check-in writes require HabitCheckin role",
@@ -2611,7 +2611,7 @@ fn apply_put(
     } else if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
         validate_companion_register_put(store, wtxn, &id, data, companion_retired_histories)?;
     } else if entity_type == ENTITY_TYPE_TASK {
-        let task_role = crate::types::task_role_from_body_bytes(data)?;
+        let task_role = crate::habit::task_role_from_body_bytes(data)?;
         validate_task_role_put_invariants(store, &*wtxn, &id, task_role)?;
     }
     if occurred.start > occurred.end {
@@ -3322,7 +3322,7 @@ fn stored_task_role(
     if header.entity_type != ENTITY_TYPE_TASK {
         return Ok(None);
     }
-    crate::types::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
 }
 
 fn validate_task_checkin_child_parent(
@@ -3407,8 +3407,8 @@ fn validate_task_checkin_immutable(
     body_changed: bool,
 ) -> Result<()> {
     let old_role =
-        crate::types::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
-    let new_role = crate::types::task_role_from_body_bytes(data)?;
+        crate::habit::task_role_from_body_bytes(&old_record[ENTITY_METADATA_HEADER_LEN..])?;
+    let new_role = crate::habit::task_role_from_body_bytes(data)?;
     if old_role != TaskRole::HabitCheckin && new_role != TaskRole::HabitCheckin {
         return Ok(());
     }

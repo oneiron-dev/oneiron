@@ -125,7 +125,7 @@ fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
             ENTITY_TYPE_TASK,
             range(5, 5),
             6,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .commit()?;
 
@@ -175,21 +175,21 @@ fn latest_learned_at_uses_temporal_index_tail() -> Result<()> {
             ENTITY_TYPE_TASK,
             range(1, 1),
             10,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .put(
             &entity(0x22),
             ENTITY_TYPE_TASK,
             range(2, 2),
             30,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .put(
             &entity(0x23),
             ENTITY_TYPE_TASK,
             range(3, 3),
             20,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .commit()?;
 
@@ -214,7 +214,7 @@ fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()
             ENTITY_TYPE_TASK,
             range(1, 1),
             10,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .commit()?;
 

@@ -43,7 +43,7 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
 }
 
 fn task_body() -> Vec<u8> {
-    crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
 /// Hand-built 24-byte SemanticBare edge value (weight + created_at +

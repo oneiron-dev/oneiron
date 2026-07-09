@@ -74,7 +74,7 @@ fn receiver_soft_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_L
 }
 
 fn task_body() -> Vec<u8> {
-    crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
 fn put_receiver_entity(vault: &Vault, id: &EntityId, _body: &[u8]) {

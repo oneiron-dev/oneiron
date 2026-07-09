@@ -45,6 +45,7 @@ pub(crate) mod fusion;
 pub(crate) mod gate;
 pub mod genui;
 pub mod graph_fs;
+pub mod habit;
 pub(crate) mod hnsw;
 pub(crate) mod identity;
 pub mod identity_reputation;
