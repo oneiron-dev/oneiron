@@ -10,8 +10,15 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::Vault;
+use crate::batch::BatchOp;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::EntityMetadataHeader;
+use crate::batch::apply_ops;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
+use crate::temporal::TimeRange;
 
 /// Current AccessGrant body schema version.
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 1;
@@ -388,6 +395,103 @@ fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Va
 
 fn invalid_grant() -> Error {
     Error::InvalidAccessGrantBody("body failed validation")
+}
+
+impl Vault {
+    /// Engine-authored write door for AccessGrant control-plane records.
+    ///
+    /// Public generic entity puts for `ENTITY_TYPE_ACCESS_GRANT` remain
+    /// rejected with `MaintenanceKindNotWritable`; this method validates the
+    /// pinned AccessGrant body before using the maintenance write path.
+    pub fn put_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        self.write_access_grant_body(id, grant.created_at, &data)
+    }
+
+    /// Creates an AccessGrant only when no entity already exists at `id`.
+    pub fn create_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
+        let data = encode_access_grant_body(grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::AccessGrantAlreadyExists);
+        }
+        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Revokes an AccessGrant by rewriting the same record as revoked.
+    pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let revoked = grant.revoked(revoked_at)?;
+        let data = encode_access_grant_body(&revoked)?;
+        self.apply_access_grant_body(&mut wtxn, id, revoked_at, data)?;
+        wtxn.commit()?;
+        Ok(revoked)
+    }
+
+    /// Reads and decodes an AccessGrant record.
+    pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    fn write_access_grant_body(&self, id: &EntityId, learned_at: u64, data: &[u8]) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.apply_access_grant_body(&mut wtxn, id, learned_at, data.to_vec())?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn apply_access_grant_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
 }
 
 #[cfg(test)]
