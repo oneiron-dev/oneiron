@@ -1327,6 +1327,20 @@ exit 0
 #>    return R.find_item(doc, row["kind"], "-", row["item_name"], row["cfg"])
 #>
 #>
+#>def _dst_row(row):
+#>    # Source and destination containers legitimately differ for moved tests:
+#>    # an item inside the source `mod tests` lands TOP-LEVEL when the dst is a
+#>    # sibling tests-file module (…/tests.rs) — that file IS the tests module
+#>    # (S1 convention), so re-nesting `mod tests` there would be module
+#>    # inception (clippy -D warnings). Dst-side lookups for such rows use a
+#>    # top-level view; source-side lookups keep the tsv container.
+#>    if row["container"] == "mod tests" and row["dst_file"].endswith("/tests.rs"):
+#>        d = dict(row)
+#>        d["container"] = "-"
+#>        return d
+#>    return row
+#>
+#>
 #>def check3(root, base, tsv, decls):
 #>    edits = _parse_edits(decls)
 #>    fragedits = _parse_fragedits(decls)
@@ -1379,7 +1393,7 @@ exit 0
 #>            raise Violation(3, f"dst not present — item not yet moved: {row['dst_file']} "
 #>                               f"(item {row['item_name']})")
 #>        hdoc = R.Doc(ht)
-#>        hm = _exactly_one(_find_row(hdoc, row), f"HEAD {row['dst_file']}", row)
+#>        hm = _exactly_one(_find_row(hdoc, _dst_row(row)), f"HEAD {row['dst_file']}", row)
 #>        head_text = R.item_text(hdoc, hm)
 #>
 #>        if row["src_file"] != row["dst_file"]:
@@ -1517,7 +1531,7 @@ exit 0
 #>    for row in rows_for_dst:
 #>        if row["kind"] == "mod":
 #>            continue
-#>        m = _find_row(doc, row)
+#>        m = _find_row(doc, _dst_row(row))
 #>        if len(m) != 1:
 #>            raise Violation(8, f"check8 could not uniquely locate {row['item_name']} "
 #>                               f"in dst {row['dst_file']} ({len(m)} matches)")
