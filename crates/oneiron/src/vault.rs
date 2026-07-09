@@ -23,6 +23,7 @@ use crate::affect::{
     },
     mean_vad,
 };
+use crate::affect::{Vad, VadAnnotation, VadAnnotationSource};
 use crate::analyzer::{AnalyzerChannel, AnalyzerManifest, AnalyzerMode, MultilingualAnalyzer};
 use crate::authority::{
     AuthorityFold, AuthorityLogEntry, authority_entry_hash, authority_first_seen_backfill_sync_key,
@@ -106,8 +107,8 @@ use crate::types::{
     ClaimCandidate, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity, TimeRange, Vad, VadAnnotation, VadAnnotationSource, VaultConfig, WriteEnvelope,
-    edge_value_layout_for_kind, parse_strict_edge_record,
+    ScoredEntity, TimeRange, VaultConfig, WriteEnvelope, edge_value_layout_for_kind,
+    parse_strict_edge_record,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,

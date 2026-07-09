@@ -2,6 +2,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use loro::{ExportMode, LoroDoc};
 
 use super::*;
+use crate::affect::Vad;
 use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
     AuthoritySignature, AuthoritySignatureSuite, AuthorityTier, DeviceAuthority, ROLE_ADMIN,
@@ -30,7 +31,7 @@ use crate::registry::{
 use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::loro_support::map_get_bytes;
-use crate::types::{EdgeActorClass, TimeRange, Vad};
+use crate::types::{EdgeActorClass, TimeRange};
 
 fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()

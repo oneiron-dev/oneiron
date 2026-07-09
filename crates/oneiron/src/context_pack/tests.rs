@@ -902,7 +902,7 @@ fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
         crate::types::EdgeKind::Mentions,
         0.5,
         0,
-        crate::types::Vad::NEUTRAL,
+        crate::affect::Vad::NEUTRAL,
         None,
     )?;
 
@@ -1131,7 +1131,7 @@ fn vad_round_trip_through_hydration() -> Result<()> {
         crate::types::EdgeKind::HasFacet,
         &tgt,
         0.8,
-        crate::types::Vad {
+        crate::affect::Vad {
             valence: 0.6,
             arousal: 0.3,
             dominance: 0.9,
@@ -2574,7 +2574,7 @@ fn walk_edges_gates_structural_kinds_and_retracted_provenance() -> Result<()> {
             crate::types::EdgeKind::Supports,
             0.9,
             1,
-            crate::types::Vad::NEUTRAL,
+            crate::affect::Vad::NEUTRAL,
             Some(crate::types::EdgeProvenanceFlags {
                 confirmation_status: status,
                 actor_class: crate::types::EdgeActorClass::Human,

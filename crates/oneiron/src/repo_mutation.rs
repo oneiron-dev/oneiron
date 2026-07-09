@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
+use crate::affect::Vad;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN,
@@ -26,7 +27,7 @@ use crate::codebase::{CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::types::{EdgeKind, TimeRange, Vad};
+use crate::types::{EdgeKind, TimeRange};
 
 use rmpv::Value;
 

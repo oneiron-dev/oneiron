@@ -92,9 +92,9 @@ pub use crate::affect::coping::{
 };
 pub use crate::affect::{
     AFFECT_TRIGGER_PREDICATE, AffectTriggerValue, CLAIM_VAD_REAPPRAISAL_PREDICATE,
-    ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, VadDelta,
-    affect_trigger_claim_candidate, affect_trigger_value, decode_affect_trigger_claim,
-    decode_affect_trigger_value,
+    ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence, Vad, VadAnnotation,
+    VadAnnotationSource, VadComponent, VadDelta, affect_trigger_claim_candidate,
+    affect_trigger_value, decode_affect_trigger_claim, decode_affect_trigger_value,
 };
 pub use crate::agent_def::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
@@ -609,8 +609,7 @@ pub use crate::types::{
     NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats,
     PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
     TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent,
-    VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    TokenAllocation, UnprocessedItem, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,

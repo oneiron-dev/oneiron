@@ -25,12 +25,13 @@ use core::assert_matches;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron::affect::Vad;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::{WindowKey, drain_reassert_markers, pending_reassert_windows, transport};
-use oneiron::types::{EdgeKind, TimeRange, Vad};
+use oneiron::types::{EdgeKind, TimeRange};
 use oneiron::{
     DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,
     decode_tombstone_value,

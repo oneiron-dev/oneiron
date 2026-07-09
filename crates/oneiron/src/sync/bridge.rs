@@ -29,6 +29,7 @@ use super::quarantine::{
 use super::queue::{SyncQueue, scrub_receiver_outbox_on_remote_hard_delete_in_txn};
 use super::quota;
 use super::types::LocalUpdate;
+use crate::affect::Vad;
 use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
@@ -37,8 +38,8 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::store::Store;
 use crate::types::{
-    DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, Vad, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
+    DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
+    encode_edge_value,
 };
 use crate::{Error, Result, SyncProtocolValidation, Vault};
 
