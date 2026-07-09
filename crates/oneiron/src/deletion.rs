@@ -28,6 +28,7 @@ use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::provenance::ProvenancePrecedence;
+use crate::provenance::StoredProvenanceClaim;
 use crate::provenance::decode_edge_provenance_body;
 use crate::provenance::downgrade_edge_to_bare;
 use crate::provenance::restamp_edge_flags;
@@ -38,7 +39,6 @@ use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::Store;
 use crate::unix_seconds_now;
-use crate::vault::StoredProvenanceClaim;
 
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
