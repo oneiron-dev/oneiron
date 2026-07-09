@@ -15,6 +15,7 @@ crates/oneiron/src/types.rs
 
 ## error-literal
 crates/oneiron/src/eiri.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod eiri

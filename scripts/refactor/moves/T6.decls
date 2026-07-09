@@ -72,6 +72,7 @@ crates/oneiron/tests/sync_window_manager.rs
 
 ## error-literal
 crates/oneiron/src/temporal.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod temporal

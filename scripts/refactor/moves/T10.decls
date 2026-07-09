@@ -14,6 +14,7 @@ crates/oneiron/src/vault.rs
 
 ## error-literal
 crates/oneiron/src/deletion.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub use crate :: deletion :: { DecodedTombstoneValue , DeleteEntityOutcome , DeleteReason , HydratedShortIdDeletion , HydratedShortIdDeletionReason , HydratedShortIdDeletionSource , MemoryOperationKind , MemoryTimeline , MemoryTimelineRecord , MemoryTimelineRecordState , NamedMemoryVerb , TOMBSTONE_VALUE_LEGACY_LEN , TOMBSTONE_VALUE_V2_LEN , TombstoneReason , TombstoneValueV2 , decode_tombstone_value }
