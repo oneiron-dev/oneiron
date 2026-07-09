@@ -17,7 +17,8 @@ use crate::ppr::{
 };
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::Store;
-use crate::types::{ScoredEntity, TimeRange};
+use crate::temporal::TimeRange;
+use crate::types::ScoredEntity;
 
 pub const CODE_SYMBOL_TEXT_HASH_LEN: usize = 32;
 pub const CODE_SYMBOL_FINGERPRINT_LEN: usize = 32;

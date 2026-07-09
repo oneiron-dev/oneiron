@@ -10,7 +10,8 @@ use crate::job_queue::{
 use crate::store::{
     GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
 };
-use crate::types::{HnswConfig, TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::{HnswConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {

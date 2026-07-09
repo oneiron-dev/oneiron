@@ -21,7 +21,7 @@ use oneiron::edge::EdgeKind;
 use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, apply_tombstone_to_window_doc, replay_pending_tombstones};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{
     DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, Vault,
     VaultConfig, decode_tombstone_value,

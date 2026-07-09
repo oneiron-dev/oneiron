@@ -28,7 +28,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 use rmpv::Value;
 

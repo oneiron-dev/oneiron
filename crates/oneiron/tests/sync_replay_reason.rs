@@ -24,7 +24,7 @@ use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig,

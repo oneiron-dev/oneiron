@@ -50,7 +50,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, PendingGateConsentRecord,
 };
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 /// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;

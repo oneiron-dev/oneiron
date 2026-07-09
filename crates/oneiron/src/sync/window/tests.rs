@@ -758,7 +758,7 @@ fn finalized_receipt_not_mirrored_to_crdt() {
         encode_redaction_audit_receipt,
     };
     use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
-    use crate::types::TimeRange;
+    use crate::temporal::TimeRange;
     use ed25519_dalek::SigningKey;
 
     let (_dir, vault) = test_vault();
@@ -895,7 +895,7 @@ fn finalized_receipt_not_mirrored_by_pending_mirror_replay() {
         encode_redaction_audit_receipt,
     };
     use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
-    use crate::types::TimeRange;
+    use crate::temporal::TimeRange;
     use ed25519_dalek::SigningKey;
 
     let (_dir, vault) = test_vault();

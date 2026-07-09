@@ -1607,7 +1607,7 @@ fn materialize_entity_blob_in_txn(
         .put_replicated(
             &id,
             header.entity_type,
-            crate::types::TimeRange {
+            crate::temporal::TimeRange {
                 start: header.occurred_start,
                 end: header.occurred_end,
             },

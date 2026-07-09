@@ -32,7 +32,7 @@ use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::store::Store;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;

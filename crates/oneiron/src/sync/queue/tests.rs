@@ -9,7 +9,8 @@ use crate::sync::bridge::{self, Materializer};
 use crate::sync::quarantine;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::forward_rematerialize;
-use crate::types::{TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::VaultConfig;
 use core::assert_matches;
 
 const RECEIVER_SCRUB_WINDOW: &str = "2026-03";

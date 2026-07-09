@@ -37,7 +37,7 @@ use crate::companion::{CompanionExportClassification, CompanionRecordKind, Compa
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT};
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 /// Schema version string carried by every persona snapshot compile stamp.
 ///

@@ -7,7 +7,7 @@ use crate::affect::VadComponent;
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::registry::{ENTITY_TYPE_FACET, TypeByteBand};
-use crate::types::TemporalExpressionParseError;
+use crate::temporal::TemporalExpressionParseError;
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;

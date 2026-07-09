@@ -5,7 +5,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 pub const CODE_ARTIFACT_BODY_KEYS: [&str; 4] =
     ["summary_prompt", "summary_hash", "repo_ref", "class"];

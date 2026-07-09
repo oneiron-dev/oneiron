@@ -27,7 +27,7 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
 };

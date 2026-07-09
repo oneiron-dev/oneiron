@@ -23,7 +23,7 @@ use crate::llm::ModelTierRef;
 use crate::pipeline::WorldScope;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 /// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
 ///

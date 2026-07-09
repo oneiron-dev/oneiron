@@ -38,7 +38,7 @@ use oneiron::sync::quarantine::{QuarantineContainer, QuarantineRecord, quarantin
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{DeleteReason, EntityId, Error, Vault, VaultConfig};
 use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_64;

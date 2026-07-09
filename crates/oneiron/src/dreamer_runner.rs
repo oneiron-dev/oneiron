@@ -32,7 +32,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 

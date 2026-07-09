@@ -12,9 +12,9 @@ use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::temporal::TimeRange;
 use crate::types::{
     ContextEntity, ContextPack, PackItemAccounting, PackStats, PackTokenStats, ScoredEntity,
-    TimeRange,
 };
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;

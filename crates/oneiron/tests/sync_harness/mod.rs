@@ -31,7 +31,7 @@ use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{
     EdgeInfo, EdgeKind, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     Vault, VaultConfig,

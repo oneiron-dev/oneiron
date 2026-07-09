@@ -30,7 +30,7 @@ use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::transport::{decode_window_sync, encode_window_sync, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::LoadedWindow;
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{DeleteReason, EntityId, HnswConfig, TOMBSTONE_VALUE_V2_LEN, Vault, VaultConfig};
 
 /// 2026-02-15 ≈ unix 1_771_027_200 ⇒ window "2026-02".

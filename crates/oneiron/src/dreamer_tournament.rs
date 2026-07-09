@@ -18,7 +18,7 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::job_queue::JobId;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 

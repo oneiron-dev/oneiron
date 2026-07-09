@@ -18740,7 +18740,7 @@ mod tests {
         let error = core_engine_error(
             "core query failed",
             oneiron::Error::InvalidTemporalExpression(
-                oneiron::types::TemporalExpressionParseError::Unsupported {
+                oneiron::temporal::TemporalExpressionParseError::Unsupported {
                     expression: "last friday".to_owned(),
                 },
             ),

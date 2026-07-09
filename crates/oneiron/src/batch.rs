@@ -35,7 +35,8 @@ use crate::registry::{
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
-use crate::types::{TaskRole, TimeRange};
+use crate::temporal::TimeRange;
+use crate::types::TaskRole;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 

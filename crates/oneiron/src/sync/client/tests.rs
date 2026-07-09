@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::export_snapshot;
 use crate::sync::schema::create_root_doc;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 fn test_manager() -> Arc<WindowManager> {
     let dir = tempfile::tempdir().unwrap();
