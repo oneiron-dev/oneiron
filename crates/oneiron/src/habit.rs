@@ -5,6 +5,11 @@ use std::io::Cursor;
 #[cfg(test)]
 use rmpv::Value;
 
+use crate::Vault;
+use crate::entity_id::EntityId;
+use crate::error::Result;
+use crate::temporal::TimeRange;
+
 pub(crate) const TASK_BODY_ROLE_KEY: &str = "role";
 
 /// Pinned TASK role byte for the productivity pack.
@@ -100,6 +105,22 @@ pub(crate) fn task_role_from_body_bytes(bytes: &[u8]) -> crate::error::Result<Ta
         );
     }
     role.ok_or(crate::error::Error::InvalidTaskBody("missing task role"))
+}
+
+impl Vault {
+    /// Appends an immutable TASK/HabitCheckin child under a Habit-role TASK.
+    pub fn put_habit_checkin(
+        &self,
+        habit_id: &EntityId,
+        checkin_id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        data: &[u8],
+    ) -> Result<()> {
+        self.batch()
+            .put_habit_checkin(habit_id, checkin_id, occurred, learned_at, data)
+            .commit()
+    }
 }
 
 #[cfg(test)]
