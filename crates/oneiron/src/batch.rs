@@ -2988,7 +2988,7 @@ fn validate_companion_register_put(
             } else {
                 None
             };
-        let lookup = crate::vault::companion_record_key_lookup_in_txn(
+        let lookup = crate::companion::companion_record_key_lookup_in_txn(
             store,
             &*wtxn,
             &key,
