@@ -278,8 +278,11 @@ pub use crate::critic::{
     triage_critiques_with_exploration,
 };
 pub use crate::deletion::{
-    DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN,
-    TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2, decode_tombstone_value,
+    DecodedTombstoneValue, DeleteEntityOutcome, DeleteReason, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
+    TOMBSTONE_VALUE_LEGACY_LEN, TOMBSTONE_VALUE_V2_LEN, TombstoneReason, TombstoneValueV2,
+    decode_tombstone_value,
 };
 pub use crate::delivery_window::{
     DELIVERY_WINDOW_CLAIM_PREDICATES, DELIVERY_WINDOW_SCHEMA_VERSION,
@@ -619,11 +622,6 @@ pub use crate::thread_lens::{
 pub use crate::tokenizer::{
     ContextPackTokenizer, DEFAULT_CONTEXT_PACK_TOKENIZER, DEFAULT_CONTEXT_PACK_TOKENIZER_ID,
     PackTokenizer, count_context_pack_tokens,
-};
-pub use crate::types::{
-    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    NamedMemoryVerb,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,

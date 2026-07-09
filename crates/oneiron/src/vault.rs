@@ -62,6 +62,12 @@ use crate::counterparty_contact::{
     decode_counterparty_contact_index_value, encode_counterparty_contact_body,
     encode_counterparty_contact_index_value,
 };
+use crate::deletion::HydratedShortIdDeletion;
+use crate::deletion::HydratedShortIdDeletionReason;
+use crate::deletion::HydratedShortIdDeletionSource;
+use crate::deletion::MemoryTimeline;
+use crate::deletion::MemoryTimelineRecord;
+use crate::deletion::MemoryTimelineRecordState;
 use crate::deletion::{
     DeleteEntityOutcome, DeleteReason, HARD_ERASE_SWEEP_PREFIX, HardEraseSweepExtras,
     LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionReceiptInput, RedactionScope, ReplayedTombstoneOutcome,
@@ -110,12 +116,6 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::temporal::TimeRange;
-use crate::types::HydratedShortIdDeletion;
-use crate::types::HydratedShortIdDeletionReason;
-use crate::types::HydratedShortIdDeletionSource;
-use crate::types::MemoryTimeline;
-use crate::types::MemoryTimelineRecord;
-use crate::types::MemoryTimelineRecordState;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 use crate::{

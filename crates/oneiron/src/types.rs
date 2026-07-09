@@ -3,8 +3,6 @@ use std::io::Cursor;
 #[cfg(test)]
 use rmpv::Value;
 
-use crate::entity_id::EntityId;
-
 pub(crate) const TASK_BODY_ROLE_KEY: &str = "role";
 
 /// Pinned TASK role byte for the productivity pack.
@@ -100,128 +98,6 @@ pub(crate) fn task_role_from_body_bytes(bytes: &[u8]) -> crate::error::Result<Ta
         );
     }
     role.ok_or(crate::error::Error::InvalidTaskBody("missing task role"))
-}
-
-/// Stable deletion reason surfaced by short-id hydrate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HydratedShortIdDeletionReason {
-    UserDelete,
-    UserHardDelete,
-    GdprDelete,
-    PolicyDelete,
-}
-
-/// Where hydrate found deletion evidence for a short-id row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HydratedShortIdDeletionSource {
-    Tombstone,
-    PendingTombstone,
-    DanglingShortId,
-}
-
-/// Deletion metadata returned when a short-id row resolves to deleted state.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HydratedShortIdDeletion {
-    pub source: HydratedShortIdDeletionSource,
-    pub reason: Option<HydratedShortIdDeletionReason>,
-    pub deleted_at: Option<u64>,
-    pub request_id: Option<String>,
-    pub hard: bool,
-}
-
-/// Renderer-facing lifecycle state for one record in a memory timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryTimelineRecordState {
-    /// The record exists and is not closed by the supersession graph.
-    Live,
-    /// The record exists and has been superseded by at least one newer record.
-    Superseded,
-    /// The record exists as explicitly retracted claim history.
-    Retracted,
-    /// The record exists only as a deletion shell with tombstone metadata.
-    Deleted,
-    /// The graph still references an entity id whose record is absent locally.
-    Missing,
-}
-
-/// One node in a bitemporal supersession timeline.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemoryTimelineRecord {
-    pub id: EntityId,
-    pub state: MemoryTimelineRecordState,
-    pub entity_type: Option<u8>,
-    pub occurred_start: Option<u64>,
-    pub occurred_end: Option<u64>,
-    pub learned_at: Option<u64>,
-    pub body_bytes: Option<usize>,
-    pub deletion: Option<HydratedShortIdDeletion>,
-    pub supersedes: Vec<EntityId>,
-    pub superseded_by: Vec<EntityId>,
-}
-
-/// Stable, ordered supersession-chain data for one anchor entity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemoryTimeline {
-    pub anchor: EntityId,
-    pub records: Vec<MemoryTimelineRecord>,
-}
-
-/// Human-readable memory verbs exposed by API surfaces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NamedMemoryVerb {
-    Remember,
-    Supersede,
-    Retract,
-    Delete,
-    HardDelete,
-}
-
-impl NamedMemoryVerb {
-    /// Parses a public route verb, accepting stable aliases while resolving to
-    /// one canonical typed operation family.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-            "remember" | "put" | "put_entity" => Some(Self::Remember),
-            "supersede" | "replace" | "revise" | "supersede_claim" => Some(Self::Supersede),
-            "retract" | "withdraw" | "retract_claim" => Some(Self::Retract),
-            "delete" | "forget" | "soft_delete" | "user_delete" => Some(Self::Delete),
-            "hard_delete" | "erase" | "purge" | "user_hard_delete" => Some(Self::HardDelete),
-            _ => None,
-        }
-    }
-
-    pub const fn canonical_name(self) -> &'static str {
-        match self {
-            Self::Remember => "remember",
-            Self::Supersede => "supersede",
-            Self::Retract => "retract",
-            Self::Delete => "delete",
-            Self::HardDelete => "hard_delete",
-        }
-    }
-
-    pub const fn operation_kind(self) -> MemoryOperationKind {
-        match self {
-            Self::Remember => MemoryOperationKind::PutEntity,
-            Self::Supersede => MemoryOperationKind::SupersedeClaim,
-            Self::Retract => MemoryOperationKind::RetractClaim,
-            Self::Delete | Self::HardDelete => MemoryOperationKind::DeleteEntity,
-        }
-    }
-}
-
-/// Typed operation family selected by a named memory verb.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryOperationKind {
-    PutEntity,
-    SupersedeClaim,
-    RetractClaim,
-    DeleteEntity,
 }
 
 #[cfg(test)]
