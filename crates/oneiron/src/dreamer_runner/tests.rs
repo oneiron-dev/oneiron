@@ -142,7 +142,7 @@ fn milestone_fixture(vault: &Vault, claim_id: EntityId, at: u64) -> Result<Dream
         ENTITY_TYPE_TASK,
         occurred(at),
         at,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Human),
@@ -219,7 +219,7 @@ fn write_dreamer_boundary_claim(
         ENTITY_TYPE_TASK,
         occurred(at),
         at,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Human),

@@ -37,7 +37,7 @@ fn decode_observer_u_seq_rejects_bad_lengths_without_panic() {
 }
 
 fn task_body() -> Vec<u8> {
-    crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
 /// Minimal WARN-level event capture: collects `message` fields so tests

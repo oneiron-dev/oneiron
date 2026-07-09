@@ -69,8 +69,8 @@ fn checkin_on_non_habit_rejected() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let task = EntityId::now();
     let checkin = EntityId::now();
-    let task_body = crate::types::task_body_for_test(TaskRole::Task);
-    let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+    let task_body = crate::habit::task_body_for_test(TaskRole::Task);
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
 
     vault.put_entity(
         &task,
@@ -95,9 +95,9 @@ fn checkin_immutable() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let habit = EntityId::now();
     let checkin = EntityId::now();
-    let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
-    let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
-    let replacement_body = crate::types::task_body_for_test(TaskRole::Task);
+    let habit_body = crate::habit::task_body_for_test(TaskRole::Habit);
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
+    let replacement_body = crate::habit::task_body_for_test(TaskRole::Task);
 
     vault.put_entity(
         &habit,
@@ -131,8 +131,8 @@ fn checkin_same_role_mutation_rejected_and_identical_reput_idempotent() -> Resul
     let (_dir, vault) = open_raw_test_vault();
     let habit = EntityId::now();
     let checkin = EntityId::now();
-    let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
-    let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
+    let habit_body = crate::habit::task_body_for_test(TaskRole::Habit);
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
 
     vault.put_entity(
         &habit,
@@ -177,9 +177,9 @@ fn habit_with_checkins_cannot_change_role() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let habit = EntityId::now();
     let checkin = EntityId::now();
-    let habit_body = crate::types::task_body_for_test(TaskRole::Habit);
-    let checkin_body = crate::types::task_body_for_test(TaskRole::HabitCheckin);
-    let demoted_body = crate::types::task_body_for_test(TaskRole::Task);
+    let habit_body = crate::habit::task_body_for_test(TaskRole::Habit);
+    let checkin_body = crate::habit::task_body_for_test(TaskRole::HabitCheckin);
+    let demoted_body = crate::habit::task_body_for_test(TaskRole::Task);
 
     vault.put_entity(
         &habit,
@@ -816,7 +816,7 @@ fn affect_trigger_batch_helper_writes_and_conflict_uses_claim_lifecycle() -> Res
         ENTITY_TYPE_TASK,
         occurred,
         1,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
     let envelope = test_write_envelope(actor)?;
 
@@ -3279,14 +3279,14 @@ fn public_timestamped_builder_keeps_structural_edge_layout() -> Result<()> {
         ENTITY_TYPE_TASK,
         occurred,
         1,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
     vault.put_entity(
         &parent,
         ENTITY_TYPE_TASK,
         occurred,
         1,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
 
     vault

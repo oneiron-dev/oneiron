@@ -23,6 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, LoroDoc};
+use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::transport::{
@@ -32,7 +33,6 @@ use oneiron::sync::{
     ConnectionConfig, EphemeralStore, EphemeralWireState, LoroValue, SyncClient, SyncClientConfig,
     SyncConnection, SyncEvent, SyncStatus, WindowManager,
 };
-use oneiron::types::TaskRole;
 use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;

@@ -354,7 +354,7 @@ fn reliability_claim_family_is_structured_under_critic_reliability() -> Result<(
         crate::registry::ENTITY_TYPE_TASK,
         TimeRange { start: 1, end: 1 },
         1,
-        &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
     )?;
     let mut writable = body;
     writable.subject = ClaimSubject::Entity(anchor);
