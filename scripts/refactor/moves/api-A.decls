@@ -14,6 +14,10 @@ crates/oneiron-server/src/api/openapi.rs
 crates/oneiron-server/src/api/resume.rs
 crates/oneiron-server/src/api/search.rs
 crates/oneiron-server/src/api/vad.rs
+crates/oneiron-server/tests/skills_pack.rs
+
+## consumer-exempt
+crates/oneiron-server/tests/skills_pack.rs
 
 ## forbid
 
@@ -256,6 +260,7 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) use self :: resume :: *
 + pub ( crate ) use self :: search :: *
 + pub ( crate ) use self :: vad :: *
++ pub ( crate ) struct ViewQuery
 
 ## impl-delta
 - crates/oneiron-server/src/api.rs	impl From < TurnVadAnnotationSource > for VadAnnotationSource
@@ -270,3 +275,12 @@ crates/oneiron-server/src/api/*.rs
 + crates/oneiron-server/src/api/vad.rs	impl From < VadAnnotationSource > for TurnVadAnnotationSource
 + crates/oneiron-server/src/api/vad.rs	impl TurnVadAnnotateResponse
 + crates/oneiron-server/src/api/vad.rs	impl VadPayload
+
+## edit
+crates/oneiron-server/src/api.rs	struct ViewQuery {	pub(crate) struct ViewQuery {
+
+## frag-edit
+crates/oneiron-server/src/api.rs	query: String,	pub(crate) query: String,
+crates/oneiron-server/src/api.rs	limit: usize,	pub(crate) limit: usize,
+crates/oneiron-server/src/api.rs	view: Option<View>,	pub(crate) view: Option<View>,
+crates/oneiron-server/src/api.rs	count_mode: CountMode,	pub(crate) count_mode: CountMode,
