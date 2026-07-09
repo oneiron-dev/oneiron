@@ -3,12 +3,13 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::deletion::DeleteReason;
+use crate::edge::EdgeActorClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::types::{
-    ClaimCandidate, EdgeActorClass, HnswConfig, VaultConfig,
-    WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-    WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, HnswConfig, VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
+    WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
 use core::assert_matches;
 #[cfg(feature = "sync")]

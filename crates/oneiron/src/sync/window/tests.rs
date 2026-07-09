@@ -7,7 +7,8 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
     encode_companion_record_body,
 };
-use crate::types::{EdgeActorClass, EdgeKind, VaultConfig};
+use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::types::VaultConfig;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();

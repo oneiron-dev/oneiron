@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 
 use loro::{CommitOptions, ExportMode, LoroDoc};
 use oneiron::affect::Vad;
+use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT};
 use oneiron::sync::bridge::{
     BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
@@ -26,9 +27,7 @@ use oneiron::sync::transport::{
 };
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{
-    EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
-};
+use oneiron::types::TimeRange;
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, SupersessionStatus, Vault,
 };

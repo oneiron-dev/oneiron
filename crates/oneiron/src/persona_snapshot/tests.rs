@@ -4,9 +4,10 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
 use crate::deletion::DeleteReason;
+use crate::edge::EdgeActorClass;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::types::{EdgeActorClass, VaultConfig};
+use crate::types::VaultConfig;
 use crate::{ErrorKind, Vault};
 
 fn test_vault() -> (tempfile::TempDir, Vault) {

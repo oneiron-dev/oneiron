@@ -21,8 +21,9 @@ use crate::job_queue::{
     FailOutcome, JobId, JobQueue, JobRecord, RetryJob, RetryOutcome,
 };
 
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::types::{EdgeActorClass, WriteEnvelope};
+use crate::types::WriteEnvelope;
 
 /// Dedicated companion-register structural kind byte.
 ///

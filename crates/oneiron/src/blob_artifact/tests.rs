@@ -1,10 +1,11 @@
 use super::*;
+use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, EntityClassification, TypeByteBand,
     entity_type_registry_entry, short_id_prefix,
 };
-use crate::types::{EdgeActorClass, HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

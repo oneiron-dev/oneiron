@@ -14,6 +14,7 @@ use rmpv::Value;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ScopedRead, decode_claim_body};
 use crate::code_sandbox::{SandboxImportClass, SandboxLinkedImport};
+use crate::edge::{EDGE_KEY_LEN, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::{
@@ -21,7 +22,6 @@ use crate::gate::{
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
-use crate::types::{EDGE_KEY_LEN, EdgeKind};
 
 pub const GRAPH_FS_PROJECTION_VERSION: &str = "graph-fs.v1";
 pub const GRAPH_FS_DEFAULT_PAGE_BYTE_CAP: usize = 16 * 1024;

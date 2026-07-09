@@ -615,7 +615,7 @@ fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
         "precondition: endpoints materialized"
     );
 
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     let edge_val = crate::sync::bridge::encode_edge_value_for_crdt(
         kind,
@@ -722,7 +722,7 @@ fn window_with_unmaterialized_endpoints(
 
 fn one_1147_edge_value() -> Vec<u8> {
     crate::sync::bridge::encode_edge_value_for_crdt(
-        crate::types::EdgeKind::Mentions,
+        crate::edge::EdgeKind::Mentions,
         0.75,
         12_345,
         Some(crate::affect::Vad::NEUTRAL),
@@ -752,7 +752,7 @@ fn edge_batch_in_txn_endpoint_hydration_rollback_marks_endpoint() {
 
     // The edge commit hydrates BOTH endpoints inside the batch txn, then
     // the injected failure rolls the whole txn back.
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
     map_insert_bytes(
@@ -816,7 +816,7 @@ fn edge_batch_hydrated_target_only_rollback_marks_target() {
     // injected to fail LOCALLY before it reads or writes anything.
     let window = window_with_unmaterialized_endpoints(&vault, &materializer, &[(tgt, b"tgt")]);
 
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     // Arm SRC (first-hydrated): its LOCAL failure aborts the batch at the
     // `(Err(e), _) if remote_rejection_reason(&e).is_none()` arm — AFTER
@@ -897,7 +897,7 @@ fn edge_batch_already_present_endpoint_not_overmarked() {
         "precondition: src CRDT-only"
     );
 
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
     map_insert_bytes(
@@ -946,7 +946,7 @@ fn edge_batch_hydration_rollback_drain_heals() {
         &[(src, b"src"), (tgt, b"tgt")],
     );
 
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     crate::sync::bridge::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
     map_insert_bytes(
@@ -1099,7 +1099,7 @@ fn edge_source_quarantine_terminally_discharges_source_rm_marker() {
     map_insert_bytes(&entities, &src.to_hex(), &src_blob).unwrap();
     map_insert_bytes(&entities, &tgt.to_hex(), &tgt_blob).unwrap();
 
-    let kind = crate::types::EdgeKind::Mentions;
+    let kind = crate::edge::EdgeKind::Mentions;
     let edge_key = crate::sync::bridge::format_edge_key(&src, kind, &tgt);
     let edge_value = one_1147_edge_value();
     map_insert_bytes(&doc.get_map("edges"), &edge_key, &edge_value).unwrap();

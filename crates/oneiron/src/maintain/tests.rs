@@ -2,6 +2,7 @@ use core::assert_matches;
 use heed::types::Bytes;
 
 use super::*;
+use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::job_queue::{
     ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobQueue, JobQueueRetryReason,
@@ -9,7 +10,7 @@ use crate::job_queue::{
 use crate::store::{
     GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
 };
-use crate::types::{EdgeKind, HnswConfig, TimeRange, VaultConfig};
+use crate::types::{HnswConfig, TimeRange, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {

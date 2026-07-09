@@ -34,13 +34,13 @@ use crate::batch::{self, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHead
 use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
-use crate::entity_id::EntityId;
-use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
-use crate::store::Store;
-use crate::types::{
+use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, decode_edge_value_for_kind,
     encode_edge_value,
 };
+use crate::entity_id::EntityId;
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::store::Store;
 use crate::{Error, Result, SyncProtocolValidation, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.

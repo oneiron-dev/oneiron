@@ -135,14 +135,14 @@ use heed::RwTxn;
 use rmpv::Value;
 
 use crate::claim::{ClaimSubject, EDGE_REF_LEN as CLAIM_EDGE_REF_LEN, unit_interval_f32};
+use crate::edge::{
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
+};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::store::Store;
-use crate::types::{
-    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
-};
 
 /// The pinned predicate for edge-provenance Claims (contracts.ts
 /// `edgeProvenanceClaim.predicate`). Lives in the reserved `edge.*`

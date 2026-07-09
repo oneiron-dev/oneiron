@@ -567,11 +567,11 @@ fn reserved_namespace_rejected_public_allowed_internal() {
 /// grown value-record vocabulary.
 #[test]
 fn write_door_validates_edge_provenance_claim_structure() {
+    use crate::edge::EdgeActorClass;
     use crate::provenance::{
         EVIDENCE_KEY_ACTOR_CLASS, EdgeProvenanceClaimBody, SupersessionStatus,
         encode_actor_class_evidence, encode_edge_provenance_value,
     };
-    use crate::types::EdgeActorClass;
 
     let actor = EntityId::from_bytes([0x42; 16]).expect("valid id");
     // ONE-1159 fix-wave: a surfaceable wrapper's `conf` MUST mirror the

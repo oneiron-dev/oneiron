@@ -19,6 +19,11 @@ use crate::companion::{
     ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
+use crate::edge::{
+    DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN,
+    EDGE_VALUE_STRUCTURAL_LEN, EdgeKind, EdgeProvenanceFlags, encode_edge_value,
+    parse_strict_edge_record, validate_edge_weight,
+};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, ErrorKind, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
@@ -30,12 +35,7 @@ use crate::registry::{
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
-use crate::types::{
-    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
-    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, EdgeKind, EdgeProvenanceFlags,
-    TaskRole, TimeRange, WriteEnvelope, encode_edge_value, parse_strict_edge_record,
-    validate_edge_weight,
-};
+use crate::types::{ClaimCandidate, TaskRole, TimeRange, WriteEnvelope};
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
 pub(crate) const ENTITY_OCCURRED_START_OFFSET: usize = 1;

@@ -68,6 +68,10 @@ use crate::deletion::{
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
     local_hard_delete_key, pending_tombstone_key, window_label_from_timestamp,
 };
+use crate::edge::{
+    EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags,
+    EdgeValueLayout, edge_value_layout_for_kind, parse_strict_edge_record,
+};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
@@ -104,11 +108,9 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    ClaimCandidate, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EdgeProvenanceFlags, EdgeValueLayout, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    ClaimCandidate, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity, TimeRange, VaultConfig, WriteEnvelope, edge_value_layout_for_kind,
-    parse_strict_edge_record,
+    ScoredEntity, TimeRange, VaultConfig, WriteEnvelope,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
@@ -7790,7 +7792,7 @@ fn closed_claim_put_payload(
 
 /// Parses one `edges_out` / `edges_in` row into an [`EdgeInfo`].
 ///
-/// Compatibility wrapper over [`crate::types::parse_strict_edge_record`] so
+/// Compatibility wrapper over [`crate::edge::parse_strict_edge_record`] so
 /// Vault and context-pack readers classify malformed edge rows identically.
 pub(crate) fn parse_edge_record(key: &[u8], value: &[u8]) -> Result<EdgeInfo> {
     Ok(parse_strict_edge_record(key, value)?.into_edge_info())

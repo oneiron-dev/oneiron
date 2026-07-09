@@ -6,15 +6,14 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
+use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body,
 };
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
-use crate::types::{
-    EdgeActorClass, HnswConfig, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::types::{HnswConfig, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

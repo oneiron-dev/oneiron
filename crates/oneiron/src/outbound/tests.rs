@@ -12,6 +12,7 @@ use crate::delivery_window::{
     DeliveryWindowContextCondition, PREDICATE_DELIVERY_WINDOW_CHANNEL,
     PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
 };
+use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::linkedin_connector::{
     LINKEDIN_CHANNEL, LinkedInMcpConnectorAdapter, LinkedInMcpSendMessageRequest,
@@ -21,7 +22,7 @@ use crate::linkedin_connector::{
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::{EdgeKind, VaultConfig};
+use crate::types::VaultConfig;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");

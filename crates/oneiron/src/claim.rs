@@ -38,12 +38,13 @@ use crate::affect::{
     coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
     validate_affect_trigger_claim_structure,
 };
+use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::types::{
-    ContextEntity, ContextPack, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EmptyContext,
-    EmptyReason, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
+    ContextEntity, ContextPack, EmptyContext, EmptyReason, MemoryTimeline, MemoryTimelineRecord,
+    MemoryTimelineRecordState, ScoredEntity,
 };
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
