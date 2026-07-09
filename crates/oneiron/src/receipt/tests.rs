@@ -5,6 +5,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
 };
+use crate::config::{HnswConfig, VaultConfig};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -13,7 +14,6 @@ use crate::federation::{
 };
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
-use crate::types::{HnswConfig, VaultConfig};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;

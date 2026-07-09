@@ -5,6 +5,7 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
     ENTITY_TYPE_COMPANION_REGISTER, encode_companion_record_body,
 };
+use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::loro_support::{
@@ -12,7 +13,6 @@ use crate::sync::loro_support::{
     map_contains_binary, map_insert_bytes,
 };
 use crate::temporal::TimeRange;
-use crate::types::VaultConfig;
 use core::assert_matches;
 use ed25519_dalek::{Signer, SigningKey};
 use rmpv::Value;

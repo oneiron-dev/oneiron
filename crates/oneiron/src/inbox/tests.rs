@@ -1,13 +1,13 @@
 use rmpv::Value;
 
 use super::*;
+use crate::config::VaultConfig;
 use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
 use crate::edge::EdgeActorClass;
 use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
 use crate::receipt::ReceiptQuery;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
-use crate::types::VaultConfig;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;

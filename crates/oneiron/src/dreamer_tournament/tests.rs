@@ -1,13 +1,13 @@
 use rmpv::Value;
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::config::VaultConfig;
 use crate::critic::{
     CriticLens, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity,
     CritiqueVerdict, LensCatalog,
 };
 use crate::edge::EdgeActorClass;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::types::VaultConfig;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
 

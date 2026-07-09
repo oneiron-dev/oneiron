@@ -656,7 +656,7 @@ pub(crate) mod test_util {
     //! Shared test helpers. Centralized to avoid drift between per-module
     //! copies of `open_test_vault`. Each module keeps its own `test_config()`
     //! because configs diverge (map sizes, dimensions, embedding model).
-    use crate::types::VaultConfig;
+    use crate::config::VaultConfig;
     use crate::vault::Vault;
 
     /// Opens a temporary vault with the supplied config. Returns the

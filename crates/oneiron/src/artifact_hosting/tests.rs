@@ -4,9 +4,9 @@ use std::process::{Command, Stdio};
 
 use super::*;
 use crate::codebase::RepoIngestConfig;
+use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::error::ErrorKind;
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

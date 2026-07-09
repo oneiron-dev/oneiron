@@ -1,9 +1,9 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
+use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, VaultConfig};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
@@ -23,7 +23,7 @@ fn test_config() -> VaultConfig {
             ef_construction: 200,
             ef_search: 128,
         },
-        text_analyzer: crate::types::TextAnalyzerConfig::default(),
+        text_analyzer: crate::config::TextAnalyzerConfig::default(),
         dict_search_paths: Vec::new(),
         skip_text_index_manifest_check: false,
     }
@@ -1071,7 +1071,7 @@ fn bm25_plus_formula_does_not_require_reindex() -> Result<()> {
     // `Bm25RankProfile` knob must produce the identical BM25+ score
     // against the same index — no reindex happened in between.
     let plus_profile =
-        crate::types::Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: 1.0 });
+        crate::config::Bm25RankProfile::default().with_formula(Bm25Formula::Plus { delta: 1.0 });
     let public_plus = vault.search_text_with_profile("hello", 10, &plus_profile)?;
     let public_plus_score = public_plus.iter().find(|r| r.id == id).unwrap().score;
     assert_eq!(public_plus_score, plus_score);
@@ -1140,7 +1140,7 @@ fn okapi_surface_score_matches_formula_fixture() -> Result<()> {
 /// disabled. The profile deliberately exposes no `k1` knob.
 #[test]
 fn rank_profile_default_lowers_to_contract_literals() -> Result<()> {
-    let c = crate::types::Bm25RankProfile::default().to_bm25_config()?;
+    let c = crate::config::Bm25RankProfile::default().to_bm25_config()?;
     assert_eq!(c.k1, 1.2);
     assert_eq!(c.formula, Bm25Formula::Okapi);
 
@@ -1187,7 +1187,7 @@ fn zero_weight_channel_excluded_through_public_path() -> Result<()> {
     put_text_doc(&vault, &id, "she runs every morning before work")?;
 
     // Default profile: stem channel carries the match.
-    let default_profile = crate::types::Bm25RankProfile::default();
+    let default_profile = crate::config::Bm25RankProfile::default();
     let stem_only_query = "running.";
     let hits = vault.search_text_with_profile(stem_only_query, 10, &default_profile)?;
     assert!(contains_id(&hits, &id));
@@ -1196,7 +1196,7 @@ fn zero_weight_channel_excluded_through_public_path() -> Result<()> {
     // punctuation keeps this assertion isolated from final-token prefix
     // widening, which may legitimately match `runs` through Surface.
     let stem_zero =
-        crate::types::Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Stem, 0.0);
+        crate::config::Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Stem, 0.0);
     let hits = vault.search_text_with_profile(stem_only_query, 10, &stem_zero)?;
     assert!(
         !contains_id(&hits, &id),
@@ -1215,7 +1215,7 @@ fn zero_weight_channel_excluded_through_public_path() -> Result<()> {
 
     // All four v1 channels zeroed: even a direct surface match is
     // excluded and the result set is empty.
-    let all_zero = crate::types::Bm25RankProfile::default()
+    let all_zero = crate::config::Bm25RankProfile::default()
         .with_channel_weight(AnalyzerChannel::Surface, 0.0)
         .with_channel_weight(AnalyzerChannel::Stem, 0.0)
         .with_channel_weight(AnalyzerChannel::NormalizedOverlay, 0.0)
@@ -1253,7 +1253,7 @@ fn disabled_channel_exact_hit_does_not_suppress_enabled_prefix() -> Result<()> {
     put_text_doc(&vault, &enabled_prefix, "runningly specific surface")?;
 
     let stem_zero =
-        crate::types::Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Stem, 0.0);
+        crate::config::Bm25RankProfile::default().with_channel_weight(AnalyzerChannel::Stem, 0.0);
     let hits = vault.search_text_with_profile("running", 10, &stem_zero)?;
 
     assert!(contains_id(&hits, &enabled_prefix));
@@ -1266,7 +1266,7 @@ fn disabled_channel_exact_hit_does_not_suppress_enabled_prefix() -> Result<()> {
 /// values stay accepted.
 #[test]
 fn rank_profile_validation_fails_closed() -> Result<()> {
-    use crate::types::Bm25RankProfile;
+    use crate::config::Bm25RankProfile;
 
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
@@ -1362,7 +1362,7 @@ fn rank_profile_validation_fails_closed() -> Result<()> {
 
     // Boundary-legal values stay accepted: weight 0.0, b 0.0 / 1.0,
     // small positive delta; the last override per channel wins.
-    let legal = crate::types::Bm25RankProfile::default()
+    let legal = crate::config::Bm25RankProfile::default()
         .with_formula(Bm25Formula::Plus { delta: 1e-6 })
         .with_channel_weight(AnalyzerChannel::Surface, 0.0)
         .with_channel_weight(AnalyzerChannel::Surface, 2.5)

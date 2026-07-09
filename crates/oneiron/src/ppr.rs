@@ -5,6 +5,8 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 #[cfg(test)]
+use crate::config::VaultConfig;
+#[cfg(test)]
 use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
 use crate::edge::{
     EdgeConfirmationStatus, EdgeKind, parse_strict_edge_record, parse_strict_edge_record_key,
@@ -14,8 +16,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use crate::types::ScoredEntity;
-#[cfg(test)]
-use crate::types::VaultConfig;
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]
