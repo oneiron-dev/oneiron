@@ -38,18 +38,18 @@ use crate::affect::{
     coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
     validate_affect_trigger_claim_structure,
 };
+use crate::context_pack::ContextEntity;
+use crate::context_pack::ContextPack;
+use crate::context_pack::EmptyContext;
+use crate::context_pack::EmptyReason;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::types::ContextEntity;
-use crate::types::ContextPack;
-use crate::types::EmptyContext;
-use crate::types::EmptyReason;
 use crate::types::MemoryTimeline;
 use crate::types::MemoryTimelineRecord;
 use crate::types::MemoryTimelineRecordState;
-use crate::types::ScoredEntity;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     gate::PolicyManifestResolution,

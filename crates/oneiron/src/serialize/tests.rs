@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
+use crate::context_pack::ContextEntity;
+use crate::context_pack::ContextPack;
+use crate::context_pack::EmptyContext;
+use crate::context_pack::EmptyReason;
+use crate::context_pack::FieldProfile;
+use crate::context_pack::PackFormat;
+use crate::context_pack::PackStats;
+use crate::context_pack::TokenAllocation;
 use crate::entity_id::EntityId;
-use crate::types::ContextEntity;
-use crate::types::ContextPack;
-use crate::types::EmptyContext;
-use crate::types::EmptyReason;
-use crate::types::FieldProfile;
-use crate::types::PackFormat;
-use crate::types::PackStats;
-use crate::types::Signal;
-use crate::types::TokenAllocation;
+use crate::pipeline::Signal;
 
 use super::*;
 
@@ -85,9 +85,9 @@ fn sample_pack() -> ContextPack {
             neighbors_hydrated: 1,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
-            tokens: crate::types::PackTokenStats::default(),
-            items_truncated: crate::types::PackItemAccounting::item_budget(),
-            items_dropped: crate::types::PackItemAccounting::token_budget(),
+            tokens: crate::context_pack::PackTokenStats::default(),
+            items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+            items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
         },
         empty: None,
     }
@@ -200,9 +200,9 @@ fn token_savings_regression_pack() -> ContextPack {
             neighbors_hydrated: 0,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
-            tokens: crate::types::PackTokenStats::default(),
-            items_truncated: crate::types::PackItemAccounting::item_budget(),
-            items_dropped: crate::types::PackItemAccounting::token_budget(),
+            tokens: crate::context_pack::PackTokenStats::default(),
+            items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+            items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
         },
         empty: None,
     };
@@ -1811,9 +1811,9 @@ fn empty_stats() -> PackStats {
         neighbors_hydrated: 0,
         cosine_ghosts_dampened: 0,
         claims_suppressed: 0,
-        tokens: crate::types::PackTokenStats::default(),
-        items_truncated: crate::types::PackItemAccounting::item_budget(),
-        items_dropped: crate::types::PackItemAccounting::token_budget(),
+        tokens: crate::context_pack::PackTokenStats::default(),
+        items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+        items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
     }
 }
 

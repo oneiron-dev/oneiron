@@ -7,10 +7,10 @@ use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
+use crate::pipeline::ScoredEntity;
 #[cfg(test)]
 use crate::store::RetrievalBlendSignal;
 use crate::store::{RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal};
-use crate::types::ScoredEntity;
 
 pub(crate) fn sort_scored_entities_desc(scores: &mut [ScoredEntity]) {
     scores.sort_unstable_by(|a, b| {

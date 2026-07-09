@@ -3,6 +3,16 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Number, Value};
 
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
+use crate::context_pack::ContextEntity;
+use crate::context_pack::ContextPack;
+use crate::context_pack::FieldProfile;
+use crate::context_pack::PackFormat;
+use crate::context_pack::PackItemTokenStats;
+use crate::context_pack::PackSectionTokenStats;
+use crate::context_pack::PackStats;
+use crate::context_pack::PackTokenStats;
+use crate::context_pack::TokenAllocation;
+use crate::pipeline::Signal;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -14,17 +24,7 @@ use crate::registry::{
     ENTITY_TYPE_WORLD,
 };
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
-use crate::types::ContextEntity;
-use crate::types::ContextPack;
-use crate::types::FieldProfile;
-use crate::types::PackFormat;
-use crate::types::PackItemTokenStats;
-use crate::types::PackSectionTokenStats;
-use crate::types::PackStats;
-use crate::types::PackTokenStats;
 use crate::types::ResumeBundle;
-use crate::types::Signal;
-use crate::types::TokenAllocation;
 
 const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_CLAIM,
@@ -672,7 +672,7 @@ fn apply_item_budget_with_depth_limit(
         }
         true
     } else {
-        stats.items_dropped.reason = crate::types::PackItemAccountingReason::ItemBudget;
+        stats.items_dropped.reason = crate::context_pack::PackItemAccountingReason::ItemBudget;
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
         false
     }
@@ -1336,7 +1336,8 @@ fn enforce_serialized_token_budget(
             may_drop_critical = true;
             continue;
         }
-        prepared.stats.items_dropped.reason = crate::types::PackItemAccountingReason::TokenBudget;
+        prepared.stats.items_dropped.reason =
+            crate::context_pack::PackItemAccountingReason::TokenBudget;
         prepared.stats.items_dropped.count = prepared.stats.items_dropped.count.saturating_add(1);
     }
 }
@@ -2608,7 +2609,7 @@ fn json_stats(pack_stats: &PackStats) -> Value {
     Value::Object(stats)
 }
 
-fn item_accounting_json(accounting: crate::types::PackItemAccounting) -> Value {
+fn item_accounting_json(accounting: crate::context_pack::PackItemAccounting) -> Value {
     let mut out = Map::new();
     out.insert(
         "count".to_owned(),

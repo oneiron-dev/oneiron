@@ -3,22 +3,22 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
     claim_body_decode_count, decode_claim_body, reset_claim_body_decode_count,
 };
+use crate::context_pack::ContextEntity;
+use crate::context_pack::ContextPack;
+use crate::context_pack::PackItemAccounting;
+use crate::context_pack::PackStats;
+use crate::context_pack::PackTokenStats;
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
     CounterpartyOptOutReason,
 };
 use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
+use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
-use crate::types::ContextEntity;
-use crate::types::ContextPack;
-use crate::types::PackItemAccounting;
-use crate::types::PackStats;
-use crate::types::PackTokenStats;
-use crate::types::ScoredEntity;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
@@ -1388,7 +1388,7 @@ fn scoped_read_context_pack_filters_before_response_limit() -> Result<()> {
     let mut pack = vault
         .context_pack()
         .limit(candidate_limit)
-        .retrieval_budget(crate::types::ContextPackRetrievalBudget::new(
+        .retrieval_budget(crate::context_pack::ContextPackRetrievalBudget::new(
             candidate_limit,
             candidate_limit,
             candidate_limit,

@@ -3254,7 +3254,7 @@ fn empty_reason_label(reason: EmptyReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oneiron::types::{PackItemAccounting, PackStats};
+    use oneiron::context_pack::{PackItemAccounting, PackStats};
 
     #[test]
     fn parse_fixture_and_manifest_accepts_beam_128k_smoke_schema() {

@@ -251,7 +251,11 @@ pub use crate::companion::{
 pub use crate::config::{
     Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
 };
-pub use crate::context_pack::{ContextPackBuilder, SerializedContextPack};
+pub use crate::context_pack::{
+    ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
+    EmptyReason, FieldProfile, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
+    PackTokenStats, SerializedContextPack, TokenAllocation,
+};
 pub use crate::counterparty_contact::{
     COUNTERPARTY_CONTACT_BODY_KEYS, COUNTERPARTY_CONTACT_CLAIM_PREDICATES,
     COUNTERPARTY_CONTACT_SCHEMA_VERSION, CounterpartyContactRecord, CounterpartyContactStatus,
@@ -508,7 +512,7 @@ pub use crate::persona_snapshot::{
 };
 pub use crate::pipeline::{
     DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, PendingVectorEmbedding, PipelineBuilder,
-    RetrievalWithPendingVectors, RetrievalWithTelemetry, WorldScope,
+    RetrievalWithPendingVectors, RetrievalWithTelemetry, ScoredEntity, Signal, WorldScope,
 };
 pub use crate::policy_model::{
     AgeGateSubclass, CrisisSubclass, LegalFloorSubclass, POLICY_MODEL_REWORD_RETRY_BUDGET,
@@ -611,14 +615,11 @@ pub use crate::tokenizer::{
     PackTokenizer, count_context_pack_tokens,
 };
 pub use crate::types::{
-    ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
-    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
-    FieldProfile, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
-    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity,
-    SessionContext, Signal, TokenAllocation, UnprocessedItem,
+    EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
+    EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
+    NamedMemoryVerb, NotificationItem, ResumeBudget, ResumeBundle, SessionContext, UnprocessedItem,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
