@@ -13,9 +13,9 @@ use crate::edge::{
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::types::ScoredEntity;
 
 const SEED_HASH_LEN: usize = 16;
 #[cfg(test)]

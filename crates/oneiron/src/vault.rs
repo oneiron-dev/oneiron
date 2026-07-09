@@ -83,6 +83,7 @@ use crate::outbound_grant::{
     StandingOutboundGrant, decode_standing_outbound_grant_body,
     encode_standing_outbound_grant_body, standing_outbound_grant_principal_index_key,
 };
+use crate::pipeline::ScoredEntity;
 use crate::provenance::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence,
     SupersessionStatus, close_record_for_supersession, decode_edge_provenance_body,
@@ -115,7 +116,6 @@ use crate::types::HydratedShortIdDeletionSource;
 use crate::types::MemoryTimeline;
 use crate::types::MemoryTimelineRecord;
 use crate::types::MemoryTimelineRecordState;
-use crate::types::ScoredEntity;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 use crate::{

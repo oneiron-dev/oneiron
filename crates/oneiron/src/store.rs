@@ -117,13 +117,13 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
+use crate::pipeline::Signal;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand, band_of,
     entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
-use crate::types::Signal;
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
