@@ -17,6 +17,8 @@ use crate::batch::{
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::codebase::{CodebaseScopeKey, RepoRef, codebase_candidate_matches_scope_key};
+use crate::context_pack::ContextPackRetrievalBudget;
+use crate::context_pack::EmptyReason;
 use crate::edge::{EDGE_KEY_LEN, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -41,7 +43,6 @@ use crate::temporal::TemporalExpressionParseError;
 use crate::temporal::TemporalGranularity;
 use crate::temporal::TimeRange;
 use crate::temporal::temporal_expression_from_query;
-use crate::types::{ContextPackRetrievalBudget, EmptyReason, ScoredEntity};
 
 const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
@@ -49,6 +50,26 @@ const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
 const LONG_INTERVAL_VALUE_LEN: usize = 8;
 const TEMPORAL_FLOOR: f64 = 0.05;
+
+/// A scored entity result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScoredEntity {
+    /// Entity identifier.
+    pub id: EntityId,
+    /// Ranking score.
+    pub score: f32,
+}
+
+/// Retrieval signal type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Signal {
+    Vector,
+    Text,
+    Phonetic,
+    Temporal,
+    Ppr,
+}
 
 fn retrieval_blend_weights_for_scoring(
     store: &Store,
