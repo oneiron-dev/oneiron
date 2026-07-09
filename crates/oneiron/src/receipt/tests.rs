@@ -1100,10 +1100,11 @@ fn test_prompt_stamp() -> PromptRecompileStamp {
 }
 
 fn test_memory_board(claim_score: f32) -> EiriMemoryBoard {
-    use crate::types::{
-        EIRI_CONTEXT_VERSION_V4, EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot,
-        EiriMemoryBoardSource,
-    };
+    use crate::types::EIRI_CONTEXT_VERSION_V4;
+    use crate::types::EiriMemoryBoardBudget;
+    use crate::types::EiriMemoryBoardRow;
+    use crate::types::EiriMemoryBoardSlot;
+    use crate::types::EiriMemoryBoardSource;
 
     let row =
         |row_index: usize, seed: u8, slot: EiriMemoryBoardSlot, score: f32| EiriMemoryBoardRow {
