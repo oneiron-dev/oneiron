@@ -76,7 +76,7 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) enum CoreShortIdHydrateOutcome
 + pub ( crate ) fn announcement_original_text ( object : & serde_json :: Map < String , Value > ) -> Option < & str >
 + pub ( crate ) fn announcement_status ( object : & serde_json :: Map < String , Value > ) -> & ' static str
-+ pub ( crate ) fn apply_context_pack_budget < ' a > ( mut builder : oneiron :: ContextPackBuilder < ' a > , budget : Option < & ContextPackBudgetControls > , top_level_max_item_tokens : usize , scoped_candidate_limit : usize , result_limit : usize , default_selected_edges : usize ) -> Result < ( oneiron :: ContextPackBuilder < ' a > , oneiron :: ContextPackRetrievalBudget ) , ApiError , >
++ pub ( crate ) fn apply_context_pack_budget < ' a > ( mut builder : oneiron :: ContextPackBuilder < ' a > , budget : Option < & ContextPackBudgetControls > , top_level_max_item_tokens : usize , scoped_candidate_limit : usize , result_limit : usize , default_selected_edges : usize ) -> Result < ( oneiron :: ContextPackBuilder < ' a > , oneiron :: ContextPackRetrievalBudget , ) , ApiError , >
 + pub ( crate ) fn apply_context_pack_policy < ' a > ( mut builder : oneiron :: ContextPackBuilder < ' a > , policy : Option < & ContextPackPolicyControls > ) -> Result < oneiron :: ContextPackBuilder < ' a > , ApiError >
 + pub ( crate ) fn apply_context_pack_response_limits ( pack : & mut oneiron :: ContextPack , limits : ContextPackResponseLimits )
 + pub ( crate ) fn apply_context_pack_response_retrieval_budget ( pack : & mut oneiron :: ContextPack , budget : oneiron :: ContextPackRetrievalBudget )
@@ -141,7 +141,7 @@ crates/oneiron-server/src/api/*.rs
 + pub ( crate ) fn parse_short_ref_request ( req : & CoreHydrateRequest ) -> Result < ( String , u8 ) , ApiError >
 + pub ( crate ) fn project_core_entity ( vault : & oneiron :: Vault , id : & oneiron :: EntityId , view : View ) -> Result < Json < Value > , EnvelopedApiError >
 + pub ( crate ) fn project_entity_ids ( vault : & oneiron :: Vault , ids : Vec < oneiron :: EntityId > , view : View ) -> Result < Vec < Value > , ApiError >
-+ pub ( crate ) fn resolve_context_pack_retrieval_budgets ( retrieval : Option < & ContextPackRetrievalBudgetControls > , result_limit : usize , scoped_candidate_limit : usize , default_selected_edges : usize ) -> ( oneiron :: ContextPackRetrievalBudget , oneiron :: ContextPackRetrievalBudget )
++ pub ( crate ) fn resolve_context_pack_retrieval_budgets ( retrieval : Option < & ContextPackRetrievalBudgetControls > , result_limit : usize , scoped_candidate_limit : usize , default_selected_edges : usize ) -> ( oneiron :: ContextPackRetrievalBudget , oneiron :: ContextPackRetrievalBudget , )
 + pub ( crate ) fn resolve_eiri_companion_assembly ( vault : & oneiron :: Vault , companion : Option < & EiriCompanionControls > , session_id : & str , companion_auth : Option < & CoreAuth > ) -> Result < oneiron :: EiriCompanionAssembly , ApiError >
 + pub ( crate ) fn resolve_eiri_context_v4_request ( vault : & oneiron :: Vault , context_version : Option < & str > , memory_board : Option < & EiriMemoryBoardControls > , session_rag : Option < & EiriSessionRagControls > , companion : Option < & EiriCompanionControls > , budget_shape : ( usize , usize ) , identity : EiriContextV4Identity < ' _ > ) -> Result < Option < EiriContextV4Request > , ApiError >
 + pub ( crate ) fn resolved_context_pack_depth ( depth : Option < & ContextPackDepthControls > , edge_hop : u32 , max_neighbors : usize ) -> ( u32 , & ' static str , usize , & ' static str )
