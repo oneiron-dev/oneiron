@@ -139,13 +139,17 @@ static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::
 
 #[derive(Default)]
 struct EiriSessionRagStore {
-    entries: BTreeMap<String, oneiron::EiriSessionRagState>,
+    pub(crate) entries: BTreeMap<String, oneiron::EiriSessionRagState>,
     active_sessions: BTreeMap<String, String>,
     insertion_order: VecDeque<String>,
 }
 
 impl EiriSessionRagStore {
-    fn current(&mut self, key: String, session_id: &str) -> oneiron::EiriSessionRagState {
+    pub(crate) fn current(
+        &mut self,
+        key: String,
+        session_id: &str,
+    ) -> oneiron::EiriSessionRagState {
         if let Some(state) = self.entries.get(&key) {
             return state.clone();
         }
@@ -173,7 +177,7 @@ impl EiriSessionRagStore {
         self.current(default_key, default_session_id)
     }
 
-    fn advance(
+    pub(crate) fn advance(
         &mut self,
         scope_key: String,
         key: String,
@@ -735,29 +739,29 @@ struct CoreBatchEntityInput {
     /// Optional hex entity id. When omitted, the server generates an id.
     #[serde(default)]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     /// Numeric entity type byte.
     #[serde(rename = "entity_type", alias = "entityType")]
     #[schema(example = 1)]
-    entity_type: u8,
+    pub(crate) entity_type: u8,
     /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
     #[serde(default, rename = "occurred_start", alias = "occurredStart")]
     #[schema(example = 1782357600_u64)]
-    occurred_start: Option<u64>,
+    pub(crate) occurred_start: Option<u64>,
     /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
     #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
     #[schema(example = 1782357600_u64)]
-    occurred_end: Option<u64>,
+    pub(crate) occurred_end: Option<u64>,
     /// Learned-at timestamp in Unix seconds. Defaults to current server time.
     #[serde(default, rename = "learned_at", alias = "learnedAt")]
     #[schema(example = 1782357635_u64)]
-    learned_at: Option<u64>,
+    pub(crate) learned_at: Option<u64>,
     /// JSON body encoded into the vault's msgpack entity payload.
     #[schema(value_type = Object, example = json!({"txt": "I saw a blue hallway door."}))]
-    body: Value,
+    pub(crate) body: Value,
     /// Optional explicit text index fields. When omitted, top-level string body fields are indexed.
     #[serde(default)]
-    text: Option<Vec<CoreTextField>>,
+    pub(crate) text: Option<Vec<CoreTextField>>,
 }
 
 /// Core batch request envelope.
@@ -778,10 +782,10 @@ struct CoreBatchRequest {
 struct CoreBatchEntityResult {
     /// Hex-encoded entity id written by the batch.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    id: String,
+    pub(crate) id: String,
     /// Numeric entity type byte.
     #[schema(example = 1)]
-    entity_type: u8,
+    pub(crate) entity_type: u8,
 }
 
 /// Core batch response envelope.
@@ -1475,22 +1479,22 @@ struct ContextPackTimeControls {
 struct ContextPackRetrievalBudgetControls {
     #[serde(default)]
     #[schema(example = 4)]
-    claims: Option<usize>,
+    pub(crate) claims: Option<usize>,
     #[serde(default)]
     #[schema(example = 2)]
-    turns: Option<usize>,
+    pub(crate) turns: Option<usize>,
     #[serde(default)]
     #[schema(example = 2)]
-    summaries: Option<usize>,
+    pub(crate) summaries: Option<usize>,
     #[serde(default)]
     #[schema(example = 1)]
-    facets: Option<usize>,
+    pub(crate) facets: Option<usize>,
     #[serde(default)]
     #[schema(example = 1)]
-    other: Option<usize>,
+    pub(crate) other: Option<usize>,
     #[serde(default, rename = "selected_edges", alias = "selectedEdges")]
     #[schema(example = 50)]
-    selected_edges: Option<usize>,
+    pub(crate) selected_edges: Option<usize>,
 }
 
 /// Token and item budget controls for context-pack assembly.
@@ -1518,22 +1522,22 @@ struct ContextPackBudgetControls {
 struct EiriMemoryBoardSlotControls {
     #[serde(default)]
     #[schema(example = 4)]
-    claims: Option<usize>,
+    pub(crate) claims: Option<usize>,
     #[serde(default)]
     #[schema(example = 2)]
-    turns: Option<usize>,
+    pub(crate) turns: Option<usize>,
     #[serde(default)]
     #[schema(example = 2)]
-    summaries: Option<usize>,
+    pub(crate) summaries: Option<usize>,
     #[serde(default)]
     #[schema(example = 1)]
-    facets: Option<usize>,
+    pub(crate) facets: Option<usize>,
     #[serde(default)]
     #[schema(example = 1)]
-    companions: Option<usize>,
+    pub(crate) companions: Option<usize>,
     #[serde(default)]
     #[schema(example = 1)]
-    other: Option<usize>,
+    pub(crate) other: Option<usize>,
 }
 
 /// Eiri Context v4 memory-board controls.
@@ -1542,10 +1546,10 @@ struct EiriMemoryBoardControls {
     /// Whether to emit the v4 memory board. Defaults to true when v4 is requested.
     #[serde(default)]
     #[schema(example = true)]
-    enabled: Option<bool>,
+    pub(crate) enabled: Option<bool>,
     /// Exact per-slot row caps for the memory board.
     #[serde(default)]
-    slots: Option<EiriMemoryBoardSlotControls>,
+    pub(crate) slots: Option<EiriMemoryBoardSlotControls>,
 }
 
 /// Eiri Context v4 session RAG controls.
@@ -1819,14 +1823,14 @@ struct CoreContextPackScoreEvidence {
 #[derive(Debug, Serialize, ToSchema)]
 struct CoreContextPackEvidence {
     /// Whether the retrieval telemetry row was persisted and finalized.
-    telemetry_persisted: bool,
+    pub(crate) telemetry_persisted: bool,
     /// Retrieval telemetry run id when persistence succeeded.
     #[serde(skip_serializing_if = "Option::is_none")]
-    retrieval_run_id: Option<String>,
+    pub(crate) retrieval_run_id: Option<String>,
     /// Surfaced result ids recorded in telemetry.
-    result_ids: Vec<String>,
+    pub(crate) result_ids: Vec<String>,
     /// Final score evidence recorded in telemetry.
-    scores: Vec<CoreContextPackScoreEvidence>,
+    pub(crate) scores: Vec<CoreContextPackScoreEvidence>,
 }
 
 /// Stable Eiri Context v4 memory-board slot name.
@@ -2011,22 +2015,22 @@ struct CoreListQuery {
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     #[param(default = 10, example = 10)]
-    limit: usize,
+    pub(crate) limit: usize,
     /// Optional exclusive cursor id for entity-type scans.
     #[serde(default)]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     #[param(example = "0123456789abcdef0123456789abcdef")]
-    after: Option<String>,
+    pub(crate) after: Option<String>,
     /// Projection view. Defaults to summary.
     #[serde(default)]
     #[schema(example = "summary")]
     #[param(example = "summary")]
-    view: Option<View>,
+    pub(crate) view: Option<View>,
     /// Count precision for response metadata. List endpoints default to exact.
     #[serde(default, rename = "countMode", alias = "count_mode")]
     #[schema(example = "exact")]
     #[param(example = "exact")]
-    count_mode: CountMode,
+    pub(crate) count_mode: CountMode,
 }
 
 /// Generic core entity create request.
@@ -2039,25 +2043,25 @@ struct CoreCreateEntityRequest {
     /// Optional hex entity id. When omitted, the server generates an id.
     #[serde(default)]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
     #[serde(default, rename = "occurred_start", alias = "occurredStart")]
     #[schema(example = 1782357600_u64)]
-    occurred_start: Option<u64>,
+    pub(crate) occurred_start: Option<u64>,
     /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
     #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
     #[schema(example = 1782357600_u64)]
-    occurred_end: Option<u64>,
+    pub(crate) occurred_end: Option<u64>,
     /// Learned-at timestamp in Unix seconds. Defaults to current server time.
     #[serde(default, rename = "learned_at", alias = "learnedAt")]
     #[schema(example = 1782357635_u64)]
-    learned_at: Option<u64>,
+    pub(crate) learned_at: Option<u64>,
     /// JSON body encoded into the vault's msgpack entity payload.
     #[schema(value_type = Object, example = json!({"name": "Dream session"}))]
-    body: Value,
+    pub(crate) body: Value,
     /// Optional explicit text index fields. When omitted, top-level string body fields are indexed.
     #[serde(default)]
-    text: Option<Vec<CoreTextField>>,
+    pub(crate) text: Option<Vec<CoreTextField>>,
 }
 
 /// Core turn create request.
@@ -2096,13 +2100,13 @@ struct CoreCreateTurnRequest {
 struct CoreEntityWriteResponse {
     /// Hex entity id written by the route.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    id: String,
+    pub(crate) id: String,
     /// Numeric entity type byte.
     #[schema(example = 1)]
-    entity_type: u8,
+    pub(crate) entity_type: u8,
     /// Projected entity body after write.
     #[schema(value_type = Object)]
-    item: Value,
+    pub(crate) item: Value,
 }
 
 /// Commit a core entity batch.
@@ -3396,8 +3400,8 @@ async fn get_core_turn(
 
 #[derive(Clone, Copy)]
 struct CoreEntityTimestamps {
-    occurred: oneiron::TimeRange,
-    learned_at: u64,
+    pub(crate) occurred: oneiron::TimeRange,
+    pub(crate) learned_at: u64,
 }
 
 fn default_true() -> bool {
@@ -4220,9 +4224,9 @@ async fn advance_eiri_session_rag_state(
 
 #[derive(Clone, Copy)]
 struct ContextPackResponseLimits {
-    results: usize,
-    neighbors: usize,
-    retrieval: oneiron::ContextPackRetrievalBudget,
+    pub(crate) results: usize,
+    pub(crate) neighbors: usize,
+    pub(crate) retrieval: oneiron::ContextPackRetrievalBudget,
 }
 
 fn apply_context_pack_response_limits(
@@ -4880,13 +4884,13 @@ fn project_entity_ids(
 }
 
 struct CoreEntityWriteInput<'a> {
-    id: Option<&'a str>,
-    entity_type: u8,
-    occurred_start: Option<u64>,
-    occurred_end: Option<u64>,
-    learned_at: Option<u64>,
-    body: &'a Value,
-    text: Option<&'a [CoreTextField]>,
+    pub(crate) id: Option<&'a str>,
+    pub(crate) entity_type: u8,
+    pub(crate) occurred_start: Option<u64>,
+    pub(crate) occurred_end: Option<u64>,
+    pub(crate) learned_at: Option<u64>,
+    pub(crate) body: &'a Value,
+    pub(crate) text: Option<&'a [CoreTextField]>,
 }
 
 fn write_core_entity(
