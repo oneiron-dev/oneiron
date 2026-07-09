@@ -215,6 +215,18 @@ def edit_props():
         # comment interior is still not path-shaped
         (not R.edit_delta_ok("/// fn f()", "/// pub fn f()"),
          "interior pub insertion rejected"),
+        # code-line exceptions must NOT leak into comment interiors
+        # (Qodo/Codex on #426): string swaps and vis promotion are code
+        # classes; comment deltas are path re-points ONLY
+        (not R.edit_delta_ok('/// "old"', '/// "new"'),
+         "interior string-literal swap rejected"),
+        (not R.edit_delta_ok("///", "/// pub(crate)"),
+         "interior pub(crate) promotion rejected"),
+        # ...while both exceptions stay legal on real code lines
+        (R.edit_delta_ok('include_str!("../a.md")', 'include_str!("../../a.md")'),
+         "code string-literal swap still legal"),
+        (R.edit_delta_ok("fn f()", "pub(crate) fn f()"),
+         "code pub(crate) promotion still legal"),
     ]
     ok = True
     for good, name in cases:

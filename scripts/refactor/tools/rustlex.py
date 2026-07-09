@@ -664,7 +664,7 @@ def apply_edits(text, edits):
     return "\n".join(lines)
 
 
-def _edit_delta_ok_core(old, new):
+def _edit_delta_ok_core(old, new, allow_exceptions=True):
     """True iff old→new is a legal declared edit: every changed region is pure
     `::`-path text, a single string-literal token swapped for a string-literal
     token (relative include_str!/include_bytes! paths broken by a directory-depth
@@ -672,7 +672,8 @@ def _edit_delta_ok_core(old, new):
     module-un-mount class), or the single visibility-promotion exception
     (empty→`pub(crate)` prepended). Multiple regions are allowed (a line may
     carry more than one `types::X` occurrence re-pointed at once); each must be
-    pure-path."""
+    pure-path. allow_exceptions=False drops the string-literal and
+    vis-promotion exceptions — comment interiors are path-re-points ONLY."""
     old_toks = [t for t, _s, _e in _lex(old)]
     nt = [t for t, _s, _e in _lex(new)]
     if old_toks == nt:
@@ -689,7 +690,8 @@ def _edit_delta_ok_core(old, new):
             j = i
             while j < n and old_toks[j] != nt[j]:
                 j += 1
-            if j - i == 1 and old_toks[i].startswith('"') and nt[i].startswith('"'):
+            if (allow_exceptions and j - i == 1
+                    and old_toks[i].startswith('"') and nt[i].startswith('"')):
                 # string-literal → string-literal single-token swap
                 i = j
                 continue
@@ -713,7 +715,7 @@ def _edit_delta_ok_core(old, new):
     # the ONLY visibility exception is pub(crate) (TS D2 promotions); a bare
     # `pub` insertion is public-API widening and must never validate as a
     # declared edit
-    if old_reg == [] and "".join(new_reg) == "pub(crate)":
+    if allow_exceptions and old_reg == [] and "".join(new_reg) == "pub(crate)":
         return True
     # every length-changing path edit must sit at a `::` boundary OUTSIDE the
     # changed region: the unchanged token just before or just after the region
@@ -740,14 +742,17 @@ def edit_delta_ok(old, new):
     lexing makes a `///` doctest line ONE token, so an interior path re-point
     (the ForeignWorldId doctest frag-edit class) can never satisfy the token
     rules on the raw line. When both sides carry the SAME comment marker,
-    validate the interiors under the identical strict rules instead — a
-    marker change (`///`→`//`) or any non-path interior delta still fails."""
+    validate the interiors as pure path re-points — a marker change
+    (`///`→`//`), any non-path interior delta, and the string-literal /
+    vis-promotion exceptions (code-line classes, meaningless and fail-open
+    inside comment text) all still fail."""
     if _edit_delta_ok_core(old, new):
         return True
     o, n = old.lstrip(), new.lstrip()
     for pre in ("///", "//!", "//"):
         if o.startswith(pre) and n.startswith(pre):
-            return _edit_delta_ok_core(o[len(pre):], n[len(pre):])
+            return _edit_delta_ok_core(o[len(pre):], n[len(pre):],
+                                       allow_exceptions=False)
     return False
 
 
