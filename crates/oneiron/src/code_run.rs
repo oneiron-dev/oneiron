@@ -217,7 +217,7 @@ impl CodeRunRawOutput {
         let raw_sha256 = sha256_bytes(raw);
         let handle = format!(
             "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-            crate::types::bytes_to_hex_lower(&raw_sha256)
+            crate::entity_id::bytes_to_hex_lower(&raw_sha256)
         );
         let raw_len = u64::try_from(raw.len())
             .map_err(|_| invalid_code_run_replay("raw output length overflow"))?;
@@ -844,7 +844,7 @@ fn validate_raw_output(output: &CodeRunRawOutput) -> Result<()> {
     )?;
     let expected_handle = format!(
         "{CODE_RUN_OUTPUT_HANDLE_PREFIX}{}",
-        crate::types::bytes_to_hex_lower(&output.raw_sha256)
+        crate::entity_id::bytes_to_hex_lower(&output.raw_sha256)
     );
     if output.handle != expected_handle {
         return Err(invalid_code_run_replay(

@@ -18,6 +18,7 @@ use crate::delivery_window::{
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
     DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
 };
+use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
@@ -25,7 +26,6 @@ use crate::gate::{
 };
 use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy};
 use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
-use crate::types::EntityId;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 

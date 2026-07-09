@@ -4,6 +4,7 @@ use heed::{RoTxn, RwTxn};
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
@@ -12,8 +13,8 @@ use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    ENTITY_ID_LEN, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
-    parse_strict_edge_record, parse_strict_edge_record_key,
+    EdgeConfirmationStatus, EdgeKind, ScoredEntity, parse_strict_edge_record,
+    parse_strict_edge_record_key,
 };
 
 const SEED_HASH_LEN: usize = 16;

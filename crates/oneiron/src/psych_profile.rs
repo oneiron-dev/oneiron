@@ -15,8 +15,9 @@ use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, ap
 use crate::claim::unit_interval_f32;
 use crate::error::{Error, Result};
 
+use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_PSYCH_PROFILE;
-use crate::types::{EntityId, TimeRange};
+use crate::types::TimeRange;
 
 /// Current PsychProfile record body schema version.
 pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 1;

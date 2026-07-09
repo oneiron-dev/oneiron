@@ -28,7 +28,7 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::types::bytes_to_hex_lower;
+use crate::entity_id::bytes_to_hex_lower;
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
 pub type LlmGenerateFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<LlmResponse>> + Send + 'a>>;

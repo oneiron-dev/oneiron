@@ -17,6 +17,7 @@ use crate::batch::{
 use crate::bm25::{Bm25Config, Bm25Formula};
 use crate::claim::{ClaimBody, claim_surfaceable};
 use crate::codebase::{CodebaseScopeKey, RepoRef, codebase_candidate_matches_scope_key};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::fusion;
 use crate::registry::{
@@ -35,8 +36,8 @@ use crate::store::{
     RetrievalTraceChannelRecord, RetrievalTraceStage, RetrievalTraceStageRecord, Store,
 };
 use crate::types::{
-    ContextPackRetrievalBudget, EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EmptyReason, EntityId,
-    ScoredEntity, TemporalAnchorMode, TemporalExpressionParseError, TemporalGranularity, TimeRange,
+    ContextPackRetrievalBudget, EDGE_KEY_LEN, EdgeKind, EmptyReason, ScoredEntity,
+    TemporalAnchorMode, TemporalExpressionParseError, TemporalGranularity, TimeRange,
     temporal_expression_from_query,
 };
 

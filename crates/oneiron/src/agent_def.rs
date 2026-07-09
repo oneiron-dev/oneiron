@@ -17,12 +17,13 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::ModelTierRef;
 use crate::pipeline::WorldScope;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
-use crate::types::{EntityId, TimeRange};
+use crate::types::TimeRange;
 
 /// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
 ///

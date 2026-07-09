@@ -1,7 +1,7 @@
+use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::error::Error;
 use crate::error::Result;
-use crate::types::EntityId;
 
 /// Highest priority: a pending claim surfaced in user-visible retrieval.
 pub const EMBED_PRIORITY_SURFACED_HOT: u8 = 0;

@@ -31,12 +31,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::sync::transport::MAX_WINDOW_KEY_LEN;
 use crate::sync::types::parse_window_key_str;
 use crate::sync::window::DeleteBearingUpdate;
-use crate::types::EntityId;
 
 /// Maximum number of queue entries before triggering re-bootstrap.
 const MAX_QUEUE_SIZE: usize = 10_000;

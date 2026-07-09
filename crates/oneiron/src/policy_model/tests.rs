@@ -9,6 +9,7 @@ use rmpv::Value;
 use tempfile::TempDir;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
 use crate::llm::{
     BudgetLease, FatalLlmError, FinishReason, LlmGenerateFuture, LlmInputUsage, LlmOutputUsage,
@@ -17,7 +18,7 @@ use crate::llm::{
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, EntityId, VaultConfig};
+use crate::types::VaultConfig;
 
 fn temp_vault() -> (TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp vault dir");

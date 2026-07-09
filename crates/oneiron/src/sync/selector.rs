@@ -26,6 +26,7 @@ use crate::companion::{
     CompanionExportClassification, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
     decode_companion_record_body,
 };
+use crate::entity_id::{EntityId, LocalWorldId};
 use crate::error::{
     Error, Result, SyncEngineContext, SyncProtocolValidation,
     SyncSelectorValidation as SelectorError,
@@ -38,7 +39,7 @@ use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
     ENTITY_TYPE_WORLD, TypeByteBand, band_of,
 };
-use crate::types::{EdgeKind, EntityId, LocalWorldId};
+use crate::types::EdgeKind;
 
 use super::bridge::parse_edge_key;
 use super::loro_support::{

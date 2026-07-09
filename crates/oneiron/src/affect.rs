@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::claim::{ClaimBody, ClaimSubject, unit_interval_f32};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::types::{ClaimCandidate, ENTITY_ID_LEN, EntityId, Vad, VadAnnotation};
+use crate::types::{ClaimCandidate, Vad, VadAnnotation};
 
 pub mod coping;
 

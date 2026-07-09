@@ -7,6 +7,7 @@ use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::gate::{self, PolicyManifestResolution};
 use crate::llm::{
@@ -18,7 +19,6 @@ use crate::store::{
     GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateDecisionId, GateDecisionRecord, GateSystemNoticeAction,
     GateSystemNoticeRecord,
 };
-use crate::types::bytes_to_hex_lower;
 
 pub const POLICY_MODEL_REWORD_RETRY_BUDGET: usize = 2;
 const POLICY_MODEL_SAFE_GENERIC_PERSONA_REPLY: &str =

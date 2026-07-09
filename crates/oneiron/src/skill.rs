@@ -5,9 +5,10 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::types::{EntityId, TimeRange};
+use crate::types::TimeRange;
 
 pub const SKILL_RECORD_BODY_KEYS: [&str; 11] = [
     "skillId",

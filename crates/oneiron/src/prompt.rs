@@ -3,8 +3,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
-use crate::types::bytes_to_hex_lower;
 
 pub const DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH: &str = "packages/prompts";
 pub const EIRI_V3_PROMPT_RELATIVE_PATH: &str = "eiri/v3.md";

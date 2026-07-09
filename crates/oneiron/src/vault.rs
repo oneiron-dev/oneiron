@@ -67,6 +67,7 @@ use crate::deletion::{
     encode_hard_erase_sweep_job, encode_hard_erase_sweep_key, encode_redaction_audit_receipt,
     local_hard_delete_key, pending_tombstone_key, window_label_from_timestamp,
 };
+use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
 use crate::limits::{
@@ -102,11 +103,10 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
-    EdgeProvenanceFlags, EdgeValueLayout, EntityId, HydratedShortIdDeletion,
-    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
-    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, TimeRange, Vad, VadAnnotation,
-    VadAnnotationSource, VaultConfig, WriteEnvelope, bytes_to_hex_lower,
+    ClaimCandidate, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
+    HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
+    ScoredEntity, TimeRange, Vad, VadAnnotation, VadAnnotationSource, VaultConfig, WriteEnvelope,
     edge_value_layout_for_kind, parse_strict_edge_record,
 };
 use crate::{

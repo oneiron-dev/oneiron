@@ -9,8 +9,8 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 
 /// Current FederationGrant body schema version.
 pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 1;

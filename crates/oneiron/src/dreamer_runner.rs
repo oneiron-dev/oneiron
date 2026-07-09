@@ -17,6 +17,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
 use crate::error::SyncEngineContext;
 use crate::error::{Error, Result};
@@ -31,7 +32,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
-use crate::types::{ClaimCandidate, EntityId, TimeRange, WriteEnvelope};
+use crate::types::{ClaimCandidate, TimeRange, WriteEnvelope};
 
 /// Generic [`JobQueue`] kind used by Dreamer runner jobs.
 pub const DREAMER_RUNNER_JOB_KIND: &str = "dreamer";

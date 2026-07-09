@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::types::bytes_to_hex_lower;
+use crate::entity_id::bytes_to_hex_lower;
 
 /// v3 (ONE-1118): portable emoji lane — one Surface token per emoji grapheme
 /// cluster (ARCH-0031 dispatch row "Emoji / unknown → Grapheme per token").

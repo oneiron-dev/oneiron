@@ -321,9 +321,9 @@ pub(crate) fn record_in_txn(
 pub(crate) fn remat_marker_entity_for_quarantine(
     container: QuarantineContainer,
     crdt_key: &str,
-) -> Option<crate::types::EntityId> {
+) -> Option<crate::entity_id::EntityId> {
     match container {
-        QuarantineContainer::Entities => crate::types::EntityId::from_hex(crdt_key).ok(),
+        QuarantineContainer::Entities => crate::entity_id::EntityId::from_hex(crdt_key).ok(),
         QuarantineContainer::Edges => {
             crate::sync::bridge::parse_edge_key(crdt_key).map(|(src, _, _)| src)
         }
@@ -600,11 +600,11 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
 /// an unrelated entity's successful purge can never discharge another
 /// entity's GDPR purge retry.
 #[must_use]
-pub(crate) fn remat_marker_key(window_key: &str, id: &crate::types::EntityId) -> String {
+pub(crate) fn remat_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!("{REMAT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
-fn replay_remat_marker_provenance_key(window_key: &str, id: &crate::types::EntityId) -> String {
+fn replay_remat_marker_provenance_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!(
         "{REPLAY_REMAT_MARKER_PROVENANCE_PREFIX}{window_key}:{}",
         id.to_hex()
@@ -620,7 +620,7 @@ pub(crate) fn set_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<()> {
     let marker_key = remat_marker_key(window_key, id);
     let provenance_key = replay_remat_marker_provenance_key(window_key, id);
@@ -633,7 +633,7 @@ pub(crate) fn set_remat_marker_in_txn(
 pub(crate) fn set_remat_marker(
     vault: &Vault,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<()> {
     vault.with_write_txn(|wtxn| set_remat_marker_in_txn(vault, wtxn, window_key, id))
 }
@@ -645,7 +645,7 @@ pub(crate) fn set_replay_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<()> {
     let marker_key = remat_marker_key(window_key, id);
     let provenance_key = replay_remat_marker_provenance_key(window_key, id);
@@ -664,7 +664,7 @@ pub(crate) fn set_replay_remat_marker_in_txn(
 pub(crate) fn set_replay_remat_marker(
     vault: &Vault,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<()> {
     vault.with_write_txn(|wtxn| set_replay_remat_marker_in_txn(vault, wtxn, window_key, id))
 }
@@ -677,7 +677,7 @@ pub(crate) fn clear_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<()> {
     let marker_key = remat_marker_key(window_key, id);
     let provenance_key = replay_remat_marker_provenance_key(window_key, id);
@@ -693,7 +693,7 @@ pub(crate) fn unproven_remat_marker_exists_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
     let marker_key = remat_marker_key(window_key, id);
     let provenance_key = replay_remat_marker_provenance_key(window_key, id);
@@ -708,7 +708,7 @@ pub(crate) fn clear_replay_remat_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
     let provenance_key = replay_remat_marker_provenance_key(window_key, id);
     if vault.store.sync_state.get(wtxn, &provenance_key)?.is_none() {
@@ -856,7 +856,7 @@ const REASSERT_MARKER_PREFIX: &str = "ra:w:";
 
 /// Formats the `ra:w:{window}:{entity_hex}` re-assertion marker key.
 #[must_use]
-pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::types::EntityId) -> String {
+pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::entity_id::EntityId) -> String {
     format!("{REASSERT_MARKER_PREFIX}{window_key}:{}", id.to_hex())
 }
 
@@ -870,7 +870,7 @@ pub(crate) fn reassert_marker_key(window_key: &str, id: &crate::types::EntityId)
 pub(crate) fn enqueue_tombstone_reassert_marker(
     vault: &Vault,
     window_key: &str,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
     vault.with_write_txn(|wtxn| {
         let dt_key = crate::deletion::local_hard_delete_key(id);
@@ -912,7 +912,7 @@ pub fn pending_reassert_windows(vault: &Vault) -> Result<Vec<String>> {
 }
 
 /// One parsed `ra:` marker: (full `sync_state` key, entity id, value bytes).
-type ReassertMarker = (String, crate::types::EntityId, Vec<u8>);
+type ReassertMarker = (String, crate::entity_id::EntityId, Vec<u8>);
 
 /// The `ra:` markers for one window: `(marker_key, parsed_id, value)` for
 /// every row whose entity segment parses, plus the count of malformed rows.
@@ -931,7 +931,7 @@ fn pending_reassert_markers(
     for entry in iter {
         let (key, value) = entry?;
         let hex = &key[prefix.len()..];
-        match crate::types::EntityId::from_hex(hex) {
+        match crate::entity_id::EntityId::from_hex(hex) {
             Ok(id) => markers.push((key.to_string(), id, value.to_vec())),
             Err(_) => {
                 tracing::error!(
@@ -1132,7 +1132,7 @@ thread_local! {
 /// marker round-trip.
 pub(crate) fn apply_replayed_tombstone_for_sync(
     vault: &Vault,
-    id: &crate::types::EntityId,
+    id: &crate::entity_id::EntityId,
     raw_value: &[u8],
 ) -> Result<crate::deletion::ReplayedTombstoneOutcome> {
     #[cfg(test)]

@@ -16,9 +16,9 @@ use crate::channel_identity_lifecycle::{
     ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor, ChannelIdentityLifecycleVerb,
     ProvisionIntent,
 };
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
-use crate::types::{EntityId, bytes_to_hex_lower};
 
 /// Stable provider adapter contract version.
 pub const CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION: &str = "channel_identity.provider_adapter.v1";

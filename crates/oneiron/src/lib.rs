@@ -34,6 +34,7 @@ pub mod edit_roundtrip;
 pub mod edit_settle;
 pub mod embed;
 pub mod engine_executor;
+pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
 pub mod federation;
@@ -334,6 +335,7 @@ pub use crate::engine_executor::{
     EngineNativeExecutor, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
     JsCodeModeStepOutcome,
 };
+pub use crate::entity_id::EntityId;
 pub use crate::error::{Error, ErrorKind, Result};
 #[cfg(feature = "sync")]
 pub use crate::error::{
@@ -601,7 +603,7 @@ pub use crate::types::{
     DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo,
     EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
     EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
-    EiriSessionRagState, EmptyContext, EmptyReason, EntityId, FieldProfile, HnswConfig,
+    EiriSessionRagState, EmptyContext, EmptyReason, FieldProfile, HnswConfig,
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
     NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats,

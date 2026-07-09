@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
+use crate::entity_id::EntityId;
 use crate::types::{
-    ContextEntity, ContextPack, EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat,
-    PackStats, Signal, TokenAllocation,
+    ContextEntity, ContextPack, EmptyContext, EmptyReason, FieldProfile, PackFormat, PackStats,
+    Signal, TokenAllocation,
 };
 
 use super::*;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::EntityId;
+use crate::entity_id::EntityId;
 
 fn entity(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("valid entity")

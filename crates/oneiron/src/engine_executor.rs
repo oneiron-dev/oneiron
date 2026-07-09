@@ -26,7 +26,7 @@ use crate::{
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{
     code_sandbox::SANDBOX_WIT_WORLD_NAME,
-    types::{EntityId, bytes_to_hex_lower},
+    entity_id::{EntityId, bytes_to_hex_lower},
 };
 
 pub const ENGINE_EXECUTOR_SOFT_STEP_LIMIT: u32 = 6;

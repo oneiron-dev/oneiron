@@ -20,6 +20,7 @@ use crate::counterparty_contact::{
     decode_counterparty_contact_body, decode_counterparty_contact_index_value,
 };
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
 use crate::llm::BudgetExhaustionPolicy;
@@ -34,7 +35,7 @@ use crate::registry::{
     ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::types::{ENTITY_ID_LEN, EdgeActorClass, EntityId, WriteEnvelope, bytes_to_hex_lower};
+use crate::types::{EdgeActorClass, WriteEnvelope};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";

@@ -15,9 +15,10 @@ use crate::critic::{
     CriticReliability, CritiqueArtifact, CritiqueTriage, CritiqueVerdict, LensCatalog,
     triage_critiques,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::job_queue::JobId;
-use crate::types::{ClaimCandidate, EntityId, TimeRange, WriteEnvelope};
+use crate::types::{ClaimCandidate, TimeRange, WriteEnvelope};
 
 pub const DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION: u64 = 1;
 pub const DREAMER_TOURNAMENT_MAX_ROUNDS_K: u16 = 2;

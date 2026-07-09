@@ -527,5 +527,5 @@ fn fixed_job_id(byte: u8) -> crate::JobId {
 }
 
 fn hex(id: crate::JobId) -> String {
-    crate::types::bytes_to_hex_lower(id.as_bytes())
+    crate::entity_id::bytes_to_hex_lower(id.as_bytes())
 }

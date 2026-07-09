@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn scan_batch_ops_rejects_phonetic_secret_payload() {
         let err = scan_batch_ops(&[BatchOp::Phonetic {
-            id: crate::types::EntityId::now(),
+            id: crate::entity_id::EntityId::now(),
             codes: vec!["token=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned()],
         }])
         .expect_err("known GitHub token fixture in phonetic payload must reject");

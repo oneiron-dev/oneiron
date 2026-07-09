@@ -39,6 +39,7 @@ use crate::claim::{
 use crate::dreamer_runner::{
     DREAMER_RUNNER_JOB_KIND, DreamerJobPayload, decode_dreamer_job_payload,
 };
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
 use crate::job_queue::{JobId, JobQueue};
@@ -49,7 +50,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, PendingGateConsentRecord,
 };
-use crate::types::{EntityId, TimeRange, bytes_to_hex_lower};
+use crate::types::TimeRange;
 
 /// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;

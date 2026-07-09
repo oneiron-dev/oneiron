@@ -4,8 +4,8 @@ use heed::types::Bytes;
 use heed::{Database, RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 use crate::{Vault, unix_seconds_now};
 
 pub mod model_versioning;
