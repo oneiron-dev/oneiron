@@ -1,6 +1,7 @@
+use crate::edge::EDGE_VALUE_STRUCTURAL_LEN;
 use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_TASK};
 use crate::store::Store;
-use crate::types::{EDGE_VALUE_STRUCTURAL_LEN, TaskRole, task_body_for_test};
+use crate::types::{TaskRole, task_body_for_test};
 use crate::*;
 use core::assert_matches;
 

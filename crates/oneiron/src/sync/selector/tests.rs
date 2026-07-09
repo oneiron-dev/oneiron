@@ -17,6 +17,7 @@ use crate::companion::{
     CompanionProvenance, CompanionRecord, CompanionScope, ENTITY_TYPE_COMPANION_REGISTER,
     encode_companion_record_body,
 };
+use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body, encode_guest_share_envelope, encode_guest_share_envelope_body,
@@ -31,7 +32,7 @@ use crate::registry::{
 use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::loro_support::map_get_bytes;
-use crate::types::{EdgeActorClass, TimeRange};
+use crate::types::TimeRange;
 
 fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()

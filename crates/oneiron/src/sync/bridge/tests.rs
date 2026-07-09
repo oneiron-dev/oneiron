@@ -5,12 +5,13 @@ use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
     ENTITY_TYPE_COMPANION_REGISTER, encode_companion_record_body,
 };
+use crate::edge::EdgeActorClass;
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::sync::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
     map_contains_binary, map_insert_bytes,
 };
-use crate::types::{EdgeActorClass, TimeRange, VaultConfig};
+use crate::types::{TimeRange, VaultConfig};
 use core::assert_matches;
 use ed25519_dalek::{Signer, SigningKey};
 use rmpv::Value;
@@ -1412,7 +1413,7 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
         crate::claim::ClaimLifecycleStatus::Active,
     );
     body.evidence = Some(crate::provenance::encode_actor_class_evidence(
-        crate::types::EdgeActorClass::Human,
+        crate::edge::EdgeActorClass::Human,
     ));
     let body_bytes = crate::claim::encode_claim_body(&body).unwrap();
     let claim_blob = entity_blob(

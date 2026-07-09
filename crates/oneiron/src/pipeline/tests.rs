@@ -1708,7 +1708,7 @@ fn expand_ppr_uses_blended_results_as_seeds() -> Result<()> {
         .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
         .text(&a, &[("body", "alpha")])
         .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
+        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
         .commit()?;
 
     let baseline = vault.query().search_text("alpha", 10).run()?;
@@ -1766,7 +1766,7 @@ fn search_ppr_as_blend_candidate_signal() -> Result<()> {
         .batch()
         .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
         .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
+        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
         .commit()?;
 
     let results = vault.query().search_ppr(&[a], 3).run()?;
@@ -1785,7 +1785,7 @@ fn search_ppr_warms_cache_after_pipeline_snapshot() -> Result<()> {
         .batch()
         .put(&a, 1, TimeRange { start: 10, end: 10 }, 10, b"payload")
         .put(&b, 1, TimeRange { start: 11, end: 11 }, 11, b"payload")
-        .edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)
+        .edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)
         .commit()?;
 
     assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);

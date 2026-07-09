@@ -827,7 +827,7 @@ fn include_edges_returns_edge_info() -> Result<()> {
         serde_json::json!({"name": "Alice"}),
     )?;
 
-    vault.put_edge(&src, crate::types::EdgeKind::Supports, &tgt, 0.7)?;
+    vault.put_edge(&src, crate::edge::EdgeKind::Supports, &tgt, 0.7)?;
 
     let pack = vault
         .context_pack()
@@ -838,7 +838,7 @@ fn include_edges_returns_edge_info() -> Result<()> {
     let edges = pack.results[0].edges.as_ref().expect("expected edges");
     assert_eq!(edges.len(), 1);
     assert_eq!(edges[0].target, tgt);
-    assert_eq!(edges[0].kind, crate::types::EdgeKind::Supports);
+    assert_eq!(edges[0].kind, crate::edge::EdgeKind::Supports);
     Ok(())
 }
 
@@ -866,12 +866,12 @@ fn include_edges_rejects_malformed_edge_rows() -> Result<()> {
         "beta",
         serde_json::json!({"name": "Alice"}),
     )?;
-    vault.put_edge(&src, crate::types::EdgeKind::Supports, &healthy, 0.7)?;
+    vault.put_edge(&src, crate::edge::EdgeKind::Supports, &healthy, 0.7)?;
 
     // Plant a 13-byte edge value via a raw write: the contract pins the
     // edge value as a fixed-width LE buffer of exactly 12/24/26 bytes
     // (dbManifest n14), so 13 bytes is on-disk corruption.
-    let key = Store::encode_edge_key(&src, crate::types::EdgeKind::Mentions, &tgt);
+    let key = Store::encode_edge_key(&src, crate::edge::EdgeKind::Mentions, &tgt);
     let value = [0_u8; 13];
     vault.with_write_txn(|wtxn| {
         vault.store.edges_out.put(wtxn, &key, &value)?;
@@ -898,8 +898,8 @@ fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let small_src = EntityId::from_bytes_unchecked([0x01; 16]);
     let bounded_src = EntityId::from_bytes_unchecked([0x02; 16]);
-    let value = crate::types::encode_edge_value(
-        crate::types::EdgeKind::Mentions,
+    let value = crate::edge::encode_edge_value(
+        crate::edge::EdgeKind::Mentions,
         0.5,
         0,
         crate::affect::Vad::NEUTRAL,
@@ -908,7 +908,7 @@ fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
 
     vault.with_write_txn(|wtxn| {
         let target = EntityId::from_bytes_unchecked([0x03; 16]);
-        let key = Store::encode_edge_key(&small_src, crate::types::EdgeKind::Mentions, &target);
+        let key = Store::encode_edge_key(&small_src, crate::edge::EdgeKind::Mentions, &target);
         vault.store.edges_out.put(wtxn, &key, &value)?;
         Ok(())
     })?;
@@ -925,7 +925,7 @@ fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
             let target_byte = u8::try_from(i + 4).expect("test cap fits in u8");
             let target = EntityId::from_bytes_unchecked([target_byte; 16]);
             let key =
-                Store::encode_edge_key(&bounded_src, crate::types::EdgeKind::Mentions, &target);
+                Store::encode_edge_key(&bounded_src, crate::edge::EdgeKind::Mentions, &target);
             vault.store.edges_out.put(wtxn, &key, &value)?;
         }
         Ok(())
@@ -942,7 +942,7 @@ fn scan_edges_for_entity_enforces_result_bound() -> Result<()> {
         let overflow_target = EntityId::from_bytes_unchecked([0xFE; 16]);
         let key = Store::encode_edge_key(
             &bounded_src,
-            crate::types::EdgeKind::Mentions,
+            crate::edge::EdgeKind::Mentions,
             &overflow_target,
         );
         vault.store.edges_out.put(wtxn, &key, &value)?;
@@ -982,9 +982,9 @@ fn edge_walk_rejects_malformed_edge_rows() -> Result<()> {
         "friend",
         serde_json::json!({"name": "B"}),
     )?;
-    vault.put_edge(&root, crate::types::EdgeKind::Supports, &neighbor, 1.0)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Supports, &neighbor, 1.0)?;
 
-    let key = Store::encode_edge_key(&root, crate::types::EdgeKind::Mentions, &tgt);
+    let key = Store::encode_edge_key(&root, crate::edge::EdgeKind::Mentions, &tgt);
     let value = [0_u8; 13];
     vault.with_write_txn(|wtxn| {
         vault.store.edges_out.put(wtxn, &key, &value)?;
@@ -1023,9 +1023,8 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
         serde_json::json!({"text": "alpha"}),
     )?;
 
-    let supports_key =
-        Store::encode_edge_key(&src, crate::types::EdgeKind::Supports, &tgt).to_vec();
-    let child_of_key = Store::encode_edge_key(&src, crate::types::EdgeKind::ChildOf, &tgt).to_vec();
+    let supports_key = Store::encode_edge_key(&src, crate::edge::EdgeKind::Supports, &tgt).to_vec();
+    let child_of_key = Store::encode_edge_key(&src, crate::edge::EdgeKind::ChildOf, &tgt).to_vec();
 
     // 33-byte key whose kind byte (20) is outside the pinned 0-19 range.
     let mut unknown_kind_key = src.as_bytes().to_vec();
@@ -1034,11 +1033,11 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
 
     // 17-byte key: source id + kind byte, target id missing entirely.
     let mut truncated_key = src.as_bytes().to_vec();
-    truncated_key.push(crate::types::EdgeKind::Supports as u8);
+    truncated_key.push(crate::edge::EdgeKind::Supports as u8);
 
     // 33-byte key whose target is the reserved all-0xFF sentinel id.
     let mut reserved_target_key = src.as_bytes().to_vec();
-    reserved_target_key.push(crate::types::EdgeKind::Supports as u8);
+    reserved_target_key.push(crate::edge::EdgeKind::Supports as u8);
     reserved_target_key.extend_from_slice(&[0xFF; 16]);
 
     // 26-byte value with confirmation_status byte 4 (valid enums are 0-3).
@@ -1128,7 +1127,7 @@ fn vad_round_trip_through_hydration() -> Result<()> {
 
     vault.put_edge_with_vad(
         &src,
-        crate::types::EdgeKind::HasFacet,
+        crate::edge::EdgeKind::HasFacet,
         &tgt,
         0.8,
         crate::affect::Vad {
@@ -1146,7 +1145,7 @@ fn vad_round_trip_through_hydration() -> Result<()> {
 
     let edges = pack.results[0].edges.as_ref().expect("expected edges");
     assert_eq!(edges.len(), 1);
-    assert_eq!(edges[0].kind, crate::types::EdgeKind::HasFacet);
+    assert_eq!(edges[0].kind, crate::edge::EdgeKind::HasFacet);
     assert!((edges[0].weight - 0.8).abs() < f32::EPSILON);
     let vad = edges[0].vad.expect("semantic edge should hydrate VAD");
     assert!((vad.valence - 0.6).abs() < f32::EPSILON);
@@ -1167,8 +1166,8 @@ fn edge_hops_collect_neighbors() -> Result<()> {
     put_text_entity(&vault, &b, 4, "child", serde_json::json!({"name": "B"}))?;
     put_text_entity(&vault, &c, 4, "leaf", serde_json::json!({"name": "C"}))?;
 
-    vault.put_edge(&a, crate::types::EdgeKind::Supports, &b, 1.0)?;
-    vault.put_edge(&b, crate::types::EdgeKind::Supports, &c, 1.0)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::Supports, &b, 1.0)?;
+    vault.put_edge(&b, crate::edge::EdgeKind::Supports, &c, 1.0)?;
 
     let hop1 = vault
         .context_pack()
@@ -1206,7 +1205,7 @@ fn max_neighbors_caps_neighbor_count() -> Result<()> {
             "neighbor",
             serde_json::json!({"name": format!("P{i}")}),
         )?;
-        vault.put_edge(&root, crate::types::EdgeKind::Mentions, &id, 1.0)?;
+        vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &id, 1.0)?;
     }
 
     let pack = vault
@@ -1378,8 +1377,8 @@ fn selected_edge_budget_caps_edge_walk() -> Result<()> {
         "edge neighbor weaker",
         serde_json::json!({"name": "weaker"}),
     )?;
-    vault.put_edge(&root, crate::types::EdgeKind::Mentions, &strongest, 0.9)?;
-    vault.put_edge(&root, crate::types::EdgeKind::Mentions, &weaker, 0.8)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &strongest, 0.9)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &weaker, 0.8)?;
 
     let pack = vault
         .context_pack()
@@ -1415,7 +1414,7 @@ fn neighbor_selection_prefers_highest_weight_edges() -> Result<()> {
             "neighbor",
             serde_json::json!({"name": format!("P{:?}", id.as_bytes()[0])}),
         )?;
-        vault.put_edge(&root, crate::types::EdgeKind::Mentions, &id, weight)?;
+        vault.put_edge(&root, crate::edge::EdgeKind::Mentions, &id, weight)?;
     }
 
     let pack = vault
@@ -1450,7 +1449,7 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
         "child",
         serde_json::json!({"name": "Child"}),
     )?;
-    vault.put_edge(&root, crate::types::EdgeKind::Supports, &child, 1.0)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Supports, &child, 1.0)?;
 
     reset_edge_scan_count();
     let rtxn = vault.store.env.read_txn()?;
@@ -1812,9 +1811,9 @@ fn pack_neighbors_apply_the_status_gate() -> Result<()> {
         serde_json::json!({"name": "N"}),
     )?;
 
-    vault.put_edge(&a, crate::types::EdgeKind::Supports, &retracted, 0.9)?;
-    vault.put_edge(&a, crate::types::EdgeKind::ClaimOf, &proposed, 1.0)?;
-    vault.put_edge(&a, crate::types::EdgeKind::Supports, &person, 0.8)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::Supports, &retracted, 0.9)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::ClaimOf, &proposed, 1.0)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::Supports, &person, 0.8)?;
 
     let pack = vault
         .context_pack()
@@ -1975,7 +1974,7 @@ fn pack_validation_rejects_missing_required_evidence() -> Result<()> {
         crate::provenance::PREDICATE_EDGE_PROVENANCE,
         crate::claim::ClaimSubject::Edge {
             source,
-            kind: crate::types::EdgeKind::Supports,
+            kind: crate::edge::EdgeKind::Supports,
             target,
         },
         value,
@@ -2068,7 +2067,7 @@ fn pack_validation_rejects_quarantined_claim_edge_subject_endpoint() -> Result<(
         &id,
         crate::claim::ClaimSubject::Edge {
             source,
-            kind: crate::types::EdgeKind::Supports,
+            kind: crate::edge::EdgeKind::Supports,
             target,
         },
         "quarantinededgeclaimsubjectneedle",
@@ -2218,7 +2217,7 @@ fn pack_validation_rejects_deleted_edge_target_reference() -> Result<()> {
         "edge target",
         serde_json::json!({"body": "target"}),
     )?;
-    vault.put_edge(&source, crate::types::EdgeKind::Supports, &target, 0.7)?;
+    vault.put_edge(&source, crate::edge::EdgeKind::Supports, &target, 0.7)?;
     vault.with_write_txn(|wtxn| {
         vault.store.sync_state.put(
             wtxn,
@@ -2327,7 +2326,7 @@ fn pack_validation_rejects_active_edge_source_remat_marker() -> Result<()> {
         "edge target",
         serde_json::json!({"body": "target"}),
     )?;
-    vault.put_edge(&source, crate::types::EdgeKind::Supports, &target, 0.7)?;
+    vault.put_edge(&source, crate::edge::EdgeKind::Supports, &target, 0.7)?;
     vault.with_write_txn(|wtxn| {
         vault
             .store
@@ -2436,7 +2435,7 @@ fn pack_hydration_fails_closed_on_undecodable_claim_neighbor() -> Result<()> {
         vault.store.entities.put(wtxn, bad.as_bytes(), &raw)?;
         Ok(())
     })?;
-    vault.put_edge(&a, crate::types::EdgeKind::Supports, &bad, 0.9)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::Supports, &bad, 0.9)?;
 
     let pack = vault
         .context_pack()
@@ -2471,7 +2470,7 @@ fn claim_body_is_decoded_once_per_result_for_gate_and_projection() -> Result<()>
         crate::claim::ClaimLifecycleStatus::Active,
         false,
     )?;
-    vault.put_edge(&a, crate::types::EdgeKind::Supports, &b, 0.9)?;
+    vault.put_edge(&a, crate::edge::EdgeKind::Supports, &b, 0.9)?;
 
     crate::claim::reset_claim_body_decode_count();
     let pack = vault
@@ -2556,28 +2555,23 @@ fn walk_edges_gates_structural_kinds_and_retracted_provenance() -> Result<()> {
     }
 
     // Structural plumbing at FULL weight — must contribute no neighbor.
-    vault.put_edge(&root, crate::types::EdgeKind::ChildOf, &child_of_tgt, 1.0)?;
-    vault.put_edge(
-        &root,
-        crate::types::EdgeKind::AssignedTo,
-        &assigned_tgt,
-        1.0,
-    )?;
+    vault.put_edge(&root, crate::edge::EdgeKind::ChildOf, &child_of_tgt, 1.0)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::AssignedTo, &assigned_tgt, 1.0)?;
     // Contradiction IS context — opposes is followed (unlike PPR λ=0).
-    vault.put_edge(&root, crate::types::EdgeKind::Opposes, &opposes_tgt, 0.5)?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Opposes, &opposes_tgt, 0.5)?;
 
     // Two provenanced (26 B) edges planted raw: confirmation_status
     // byte 24 = retracted (3) must be skipped, confirmed (1) followed.
-    let plant = |tgt: &EntityId, status: crate::types::EdgeConfirmationStatus| -> Result<()> {
-        let key = Store::encode_edge_key(&root, crate::types::EdgeKind::Supports, tgt);
-        let value = crate::types::encode_edge_value(
-            crate::types::EdgeKind::Supports,
+    let plant = |tgt: &EntityId, status: crate::edge::EdgeConfirmationStatus| -> Result<()> {
+        let key = Store::encode_edge_key(&root, crate::edge::EdgeKind::Supports, tgt);
+        let value = crate::edge::encode_edge_value(
+            crate::edge::EdgeKind::Supports,
             0.9,
             1,
             crate::affect::Vad::NEUTRAL,
-            Some(crate::types::EdgeProvenanceFlags {
+            Some(crate::edge::EdgeProvenanceFlags {
                 confirmation_status: status,
-                actor_class: crate::types::EdgeActorClass::Human,
+                actor_class: crate::edge::EdgeActorClass::Human,
             }),
         )?;
         vault.with_write_txn(|wtxn| {
@@ -2587,11 +2581,11 @@ fn walk_edges_gates_structural_kinds_and_retracted_provenance() -> Result<()> {
     };
     plant(
         &retracted_tgt,
-        crate::types::EdgeConfirmationStatus::Retracted,
+        crate::edge::EdgeConfirmationStatus::Retracted,
     )?;
     plant(
         &confirmed_tgt,
-        crate::types::EdgeConfirmationStatus::Confirmed,
+        crate::edge::EdgeConfirmationStatus::Confirmed,
     )?;
 
     let pack = vault
@@ -2665,7 +2659,7 @@ fn context_pack_telemetry_records_final_hydration_suppressions() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Retracted,
         false,
     )?;
-    vault.put_edge(&live, crate::types::EdgeKind::Supports, &dead_neighbor, 0.9)?;
+    vault.put_edge(&live, crate::edge::EdgeKind::Supports, &dead_neighbor, 0.9)?;
 
     let pack_with_telemetry = vault
         .context_pack()
@@ -3095,7 +3089,7 @@ fn context_pack_serialized_telemetry_excludes_merged_neighbors() -> Result<()> {
         "serialized neighbor",
         serde_json::json!({"name": "Neighbor"}),
     )?;
-    vault.put_edge(&result, crate::types::EdgeKind::Supports, &neighbor, 1.0)?;
+    vault.put_edge(&result, crate::edge::EdgeKind::Supports, &neighbor, 1.0)?;
 
     let serialized = vault
         .context_pack()

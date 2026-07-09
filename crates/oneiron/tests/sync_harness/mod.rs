@@ -26,11 +26,12 @@ use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
+use oneiron::edge::EdgeActorClass;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{EdgeActorClass, TimeRange};
+use oneiron::types::TimeRange;
 use oneiron::{
     EdgeInfo, EdgeKind, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     Vault, VaultConfig,
