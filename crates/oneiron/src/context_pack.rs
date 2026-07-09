@@ -16,6 +16,13 @@ use crate::companion::{
     decode_companion_record_body,
 };
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
+use crate::eiri::EIRI_CONTEXT_VERSION_V4;
+use crate::eiri::EiriCompanionAssembly;
+use crate::eiri::EiriMemoryBoard;
+use crate::eiri::EiriMemoryBoardBudget;
+use crate::eiri::EiriMemoryBoardRow;
+use crate::eiri::EiriMemoryBoardSlot;
+use crate::eiri::EiriMemoryBoardSource;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -31,13 +38,6 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::temporal::TemporalAnchorMode;
 use crate::temporal::TemporalGranularity;
 use crate::temporal::TimeRange;
-use crate::types::EIRI_CONTEXT_VERSION_V4;
-use crate::types::EiriCompanionAssembly;
-use crate::types::EiriMemoryBoard;
-use crate::types::EiriMemoryBoardBudget;
-use crate::types::EiriMemoryBoardRow;
-use crate::types::EiriMemoryBoardSlot;
-use crate::types::EiriMemoryBoardSource;
 use crate::{Vault, le_bytes_to_f32_vec};
 
 pub const DEFAULT_MAX_NEIGHBORS: usize = 50;
