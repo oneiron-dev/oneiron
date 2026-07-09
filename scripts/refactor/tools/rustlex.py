@@ -155,10 +155,8 @@ def mask(src):
 # canonicalisation
 # ---------------------------------------------------------------------------
 
-_TOKEN = re.compile(
-    r"//[^\n]*"                # line comment — one atomic token, ends at EOL
-    r"|/\*(?:[^*]|\*(?!/))*\*/"  # block comment — one atomic token
-    r'|"(?:\\.|[^"\\])*"'      # string literal
+_CODE_TOKEN = re.compile(
+    r'"(?:\\.|[^"\\])*"'      # string literal
     r"|[A-Za-z_][A-Za-z0-9_]*"  # ident/keyword
     r"|[0-9][0-9A-Za-z_.]*"     # number-ish
     r"|::|->|=>|&&|\|\||==|!=|<=|>="  # multi-char ops
@@ -166,20 +164,86 @@ _TOKEN = re.compile(
 )
 
 
-def canon(text):
-    """Whitespace/reflow-insensitive token form: split into Rust-ish tokens,
-    rejoin with single spaces. Comments are atomic tokens, so a `//` comment
-    can never swallow following code when lines are joined, and comment text
-    never equals a code-token stream. A trailing comma before a closing
-    bracket is dropped only when the bracket sits on a LATER line (rustfmt's
-    vertical-list habit); a same-line `,)` — a one-tuple — stays significant."""
-    ms = list(_TOKEN.finditer(text))
+def _lex(text):
+    """(token, start, end) stream with comments atomic: a `//` comment runs
+    to EOL, a `/* */` comment nests (matching mask()'s lexical reality), a
+    string literal is one token. Comment/string interiors are never re-lexed
+    as code."""
     out = []
-    for i, m in enumerate(ms):
-        t = m.group(0)
-        if (t == "," and i + 1 < len(ms)
-                and ms[i + 1].group(0) in ("}", "]", ")")
-                and "\n" in text[m.end():ms[i + 1].start()]):
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] in " \t\r\n":
+            i += 1
+            continue
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j == -1 else j
+            out.append((text[i:j], i, j))
+            i = j
+            continue
+        if text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth += 1
+                    j += 2
+                elif text.startswith("*/", j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            out.append((text[i:j], i, j))
+            i = j
+            continue
+        m = _CODE_TOKEN.match(text, i)
+        if m:
+            out.append((m.group(0), i, m.end()))
+            i = m.end()
+        else:
+            i += 1
+    return out
+
+
+# Keywords that can legally precede a parenthesized EXPRESSION/PATTERN — after
+# these, `(x,)` is a one-tuple and its comma is semantics, not rustfmt style.
+_TUPLE_POS_KEYWORDS = {
+    "return", "break", "continue", "if", "else", "while", "for", "in",
+    "match", "loop", "move", "yield", "as", "where", "let", "mut", "ref",
+    "const", "static", "async", "unsafe", "await", "box", "dyn", "fn",
+    "impl",
+}
+
+
+def canon(text):
+    """Whitespace/reflow-insensitive token form: lex (comments atomic — see
+    _lex), rejoin with single spaces. A trailing comma before a closing
+    bracket is dropped only when BOTH hold: the closer sits on a LATER line
+    (rustfmt's vertical-list habit — never drop a same-line `,)` one-tuple),
+    AND the bracket group is droppable: `[ ]` / `{ }` always (trailing commas
+    there are never semantic in Rust), `( )` only in CALL position — matching
+    opener directly preceded by a path ident (not a keyword), `)`, `]`,
+    turbofish `>`, or macro `!` — because an arg-list/constructor trailing
+    comma is style, while a non-call `(x,)` is a one-tuple. Known accepted
+    blind spot: `a > (b,\\n)` comparisons read `>` as turbofish."""
+    toks = _lex(text)
+    # Per-closer droppability via bracket matching.
+    droppable = {}
+    stack = []
+    for idx, (t, _s, _e) in enumerate(toks):
+        if t in ("(", "[", "{"):
+            prev = toks[idx - 1][0] if idx else ""
+            call = (t != "(") or prev in (")", "]", ">", "!") or bool(
+                re.match(r"[A-Za-z_]", prev or " ")
+                and prev not in _TUPLE_POS_KEYWORDS)
+            stack.append(call)
+        elif t in (")", "]", "}"):
+            droppable[idx] = stack.pop() if stack else True
+    out = []
+    for i, (t, _s, e) in enumerate(toks):
+        if (t == "," and i + 1 < len(toks)
+                and toks[i + 1][0] in ("}", "]", ")")
+                and "\n" in text[e:toks[i + 1][1]]
+                and droppable.get(i + 1, True)):
             continue
         out.append(t)
     return " ".join(out)
@@ -609,8 +673,8 @@ def edit_delta_ok(old, new):
     (empty→`pub(crate)` prepended). Multiple regions are allowed (a line may
     carry more than one `types::X` occurrence re-pointed at once); each must be
     pure-path."""
-    old_toks = _TOKEN.findall(old)
-    nt = _TOKEN.findall(new)
+    old_toks = [t for t, _s, _e in _lex(old)]
+    nt = [t for t, _s, _e in _lex(new)]
     if old_toks == nt:
         return False  # a no-op edit is not a valid declared edit
     if len(old_toks) == len(nt):
