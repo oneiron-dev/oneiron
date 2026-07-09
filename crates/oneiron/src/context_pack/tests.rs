@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::error::Error;
-use crate::types::{HnswConfig, TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::{HnswConfig, VaultConfig};
 
 use super::*;
 

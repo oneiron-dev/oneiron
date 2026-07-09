@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;

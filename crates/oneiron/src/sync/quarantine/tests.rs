@@ -8,7 +8,8 @@ use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{LoadedWindow, forward_rematerialize, reverse_rematerialize};
-use crate::types::{TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::VaultConfig;
 use loro::LoroDoc;
 
 /// `learned_at` inside the 2026-03 window used throughout.

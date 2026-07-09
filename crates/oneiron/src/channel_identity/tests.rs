@@ -4,8 +4,9 @@ use crate::error::ErrorKind;
 use crate::registry::{
     ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TypeByteBand, entity_type_registry_entry,
 };
+use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
-use crate::types::{TimeRange, VaultConfig};
+use crate::types::VaultConfig;
 
 fn entity(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid entity id")

@@ -17,7 +17,7 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{EntityId, Error, ErrorKind, HnswConfig, Vault, VaultConfig};
 
 fn test_config() -> VaultConfig {

@@ -5,7 +5,8 @@ use crate::code_artifact::{
 use crate::edge::EdgeKind;
 use crate::error::{Error, ErrorKind};
 use crate::registry::ENTITY_TYPE_CODE_SYMBOL;
-use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

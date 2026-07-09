@@ -8,7 +8,8 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSu
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::SyncQueue;
-use crate::types::{TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::VaultConfig;
 
 #[derive(Debug)]
 struct RecordingEmbedder {

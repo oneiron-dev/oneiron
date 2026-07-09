@@ -418,7 +418,7 @@ pub fn put_selector_test_federation_grant(
         .put_replicated(
             grant_id,
             ENTITY_TYPE_FEDERATION_GRANT,
-            crate::types::TimeRange {
+            crate::temporal::TimeRange {
                 start: learned_at,
                 end: learned_at,
             },

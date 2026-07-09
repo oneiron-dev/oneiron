@@ -1,6 +1,7 @@
 use super::*;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
