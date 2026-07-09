@@ -83,7 +83,6 @@ pub mod sync;
 pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
-pub mod types;
 mod vault;
 pub mod write_envelope;
 
