@@ -7,7 +7,10 @@ use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
 use crate::receipt::ReceiptQuery;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
-use crate::types::{VaultConfig, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::types::VaultConfig;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 
 const REASON_CEILING: &str = "gate.pending.actor_ceiling";
 const REASON_CRITICAL: &str = "gate.pending.criticality_floor";
@@ -56,7 +59,7 @@ fn write_dreamer_proposal(
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, time(1), 1, b"dreamer actor")?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, time(1), 1, b"subject")?;
     let envelope = dreamer_envelope(actor, run_id);
-    let candidate = crate::types::ClaimCandidate::new(
+    let candidate = crate::write_envelope::ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(value),
@@ -622,7 +625,7 @@ fn supersede_of_user_stated_and_conflict_rows_surface_as_exceptions() -> Result<
         WriteProvenance::new(Value::from("user said so")).expect("provenance"),
         ClaimApprovalStatus::Approved,
     );
-    let candidate = crate::types::ClaimCandidate::new(
+    let candidate = crate::write_envelope::ClaimCandidate::new(
         "profile.diet",
         ClaimSubject::Entity(subject),
         Value::from("vegan"),
@@ -885,7 +888,7 @@ fn stale_truth_does_not_classify_updates() -> Result<()> {
         WriteProvenance::new(Value::from("user said so")).expect("provenance"),
         ClaimApprovalStatus::Approved,
     );
-    let candidate = crate::types::ClaimCandidate::new(
+    let candidate = crate::write_envelope::ClaimCandidate::new(
         "profile.diet",
         ClaimSubject::Entity(subject),
         Value::from("vegan"),

@@ -35,7 +35,9 @@ use crate::registry::{
     ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::store::Store;
-use crate::types::{ClaimCandidate, TaskRole, TimeRange, WriteEnvelope};
+use crate::types::{TaskRole, TimeRange};
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteEnvelope;
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
 pub(crate) const ENTITY_OCCURRED_START_OFFSET: usize = 1;

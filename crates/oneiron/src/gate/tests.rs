@@ -13,9 +13,12 @@ use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::types::{
-    ClaimCandidate, ContextEntity, ContextPack, PackItemAccounting, PackStats, PackTokenStats,
-    ScoredEntity, TimeRange, WriteActor, WriteProvenance,
+    ContextEntity, ContextPack, PackItemAccounting, PackStats, PackTokenStats, ScoredEntity,
+    TimeRange,
 };
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteProvenance;
 use std::time::Duration;
 
 fn test_id(seed: u8) -> EntityId {

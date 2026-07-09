@@ -1,14 +1,13 @@
 use rmpv::Value;
 
 use super::*;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
 use crate::{
     ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
     receipt::{ReceiptKind, ReceiptQuery},
     registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
-    types::{
-        WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
-        WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
-    },
 };
 
 fn test_config() -> VaultConfig {

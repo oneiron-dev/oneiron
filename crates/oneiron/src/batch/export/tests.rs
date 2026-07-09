@@ -3,7 +3,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::types::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 use rmpv::Value;
 
 fn entity(seed: u8) -> EntityId {

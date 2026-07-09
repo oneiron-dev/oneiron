@@ -6,11 +6,14 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
-use crate::types::{
-    ClaimCandidate, HnswConfig, VaultConfig, WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY,
-    WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteActor,
-    WriteEnvelope, WriteProvenance,
-};
+use crate::types::{HnswConfig, VaultConfig};
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 use core::assert_matches;
 #[cfg(feature = "sync")]
 use ed25519_dalek::{Signer, SigningKey};
