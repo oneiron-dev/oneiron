@@ -136,11 +136,11 @@ use rmpv::Value;
 
 use crate::claim::{ClaimSubject, EDGE_REF_LEN as CLAIM_EDGE_REF_LEN, unit_interval_f32};
 use crate::error::{Error, Result};
+use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::store::Store;
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus,
-    EdgeKind, EdgeProvenanceFlags, EntityId,
+    ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, EntityId,
 };
 
 /// The pinned predicate for edge-provenance Claims (contracts.ts

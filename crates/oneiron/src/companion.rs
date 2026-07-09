@@ -27,7 +27,7 @@ use crate::types::{EdgeActorClass, EntityId, WriteEnvelope};
 ///
 /// The companion pack owns bytes 64..=79; this API pins the register substrate
 /// to the first byte in that band and registers it lazily per vault.
-pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::types::TYPE_BYTE_BAND_COMPANION_START;
+pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = crate::registry::TYPE_BYTE_BAND_COMPANION_START;
 /// Short-id prefix for companion-register rows.
 pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
 /// Pack id recorded in the vault-scoped structural-kind registry.

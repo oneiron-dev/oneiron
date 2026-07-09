@@ -548,7 +548,7 @@ pub(crate) const ATT_EMPTY_MAP_BYTE: u8 = 0x80;
 /// transcript so the signed header bytes are EXACTLY the stored bytes.
 pub(crate) fn receipt_envelope_header(learned_at: u64) -> [u8; 25] {
     let mut header = [0u8; 25];
-    header[0] = crate::types::ENTITY_TYPE_REDACTION_AUDIT;
+    header[0] = crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
     header[1..9].copy_from_slice(&learned_at.to_be_bytes());
     header[9..17].copy_from_slice(&learned_at.to_be_bytes());
     header[17..25].copy_from_slice(&learned_at.to_be_bytes());

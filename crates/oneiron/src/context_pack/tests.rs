@@ -288,7 +288,7 @@ fn companion_register_api_context_pack_retrieves_affect_without_private_note_lea
     put_text_entity(
         &vault,
         &turn_id,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "turn affect retrieval needle",
         serde_json::json!({
             "txt": "turn affect retrieval needle",
@@ -368,14 +368,14 @@ fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
     let claim = EntityId::from_bytes_unchecked([0x84; 16]);
     vault.put_entity(
         &actor,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         occurred,
         1,
         b"actor",
     )?;
     vault.put_entity(
         &person,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         occurred,
         1,
         b"person",
@@ -383,7 +383,7 @@ fn affect_trigger_context_pack_projects_typed_value_refs() -> Result<()> {
     put_text_entity(
         &vault,
         &trigger,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "affect trigger source turn",
         serde_json::json!({
             "txt": "affect trigger source turn",
@@ -1254,14 +1254,14 @@ fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> 
     put_text_entity(
         &vault,
         &turn,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "budgetbalance",
         serde_json::json!({"text": "turn"}),
     )?;
     put_text_entity(
         &vault,
         &facet,
-        crate::types::ENTITY_TYPE_FACET,
+        crate::registry::ENTITY_TYPE_FACET,
         "budgetbalance",
         serde_json::json!({"name": "active facet"}),
     )?;
@@ -1304,14 +1304,14 @@ fn retrieval_budget_zero_caps_remain_excluded_after_surplus_redistribution() -> 
     put_text_entity(
         &vault,
         &summary_a,
-        crate::types::ENTITY_TYPE_SUMMARY,
+        crate::registry::ENTITY_TYPE_SUMMARY,
         "zerocapbudget",
         serde_json::json!({"text": "summary a"}),
     )?;
     put_text_entity(
         &vault,
         &summary_b,
-        crate::types::ENTITY_TYPE_SUMMARY,
+        crate::registry::ENTITY_TYPE_SUMMARY,
         "zerocapbudget",
         serde_json::json!({"text": "summary b"}),
     )?;
@@ -1340,7 +1340,7 @@ fn default_retrieval_budget_keeps_small_limit_turn_results_eligible() -> Result<
     put_text_entity(
         &vault,
         &turn,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "smalllimitturn",
         serde_json::json!({"text": "turn"}),
     )?;
@@ -2754,7 +2754,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
     put_text_entity(
         &vault,
         &id,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "telemetry unpublished finalization",
         serde_json::json!({"name": "Unpublished"}),
     )?;
@@ -2823,7 +2823,7 @@ fn context_pack_telemetry_discards_run_on_assembly_error() -> Result<()> {
         .batch()
         .put(
             &id,
-            crate::types::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_PERSON,
             TimeRange { start: 1, end: 1 },
             1,
             &msgpack_entity(serde_json::json!({"name": "Corrupt"})),
@@ -2861,7 +2861,7 @@ fn context_pack_telemetry_discard_removes_provisional_outcomes() -> Result<()> {
     put_text_entity(
         &vault,
         &id,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "telemetry provisional outcome",
         serde_json::json!({"name": "Provisional"}),
     )?;
@@ -2910,7 +2910,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
     put_text_entity(
         &vault,
         &id,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "telemetry corrupt finalization",
         serde_json::json!({"name": "Corrupt Finalization"}),
     )?;
@@ -2990,7 +2990,7 @@ fn context_pack_serialized_telemetry_reflects_budget_surviving_results() -> Resu
             .batch()
             .put(
                 &id,
-                crate::types::ENTITY_TYPE_TURN,
+                crate::registry::ENTITY_TYPE_TURN,
                 TimeRange { start: 1, end: 1 },
                 1,
                 &payload,
@@ -3043,7 +3043,7 @@ fn context_pack_serialized_telemetry_reports_item_budget_empty() -> Result<()> {
             .batch()
             .put(
                 &id,
-                crate::types::ENTITY_TYPE_TURN,
+                crate::registry::ENTITY_TYPE_TURN,
                 TimeRange { start: 1, end: 1 },
                 1,
                 &payload,
@@ -3091,7 +3091,7 @@ fn context_pack_serialized_telemetry_excludes_merged_neighbors() -> Result<()> {
     put_text_entity(
         &vault,
         &neighbor,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "serialized neighbor",
         serde_json::json!({"name": "Neighbor"}),
     )?;
@@ -3138,7 +3138,7 @@ fn context_pack_serialized_stats_populate_token_accounting() -> Result<()> {
             .batch()
             .put(
                 &id,
-                crate::types::ENTITY_TYPE_TURN,
+                crate::registry::ENTITY_TYPE_TURN,
                 TimeRange { start: 1, end: 1 },
                 1,
                 &payload,

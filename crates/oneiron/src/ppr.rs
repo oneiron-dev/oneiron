@@ -5,13 +5,14 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 #[cfg(test)]
 use crate::types::EDGE_VALUE_STRUCTURAL_LEN;
 #[cfg(test)]
 use crate::types::VaultConfig;
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
+    ENTITY_ID_LEN, EdgeConfirmationStatus, EdgeKind, EntityId, ScoredEntity,
     parse_strict_edge_record, parse_strict_edge_record_key,
 };
 

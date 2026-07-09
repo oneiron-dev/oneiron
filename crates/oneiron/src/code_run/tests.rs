@@ -4,8 +4,8 @@ use super::*;
 use crate::{
     ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
     receipt::{ReceiptKind, ReceiptQuery},
+    registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
     types::{
-        ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
         WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
         WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
     },

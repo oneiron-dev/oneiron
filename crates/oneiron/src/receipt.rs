@@ -26,14 +26,15 @@ use crate::outbound_grant::{
 };
 use crate::persona_snapshot::{PersonaSnapshotExportRecord, decode_persona_snapshot_export_body};
 use crate::prompt::PromptRecompileStamp;
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+};
 use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
     PendingGateConsentRecord,
 };
-use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EiriMemoryBoard, EntityId,
-};
+use crate::types::{ENTITY_ID_LEN, EiriMemoryBoard, EntityId};
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
 pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;

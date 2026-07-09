@@ -464,31 +464,31 @@ async fn selector_vv_request_sends_filtered_update_only() {
     insert_entity(
         &server_doc,
         facet_allowed,
-        oneiron::types::ENTITY_TYPE_FACET,
+        oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-a",
     );
     insert_entity(
         &server_doc,
         facet_denied,
-        oneiron::types::ENTITY_TYPE_FACET,
+        oneiron::registry::ENTITY_TYPE_FACET,
         b"facet-b",
     );
     insert_entity(
         &server_doc,
         claim_allowed,
-        oneiron::types::ENTITY_TYPE_CLAIM,
+        oneiron::registry::ENTITY_TYPE_CLAIM,
         b"allowed-claim",
     );
     insert_entity(
         &server_doc,
         claim_denied,
-        oneiron::types::ENTITY_TYPE_CLAIM,
+        oneiron::registry::ENTITY_TYPE_CLAIM,
         b"denied-claim",
     );
     insert_entity(
         &server_doc,
         person,
-        oneiron::types::ENTITY_TYPE_PERSON,
+        oneiron::registry::ENTITY_TYPE_PERSON,
         b"person",
     );
     insert_edge(
@@ -882,13 +882,13 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
     insert_entity(
         &server_doc,
         facet_allowed,
-        oneiron::types::ENTITY_TYPE_FACET,
+        oneiron::registry::ENTITY_TYPE_FACET,
         b"facet",
     );
     insert_entity(
         &server_doc,
         claim_allowed,
-        oneiron::types::ENTITY_TYPE_CLAIM,
+        oneiron::registry::ENTITY_TYPE_CLAIM,
         b"claim",
     );
     insert_edge(

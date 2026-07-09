@@ -25,10 +25,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, TimeRange, Vad};
+use oneiron::types::{EdgeActorClass, TimeRange, Vad};
 use oneiron::{
     EdgeInfo, EdgeKind, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,
     Vault, VaultConfig,
@@ -812,7 +813,7 @@ pub(crate) fn receipt_request_id(vault: &Vault, receipt_id: &EntityId) -> String
 /// All REDACTION_AUDIT receipts (type byte 120) on a vault.
 pub(crate) fn redaction_audit_receipts(vault: &Vault) -> Vec<EntityId> {
     vault
-        .entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
         .unwrap()
 }
 

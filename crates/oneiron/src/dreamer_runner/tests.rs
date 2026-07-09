@@ -3,9 +3,8 @@ use std::thread;
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState, RetryJob};
-use crate::types::{
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, EdgeActorClass, VaultConfig, WriteActor, WriteProvenance,
-};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+use crate::types::{EdgeActorClass, VaultConfig, WriteActor, WriteProvenance};
 
 use super::*;
 

@@ -4,10 +4,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::claim::ClaimLifecycleStatus;
-use crate::types::{
-    ENTITY_TYPE_FACET, EntityId, TemporalExpressionParseError, TypeByteBand, VadComponent,
-    bytes_to_hex_lower,
-};
+use crate::registry::{ENTITY_TYPE_FACET, TypeByteBand};
+use crate::types::{EntityId, TemporalExpressionParseError, VadComponent, bytes_to_hex_lower};
 
 /// Result type used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;

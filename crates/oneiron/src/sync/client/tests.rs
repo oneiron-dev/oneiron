@@ -6,13 +6,12 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK};
 use crate::store::Store;
 use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::export_snapshot;
 use crate::sync::schema::create_root_doc;
-use crate::types::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, EntityId, TimeRange,
-};
+use crate::types::{EntityId, TimeRange};
 
 fn test_manager() -> Arc<WindowManager> {
     let dir = tempfile::tempdir().unwrap();

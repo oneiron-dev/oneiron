@@ -29,10 +29,9 @@ use crate::companion::{
 };
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST, EntityId, decode_edge_value_for_kind,
-};
+use crate::types::{EntityId, decode_edge_value_for_kind};
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
 /// A loaded window Doc with its observer subscriptions.
@@ -931,7 +930,7 @@ pub fn forward_rematerialize(
             // lease verification and replicated put, so a stale long-lived
             // `rtxn` cannot hide a mid-flight finalized/divergent receipt.
             let is_redaction_audit_blob =
-                blob.first().copied() == Some(crate::types::ENTITY_TYPE_REDACTION_AUDIT);
+                blob.first().copied() == Some(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
             if !is_redaction_audit_blob {
                 if let Some(latest) = materialized_blobs.get(&id) {
                     if latest.as_slice() == blob {
@@ -1030,7 +1029,7 @@ pub fn forward_rematerialize(
             //   closed. This pass is also the OD-10 lazy re-admission path:
             //   a previously quarantined receipt re-runs the door here
             //   after the lease mirror catches up.
-            if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT
+            if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT
                 && let Err(err) = crate::deletion::validate_redaction_receipt_body(data)
             {
                 if let Err(q_err) = quarantine::quarantine_rejected_op(
@@ -1055,7 +1054,7 @@ pub fn forward_rematerialize(
             // engine-authored bands while still running full structural
             // validation (unknown type bytes, ungrammatical predicates, and
             // malformed CLAIM bodies all still fail typed).
-            let result = if header.entity_type == crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+            let result = if header.entity_type == crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
                 #[cfg(any(test, feature = "test-hooks"))]
                 if let Err(err) = test_hooks::run_receipt_revocation_race(vault) {
                     entity_error = Some(err);
@@ -1769,9 +1768,9 @@ fn forward_remat_skip_policy_manifest_tombstone(vault: &Vault, id: &EntityId) ->
 /// rather than replicate raw accountability bytes whose shape is unknown.
 fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return raw.first().copied() == Some(crate::types::ENTITY_TYPE_REDACTION_AUDIT);
+        return raw.first().copied() == Some(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
     };
-    if header.entity_type != crate::types::ENTITY_TYPE_REDACTION_AUDIT {
+    if header.entity_type != crate::registry::ENTITY_TYPE_REDACTION_AUDIT {
         return false;
     }
     let body = if raw.len() > ENTITY_METADATA_HEADER_LEN {

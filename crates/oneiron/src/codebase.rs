@@ -11,11 +11,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan
 use crate::code_artifact::{CodeArtifactBody, decode_code_artifact_body};
 use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
 use crate::error::{Error, Result};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::store::Store;
-use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, EntityId, TimeRange,
-    bytes_to_hex_lower,
-};
+use crate::types::{ENTITY_ID_LEN, EntityId, TimeRange, bytes_to_hex_lower};
 
 pub const CODEBASE_REPO_REF_MAX_BYTES: usize = 1024;
 pub const CODEBASE_PROJECT_ID_MAX_BYTES: usize = 256;

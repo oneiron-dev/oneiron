@@ -29,12 +29,12 @@ use crate::outbound_grant::{
     standing_outbound_grant_principal_index_prefix,
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, EdgeActorClass, EntityId,
-    WriteEnvelope, bytes_to_hex_lower,
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_POLICY_MANIFEST,
 };
+use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::types::{ENTITY_ID_LEN, EdgeActorClass, EntityId, WriteEnvelope, bytes_to_hex_lower};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";

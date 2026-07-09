@@ -31,13 +31,14 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
+use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::lease;
 use oneiron::sync::quarantine::{QuarantineContainer, QuarantineRecord, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
-use oneiron::types::{ENTITY_TYPE_REDACTION_AUDIT, TimeRange};
+use oneiron::types::TimeRange;
 use oneiron::{DeleteReason, EntityId, Error, Vault, VaultConfig};
 use rmpv::Value;
 use xxhash_rust::xxh3::xxh3_64;

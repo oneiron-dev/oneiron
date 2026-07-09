@@ -24,13 +24,13 @@ use crate::provenance::{
     EdgeProvenanceClaimBody, SupersessionStatus, encode_actor_class_evidence,
     encode_edge_provenance_value,
 };
+use crate::registry::{
+    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
+};
 use crate::store::Store;
 use crate::sync::bridge::encode_edge_value_for_crdt;
 use crate::sync::loro_support::map_get_bytes;
-use crate::types::{
-    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_WORLD,
-    EdgeActorClass, TimeRange, Vad,
-};
+use crate::types::{EdgeActorClass, TimeRange, Vad};
 
 fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()

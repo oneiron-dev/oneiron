@@ -504,7 +504,7 @@ fn receiver_that_never_materialized_sweeps_history_8c3() {
     );
     assert!(
         vault_b
-            .entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
             .unwrap()
             .is_empty(),
         "erased == false ⇒ no receipt"
@@ -555,7 +555,7 @@ fn receiver_that_never_materialized_sweeps_history_8c3() {
     );
     assert!(
         vault_b
-            .entities_by_type(oneiron::types::ENTITY_TYPE_REDACTION_AUDIT)
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT)
             .unwrap()
             .is_empty(),
         "the sweep must not fabricate a receipt where nothing was erased"

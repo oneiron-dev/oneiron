@@ -1,9 +1,9 @@
 use super::*;
 use crate::error::ErrorKind;
-use crate::types::{
-    EntityClassification, HnswConfig, TextAnalyzerConfig, TypeByteBand, VaultConfig,
-    entity_type_registry_entry, short_id_prefix,
+use crate::registry::{
+    EntityClassification, TypeByteBand, entity_type_registry_entry, short_id_prefix,
 };
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

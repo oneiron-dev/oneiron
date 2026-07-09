@@ -64,6 +64,7 @@ pub mod provenance;
 pub mod psych_profile;
 pub mod receipt;
 pub mod recovery;
+pub mod registry;
 pub mod repo_mutation;
 pub mod run_tree;
 pub mod serialize;
@@ -537,6 +538,12 @@ pub use crate::recovery::{
     RECOVERY_ARTIFACT_VERSION, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad,
     decode_recovery_artifact, encode_recovery_artifact, load_recovery_artifact,
 };
+pub use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
+    ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
+    ENTITY_TYPE_PSYCH_PROFILE, StructuralKindRegistration, TypeByteBand,
+};
 pub use crate::repo_mutation::{
     REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION, REPO_CONFLICT_OPEN_VALUE_KEYS,
     REPO_CONFLICT_RESOLUTION_VALUE_KEYS, REPO_MUTATION_ALLOWED_OPERATION_KINDS,
@@ -591,21 +598,17 @@ pub use crate::tokenizer::{
 };
 pub use crate::types::{
     Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, ContextPackRetrievalBudget,
-    DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL,
-    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_PSYCH_PROFILE, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
-    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState, EmptyContext, EmptyReason,
-    EntityId, FieldProfile, HnswConfig, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats,
-    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity,
-    SessionContext, Signal, StructuralKindRegistration, TemporalAnchorMode, TemporalGranularity,
-    TextAnalyzerConfig, TextIndexOptions, TimeRange, TokenAllocation, TypeByteBand,
-    UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent, VaultConfig,
-    WriteActor, WriteEnvelope, WriteProvenance,
+    DecodedEdgeValue, EIRI_CONTEXT_VERSION_V4, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo,
+    EdgeKind, EdgeProvenanceFlags, EdgeValueLayout, EiriCompanionAssembly, EiriMemoryBoard,
+    EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
+    EiriSessionRagState, EmptyContext, EmptyReason, EntityId, FieldProfile, HnswConfig,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
+    NamedMemoryVerb, NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats,
+    PackStats, PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
+    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
+    TokenAllocation, UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource, VadComponent,
+    VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,

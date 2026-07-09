@@ -531,7 +531,7 @@ mod tests {
             .batch()
             .put(
                 &id,
-                oneiron::types::ENTITY_TYPE_SUMMARY,
+                oneiron::registry::ENTITY_TYPE_SUMMARY,
                 TimeRange { start: 1, end: 1 },
                 1,
                 b"payload",

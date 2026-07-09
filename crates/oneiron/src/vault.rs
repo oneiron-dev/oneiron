@@ -84,6 +84,13 @@ use crate::provenance::{
     restamp_edge_flags, retract_record, validate_actor_class, validate_edge_provenance_value,
     validate_model_substrate_field, winner_index,
 };
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_TURN, EntityClassification, StructuralKindRegistration, TypeByteBand,
+    entity_type_registry_entry,
+};
 use crate::store::{
     DB_MANIFEST, GateDecisionRecord, HnswCompatibilityState, MODEL_ID_KEY, PendingGateConsentGroup,
     PendingGateConsentRecord, RetrievalAction, RetrievalBlendTuningConfig,
@@ -95,16 +102,12 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
-    EntityClassification, EntityId, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity, StructuralKindRegistration, TimeRange, TypeByteBand, Vad, VadAnnotation,
+    ClaimCandidate, ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EdgeProvenanceFlags, EdgeValueLayout, EntityId, HydratedShortIdDeletion,
+    HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryTimeline,
+    MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, TimeRange, Vad, VadAnnotation,
     VadAnnotationSource, VaultConfig, WriteEnvelope, bytes_to_hex_lower,
-    edge_value_layout_for_kind, entity_type_registry_entry, parse_strict_edge_record,
+    edge_value_layout_for_kind, parse_strict_edge_record,
 };
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,

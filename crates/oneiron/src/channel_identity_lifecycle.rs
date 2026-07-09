@@ -11,8 +11,9 @@ use crate::gate::{
     self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
     GateProvenanceHandles,
 };
+use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::{ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord};
-use crate::types::{ENTITY_TYPE_CHANNEL_IDENTITY, EntityId};
+use crate::types::EntityId;
 
 /// Actor context used for identity lifecycle effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
