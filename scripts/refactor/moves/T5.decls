@@ -37,6 +37,7 @@ crates/oneiron/src/write_envelope.rs
 
 ## error-literal
 crates/oneiron/src/write_envelope.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod write_envelope

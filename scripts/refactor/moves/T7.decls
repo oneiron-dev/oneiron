@@ -66,6 +66,7 @@ crates/oneiron/src/vault/tests.rs
 
 ## error-literal
 crates/oneiron/src/config.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod config
