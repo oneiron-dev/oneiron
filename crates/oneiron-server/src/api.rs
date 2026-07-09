@@ -6,17 +6,14 @@
 //! Auth: shared secret header for Phase 1.
 
 use crate::auth::CoreAuth;
-use crate::auth::CoreScope;
 use crate::auth::check_auth;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
-use crate::error::EnvelopedApiError;
 use crate::error::ErrorCode;
 use crate::idempotency::IdempotencyLayerState;
 use crate::idempotency::idempotency_middleware;
-use crate::projection;
 use crate::projection::View;
 use crate::protocol::CountMode;
 use crate::protocol::PaginatedResponse;
@@ -49,7 +46,6 @@ use crate::usage::UsageRollup;
 use axum::Router;
 #[cfg(test)]
 use axum::body::Bytes;
-use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
@@ -71,26 +67,20 @@ use axum::response::IntoResponse;
 use axum::response::Json;
 use axum::routing::get;
 use axum::routing::post;
-use oneiron::EdgeKind;
 use oneiron::ErrorKind;
-use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 #[cfg(test)]
 use oneiron::registry::ENTITY_TYPE_MESSAGE;
+#[cfg(test)]
 use oneiron::registry::ENTITY_TYPE_TURN;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+#[cfg(test)]
 use std::collections::BTreeSet;
-use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use tokio::sync::Mutex;
 use utoipa::IntoParams;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
