@@ -65,6 +65,7 @@ crates/oneiron/tests/sync_tombstone_v2.rs
 
 ## error-literal
 crates/oneiron/src/edge.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod edge
