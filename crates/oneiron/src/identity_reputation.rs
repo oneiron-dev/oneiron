@@ -9,8 +9,8 @@ use rmpv::Value;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 
 pub const IDENTITY_REPUTATION_SCHEMA_VERSION: u64 = 1;
 

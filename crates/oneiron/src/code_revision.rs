@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::decode_code_artifact_body;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
@@ -14,10 +15,7 @@ use crate::limits::{
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION};
 use crate::store::Store;
-use crate::types::{
-    ENTITY_ID_LEN, EdgeKind, EntityId, Vad, encode_edge_value, parse_entity_id,
-    parse_strict_edge_record,
-};
+use crate::types::{EdgeKind, Vad, encode_edge_value, parse_strict_edge_record};
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [

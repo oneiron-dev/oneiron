@@ -18,6 +18,7 @@ use crate::companion::{
     },
 };
 use crate::counterparty_contact::CounterpartyContactRecord;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
 use crate::outbound::OutboundIntent;
@@ -34,7 +35,7 @@ use crate::store::{
     ChannelIdentityLifecycleReceiptRecord, GateDecisionRecord, GateSystemNoticeRecord,
     PendingGateConsentRecord,
 };
-use crate::types::{ENTITY_ID_LEN, EiriMemoryBoard, EntityId};
+use crate::types::EiriMemoryBoard;
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
 pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;

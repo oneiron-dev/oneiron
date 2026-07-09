@@ -4,6 +4,7 @@ use std::path::Path;
 use std::str;
 use std::time::Instant;
 
+use crate::entity_id::ENTITY_ID_LEN;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -14,8 +15,8 @@ use crate::registry::{
 };
 use crate::types::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    ENTITY_ID_LEN, EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, TaskRole,
-    decode_edge_value, decode_edge_value_for_kind, encode_edge_value,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, TaskRole, decode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
@@ -2013,11 +2014,11 @@ fn replayed_tombstone_on_provenance_claim_runs_d16_refresh() -> Result<()> {
     let job: serde_json::Value = rmp_serde::from_slice(&rows[0].1).expect("decode sweep job");
     assert_eq!(
         job["scope"]["revision_ids"][0],
-        crate::types::bytes_to_hex_lower(&[0x61; 16])
+        crate::entity_id::bytes_to_hex_lower(&[0x61; 16])
     );
     assert_eq!(
         job["scope"]["body_snapshot_refs"][0],
-        crate::types::bytes_to_hex_lower(&[0x62; 16])
+        crate::entity_id::bytes_to_hex_lower(&[0x62; 16])
     );
 
     // Remote SOFT tombstone for the RUNNER-UP: shell + D16 downgrade-to-bare

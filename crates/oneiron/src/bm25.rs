@@ -40,10 +40,11 @@ use heed::{RoTxn, RwTxn};
 
 use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, Token, TokenKind};
 use crate::batch::EntityMetadataHeader;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::short_id_prefix;
 use crate::store::Store;
-use crate::types::{EntityId, ScoredEntity};
+use crate::types::ScoredEntity;
 
 // === Layout constants ===
 

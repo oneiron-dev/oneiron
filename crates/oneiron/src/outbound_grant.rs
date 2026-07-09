@@ -9,9 +9,9 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::types::{ENTITY_ID_LEN, EntityId};
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;

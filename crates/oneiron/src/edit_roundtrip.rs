@@ -61,8 +61,8 @@ use std::collections::{BTreeSet, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::blob_artifact::BlobVersionProvenance;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 use opc::{OpcPackage, PartClass};
 
 /// Serialization version for [`EditManifest`]. Bump on any incompatible change

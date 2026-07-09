@@ -79,10 +79,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::deletion::DeleteReason;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::SessionLocalReceiptLog;
 use crate::store::{RetrievalRunId, Store};
-use crate::types::EntityId;
 
 /// `vault_meta` key prefix for off-record session records.
 const OFF_RECORD_SESSION_KEY_PREFIX: &[u8] = b"offrecord_session:v0:";

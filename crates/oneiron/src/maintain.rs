@@ -3,12 +3,12 @@ use std::collections::HashSet;
 use xxhash_rust::xxh32::xxh32;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
+use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::hnsw::{
     COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot, mark_symmetric_links,
     read_vector_version, write_rebuilt_hnsw,
 };
-use crate::types::{EntityId, parse_entity_id};
 use crate::vault::write_text_index_manifest;
 use crate::{Vault, le_bytes_to_f32_vec, ppr};
 

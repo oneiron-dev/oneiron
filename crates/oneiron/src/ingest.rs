@@ -9,9 +9,8 @@ use rmpv::Value as MsgpackValue;
 use serde_json::{Map, Value};
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-use crate::types::{
-    ClaimCandidate, EntityId, TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::entity_id::EntityId;
+use crate::types::{ClaimCandidate, TimeRange, WriteActor, WriteEnvelope, WriteProvenance};
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 

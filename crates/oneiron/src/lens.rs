@@ -17,9 +17,10 @@ use serde::{
 use crate::{
     Error, Result,
     claim::{ScopedRead, ScopedReadActorKey},
+    entity_id::EntityId,
     llm::ContentPart,
     registry::ENTITY_TYPE_CLAIM,
-    types::{EdgeActorClass, EntityId},
+    types::EdgeActorClass,
 };
 
 pub const LENS_ATOM_KIT_VERSION: u16 = 2;

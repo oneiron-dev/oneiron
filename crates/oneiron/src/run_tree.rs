@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::job_queue::{
     JobEvent, JobInterventionKind, JobQueue, JobRecord, JobState, job_record_order,
 };
-use crate::types::bytes_to_hex_lower;
 
 /// Renderable run tree for dashboard/read APIs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

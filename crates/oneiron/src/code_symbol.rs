@@ -9,13 +9,14 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::code_artifact::decode_code_artifact_body;
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, CODEBASE_FILE_PATH_MAX_BYTES, RepoRef};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ppr::{
     SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_deferred_cache,
 };
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, EdgeKind, EntityId, ScoredEntity, TimeRange};
+use crate::types::{EdgeKind, ScoredEntity, TimeRange};
 
 pub const CODE_SYMBOL_TEXT_HASH_LEN: usize = 32;
 pub const CODE_SYMBOL_FINGERPRINT_LEN: usize = 32;
