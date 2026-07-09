@@ -113,6 +113,7 @@ use crate::batch::secret_scan;
 use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
+use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
 use crate::registry::{
@@ -121,7 +122,7 @@ use crate::registry::{
     validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
-use crate::types::{EdgeKind, Signal, VaultConfig};
+use crate::types::{Signal, VaultConfig};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;

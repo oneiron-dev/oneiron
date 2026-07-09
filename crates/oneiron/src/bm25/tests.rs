@@ -1,9 +1,9 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
+use crate::edge::EdgeActorClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::types::{
-    ClaimCandidate, EdgeActorClass, HnswConfig, TimeRange, VaultConfig, WriteActor, WriteEnvelope,
-    WriteProvenance,
+    ClaimCandidate, HnswConfig, TimeRange, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use crate::{Error, Vault};
 use core::assert_matches;

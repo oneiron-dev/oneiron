@@ -1,4 +1,5 @@
 use super::*;
+use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -9,7 +10,7 @@ use crate::outbound::{
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, GateDecisionRecord};
-use crate::types::{EdgeKind, TimeRange, VaultConfig};
+use crate::types::{TimeRange, VaultConfig};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");

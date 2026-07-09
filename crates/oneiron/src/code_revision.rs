@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::decode_code_artifact_body;
+use crate::edge::{EdgeKind, encode_edge_value, parse_strict_edge_record};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::limits::{
@@ -16,7 +17,6 @@ use crate::limits::{
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION};
 use crate::store::Store;
-use crate::types::{EdgeKind, encode_edge_value, parse_strict_edge_record};
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";
 pub const CODE_REVISION_RECORD_KEYS: [&str; 7] = [

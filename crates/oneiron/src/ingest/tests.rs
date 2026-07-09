@@ -1,8 +1,9 @@
 use super::*;
+use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::{EdgeActorClass, VaultConfig};
+use crate::types::VaultConfig;
 
 const MINIMAL_TRANSCRIPT_FIXTURE: &str =
     include_str!("../../tests/fixtures/ingest/minimal_transcript.jsonl");

@@ -7,14 +7,14 @@ use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
     CounterpartyOptOutReason,
 };
+use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::types::{
-    ClaimCandidate, ContextEntity, ContextPack, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
-    EdgeProvenanceFlags, PackItemAccounting, PackStats, PackTokenStats, ScoredEntity, TimeRange,
-    WriteActor, WriteProvenance,
+    ClaimCandidate, ContextEntity, ContextPack, PackItemAccounting, PackStats, PackTokenStats,
+    ScoredEntity, TimeRange, WriteActor, WriteProvenance,
 };
 use std::time::Duration;
 

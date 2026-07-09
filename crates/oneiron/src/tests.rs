@@ -4,6 +4,11 @@ use std::path::Path;
 use std::str;
 use std::time::Instant;
 
+use crate::edge::{
+    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, decode_edge_value,
+    decode_edge_value_for_kind, encode_edge_value,
+};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::{
@@ -13,11 +18,7 @@ use crate::registry::{
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
-use crate::types::{
-    EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
-    EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, TaskRole, decode_edge_value,
-    decode_edge_value_for_kind, encode_edge_value,
-};
+use crate::types::TaskRole;
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;

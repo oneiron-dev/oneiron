@@ -2,9 +2,10 @@ use std::sync::Barrier;
 use std::thread;
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::edge::EdgeActorClass;
 use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState, RetryJob};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
-use crate::types::{EdgeActorClass, VaultConfig, WriteActor, WriteProvenance};
+use crate::types::{VaultConfig, WriteActor, WriteProvenance};
 
 use super::*;
 
