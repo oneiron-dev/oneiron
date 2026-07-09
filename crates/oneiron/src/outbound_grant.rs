@@ -9,9 +9,16 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::Vault;
+use crate::batch::BatchOp;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::EntityMetadataHeader;
+use crate::batch::apply_ops;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
+use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use crate::temporal::TimeRange;
 
 /// Current StandingOutboundGrant body schema version.
 pub const OUTBOUND_GRANT_SCHEMA_VERSION: u64 = 1;
@@ -614,6 +621,137 @@ fn is_send_class_verb(verb: &str) -> bool {
 
 fn invalid_grant() -> Error {
     Error::InvalidOutboundGrantBody("body failed validation")
+}
+
+impl Vault {
+    /// Mints a standing outbound grant from an authenticated OF-336 grant intent.
+    pub fn mint_standing_outbound_grant(
+        &self,
+        id: &EntityId,
+        intent: &crate::genui::GrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let policy = {
+            let rtxn = self.store.env.read_txn()?;
+            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
+        };
+        let (binding_diff_handle, read_frontier_hash) =
+            crate::gate::standing_outbound_grant_binding_parts(intent, &policy)?;
+        let grant = StandingOutboundGrant::from_grant_mint_intent(
+            intent,
+            created_at,
+            binding_diff_handle,
+            read_frontier_hash,
+        )?;
+        let data = encode_standing_outbound_grant_body(&grant)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some() {
+            return Err(Error::OutboundGrantAlreadyExists);
+        }
+        self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
+        wtxn.commit()?;
+        Ok(grant)
+    }
+
+    /// Revokes a standing outbound grant by rewriting the same record as revoked.
+    pub fn revoke_standing_outbound_grant(
+        &self,
+        id: &EntityId,
+        revoked_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let revoked = grant.revoked(revoked_at)?;
+        let data = encode_standing_outbound_grant_body(&revoked)?;
+        self.apply_standing_outbound_grant_body(&mut wtxn, id, revoked_at, data)?;
+        wtxn.commit()?;
+        Ok(revoked)
+    }
+
+    /// Reads and decodes a standing outbound grant record.
+    pub fn get_standing_outbound_grant(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<StandingOutboundGrant>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    fn apply_standing_outbound_grant_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        let new_grant = decode_standing_outbound_grant_body(&data)?;
+        let new_index_key =
+            standing_outbound_grant_principal_index_key(&new_grant.principal_ref, id)?;
+        let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
+            let Some(header) = EntityMetadataHeader::parse(raw) else {
+                return Err(Error::CorruptedIndex("outbound grant entity header"));
+            };
+            if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
+                return Err(Error::CorruptedIndex("outbound grant entity type"));
+            }
+            let old_grant = decode_standing_outbound_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            Some(standing_outbound_grant_principal_index_key(
+                &old_grant.principal_ref,
+                id,
+            )?)
+        } else {
+            None
+        };
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_OUTBOUND_GRANT,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        if let Some(old_index_key) = old_index_key.as_ref()
+            && old_index_key != &new_index_key
+        {
+            self.store.vault_meta.delete(wtxn, old_index_key)?;
+        }
+        self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
