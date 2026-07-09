@@ -54,6 +54,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'docs/ops/**'
               - 'oneiron.skills.md'
+              - 'packages/prompts/**'
 
   fmt:
     name: Format
