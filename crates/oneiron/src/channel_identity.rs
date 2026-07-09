@@ -10,11 +10,19 @@ use std::io::Cursor;
 use rmpv::Value;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::Vault;
+use crate::batch::BatchOp;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::EntityMetadataHeader;
+use crate::batch::apply_ops;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
+use crate::temporal::TimeRange;
+use crate::vault::entity_id_from_type_index_key;
 
 /// Current ChannelIdentity body schema version.
 pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 1;
@@ -780,6 +788,186 @@ fn encode_msgpack_value(value: &Value, context: &'static str) -> Result<Vec<u8>>
 
 fn invalid_identity() -> Error {
     Error::InvalidChannelIdentityBody("body failed validation")
+}
+
+impl Vault {
+    /// Creates a ChannelIdentity record through the engine maintenance door.
+    ///
+    /// Generic public entity puts for `ENTITY_TYPE_CHANNEL_IDENTITY` remain
+    /// rejected with `MaintenanceKindNotWritable`; this method validates the
+    /// CID-1 body and enforces the assignment-key uniqueness invariant before
+    /// writing.
+    pub fn create_channel_identity(&self, id: &EntityId, identity: &ChannelIdentity) -> Result<()> {
+        let data = encode_channel_identity_body(identity)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
+            || self.channel_identity_assignment_conflict_in_txn(&wtxn, id, identity)?
+        {
+            return Err(Error::ChannelIdentityAlreadyExists);
+        }
+        self.apply_channel_identity_body(&mut wtxn, id, identity.state_changed_at, data)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Creates the pre-provisioned own-app home-channel identity for an agent.
+    pub fn create_own_app_channel_identity(
+        &self,
+        id: &EntityId,
+        agent_ref: EntityId,
+        created_at: u64,
+    ) -> Result<ChannelIdentity> {
+        let identity = ChannelIdentity::own_app_home(agent_ref, created_at);
+        self.create_channel_identity(id, &identity)?;
+        Ok(identity)
+    }
+
+    /// Applies a checked ChannelIdentity lifecycle transition in place.
+    pub fn transition_channel_identity(
+        &self,
+        id: &EntityId,
+        next_state: ChannelIdentityState,
+        pending_fulfillment: Option<ChannelIdentityFulfillment>,
+        state_changed_at: u64,
+        quarantine_until: Option<u64>,
+    ) -> Result<ChannelIdentity> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let current = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        let next = current.transition(
+            next_state,
+            pending_fulfillment,
+            state_changed_at,
+            quarantine_until,
+        )?;
+        if self.channel_identity_assignment_conflict_in_txn(&wtxn, id, &next)? {
+            return Err(Error::ChannelIdentityAlreadyExists);
+        }
+        let data = encode_channel_identity_body(&next)?;
+        self.apply_channel_identity_body(&mut wtxn, id, state_changed_at, data)?;
+        wtxn.commit()?;
+        Ok(next)
+    }
+
+    /// Reads and decodes a ChannelIdentity record.
+    pub fn get_channel_identity(&self, id: &EntityId) -> Result<Option<ChannelIdentity>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Reads the ChannelIdentity bound to an exact `(channel, address)` key.
+    pub fn channel_identity_by_assignment(
+        &self,
+        channel: &str,
+        address_or_handle: &str,
+    ) -> Result<Option<(EntityId, ChannelIdentity)>> {
+        let rtxn = self.store.env.read_txn()?;
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+        {
+            let (key, _) = entry?;
+            let id = entity_id_from_type_index_key(key)?;
+            let raw = self
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if identity.assignment_key() == (channel, address_or_handle) {
+                return Ok(Some((id, identity)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn channel_identity_assignment_conflict_in_txn(
+        &self,
+        txn: &heed::RwTxn<'_>,
+        id: &EntityId,
+        identity: &ChannelIdentity,
+    ) -> Result<bool> {
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(txn, &[ENTITY_TYPE_CHANNEL_IDENTITY])?
+        {
+            let (key, _) = entry?;
+            let existing_id = entity_id_from_type_index_key(key)?;
+            if existing_id == *id {
+                continue;
+            }
+            let raw = self
+                .store
+                .entities
+                .get(txn, existing_id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+                return Err(Error::CorruptedIndex("type index row kind mismatch"));
+            }
+            let stored = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if stored.assignment_key() == identity.assignment_key() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn apply_channel_identity_body(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: ENTITY_TYPE_CHANNEL_IDENTITY,
+                occurred: TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                data,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    }
 }
 
 #[cfg(test)]
