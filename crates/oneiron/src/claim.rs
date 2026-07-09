@@ -33,11 +33,17 @@ use std::{collections::HashSet, io::Cursor, sync::Mutex};
 
 use rmpv::Value;
 
+use crate::Vault;
+use crate::affect::Vad;
 use crate::affect::{
     AFFECT_TRIGGER_PREDICATE,
     coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
     validate_affect_trigger_claim_structure,
 };
+use crate::batch::ApplyOpsGateMode;
+use crate::batch::BatchOp;
+use crate::batch::apply_ops;
+use crate::batch::apply_ops_with_gate_mode;
 use crate::context_pack::ContextEntity;
 use crate::context_pack::ContextPack;
 use crate::context_pack::EmptyContext;
@@ -49,7 +55,17 @@ use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
+use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::temporal::TimeRange;
+use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
+use crate::vault::MAX_EDGE_QUERY_RESULTS;
+use crate::vault::SUPERSEDES_DEFAULT_WEIGHT;
+use crate::vault::edge_kind_prefix;
+use crate::vault::parse_edge_record;
+use crate::vault::require_key_len;
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteEnvelope;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     gate::PolicyManifestResolution,
@@ -1767,6 +1783,635 @@ pub(crate) fn unit_interval_f32(value: &Value) -> Option<f32> {
         return None;
     }
     Some(parsed as f32)
+}
+
+impl Vault {
+    /// Writes a typed CLAIM (type 0) entity with full structural validation
+    /// (D11 key set, D17 predicate gate, D18 fail-closed body validation).
+    ///
+    /// `occurred` and `learned_at` are caller-supplied, exactly like
+    /// [`Vault::put_entity`] — the valid_from/to ↔ envelope sentinel mapping
+    /// (D15) is the provenance unit's concern, not this method's.
+    ///
+    /// For an entity subject ([`ClaimSubject::Entity`]) this also writes the
+    /// `claim_of` edge (u8 = 5, structural 12 B) Claim → subject in the SAME
+    /// write transaction, and rejects with [`Error::EntityNotFound`] if the
+    /// subject entity does not exist — nothing is written on rejection. An
+    /// EdgeRef subject ([`ClaimSubject::Edge`]) is shape-validated only; its
+    /// `claim_of` wiring belongs to the provenance path, which is also the
+    /// only path allowed to write reserved `edge.*` predicates.
+    pub fn put_claim(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_claim_body(body)?;
+        // Public-path gate: full structural validation + reserved-namespace
+        // rejection before any transaction is opened. `apply_ops` re-runs
+        // the same validator at the write chokepoint.
+        validate_claim_body_bytes(&data, false)?;
+
+        let mut ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        }];
+
+        let mut wtxn = self.store.env.write_txn()?;
+        if let ClaimSubject::Entity(subject) = body.subject {
+            if self
+                .store
+                .entities
+                .get(&wtxn, subject.as_bytes())?
+                .is_none()
+            {
+                return Err(Error::EntityNotFound);
+            }
+            ops.push(BatchOp::Edge {
+                src: *id,
+                kind: EdgeKind::ClaimOf,
+                tgt: subject,
+                weight: CLAIM_OF_DEFAULT_WEIGHT,
+                vad: Vad::NEUTRAL,
+            });
+        }
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
+        &self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::ClaimCandidate {
+                id: *id,
+                candidate: Box::new(candidate),
+                envelope: envelope.clone(),
+                occurred,
+                learned_at,
+                internal_lexical_query_hint: false,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "code-run write trap commits both typed gate checks and transition atomically"
+    )]
+    pub(crate) fn supersede_claim_for_code_run_trap(
+        &self,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        envelope: &WriteEnvelope,
+        claim_gate_id: EntityId,
+        claim_gate_body: &ClaimBody,
+        edge_gate_id: EntityId,
+        edge_gate_body: &ClaimBody,
+    ) -> Result<()> {
+        if new_id == old_id {
+            return Err(Error::ClaimSelfSupersession);
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn,
+            claim_gate_id,
+            claim_gate_body,
+            envelope,
+            &policy,
+            false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn,
+            edge_gate_id,
+            edge_gate_body,
+            envelope,
+            &policy,
+            false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+
+        let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
+        Self::require_active_claim(&new_body)?;
+        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&wtxn, old_id)?;
+        Self::require_active_claim(&old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+
+        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+        old_body.valid_to = Some(now);
+        let data = encode_claim_body(&old_body)?;
+
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![
+                BatchOp::Put {
+                    id: *old_id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: old_header.occurred_start,
+                        end: now,
+                    },
+                    learned_at: old_header.learned_at,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                },
+                BatchOp::EdgeWithCreatedAt {
+                    src: *new_id,
+                    kind: EdgeKind::Supersedes,
+                    tgt: *old_id,
+                    weight: SUPERSEDES_DEFAULT_WEIGHT,
+                    created_at: now,
+                    vad: Vad::NEUTRAL,
+                    provenance: None,
+                },
+            ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, false),
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "code-run edge trap carries gate material plus edge tuple"
+    )]
+    pub(crate) fn put_edge_for_code_run_trap(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+        weight: f32,
+        envelope: &WriteEnvelope,
+        gate_id: EntityId,
+        gate_body: &ClaimBody,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        if let Err(err) = self.check_code_run_write_gate_in_txn(
+            &mut wtxn, gate_id, gate_body, envelope, &policy, false,
+        ) {
+            wtxn.commit()?;
+            return Err(err);
+        }
+
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            vec![BatchOp::Edge {
+                src: *src,
+                kind,
+                tgt: *tgt,
+                weight,
+                vad: Vad::NEUTRAL,
+            }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn validate_code_run_write_actor_binding_in_txn(
+        &self,
+        wtxn: &heed::RwTxn<'_>,
+        envelope: &WriteEnvelope,
+    ) -> Result<()> {
+        crate::gate::validate_write_envelope(envelope)?;
+        let actor = envelope.actor();
+        let actor_raw = self
+            .store
+            .entities
+            .get(wtxn, actor.entity_ref().as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header =
+            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        validate_actor_class(actor_header.entity_type, actor.actor_class())
+    }
+
+    fn check_code_run_write_gate_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        body: &ClaimBody,
+        envelope: &WriteEnvelope,
+        policy: &crate::gate::PolicyManifestResolution,
+        can_resolve_pending_consent: bool,
+    ) -> Result<()> {
+        crate::gate::check_claim_policy_for_write(
+            &self.store,
+            wtxn,
+            &id,
+            body,
+            Some(envelope),
+            policy,
+            crate::gate::GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent,
+                include_source_in_gate_input: true,
+            },
+        )
+    }
+
+    /// Retrieves and decodes a CLAIM (type 0) entity body.
+    ///
+    /// Returns `Ok(None)` when no entity exists under `id`, and a typed
+    /// [`Error::InvalidClaimBody`] when the stored entity is not a type-0
+    /// CLAIM or its body fails the pinned structural validation. The read
+    /// path allows reserved `edge.*` predicates so stored provenance Claims
+    /// stay decodable.
+    ///
+    /// DELIBERATELY UNGATED (D19): unlike the retrieval read paths
+    /// (pipeline / context pack), this targeted read returns claims of
+    /// EVERY `appr`/`life`/`stale` status — it is the history and
+    /// consent-review door ("all non-current states are still stored",
+    /// ARCH-0003), and the edge-provenance lifecycle readers likewise must
+    /// see closed Claims to compute winner stamps.
+    pub fn get_claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.get_claim_in_txn(&rtxn, id)
+    }
+
+    /// Transaction-composable [`Vault::get_claim`]: reads and decodes a CLAIM
+    /// body through the caller's txn (so it composes inside a write txn, where a
+    /// nested read txn would be illegal).
+    pub(crate) fn get_claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    }
+
+    /// Returns the CLAIM entity ids attached to `subject` via inbound
+    /// `claim_of` edges — a thin wrapper over
+    /// `sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))`.
+    pub fn claims_for_subject(&self, subject: &EntityId) -> Result<Vec<EntityId>> {
+        self.sources(subject, EdgeKind::ClaimOf, Some(ENTITY_TYPE_CLAIM))
+    }
+
+    /// Transaction-composable [`Vault::claims_for_subject`]: resolves inbound
+    /// `claim_of` edges through the caller's txn.
+    pub(crate) fn claims_for_subject_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        self.filtered_edge_peers(
+            rtxn,
+            &self.store.edges_in,
+            subject,
+            EdgeKind::ClaimOf,
+            Some(ENTITY_TYPE_CLAIM),
+            "claims for subject",
+        )
+    }
+
+    pub(crate) fn claim_bodies_for_subjects_matching(
+        &self,
+        subjects: &[EntityId],
+        mut matches: impl FnMut(&ClaimBody, &EntityId) -> bool,
+    ) -> Result<Vec<ClaimBody>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut claims = Vec::new();
+        for subject in subjects {
+            let prefix = edge_kind_prefix(subject, EdgeKind::ClaimOf);
+            for (scanned, entry) in self.store.edges_in.prefix_iter(&rtxn, &prefix)?.enumerate() {
+                if scanned >= MAX_EDGE_QUERY_RESULTS {
+                    return Err(Error::IndexOverflow("claim_bodies_for_subjects"));
+                }
+                let (key, value) = entry?;
+                let claim_id = parse_edge_record(key, value)?.target;
+                let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? else {
+                    continue;
+                };
+                let Some(header) = EntityMetadataHeader::parse(raw) else {
+                    continue;
+                };
+                if header.entity_type != ENTITY_TYPE_CLAIM {
+                    continue;
+                }
+                let body =
+                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                if matches(&body, subject) {
+                    claims.push(body);
+                }
+            }
+        }
+        Ok(claims)
+    }
+
+    /// Reads, decodes, and gates a claim for a generic lifecycle transition
+    /// (`supersede_claim` / `retract_claim`). Fail-closed:
+    ///
+    /// * no entity under `id` → [`Error::EntityNotFound`];
+    /// * entity is not type 0 → [`Error::InvalidClaimBody`];
+    /// * reserved `edge.*` predicate → [`Error::ProvenanceClaimLifecycle`]
+    ///   — provenance Claims drive the subject edge's derived hot flags, so
+    ///   their lifecycle is owned exclusively by the edge-provenance API
+    ///   (`put_edge_provenance` / `retract_edge_provenance`); the generic
+    ///   ops REJECT rather than delegate, so they can never bypass the
+    ///   edge re-stamp.
+    fn claim_for_lifecycle_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(ClaimBody, EntityMetadataHeader)> {
+        let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
+            return Err(Error::EntityNotFound);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
+        }
+        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if is_reserved_predicate(&body.predicate) {
+            return Err(Error::ProvenanceClaimLifecycle {
+                predicate: body.predicate,
+            });
+        }
+        Ok((body, header))
+    }
+
+    /// Gates a lifecycle transition on the claim still being open: any
+    /// non-`active` `life` status is closed history and rejects with
+    /// [`Error::ClaimAlreadyClosed`] (ARCH-0003: superseded carries history,
+    /// retracted is a deliberate withdrawal — never edited again).
+    fn require_active_claim(body: &ClaimBody) -> Result<()> {
+        if body.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(Error::ClaimAlreadyClosed {
+                status: body.lifecycle,
+            });
+        }
+        Ok(())
+    }
+
+    /// Blocks generated-origin claims from superseding protected user truth.
+    /// New generated code-revision claims are rejected first so they keep the
+    /// fail-closed code-revision diagnostic; otherwise old code-revision truth
+    /// gets its own diagnostic, and non-code user/legacy truth uses the
+    /// general claim-body error. Missing old `src` is protected as legacy
+    /// user truth for this guard.
+    fn require_source_trust_supersession_rights(
+        new_body: &ClaimBody,
+        old_body: &ClaimBody,
+    ) -> Result<()> {
+        let old_is_protected_user_truth =
+            matches!(old_body.source, None | Some(ClaimSource::UserStated));
+        if !claim_generated_origin(new_body) || !old_is_protected_user_truth {
+            return Ok(());
+        }
+        if new_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated code revision claim cannot supersede user-stated truth",
+            ));
+        }
+        if old_body.predicate == crate::code_revision::CODE_REVISION_CLAIM_PREDICATE {
+            return Err(Error::InvalidCodeArtifactBody(
+                "generated claim cannot supersede user-stated code revision truth",
+            ));
+        }
+        Err(Error::InvalidClaimBody(
+            "generated claim cannot supersede user-stated truth",
+        ))
+    }
+
+    /// Supersedes the active claim `old_id` with the claim `new_id` — the
+    /// general ARCH-0003 claim lifecycle mechanics, in ONE write
+    /// transaction:
+    ///
+    /// * the old claim's body is closed: `life` = `superseded`, `to` = `now`;
+    /// * the old claim's envelope `occurred_end` is refreshed to `now` (the
+    ///   envelope copy mirrors the body's validity window for temporal
+    ///   index-key derivation, per the D15 principle);
+    /// * a `supersedes` edge (u8 = 3, structural 12 B, weight 0.3) is
+    ///   written `new_id` → `old_id` — the edge is canonical; no
+    ///   `supersedesId` body field is stored (D11).
+    ///
+    /// The old claim is KEPT fully readable: superseded carries history —
+    /// "all non-current states are still stored — claims are never silently
+    /// deleted" (ARCH-0003). Fail-closed, nothing written on any rejection:
+    ///
+    /// * `new_id == old_id` → [`Error::ClaimSelfSupersession`];
+    /// * either id missing → [`Error::EntityNotFound`]; either entity not
+    ///   type 0 → [`Error::InvalidClaimBody`];
+    /// * either claim carrying a reserved `edge.*` provenance predicate →
+    ///   [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
+    ///   that lifecycle; see `Vault::claim_for_lifecycle_in`);
+    /// * either claim's `life` ≠ `active` → [`Error::ClaimAlreadyClosed`]
+    ///   (closed claims neither supersede nor get superseded again).
+    ///
+    /// Deciding WHICH claims conflict (conflictSet), consent routing, and
+    /// predicate semantics stay above the engine (ARCH-0003 §G.1, D20) —
+    /// this method is transition mechanics only.
+    pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Supersedes `old_id` with `new_id` INSIDE the caller's write
+    /// transaction, running the same fail-closed guards as
+    /// [`Vault::supersede_claim`] (self-supersession, type-0 / reserved
+    /// predicate, both-`active`, source-trust) but composing into an existing
+    /// txn instead of opening its own. A caller that first writes the
+    /// replacement head and then supersedes the old head in one `wtxn` commits
+    /// or rolls back BOTH together, so a rejected supersession never leaves a
+    /// torn two-`active`-heads window. `new_id` must already have been written
+    /// into the same `wtxn` before this is called.
+    pub(crate) fn supersede_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<()> {
+        if new_id == old_id {
+            return Err(Error::ClaimSelfSupersession);
+        }
+
+        let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
+        Self::require_active_claim(&new_body)?;
+        let (mut old_body, old_header) = self.claim_for_lifecycle_in(&*wtxn, old_id)?;
+        Self::require_active_claim(&old_body)?;
+        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+
+        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+        old_body.valid_to = Some(now);
+        let data = encode_claim_body(&old_body)?;
+
+        let ops = vec![
+            BatchOp::Put {
+                id: *old_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: old_header.occurred_start,
+                    end: now,
+                },
+                learned_at: old_header.learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+            },
+            BatchOp::EdgeWithCreatedAt {
+                src: *new_id,
+                kind: EdgeKind::Supersedes,
+                tgt: *old_id,
+                weight: SUPERSEDES_DEFAULT_WEIGHT,
+                created_at: now,
+                vad: Vad::NEUTRAL,
+                provenance: None,
+            },
+        ];
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        Ok(())
+    }
+
+    /// Retracts the active claim `id` — a deliberate withdrawal (ARCH-0003
+    /// general claim lifecycle), in ONE write transaction: the body is
+    /// closed (`life` = `retracted`, `to` = `now`) and the envelope
+    /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
+    /// principle). The record is PRESERVED — retraction never deletes.
+    ///
+    /// Fail-closed, nothing written on any rejection: missing id →
+    /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
+    /// reserved `edge.*` provenance predicate →
+    /// [`Error::ProvenanceClaimLifecycle`] (the edge-provenance API owns
+    /// that lifecycle); `life` ≠ `active` → [`Error::ClaimAlreadyClosed`].
+    pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, id)?;
+        Self::require_active_claim(&body)?;
+
+        body.lifecycle = ClaimLifecycleStatus::Retracted;
+        body.valid_to = Some(now);
+        let data = encode_claim_body(&body)?;
+
+        let ops = vec![BatchOp::Put {
+            id: *id,
+            entity_type: ENTITY_TYPE_CLAIM,
+            occurred: TimeRange {
+                start: header.occurred_start,
+                end: now,
+            },
+            learned_at: header.learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+        }];
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn claim_facet_refs_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut prefix = [0_u8; ENTITY_ID_LEN + 1];
+        prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
+        prefix[ENTITY_ID_LEN] = EdgeKind::FacetOf as u8;
+
+        let mut facets = Vec::new();
+        for entry in self.store.edges_out.prefix_iter(rtxn, prefix.as_slice())? {
+            if facets.len() >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("claim_facet_refs"));
+            }
+            let (key, _) = entry?;
+            require_key_len(key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+            let target = EntityId::from_bytes(
+                key[ENTITY_ID_LEN + 1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("facet edge key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("facet edge key"))?;
+            facets.push(target);
+        }
+        Ok(facets)
+    }
 }
 
 #[cfg(test)]
