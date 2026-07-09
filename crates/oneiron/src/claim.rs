@@ -42,10 +42,14 @@ use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::types::{
-    ContextEntity, ContextPack, EmptyContext, EmptyReason, MemoryTimeline, MemoryTimelineRecord,
-    MemoryTimelineRecordState, ScoredEntity,
-};
+use crate::types::ContextEntity;
+use crate::types::ContextPack;
+use crate::types::EmptyContext;
+use crate::types::EmptyReason;
+use crate::types::MemoryTimeline;
+use crate::types::MemoryTimelineRecord;
+use crate::types::MemoryTimelineRecordState;
+use crate::types::ScoredEntity;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     gate::PolicyManifestResolution,

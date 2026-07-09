@@ -29,12 +29,24 @@ use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::temporal::TemporalAnchorMode;
 use crate::temporal::TemporalGranularity;
 use crate::temporal::TimeRange;
-use crate::types::{
-    ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
-    EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EmptyContext, EmptyReason, FieldProfile,
-    PackFormat, PackStats, ScoredEntity, Signal, TokenAllocation,
-};
+use crate::types::ContextEntity;
+use crate::types::ContextPack;
+use crate::types::ContextPackRetrievalBudget;
+use crate::types::EIRI_CONTEXT_VERSION_V4;
+use crate::types::EiriCompanionAssembly;
+use crate::types::EiriMemoryBoard;
+use crate::types::EiriMemoryBoardBudget;
+use crate::types::EiriMemoryBoardRow;
+use crate::types::EiriMemoryBoardSlot;
+use crate::types::EiriMemoryBoardSource;
+use crate::types::EmptyContext;
+use crate::types::EmptyReason;
+use crate::types::FieldProfile;
+use crate::types::PackFormat;
+use crate::types::PackStats;
+use crate::types::ScoredEntity;
+use crate::types::Signal;
+use crate::types::TokenAllocation;
 use crate::{Vault, le_bytes_to_f32_vec};
 
 pub const DEFAULT_MAX_NEIGHBORS: usize = 50;

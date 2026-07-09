@@ -109,10 +109,13 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::temporal::TimeRange;
-use crate::types::{
-    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity,
-};
+use crate::types::HydratedShortIdDeletion;
+use crate::types::HydratedShortIdDeletionReason;
+use crate::types::HydratedShortIdDeletionSource;
+use crate::types::MemoryTimeline;
+use crate::types::MemoryTimelineRecord;
+use crate::types::MemoryTimelineRecordState;
+use crate::types::ScoredEntity;
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;
 use crate::{

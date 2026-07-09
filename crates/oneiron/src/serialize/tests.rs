@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 
 use crate::entity_id::EntityId;
-use crate::types::{
-    ContextEntity, ContextPack, EmptyContext, EmptyReason, FieldProfile, PackFormat, PackStats,
-    Signal, TokenAllocation,
-};
+use crate::types::ContextEntity;
+use crate::types::ContextPack;
+use crate::types::EmptyContext;
+use crate::types::EmptyReason;
+use crate::types::FieldProfile;
+use crate::types::PackFormat;
+use crate::types::PackStats;
+use crate::types::Signal;
+use crate::types::TokenAllocation;
 
 use super::*;
 
