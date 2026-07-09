@@ -235,6 +235,40 @@ def edit_props():
     return ok
 
 
+def check6_props():
+    """check 6 combined-multiset properties: a literal MOVING between listed
+    files (dst may be new) nets out; a changed literal still fails."""
+    lit = 'Error::InvariantViolation("structural edges are append-only")'
+    moved_base = {"src.rs": f"fn a() {{ {lit}; }}", "dst.rs": None}
+    moved_head = {"src.rs": "fn a() {}", "dst.rs": f"fn b() {{ {lit}; }}"}
+    changed_head = {"src.rs": "fn a() {}",
+                    "dst.rs": 'fn b() { Error::InvariantViolation("reworded"); }'}
+    saved = (D.base_file, D.head_file)
+    ok = True
+    try:
+        decls = {"error-literal": ["src.rs", "dst.rs"]}
+        D.base_file = lambda r, b, p: moved_base.get(p)
+        D.head_file = lambda r, p: moved_head.get(p)
+        try:
+            D.check6("/r", "B", decls)
+            good = True
+        except D.Violation:
+            good = False
+        print("  ", "ok" if good else "FAIL", "check6: moved literal nets to zero")
+        ok = ok and good
+        D.head_file = lambda r, p: changed_head.get(p)
+        try:
+            D.check6("/r", "B", decls)
+            good = False
+        except D.Violation:
+            good = True
+        print("  ", "ok" if good else "FAIL", "check6: reworded literal still fails")
+        ok = ok and good
+    finally:
+        D.base_file, D.head_file = saved
+    return ok
+
+
 def canon_props():
     """Canon boundary properties (#421 fallback hardening): the reflow
     tolerance must not equate semantically distinct token streams."""
@@ -271,6 +305,11 @@ def canon_props():
         (" " + R.canon("let x = (y,);") + " " not in
          " " + R.canon("/* o /* i */ let x = (y,); */\nfn f() {}") + " ",
          "nested block comment does not leak code"),
+        # a \-newline continuation inside a string must not desync quote
+        # pairing: code tokens AFTER the string stay visible as code (T4)
+        (" a :: B :: AssignedTo " in
+         " " + R.canon('assert_eq!(x, "a \\\n b"); h(a::B::AssignedTo, &d);') + " ",
+         "string line-continuation does not swallow code"),
     ]
     ok = True
     for good, name in cases:
@@ -290,7 +329,9 @@ if __name__ == "__main__":
     cp = canon_props()
     print("### edit_delta_ok boundary properties (comment-interior frag-edits):")
     ep = edit_props()
+    print("### check 6 combined-multiset properties (move-into-new-file netting):")
+    c6 = check6_props()
     print("### v2 synthetic (move-to-new-file + insertion + edit + comment + flat-name):")
-    ok = cp and ep and run() and fr.returncode == 0
+    ok = cp and ep and c6 and run() and fr.returncode == 0
     print("\nRESULT:", "PASS" if ok else "PROBLEM")
     sys.exit(0 if ok else 1)

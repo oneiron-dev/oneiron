@@ -156,7 +156,10 @@ def mask(src):
 # ---------------------------------------------------------------------------
 
 _CODE_TOKEN = re.compile(
-    r'"(?:\\.|[^"\\])*"'      # string literal
+    # string literal — the escape class must span newlines ([\s\S], not .)
+    # or a \-newline line-continuation desyncs quote pairing and swallows
+    # code tokens into a bogus mega-"string" (T4 defect, context_pack tests)
+    r'"(?:\\[\s\S]|[^"\\])*"'
     r"|[A-Za-z_][A-Za-z0-9_]*"  # ident/keyword
     r"|[0-9][0-9A-Za-z_.]*"     # number-ish
     r"|::|->|=>|&&|\|\||==|!=|<=|>="  # multi-char ops

@@ -562,7 +562,9 @@ def check5(root, stage, decls):
 
 # ---- check 6: error-literal inventory ------------------------------------
 
-_ERRLIT = re.compile(r'Error::(?:Invalid\w+Body|InvariantViolation|CorruptedIndex|Invalid\w+|MaintenanceKindNotWritable)\(\s*"(?:\\.|[^"\\])*"')
+# escape class spans newlines ([\s\S]) — same continuation-desync class as
+# rustlex._CODE_TOKEN's string alternative (T4 defect)
+_ERRLIT = re.compile(r'Error::(?:Invalid\w+Body|InvariantViolation|CorruptedIndex|Invalid\w+|MaintenanceKindNotWritable)\(\s*"(?:\\[\s\S]|[^"\\])*"')
 
 # scaffolding lines that legitimately remain after every item is excised from a
 # deleted file (check X): module doc, imports, attrs, mod decls, mod-tests shell braces.
@@ -574,18 +576,23 @@ def _strip_line_comments(text):
 
 
 def check6(root, base, decls):
+    """Error-literal multiset is compared COMBINED across the listed files,
+    not per-file: a stage that moves literals src→dst (dst possibly a new
+    file with no base) nets to zero across the set, while any literal
+    appearing, vanishing, or changing text anywhere in the set still fails
+    (T4: 13 literals move types.rs → new edge.rs)."""
     files = [x.strip() for x in decls.get("error-literal", [])]
     if not files:
         return "OK check 6 (error-literal): skipped"
+    bc = collections.Counter()
+    hc = collections.Counter()
     for f in files:
-        bt = base_file(root, base, f) or ""
-        ht = head_file(root, f) or ""
-        bc = collections.Counter(_ERRLIT.findall(_strip_line_comments(bt)))
-        hc = collections.Counter(_ERRLIT.findall(_strip_line_comments(ht)))
-        if bc != hc:
-            raise Violation(6, f"error-literal multiset changed in {f}: "
-                               f"+{list((hc-bc).elements())} -{list((bc-hc).elements())}")
-    return f"OK check 6 (error-literal): {len(files)} module(s) unchanged"
+        bc.update(_ERRLIT.findall(_strip_line_comments(base_file(root, base, f) or "")))
+        hc.update(_ERRLIT.findall(_strip_line_comments(head_file(root, f) or "")))
+    if bc != hc:
+        raise Violation(6, f"error-literal multiset changed across {files}: "
+                           f"+{list((hc-bc).elements())} -{list((bc-hc).elements())}")
+    return f"OK check 6 (error-literal combined): {len(files)} module(s), multiset unchanged"
 
 
 # ---- check 8: insertion integrity ----------------------------------------
