@@ -217,7 +217,9 @@ exit 0
 #># ---------------------------------------------------------------------------
 #>
 #>_TOKEN = re.compile(
-#>    r'"(?:\\.|[^"\\])*"'      # string literal
+#>    r"//[^\n]*"                # line comment — one atomic token, ends at EOL
+#>    r"|/\*(?:[^*]|\*(?!/))*\*/"  # block comment — one atomic token
+#>    r'|"(?:\\.|[^"\\])*"'      # string literal
 #>    r"|[A-Za-z_][A-Za-z0-9_]*"  # ident/keyword
 #>    r"|[0-9][0-9A-Za-z_.]*"     # number-ish
 #>    r"|::|->|=>|&&|\|\||==|!=|<=|>="  # multi-char ops
@@ -227,12 +229,18 @@ exit 0
 #>
 #>def canon(text):
 #>    """Whitespace/reflow-insensitive token form: split into Rust-ish tokens,
-#>    rejoin with single spaces. Trailing commas before a closing bracket are
-#>    dropped so rustfmt's multi-line trailing-comma habit is invisible."""
-#>    toks = _TOKEN.findall(text)
+#>    rejoin with single spaces. Comments are atomic tokens, so a `//` comment
+#>    can never swallow following code when lines are joined, and comment text
+#>    never equals a code-token stream. A trailing comma before a closing
+#>    bracket is dropped only when the bracket sits on a LATER line (rustfmt's
+#>    vertical-list habit); a same-line `,)` — a one-tuple — stays significant."""
+#>    ms = list(_TOKEN.finditer(text))
 #>    out = []
-#>    for i, t in enumerate(toks):
-#>        if t == "," and i + 1 < len(toks) and toks[i + 1] in ("}", "]", ")"):
+#>    for i, m in enumerate(ms):
+#>        t = m.group(0)
+#>        if (t == "," and i + 1 < len(ms)
+#>                and ms[i + 1].group(0) in ("}", "]", ")")
+#>                and "\n" in text[m.end():ms[i + 1].start()]):
 #>            continue
 #>        out.append(t)
 #>    return " ".join(out)

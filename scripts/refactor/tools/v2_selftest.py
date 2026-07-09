@@ -188,6 +188,31 @@ def run():
         return False
 
 
+def canon_props():
+    """Canon boundary properties (#421 fallback hardening): the reflow
+    tolerance must not equate semantically distinct token streams."""
+    cases = [
+        # rustfmt vertical reflow still invisible (trailing comma at EOL)
+        (R.canon("foo(a, b)") == R.canon("foo(\n    a,\n    b,\n)"),
+         "vertical-reflow trailing comma tolerated"),
+        # same-line one-tuple comma is semantic: (y,) != (y)
+        (R.canon("let x = (y,);") != R.canon("let x = (y);"),
+         "same-line one-tuple comma kept"),
+        # a // comment cannot swallow the next line when streams are joined
+        (R.canon("foo(); // note\nbar();") != R.canon("foo(); // note bar();"),
+         "line-comment boundary kept"),
+        # comment text never matches a code-token stream (check E old-line probe)
+        (" " + R.canon("let x = crate::types::Foo;") + " " not in
+         " " + R.canon("/// let x = crate::types::Foo;\nlet x = crate::registry::Foo;") + " ",
+         "doc-comment text is not code"),
+    ]
+    ok = True
+    for good, name in cases:
+        print("  ", "ok" if good else "FAIL", "canon:", name)
+        ok = ok and good
+    return ok
+
+
 if __name__ == "__main__":
     import subprocess
     # D-2 freshness guard: the shipped conformance.sh must embed the CURRENT
@@ -195,7 +220,9 @@ if __name__ == "__main__":
     print("### freshness: conformance.sh embeds current rustlex+driver")
     fr = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__),
                         "build_conformance.py"), "--check"])
+    print("### canon boundary properties (reflow-fallback hardening):")
+    cp = canon_props()
     print("### v2 synthetic (move-to-new-file + insertion + edit + comment + flat-name):")
-    ok = run() and fr.returncode == 0
+    ok = cp and run() and fr.returncode == 0
     print("\nRESULT:", "PASS" if ok else "PROBLEM")
     sys.exit(0 if ok else 1)
