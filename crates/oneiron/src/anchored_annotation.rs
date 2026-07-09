@@ -52,11 +52,12 @@ use rmpv::Value;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, EdgeActorClass, EdgeKind, EntityId, TaskRole, TimeRange,
-    WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, EdgeActorClass, EdgeKind, TaskRole, TimeRange, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
 
 /// CLAIM predicate for a thread head (anchor + lifecycle state + drift).

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 
 /// Current inbound SurfaceEvent schema version.
 pub const SURFACE_EVENT_SCHEMA_VERSION: u64 = 1;

@@ -28,10 +28,11 @@ use crate::companion::{
     CompanionExportClassification, ENTITY_TYPE_COMPANION_REGISTER, decode_companion_record_body,
 };
 use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::{EntityId, decode_edge_value_for_kind};
+use crate::types::decode_edge_value_for_kind;
 use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
 
 /// A loaded window Doc with its observer subscriptions.
@@ -1793,7 +1794,7 @@ fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
 pub mod test_hooks {
     use std::cell::RefCell;
 
-    use crate::types::EntityId;
+    use crate::entity_id::EntityId;
     use crate::{Error, Result, Vault};
 
     thread_local! {

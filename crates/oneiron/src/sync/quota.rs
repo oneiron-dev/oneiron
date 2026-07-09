@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::types::WindowKey;
 use crate::authority::{AuthorityKey, AuthorityVaultId};
-use crate::types::bytes_to_hex_lower;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::{Error, Result, Vault};
 
 const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:";

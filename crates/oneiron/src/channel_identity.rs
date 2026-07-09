@@ -13,8 +13,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 
 /// Current ChannelIdentity body schema version.
 pub const CHANNEL_IDENTITY_SCHEMA_VERSION: u64 = 1;

@@ -12,8 +12,8 @@ use crate::codebase::{
     CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::EntityId;
 
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
 pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";

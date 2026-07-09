@@ -1,6 +1,7 @@
 use super::*;
 use crate::Vault;
-use crate::types::{EntityId, TimeRange};
+use crate::entity_id::EntityId;
+use crate::types::TimeRange;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 

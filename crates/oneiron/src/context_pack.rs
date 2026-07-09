@@ -15,6 +15,7 @@ use crate::companion::{
     CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
     decode_companion_record_body,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
@@ -28,7 +29,7 @@ use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
     EdgeConfirmationStatus, EdgeInfo, EdgeKind, EiriCompanionAssembly, EiriMemoryBoard,
     EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
-    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
+    EmptyContext, EmptyReason, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
     TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};

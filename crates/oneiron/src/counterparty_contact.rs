@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_ID_LEN, EntityId};
 
 /// Current CounterpartyContactRecord body schema version.
 pub const COUNTERPARTY_CONTACT_SCHEMA_VERSION: u64 = 1;

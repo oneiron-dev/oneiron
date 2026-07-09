@@ -27,13 +27,12 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::codebase::entity_id_from_hash_material;
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::store::Store;
-use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, EntityId, TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::types::{ClaimCandidate, TimeRange, WriteActor, WriteEnvelope, WriteProvenance};
 use heed::{RoTxn, RwTxn};
 
 pub const BLOB_ARTIFACT_BODY_KEYS: [&str; 2] = ["name", "media_type"];

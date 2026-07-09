@@ -21,7 +21,8 @@ use crate::job_queue::{
     FailOutcome, JobId, JobQueue, JobRecord, RetryJob, RetryOutcome,
 };
 
-use crate::types::{EdgeActorClass, EntityId, WriteEnvelope};
+use crate::entity_id::EntityId;
+use crate::types::{EdgeActorClass, WriteEnvelope};
 
 /// Dedicated companion-register structural kind byte.
 ///
@@ -2015,10 +2016,10 @@ fn entity_from_value(value: &Value, context: &'static str) -> Result<EntityId> {
     let Value::Binary(bytes) = value else {
         return Err(invalid_companion(context));
     };
-    if bytes.len() != crate::types::ENTITY_ID_LEN {
+    if bytes.len() != crate::entity_id::ENTITY_ID_LEN {
         return Err(invalid_companion(context));
     }
-    let mut arr = [0_u8; crate::types::ENTITY_ID_LEN];
+    let mut arr = [0_u8; crate::entity_id::ENTITY_ID_LEN];
     arr.copy_from_slice(bytes);
     EntityId::from_bytes(arr).map_err(|_| invalid_companion(context))
 }

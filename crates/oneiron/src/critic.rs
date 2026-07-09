@@ -15,9 +15,9 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::job_queue::JobId;
-use crate::types::EntityId;
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
