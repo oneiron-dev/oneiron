@@ -5,8 +5,40 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::Vault;
+use crate::affect::VadAnnotationCleanup;
+use crate::affect::delete_vad_annotation_metadata_for_type_in_txn;
+use crate::affect::delete_vad_annotation_metadata_in_txn;
+use crate::affect::vad_annotation_delete_scope_exists_in_txn;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::batch::EntityMetadataHeader;
+use crate::batch::deindex_entity;
+use crate::batch::deindex_lexical_query_hints_for_target;
+use crate::batch::delete_from_phonetic_postings;
+use crate::bm25;
+use crate::claim::ClaimLifecycleStatus;
+use crate::claim::ClaimSubject;
+use crate::edge::EdgeConfirmationStatus;
+use crate::edge::EdgeKind;
+use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
+use crate::ppr;
+use crate::provenance::EdgeRef;
+use crate::provenance::PREDICATE_EDGE_PROVENANCE;
+use crate::provenance::ProvenancePrecedence;
+use crate::provenance::decode_edge_provenance_body;
+use crate::provenance::downgrade_edge_to_bare;
+use crate::provenance::restamp_edge_flags;
+use crate::provenance::winner_index;
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+use crate::store::Store;
+use crate::unix_seconds_now;
+use crate::vault::StoredProvenanceClaim;
 
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
 pub(crate) const LAST_HARD_ERASE_SWEEP_SEQ_KEY: &[u8] = b"m:last_hard_erase_sweep_seq";
@@ -1247,6 +1279,1416 @@ pub enum MemoryOperationKind {
     SupersedeClaim,
     RetractClaim,
     DeleteEntity,
+}
+
+/// Cap for renderer timeline expansion across supersession edges.
+const MAX_MEMORY_TIMELINE_RECORDS: usize = 10_000;
+
+/// ONE-1149 race-test rendezvous seam. The deterministic raced-delete harness
+/// must order the deleter's lock-free `read_entity_header` read_txn (which does
+/// NOT take the single LMDB write lock) BEFORE the eraser's commit, so the
+/// headerful gate is forced to win the header read and the partial-residue leg
+/// is exercised every run instead of nondeterministically diverting to the
+/// headerless path. The only way to inject that ordering across the spawned
+/// production call is a `#[cfg(test)]` signal emitted from inside
+/// `delete_entity_with_reason` once the header is proven `Some`. It compiles
+/// out of production entirely (the `#[cfg(not(test))]` shim is a no-op),
+/// mirroring the established sweep-side fault-injection seam idiom.
+#[cfg(test)]
+static AFTER_HEADER_READ: std::sync::Mutex<Option<std::sync::mpsc::SyncSender<()>>> =
+    std::sync::Mutex::new(None);
+
+/// Installs the one-shot rendezvous sender consumed by
+/// [`signal_after_header_read`]. Called by the raced-delete harness before it
+/// releases the deleter; the matching receiver `recv()`s on the eraser side
+/// just before its commit.
+#[cfg(test)]
+pub(crate) fn install_after_header_read_signal(tx: std::sync::mpsc::SyncSender<()>) {
+    *AFTER_HEADER_READ
+        .lock()
+        .expect("AFTER_HEADER_READ poisoned") = Some(tx);
+}
+
+/// Fires the rendezvous signal exactly once if a sender is installed, then
+/// clears it so unrelated headerful deletes in the same serial run never block
+/// on a stale rendezvous. A no-op when no harness installed a sender.
+#[cfg(test)]
+fn signal_after_header_read() {
+    let sender = AFTER_HEADER_READ
+        .lock()
+        .expect("AFTER_HEADER_READ poisoned")
+        .take();
+    if let Some(sender) = sender {
+        // The rendezvous (`sync_channel(0)`) blocks here until the eraser
+        // `recv()`s; that recv is positioned immediately before its commit, so
+        // the deleter's header read is provably ordered before the erase.
+        let _ = sender.send(());
+    }
+}
+
+/// Production no-op shim for the race-test rendezvous seam: compiles out the
+/// signal entirely in non-test builds.
+#[cfg(not(test))]
+#[inline(always)]
+fn signal_after_header_read() {}
+
+pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
+    matches!(
+        entity_type,
+        ENTITY_TYPE_POLICY_MANIFEST | ENTITY_TYPE_AUTHORITY_LOG
+    )
+}
+
+fn memory_timeline_record_cmp(
+    left: &MemoryTimelineRecord,
+    right: &MemoryTimelineRecord,
+) -> std::cmp::Ordering {
+    left.occurred_start
+        .unwrap_or(u64::MAX)
+        .cmp(&right.occurred_start.unwrap_or(u64::MAX))
+        .then_with(|| {
+            left.learned_at
+                .unwrap_or(u64::MAX)
+                .cmp(&right.learned_at.unwrap_or(u64::MAX))
+        })
+        .then_with(|| {
+            left.occurred_end
+                .unwrap_or(u64::MAX)
+                .cmp(&right.occurred_end.unwrap_or(u64::MAX))
+        })
+        .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
+}
+
+/// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
+/// BEFORE its body is purged or SoftErased: the subject EdgeRef whose cached
+/// flags must be refreshed post-purge (D16), and the opaque refs the queued
+/// historical-carrier sweep rides on (the ONE-1091 executor's seam).
+struct CapturedProvenanceDelete {
+    subject: EdgeRef,
+    source_revision_ref: Option<[u8; 16]>,
+    body_snapshot_ref: Option<[u8; 16]>,
+}
+
+/// Builds the queued sweep row's delete-interplay extras from a pre-purge
+/// provenance capture: opaque lowercase-hex identifiers only — never content
+/// or predicate strings. Empty for non-provenance deletes, so their queued
+/// row shape gains nothing.
+fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardEraseSweepExtras {
+    let Some(captured) = captured else {
+        return HardEraseSweepExtras::default();
+    };
+    HardEraseSweepExtras {
+        revision_ids: captured
+            .source_revision_ref
+            .iter()
+            .map(|reference| bytes_to_hex_lower(reference))
+            .collect(),
+        body_snapshot_refs: captured
+            .body_snapshot_ref
+            .iter()
+            .map(|reference| bytes_to_hex_lower(reference))
+            .collect(),
+    }
+}
+
+impl Vault {
+    /// Deletes an entity blob by ID using the destructive user-hard-delete
+    /// contract.
+    pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
+        Ok(self
+            .delete_entity_with_reason(id, DeleteReason::UserHardDelete)?
+            .existed)
+    }
+
+    /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
+    pub fn delete_entity_with_reason(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let requested_at = unix_seconds_now();
+        let Some(header) = self.read_entity_header(id)? else {
+            return self.delete_entity_without_header(id, reason, requested_at);
+        };
+        if is_delete_protected_engine_record(header.entity_type) {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
+        // ONE-1149 race-test rendezvous: the header is proven `Some` (the
+        // lock-free `read_entity_header` read_txn has completed and committed
+        // the headerful path) but no write lock is held yet. The deterministic
+        // raced-delete harness recv()s here so the eraser commits AFTER this
+        // header read, forcing the headerful leg every run. No-op in
+        // production.
+        signal_after_header_read();
+        // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
+        // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
+        // ONE-1149: minted only AFTER the header read proves there is
+        // something to erase — a delete that finds nothing must never mint a
+        // request id (the headerless leg mints after its own scope probe).
+        let request_uuid = Uuid::now_v7();
+
+        let tombstone = TombstoneValueV2 {
+            reason: reason.into(),
+            deleted_at: requested_at,
+            request_id: *request_uuid.as_bytes(),
+        };
+        let window_label = window_label_from_timestamp(header.learned_at);
+
+        // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
+        // EdgeRef and sweep refs are only readable PRE-purge (SoftErase
+        // truncates the payload to the 25 B header) — capture them now.
+        // `None` for every non-Claim / non-provenance entity: zero new
+        // behavior on those paths.
+        let captured = self.capture_provenance_delete(id)?;
+
+        if !reason.active_store_hard_purge_v1() {
+            // `user_delete` keeps the local 25 B shell (ARCH-0038 "Tombstone
+            // revision (empty content); keep the message shell") but now
+            // writes a reason=user_delete CRDT tombstone (ONE-1090 write
+            // side): a soft delete with NO cross-device record would leave
+            // the deleted body live on every other device.
+            let mut wtxn = self.store.env.write_txn()?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            // D16: SoftErase tombstones the Claim, and "the derived edge
+            // flag follows the Claim" — refresh in the SAME transaction.
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            if existed {
+                // OWNER-DECISION (cfg-off durability): the pending-tombstone
+                // marker rides the SAME txn as the shell scrub.
+                self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+            }
+            wtxn.commit()?;
+            if existed {
+                let crdt_persisted =
+                    self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
+                if crdt_persisted {
+                    self.clear_pending_tombstone(&window_label, id)?;
+                }
+            }
+            return Ok(DeleteEntityOutcome {
+                existed,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+
+        // LOCKED ordering (ARCH-0038): CRDT tombstone FIRST — prevents sync
+        // resurrection before the destructive purge touches payloads.
+        let crdt_persisted = self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
+        let tombstone_complete_at = unix_seconds_now();
+
+        let soft_complete_at = if matches!(
+            reason,
+            DeleteReason::GdprDelete | DeleteReason::PolicyDelete
+        ) {
+            // The SoftErase scrubs the truth-Claim's body — the ONLY carrier
+            // of the subject EdgeRef (D12) — so the D16 edge refresh MUST
+            // commit atomically with it, mirroring the user_delete branch
+            // above. Committing the SoftErase alone first would leave a
+            // crash window in which a stale 26 B flag outlives its
+            // truth-Claim and a RETRY cannot heal it (capture sees the
+            // bodiless shell ⇒ `None`). The purge txn below re-runs the
+            // refresh as an idempotent second pass.
+            let mut wtxn = self.store.env.write_txn()?;
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
+            unix_seconds_now()
+        } else {
+            tombstone_complete_at
+        };
+
+        let receipt_id = EntityId::now();
+        let scope = RedactionScope::entity(id);
+        let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        // ONE-1149 ownership claim: probe the FULL delete scope INSIDE the
+        // erasing txn. LMDB's single writer makes this race-free — if the
+        // probe sees state, this txn's purge erases it; if a concurrent
+        // delete raced everything away first, this delete must not claim it
+        // erased anything (no receipt, no sweep row). Mirrors the
+        // receiver-side `apply_replayed_tombstone` nothing-local branch:
+        // ONLY the durable `dt:` marker is written (hard-once-seen — the
+        // CRDT tombstone above is already published, so the id IS
+        // hard-deleted), guarded so an existing marker is never overwritten.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                wtxn.commit()?;
+            }
+            return Ok(DeleteEntityOutcome::missing());
+        }
+        // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
+        // the Observer-B materialization gate consults when a crafted update
+        // REMOVES the CRDT tombstone (nothing else id-keyed survives a hard
+        // delete locally — the receipt id is fresh, h: is seq-keyed, pt: is
+        // cleared after replay). Written in the SAME txn as the active-store
+        // purge. PRESENCE-ONLY for gates; the 25 B value body (the tombstone
+        // wire bytes) is informational. Un-cfg'd on every build: `sync_state`
+        // is unconditional and the marker is local delete truth, not
+        // sync-only state (ONE-1132 cfg-off durability).
+        self.store
+            .sync_state
+            .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+
+        // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
+        // subject edge is refreshed in the SAME transaction as the purge.
+        // Gated on `existed` (the entity record was erased by THIS txn): a
+        // captured Claim whose record was raced away was already refreshed
+        // by the racer's own delete txn.
+        if existed && let Some(captured) = &captured {
+            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+        }
+
+        // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
+        // rides the SAME txn as the active-store purge — on every build.
+        self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+
+        let hard_purge_complete_at = unix_seconds_now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: request_uuid.to_string(),
+                scope,
+                reason,
+                requested_at,
+                soft_complete_at,
+                hard_purge_complete_at,
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+            sweep_extras(captured.as_ref()),
+        )?;
+
+        wtxn.commit()?;
+        // The CRDT record (tombstone-first, above) is durable — the crash
+        // marker has served its purpose. In non-`sync` builds the marker
+        // STAYS: it is the deletion's only propagation intent until a
+        // sync-enabled boot replays it.
+        if crdt_persisted {
+            self.clear_pending_tombstone(&window_label, id)?;
+        }
+        Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    fn delete_entity_without_header(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        requested_at: u64,
+    ) -> Result<DeleteEntityOutcome> {
+        // Probe first so a fully-missing id stays a strict no-op — deleting
+        // a nonexistent entity must not mint tombstones or receipts.
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
+                return Ok(DeleteEntityOutcome::missing());
+            }
+        }
+        // ONE-1149: the deletion request UUID is minted only AFTER the probe
+        // above says there is something to erase.
+        let request_uuid = Uuid::now_v7();
+
+        // ONE-1132: headerless residue previously left NO CRDT record, so
+        // the orphan id could re-sync forever. There is no `learned_at` to
+        // address a window with, so the tombstone lands under
+        // `WindowKey::from_timestamp(now)` — a propagation address, not a
+        // truth claim.
+        let tombstone = TombstoneValueV2 {
+            reason: reason.into(),
+            deleted_at: requested_at,
+            request_id: *request_uuid.as_bytes(),
+        };
+        let window_label = window_label_from_timestamp(requested_at);
+        let crdt_persisted = self.write_crdt_tombstone(id, requested_at, &tombstone)?;
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
+        // the erasing txn (race-free under LMDB's single writer). The read
+        // probe above gated the tombstone publish; THIS probe gates the
+        // erasure audit. A concurrent delete that raced the residue away
+        // between the two means this delete erased nothing: no receipt, no
+        // sweep row, no `pt:` marker — only the durable `dt:` marker for
+        // hard reasons (hard-once-seen; the CRDT tombstone above is already
+        // published), guarded exactly like the receiver-side
+        // `apply_replayed_tombstone` nothing-local branch.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            if reason.active_store_hard_purge_v1()
+                && self.store.sync_state.get(&wtxn, &marker_key)?.is_none()
+            {
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                wtxn.commit()?;
+            }
+            return Ok(DeleteEntityOutcome::missing());
+        }
+        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
+        self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        if reason.active_store_hard_purge_v1() {
+            // `dt:` local hard-delete marker (pinned: presence-only 25 B
+            // `[reason:1][deleted_at:8 LE][request_id:16]` value, GLOBAL
+            // lowercase key, permanent, no GC), headerless leg — in the
+            // SAME txn as the purge, mirroring the receiver-side hard
+            // apply. The CRDT tombstone above is mutable remote-facing
+            // state; without the local marker a hostile tombstone removal
+            // + re-put would resurrect this id through the
+            // materialization gates.
+            self.store
+                .sync_state
+                .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+        }
+        if !reason.writes_receipt() {
+            wtxn.commit()?;
+            if crdt_persisted {
+                self.clear_pending_tombstone(&window_label, id)?;
+            }
+            return Ok(DeleteEntityOutcome {
+                existed,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+
+        let receipt_id = EntityId::now();
+        let hard_purge_complete_at = unix_seconds_now();
+        // A headerless residue has no decodable body, so no provenance
+        // capture is possible (ARCH-0038: no body ⇒ no EdgeRef to refresh,
+        // no refs for the sweep scope).
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: request_uuid.to_string(),
+                scope: RedactionScope::entity(id),
+                reason,
+                requested_at,
+                soft_complete_at: hard_purge_complete_at,
+                hard_purge_complete_at,
+                sweep_queued_at: reason
+                    .queues_historical_sweep()
+                    .then_some(hard_purge_complete_at),
+            },
+            HardEraseSweepExtras::default(),
+        )?;
+        wtxn.commit()?;
+        if crdt_persisted {
+            self.clear_pending_tombstone(&window_label, id)?;
+        }
+        Ok(DeleteEntityOutcome {
+            existed,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    /// Pre-purge ARCH-0038 capture for the local delete paths: decodes the
+    /// entity ABOUT to be purged or SoftErased and, when it is an
+    /// `edge.provenance` Claim, captures the subject EdgeRef (for the D16
+    /// flag refresh) plus the `body_snapshot_ref` / `source_revision_ref`
+    /// the queued historical-carrier sweep needs to locate residual
+    /// snapshot/update bytes.
+    ///
+    /// Discrimination order — the hook stays inert for everything else:
+    /// type byte FIRST (non-CLAIM ⇒ `None`), then the predicate (non-
+    /// `edge.provenance` Claim ⇒ `None`). A bodiless 25 B Claim shell ⇒
+    /// `None`: every local SoftErase commits the D16 edge refresh in the
+    /// SAME transaction that scrubs the body, so a shell's subject edge is
+    /// already consistent and the refs the sweep would need are gone with
+    /// the body. A type-0 record whose NON-empty body fails
+    /// claim/provenance decoding fails CLOSED with the decoder's typed error
+    /// — the ONE-1104 invariant (every type-0 write is validated) is broken
+    /// and the delete must not guess.
+    fn capture_provenance_delete(&self, id: &EntityId) -> Result<Option<CapturedProvenanceDelete>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if body.is_empty() {
+            return Ok(None);
+        }
+        let wrapper = crate::claim::decode_claim_body(body, true)?;
+        if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
+            return Ok(None);
+        }
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = wrapper.subject
+        else {
+            return Err(Error::InvalidProvenanceBody(
+                "edge.provenance claim subject is not a 33-byte EdgeRef",
+            ));
+        };
+        let record = decode_edge_provenance_body(&wrapper.value)?;
+        Ok(Some(CapturedProvenanceDelete {
+            subject: EdgeRef::new(source, kind, target),
+            source_revision_ref: record.source_revision_ref,
+            body_snapshot_ref: record.body_snapshot_ref,
+        }))
+    }
+
+    /// ARCH-0038 DELETE interplay (D16), run in the SAME transaction that
+    /// purged / SoftErased the provenance Claim: refresh the subject edge's
+    /// cached flags — restamp from the deterministic D14 winner among the
+    /// REMAINING live Claims; else, when a RETRACTED `edge.provenance` Claim
+    /// for the same EdgeRef still survives, KEEP the 26 B retracted dampening
+    /// stamp (the withdrawn provenance must stay dampened — retractionRules
+    /// RETRACT); only when NO provenance Claim of ANY lifecycle survives is
+    /// the cached flag unauditable and the edge downgraded 26 B → 24 B bare.
+    /// Both `edges_out` and `edges_in` carry identical bytes; when the edge
+    /// bytes changed, the endpoints' PPR caches are invalidated and the graph
+    /// version bumped. A subject edge that no longer exists (deleted
+    /// independently of its Claims) leaves nothing to refresh — no-op.
+    fn refresh_subject_edge_after_claim_delete_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        deleted_claim_id: &EntityId,
+        subject: &EdgeRef,
+    ) -> Result<()> {
+        let edge_key = Store::encode_edge_key(&subject.source, subject.kind, &subject.target);
+        if self.store.edges_out.get(wtxn, &edge_key)?.is_none() {
+            return Ok(());
+        }
+        let survivors =
+            self.live_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
+        let precedence: Vec<ProvenancePrecedence> = survivors
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        let changed = match winner_index(&precedence) {
+            Some(index) => {
+                restamp_edge_flags(&self.store, wtxn, subject, survivors[index].flags())?;
+                true
+            }
+            // No ACTIVE survivor. "The derived edge flag follows the Claim"
+            // (ARCH-0038 D16) — but a RETRACTED `edge.provenance` Claim is
+            // still readable truth, so it KEEPS the 26 B retracted dampening
+            // stamp rather than downgrading to a bare 24 B edge that would
+            // re-enable PPR propagation of the WITHDRAWN provenance. Only when
+            // no provenance Claim of ANY lifecycle survives is the flag
+            // unauditable and the edge downgraded to bare.
+            None => self.refresh_to_retracted_survivor_or_bare(wtxn, deleted_claim_id, subject)?,
+        };
+        if changed {
+            ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        Ok(())
+    }
+
+    /// D16 fallback when the deleted Claim left NO active survivor: if a
+    /// RETRACTED `edge.provenance` Claim for `subject` still exists, restamp
+    /// the edge with `confirmation_status` = retracted (3) and the retracted
+    /// WINNER's persisted `actor_class` — keeping the 26 B retracted dampening
+    /// stamp the contract mandates (retractionRules RETRACT), mirroring
+    /// `retract_edge_provenance`'s own None-branch so the two paths agree.
+    /// Otherwise downgrade 26 B → 24 B bare (no truth-Claim of any lifecycle
+    /// survives ⇒ an unauditable cached flag). Returns whether the bytes
+    /// changed.
+    fn refresh_to_retracted_survivor_or_bare(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        deleted_claim_id: &EntityId,
+        subject: &EdgeRef,
+    ) -> Result<bool> {
+        let retracted =
+            self.retracted_edge_provenance_claims_in_txn(wtxn, subject, Some(deleted_claim_id))?;
+        let precedence: Vec<ProvenancePrecedence> = retracted
+            .iter()
+            .map(StoredProvenanceClaim::precedence)
+            .collect();
+        match winner_index(&precedence) {
+            Some(index) => {
+                restamp_edge_flags(
+                    &self.store,
+                    wtxn,
+                    subject,
+                    EdgeProvenanceFlags {
+                        confirmation_status: EdgeConfirmationStatus::Retracted,
+                        actor_class: retracted[index].actor_class,
+                    },
+                )?;
+                Ok(true)
+            }
+            None => downgrade_edge_to_bare(&self.store, wtxn, subject),
+        }
+    }
+
+    fn purge_entity_active_store_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let (existed, had_vector, had_graph_mutation, neighbors) =
+            deindex_entity(&self.store, wtxn, id)?;
+        crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+        if had_graph_mutation {
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+        }
+        Ok(existed)
+    }
+
+    fn soft_erase_active_store_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<(bool, bool)> {
+        let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =
+            deindex_lexical_query_hints_for_target(&self.store, wtxn, id)?;
+        if hint_had_graph_mutation {
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        bm25::deindex_text(&self.store, wtxn, id)?;
+        delete_from_phonetic_postings(&self.store, wtxn, id)?;
+        crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
+        crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
+        let blob_cleanup =
+            crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(&self.store, wtxn, id)?;
+        if blob_cleanup.had_graph_mutation {
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+        self.store.clear_pending_embedding(wtxn, id)?;
+        let entity_had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let mut had_vector = hint_had_vector | entity_had_vector | blob_cleanup.had_vector;
+        crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
+
+        let Some(entity_record) = self.store.entities.get(wtxn, id.as_bytes())? else {
+            let cleanup = delete_vad_annotation_metadata_in_txn(&self.store, wtxn, id)?;
+            had_vector |= cleanup.had_vector;
+            if cleanup.had_graph_mutation {
+                ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
+            return Ok((false, had_vector));
+        };
+        let header = EntityMetadataHeader::parse(entity_record)
+            .ok_or(Error::CorruptedIndex("entity metadata"))?;
+        let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        let mut cleanup = VadAnnotationCleanup::default();
+        delete_vad_annotation_metadata_for_type_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            header.entity_type,
+            &mut cleanup,
+        )?;
+        had_vector |= cleanup.had_vector;
+        if cleanup.had_graph_mutation {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
+            ppr::increment_graph_version(&self.store, wtxn)?;
+        }
+
+        crate::dreamer_runner::deindex_dreamer_milestone_claim(&self.store, wtxn, id)?;
+        self.store.entities.put(wtxn, id.as_bytes(), &payload)?;
+        Ok((true, had_vector))
+    }
+
+    /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
+    /// the ONE primitive every sync replay surface routes through (Observer
+    /// B's tombstone phase and `forward_rematerialize`'s tombstone pass), so
+    /// a remote delete can never diverge from the pinned ARCH-0038 reason
+    /// semantics. OWNER-DECISION (M4-06 / ONE-1133, fail-closed): replay
+    /// routes through this reason-aware delete primitive, never bare purge.
+    ///
+    /// * KNOWN-soft value (`reason = user_delete`) → shell-preserving
+    ///   SoftErase: payload truncated to the 25 B entity header,
+    ///   text/phonetic/vector/hnsw deindexed, and — when the entity was a
+    ///   live `edge.provenance` Claim — the D16 subject-edge refresh
+    ///   committed in the SAME transaction. No receipt, no sweep row
+    ///   (contracts.ts `user_delete`: activeStoreHardPurgeV1 = false,
+    ///   receipt = false).
+    /// * Hard value (known hard reason, legacy 8-byte, reserved 0, unknown
+    ///   byte, malformed) → destructive purge of the payload plus every
+    ///   active index entry, the D16 refresh in the SAME transaction, and —
+    ///   when local state was actually erased — a LOCAL `h:{seq:8BE}`
+    ///   historical-carrier sweep row (`deadline_at` ≤ queued_at + 30 d,
+    ///   GDPR Art. 12(3)) and a LOCAL REDACTION_AUDIT receipt whose
+    ///   `request_id` comes from the wire value (OWNER-DECISION: Art. 5(2)
+    ///   accountability attaches to each replica actually erasing, so N
+    ///   devices yield N receipts for one request). Ambiguity resolves to
+    ///   MORE deletion, never less.
+    /// * Never-downgrade on receive: a soft value for an id this replica
+    ///   already hard-purged finds no row to scrub and is a no-op — it
+    ///   never recreates a shell.
+    /// * Idempotent: after a completed hard apply the delete-scope probe
+    ///   finds nothing, so re-application (every-boot forward
+    ///   re-materialization, repeated delta delivery) is a receipt-free
+    ///   no-op.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn apply_replayed_tombstone(
+        &self,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<ReplayedTombstoneOutcome> {
+        let decoded = decode_tombstone_value(raw_value);
+        if let Some(header) = self.read_entity_header(id)?
+            && is_delete_protected_engine_record(header.entity_type)
+        {
+            return Err(Error::MaintenanceKindNotWritable(header.entity_type));
+        }
+        // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
+        // EdgeRef and sweep refs are only readable PRE-scrub.
+        let captured = self.capture_provenance_delete(id)?;
+
+        if !decoded.is_hard() {
+            let mut wtxn = self.store.env.write_txn()?;
+            let had_body = self
+                .store
+                .entities
+                .get(&wtxn, id.as_bytes())?
+                .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            let (existed, had_vector) = self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if had_vector {
+                crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
+            }
+            // D16: SoftErase tombstones the Claim, and "the derived edge
+            // flag follows the Claim" — refresh in the SAME transaction.
+            if existed && let Some(captured) = &captured {
+                self.refresh_subject_edge_after_claim_delete_in_txn(
+                    &mut wtxn,
+                    id,
+                    &captured.subject,
+                )?;
+            }
+            wtxn.commit()?;
+            return Ok(ReplayedTombstoneOutcome::SoftErased {
+                changed: had_body || had_vector,
+            });
+        }
+
+        let mut wtxn = self.store.env.write_txn()?;
+        let marker_key = local_hard_delete_key(id);
+        let marker_value = decoded.local_hard_delete_marker_value();
+        // Probe the FULL delete scope (entity row, vectors, text, phonetic,
+        // short-ids, edges): orphan residue without an entities row still
+        // counts as local state to erase, mirroring the local
+        // `delete_entity_without_header` semantics.
+        if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            // Hard-once-seen is durable LOCAL truth even when nothing local
+            // was erased (never-materialized id): the permanent `dt:` marker
+            // still gates a future re-put after hostile tombstone-map
+            // manipulation. The guarded write keeps every-boot replay a
+            // read-only no-op once the marker exists.
+            if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
+                self.store
+                    .sync_state
+                    .put(&mut wtxn, &marker_key, &marker_value)?;
+                wtxn.commit()?;
+            }
+            return Ok(ReplayedTombstoneOutcome::HardPurged {
+                erased: false,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+        self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
+        // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
+        // the purge so local delete truth survives CRDT-map manipulation.
+        self.store
+            .sync_state
+            .put(&mut wtxn, &marker_key, &marker_value)?;
+        // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
+        // subject edge is refreshed in the SAME transaction as the purge.
+        if let Some(captured) = &captured {
+            self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+        }
+        let applied_at = unix_seconds_now();
+        let receipt_id = EntityId::now();
+        let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
+            &mut wtxn,
+            &receipt_id,
+            RedactionReceiptInput {
+                request_id: decoded.receipt_request_id(),
+                scope: RedactionScope::entity(id),
+                reason: decoded.receipt_hard_reason(),
+                // The origin's request time, straight off the wire (0 for
+                // malformed shapes); completion stamps are device-local
+                // facts on the replica that erased.
+                requested_at: decoded.deleted_at,
+                soft_complete_at: applied_at,
+                hard_purge_complete_at: applied_at,
+                sweep_queued_at: Some(applied_at),
+            },
+            sweep_extras(captured.as_ref()),
+        )?;
+        wtxn.commit()?;
+        Ok(ReplayedTombstoneOutcome::HardPurged {
+            erased: true,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
+    }
+
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_replayed_tombstone_for_sync(
+        &self,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<ReplayedTombstoneOutcome> {
+        if let Some(header) = self.read_entity_header(id)?
+            && is_delete_protected_engine_record(header.entity_type)
+        {
+            return Ok(ReplayedTombstoneOutcome::HardPurged {
+                erased: false,
+                receipt_id: None,
+                sweep_key: None,
+            });
+        }
+        self.apply_replayed_tombstone(id, raw_value)
+    }
+
+    /// Presence-only check for the permanent `dt:{entity_hex}` local
+    /// hard-delete marker. Materialization gates OR this with the CRDT
+    /// tombstones-map presence so LOCAL delete truth survives hostile
+    /// tombstone-map manipulation (a removed tombstone + re-put entity must
+    /// not resurrect). The value is NEVER decoded (pinned presence-only
+    /// semantics).
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn local_hard_delete_marker_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .store
+            .sync_state
+            .get(txn, &local_hard_delete_key(id))?
+            .is_some())
+    }
+
+    fn active_delete_scope_exists_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if self.store.entities.get(txn, id.as_bytes())?.is_some()
+            || self.store.vectors.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
+            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
+            || self
+                .store
+                .text_doc_field_lengths
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .phonetic_forward
+                .get(txn, id.as_bytes())?
+                .is_some()
+            || self
+                .store
+                .short_ids_reverse
+                .get(txn, id.as_bytes())?
+                .is_some()
+        {
+            return Ok(true);
+        }
+
+        let mut edges_out = self.store.edges_out.prefix_iter(txn, id.as_bytes())?;
+        if edges_out.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+        let mut edges_in = self.store.edges_in.prefix_iter(txn, id.as_bytes())?;
+        if edges_in.next().transpose()?.is_some() {
+            return Ok(true);
+        }
+
+        vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)
+    }
+
+    /// Writes the ARCH-0038 CRDT tombstone (v2 wire value, ONE-1132) into
+    /// the window doc addressed by `window_ts`. In the SAME CRDT commit as
+    /// the tombstone insert, the live `entities[id]` copy (an ACTIVE
+    /// carrier, not history) and — for hard reasons — the entity's
+    /// edges-map keys are removed; op-history bytes remain for the bounded
+    /// `h:` sweep (ONE-1091). Returns whether the CRDT record was
+    /// persisted: `false` only in non-`sync` builds, where the `pt:`
+    /// pending-tombstone marker carries the deletion intent until a
+    /// sync-enabled boot replays it.
+    ///
+    /// ONE-1135 (delete-propagation transport):
+    /// - **Live routing**: when the window is OPEN (registry lookup via the
+    ///   attached [`crate::sync::WindowManager`]), the tombstone commits
+    ///   through the registry-owned live doc — Observer A persists the `u:`
+    ///   row and every registry holder sees the delete — never through a
+    ///   parallel transient copy whose `d:w:` export a live
+    ///   `persist_state` would clobber.
+    /// - **Transient path** (window NOT open): the doc is import-merged
+    ///   from the persisted snapshot + pending `u:` rows
+    ///   ([`crate::sync::window::load_window_from_state`]) — never a blind
+    ///   overwrite.
+    /// - **Delete-bearing queue row**: the tombstone-commit delta is pushed
+    ///   to the offline queue with the `d:{seq}` sidecar marker, so an
+    ///   OFFLINE delete is delivered on next connect and survives the
+    ///   optimistic clear until VV-confirmed (M4-12).
+    /// - **Carrier-15 scrub** (hard reasons): pre-existing `q:` rows for
+    ///   this window and the persisted `u:w:` rows the snapshot subsumed
+    ///   are dropped, and the `fr:w:{key}` full-resync marker is set
+    ///   (ARCH-0038 carriers 13–15; fail-closed — over-drop + full resync,
+    ///   never leak).
+    ///
+    /// OWNER-DECISION (ONE-1135, live-path commit origin): the live-doc
+    /// commit is tagged `BRIDGE_ORIGIN`. Observer A fires for ALL local
+    /// commits and still persists the `u:` row; Observer B MUST skip it —
+    /// the local delete path owns the LMDB purge under the pinned
+    /// tombstone → purge → receipt ordering, and a B-side replay here would
+    /// purge BEFORE the purge transaction, voiding the local receipt and
+    /// the `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
+    #[cfg(feature = "sync")]
+    fn write_crdt_tombstone(
+        &self,
+        id: &EntityId,
+        window_ts: u64,
+        value: &TombstoneValueV2,
+    ) -> Result<bool> {
+        use crate::sync::bridge::BRIDGE_ORIGIN;
+        use crate::sync::loro_support::{doc_version_vector, export_snapshot};
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::{
+            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+            merge_persisted_state_into_doc,
+        };
+        use loro::CommitOptions;
+
+        let window_key = WindowKey::from_timestamp(window_ts);
+
+        if let Some((window, materializer)) = self.live_window(&window_key) {
+            // Live path: merge the on-disk record first (clobber guard —
+            // a tombstone persisted transiently while this window was open
+            // must survive the snapshot export below), then commit the
+            // delete through the SHARED doc.
+            //
+            // The merge runs OUTSIDE the materializer lock: importing into
+            // an observed doc fires Observer B synchronously on this
+            // thread, and the callback takes the (non-reentrant) lock
+            // itself.
+            let merged_update_keys =
+                merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
+            // The tombstone commit + exports run UNDER the materializer
+            // lock: Observer B's tombstone-check + LMDB-materialize is
+            // atomic under that lock, so a concurrent remote re-put can no
+            // longer check the tombstones map BEFORE this commit and write
+            // the deleted body back AFTER the purge txn that follows
+            // (resurrection race). Deadlock-free: the BRIDGE_ORIGIN commit
+            // is rejected by Observer B callbacks BEFORE they lock, and
+            // Observer A never takes this lock. Lock order materializer →
+            // LMDB txn matches every other holder; the registry lock is
+            // NOT held here (manager lock-order pin).
+            let (delete_update, snapshot, vv) = {
+                let _guard = materializer.lock();
+                let vv_before = window.doc.oplog_vv();
+                apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
+                window
+                    .doc
+                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
+                let snapshot = export_snapshot(&window.doc)?;
+                let vv = doc_version_vector(&window.doc);
+                (delete_update, snapshot, vv)
+            };
+            self.finish_crdt_tombstone_persist(
+                &window_key,
+                &snapshot,
+                &vv,
+                value,
+                delete_update.as_ref(),
+                &merged_update_keys,
+            )?;
+            return Ok(true);
+        }
+
+        // Transient path (window not open): the loaded doc IS the
+        // import-merge of `d:w:` + pending `u:` rows.
+        let merged_update_keys = self.sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))?;
+        let doc = match load_window_from_state(self, "local", &window_key) {
+            Ok(doc) => doc,
+            Err(Error::WindowNotFound { .. }) => create_window_doc("local", &window_key),
+            Err(err) => return Err(err),
+        };
+        let vv_before = doc.oplog_vv();
+        apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        doc.commit();
+        let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
+
+        let snapshot = export_snapshot(&doc)?;
+        let vv = doc_version_vector(&doc);
+        self.finish_crdt_tombstone_persist(
+            &window_key,
+            &snapshot,
+            &vv,
+            value,
+            delete_update.as_ref(),
+            &merged_update_keys,
+        )?;
+        Ok(true)
+    }
+
+    /// One transaction for the delete path's sync_state / sync_queue
+    /// bookkeeping (both DBs share the LMDB env): persist the window-doc
+    /// snapshot triple, queue the delete-bearing update, and — for hard
+    /// reasons — run the carrier-15 scrub + set the `fr:w:{key}`
+    /// full-resync marker (consumer lands in M4-12).
+    #[cfg(feature = "sync")]
+    fn finish_crdt_tombstone_persist(
+        &self,
+        window_key: &crate::sync::WindowKey,
+        snapshot: &[u8],
+        vv: &[u8],
+        value: &TombstoneValueV2,
+        delete_update: Option<&crate::sync::window::DeleteBearingUpdate>,
+        scrubbed_update_keys: &[String],
+    ) -> Result<()> {
+        let is_hard = value.reason.is_hard();
+        self.with_write_txn(|wtxn| {
+            crate::sync::window::persist_window_doc_in_txn(self, wtxn, window_key, snapshot, vv)?;
+            if is_hard {
+                // ARCH-0038 carrier 15: pending `q:` rows for this window
+                // may carry the deleted payload — drop them all (fail-closed
+                // over-drop; delete-bearing rows are preserved inside the
+                // scrub). The `u:w:` rows the snapshot just subsumed are
+                // active payload carriers too.
+                crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
+                for update_key in scrubbed_update_keys {
+                    self.store.sync_state.delete(wtxn, update_key)?;
+                }
+                // Carriers 13–14: this window's sync state is no longer a
+                // faithful delta source — mark it for a full per-window
+                // resync on the next connect.
+                let fr_key = format!("fr:w:{window_key}");
+                self.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+            }
+            if let Some(update) = delete_update {
+                crate::sync::queue::push_delete_bearing_in_txn(
+                    self,
+                    wtxn,
+                    window_key.as_str(),
+                    update,
+                )?;
+            }
+            // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:
+            // rows above; the soft branch kept them. Recompute freshness from
+            // the FINAL u:w: set so a surviving row reads stale (the
+            // fast-reconnect reader then full-opens instead of trusting an
+            // sv:w: VV that omits the survivor's ops).
+            crate::sync::window::write_window_svf_in_txn(self, wtxn, window_key)
+        })
+    }
+
+    #[cfg(not(feature = "sync"))]
+    #[allow(clippy::unnecessary_wraps)]
+    fn write_crdt_tombstone(
+        &self,
+        _id: &EntityId,
+        _window_ts: u64,
+        _value: &TombstoneValueV2,
+    ) -> Result<bool> {
+        // No CRDT in this build — the `pt:` marker written in the purge /
+        // scrub txn is the deletion's durable propagation intent.
+        Ok(false)
+    }
+
+    /// Writes the CRDT-independent `pt:{window}:{entity_hex}` marker in the
+    /// caller's purge / shell-scrub transaction (ONE-1132 OWNER-DECISION:
+    /// deletion durability must not depend on the `sync` cargo feature).
+    /// Value = the v2 tombstone wire value, so a sync-enabled boot can
+    /// replay it verbatim.
+    fn put_pending_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        let key = pending_tombstone_key(window_label, id);
+        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        Ok(())
+    }
+
+    /// Clears the pending-tombstone marker. Only called once the CRDT
+    /// commit + snapshot persistence have succeeded — never before.
+    fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
+        self.with_write_txn(|wtxn| {
+            let key = pending_tombstone_key(window_label, id);
+            self.store.sync_state.delete(wtxn, &key)?;
+            Ok(())
+        })
+    }
+
+    /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
+    /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
+    /// index footprint `apply_put` gives every other envelope write. The
+    /// receipt is a point event (`occurred_start == occurred_end ==
+    /// learned_at`), so per the `apply_put` convention it gets a
+    /// `temporal_occurred_start` row but NO `temporal_occurred_end` row and
+    /// no `temporal_long_intervals` row. Maintenance kinds carry no short ID.
+    fn put_redaction_audit_receipt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt_id: &EntityId,
+        learned_at: u64,
+        body: &[u8],
+    ) -> Result<()> {
+        // Shared header helper (ONE-1140): the attestation transcript signs
+        // EXACTLY these stored header bytes — one assembly point, no drift.
+        let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
+        payload.extend_from_slice(&crate::deletion::receipt_envelope_header(learned_at));
+        payload.extend_from_slice(body);
+        self.store
+            .entities
+            .put(wtxn, receipt_id.as_bytes(), &payload)?;
+
+        let type_key = Store::encode_type_key(ENTITY_TYPE_REDACTION_AUDIT, receipt_id);
+        self.store.type_index.put(wtxn, &type_key, &[])?;
+
+        let occurred_start_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store
+            .temporal_occurred_start
+            .put(wtxn, &occurred_start_key, &[])?;
+
+        let learned_key = Store::encode_temporal_key(learned_at, receipt_id);
+        self.store.temporal_learned.put(wtxn, &learned_key, &[])?;
+        Ok(())
+    }
+
+    fn write_redaction_receipt_and_sweep_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt_id: &EntityId,
+        input: RedactionReceiptInput,
+        sweep_extras: HardEraseSweepExtras,
+    ) -> Result<Vec<u8>> {
+        let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
+            self.enqueue_hard_erase_sweep_in_txn(
+                wtxn,
+                input.scope.clone(),
+                sweep_extras,
+                queued_at,
+            )?
+        } else {
+            Vec::new()
+        };
+
+        // ONE-1140 (OD-2/OD-6): every receipt is signed at mint. The device
+        // identity (client id + Ed25519 keypair) is lazily self-provisioned
+        // in THIS txn — all receipt-mint paths funnel through here, so this
+        // is the single in-txn hook.
+        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let hard_purge_complete_at = input.hard_purge_complete_at;
+        let body = encode_redaction_audit_receipt(input, receipt_id, &identity)?;
+        self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
+        Ok(sweep_key)
+    }
+
+    fn enqueue_hard_erase_sweep_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        scope: RedactionScope,
+        extras: HardEraseSweepExtras,
+        queued_at: u64,
+    ) -> Result<Vec<u8>> {
+        let seq = self.allocate_next_hard_erase_sweep_seq(wtxn)?;
+        let key = encode_hard_erase_sweep_key(seq);
+        let value = encode_hard_erase_sweep_job(scope, extras, queued_at)?;
+        self.store.sync_queue.put(wtxn, &key, &value)?;
+        Ok(key.to_vec())
+    }
+
+    fn allocate_next_hard_erase_sweep_seq(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<u64> {
+        let metadata_seq = match self
+            .store
+            .sync_queue
+            .get(&*wtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY)?
+        {
+            Some(raw) if raw.len() == 8 => {
+                Some(u64::from_le_bytes(raw.try_into().map_err(|_| {
+                    Error::CorruptedIndex("hard erase sweep metadata")
+                })?))
+            }
+            Some(_) => return Err(Error::CorruptedIndex("hard erase sweep metadata")),
+            None => None,
+        };
+        let current = match metadata_seq {
+            Some(seq) => seq,
+            None => self.max_hard_erase_sweep_seq(wtxn)?,
+        };
+        let next = current
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("hard erase sweep sequence"))?;
+        if self
+            .store
+            .sync_queue
+            .get(&*wtxn, &encode_hard_erase_sweep_key(next))?
+            .is_some()
+        {
+            let repaired_current = self.max_hard_erase_sweep_seq(wtxn)?;
+            let repaired_next = repaired_current
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("hard erase sweep sequence"))?;
+            if self
+                .store
+                .sync_queue
+                .get(&*wtxn, &encode_hard_erase_sweep_key(repaired_next))?
+                .is_some()
+            {
+                return Err(Error::CorruptedIndex("hard erase sweep metadata"));
+            }
+            self.store.sync_queue.put(
+                wtxn,
+                LAST_HARD_ERASE_SWEEP_SEQ_KEY,
+                &repaired_next.to_le_bytes(),
+            )?;
+            return Ok(repaired_next);
+        }
+        self.store
+            .sync_queue
+            .put(wtxn, LAST_HARD_ERASE_SWEEP_SEQ_KEY, &next.to_le_bytes())?;
+        Ok(next)
+    }
+
+    fn max_hard_erase_sweep_seq(&self, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
+        let mut max_seq = 0_u64;
+        for row in self
+            .store
+            .sync_queue
+            .prefix_iter(wtxn, HARD_ERASE_SWEEP_PREFIX)?
+        {
+            let (key, _) = row?;
+            if let Some(seq) = decode_hard_erase_sweep_seq(key) {
+                max_seq = max_seq.max(seq);
+            }
+        }
+        Ok(max_seq)
+    }
+
+    /// Returns stable, renderer-facing data for the supersession chain that
+    /// contains `anchor`.
+    pub fn memory_timeline(&self, anchor: &EntityId) -> Result<MemoryTimeline> {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut edges = std::collections::BTreeMap::new();
+        let mut stack = vec![*anchor];
+        ids.insert(*anchor);
+
+        while let Some(id) = stack.pop() {
+            let older = self.targets(&id, EdgeKind::Supersedes, None)?;
+            let newer = self.sources(&id, EdgeKind::Supersedes, None)?;
+            edges.insert(id, (older.clone(), newer.clone()));
+            for next in older.into_iter().chain(newer) {
+                if ids.insert(next) {
+                    if ids.len() > MAX_MEMORY_TIMELINE_RECORDS {
+                        return Err(Error::IndexOverflow("memory_timeline"));
+                    }
+                    stack.push(next);
+                }
+            }
+        }
+
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            let (supersedes, superseded_by) = edges.remove(&id).unwrap_or_default();
+            records.push(self.memory_timeline_record(&id, supersedes, superseded_by)?);
+        }
+        records.sort_unstable_by(memory_timeline_record_cmp);
+
+        Ok(MemoryTimeline {
+            anchor: *anchor,
+            records,
+        })
+    }
+
+    fn memory_timeline_record(
+        &self,
+        id: &EntityId,
+        mut supersedes: Vec<EntityId>,
+        mut superseded_by: Vec<EntityId>,
+    ) -> Result<MemoryTimelineRecord> {
+        supersedes.sort_unstable();
+        superseded_by.sort_unstable();
+
+        let Some(raw) = self.get_raw(id)? else {
+            return Ok(MemoryTimelineRecord {
+                id: *id,
+                state: MemoryTimelineRecordState::Missing,
+                entity_type: None,
+                occurred_start: None,
+                occurred_end: None,
+                learned_at: None,
+                body_bytes: None,
+                deletion: None,
+                supersedes,
+                superseded_by,
+            });
+        };
+
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body_bytes = raw.len().saturating_sub(ENTITY_METADATA_HEADER_LEN);
+        let deletion = if body_bytes == 0 {
+            self.entity_deletion_metadata(id, header.learned_at)?
+        } else {
+            None
+        };
+        let lifecycle =
+            if deletion.is_none() && header.entity_type == ENTITY_TYPE_CLAIM && body_bytes > 0 {
+                self.get_claim(id)?.map(|claim| claim.lifecycle)
+            } else {
+                None
+            };
+        let state = if deletion.is_some() {
+            MemoryTimelineRecordState::Deleted
+        } else if lifecycle == Some(ClaimLifecycleStatus::Retracted) {
+            MemoryTimelineRecordState::Retracted
+        } else if lifecycle == Some(ClaimLifecycleStatus::Superseded) || !superseded_by.is_empty() {
+            MemoryTimelineRecordState::Superseded
+        } else {
+            MemoryTimelineRecordState::Live
+        };
+
+        Ok(MemoryTimelineRecord {
+            id: *id,
+            state,
+            entity_type: Some(header.entity_type),
+            occurred_start: Some(header.occurred_start),
+            occurred_end: Some(header.occurred_end),
+            learned_at: Some(header.learned_at),
+            body_bytes: Some(body_bytes),
+            deletion,
+            supersedes,
+            superseded_by,
+        })
+    }
+
+    pub(crate) fn entity_deletion_metadata(
+        &self,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<Option<HydratedShortIdDeletion>> {
+        let window_label = window_label_from_timestamp(learned_at);
+        let pending_key = pending_tombstone_key(&window_label, id);
+        let rtxn = self.store.env.read_txn()?;
+        if let Some(value) = self.store.sync_state.get(&rtxn, pending_key.as_str())? {
+            return Ok(Some(Self::deletion_metadata_from_tombstone_value(
+                HydratedShortIdDeletionSource::PendingTombstone,
+                value,
+            )));
+        }
+        drop(rtxn);
+
+        #[cfg(feature = "sync")]
+        {
+            use crate::sync::loro_support::tombstone_values_for_id;
+            use crate::sync::types::WindowKey;
+
+            let window_key = WindowKey::from_timestamp(learned_at);
+            match crate::sync::window::load_window_from_state(self, "local", &window_key) {
+                Ok(doc) => Ok(
+                    Self::select_tombstone_metadata_value(&tombstone_values_for_id(
+                        &doc.get_map("tombstones"),
+                        id,
+                    ))
+                    .map(|value| {
+                        Self::deletion_metadata_from_tombstone_value(
+                            HydratedShortIdDeletionSource::Tombstone,
+                            value,
+                        )
+                    }),
+                ),
+                Err(Error::WindowNotFound { .. }) => Ok(None),
+                Err(error) => Err(error),
+            }
+        }
+
+        #[cfg(not(feature = "sync"))]
+        {
+            Ok(None)
+        }
+    }
+
+    fn deletion_metadata_from_tombstone_value(
+        source: HydratedShortIdDeletionSource,
+        value: &[u8],
+    ) -> HydratedShortIdDeletion {
+        let decoded = decode_tombstone_value(value);
+        HydratedShortIdDeletion {
+            source,
+            reason: decoded.reason.map(Self::hydrate_deletion_reason),
+            deleted_at: (decoded.deleted_at != 0).then_some(decoded.deleted_at),
+            request_id: decoded
+                .request_id
+                .map(|request_id| Uuid::from_bytes(request_id).to_string()),
+            hard: decoded.is_hard(),
+        }
+    }
+
+    fn hydrate_deletion_reason(
+        reason: crate::deletion::TombstoneReason,
+    ) -> HydratedShortIdDeletionReason {
+        match reason {
+            crate::deletion::TombstoneReason::UserDelete => {
+                HydratedShortIdDeletionReason::UserDelete
+            }
+            crate::deletion::TombstoneReason::UserHardDelete => {
+                HydratedShortIdDeletionReason::UserHardDelete
+            }
+            crate::deletion::TombstoneReason::GdprDelete => {
+                HydratedShortIdDeletionReason::GdprDelete
+            }
+            crate::deletion::TombstoneReason::PolicyDelete => {
+                HydratedShortIdDeletionReason::PolicyDelete
+            }
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    fn select_tombstone_metadata_value(values: &[Vec<u8>]) -> Option<&[u8]> {
+        values
+            .iter()
+            .find(|value| decode_tombstone_value(value).is_hard())
+            .or_else(|| values.first())
+            .map(Vec::as_slice)
+    }
 }
 
 #[cfg(test)]
