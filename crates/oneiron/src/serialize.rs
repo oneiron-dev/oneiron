@@ -14,10 +14,17 @@ use crate::registry::{
     ENTITY_TYPE_WORLD,
 };
 use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER, PackTokenizer};
-use crate::types::{
-    ContextEntity, ContextPack, FieldProfile, PackFormat, PackItemTokenStats,
-    PackSectionTokenStats, PackStats, PackTokenStats, ResumeBundle, Signal, TokenAllocation,
-};
+use crate::types::ContextEntity;
+use crate::types::ContextPack;
+use crate::types::FieldProfile;
+use crate::types::PackFormat;
+use crate::types::PackItemTokenStats;
+use crate::types::PackSectionTokenStats;
+use crate::types::PackStats;
+use crate::types::PackTokenStats;
+use crate::types::ResumeBundle;
+use crate::types::Signal;
+use crate::types::TokenAllocation;
 
 const GROUP_ORDER: &[u8] = &[
     ENTITY_TYPE_CLAIM,
