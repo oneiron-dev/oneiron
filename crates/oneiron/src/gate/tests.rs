@@ -1064,7 +1064,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
             .deletion
             .expect("dangling short id deletion")
             .source,
-        crate::types::HydratedShortIdDeletionSource::DanglingShortId
+        crate::deletion::HydratedShortIdDeletionSource::DanglingShortId
     );
     Ok(())
 }
@@ -1098,12 +1098,12 @@ fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()>
     let deletion = hydrated.deletion.expect("deleted claim metadata");
     assert!(matches!(
         deletion.source,
-        crate::types::HydratedShortIdDeletionSource::Tombstone
-            | crate::types::HydratedShortIdDeletionSource::PendingTombstone
+        crate::deletion::HydratedShortIdDeletionSource::Tombstone
+            | crate::deletion::HydratedShortIdDeletionSource::PendingTombstone
     ));
     assert_eq!(
         deletion.reason,
-        Some(crate::types::HydratedShortIdDeletionReason::UserDelete)
+        Some(crate::deletion::HydratedShortIdDeletionReason::UserDelete)
     );
     assert!(!deletion.hard);
     Ok(())
