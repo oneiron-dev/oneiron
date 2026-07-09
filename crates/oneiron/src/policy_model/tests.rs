@@ -15,8 +15,9 @@ use crate::llm::{
     LlmResponse, LlmStreamResult, LlmUsage,
 };
 use crate::receipt::{ReceiptKind, ReceiptQuery};
+use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_POLICY_MANIFEST, EntityId, VaultConfig};
+use crate::types::{ENTITY_ID_LEN, EntityId, VaultConfig};
 
 fn temp_vault() -> (TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp vault dir");

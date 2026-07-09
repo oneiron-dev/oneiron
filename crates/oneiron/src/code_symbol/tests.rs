@@ -3,9 +3,8 @@ use crate::code_artifact::{
     CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
 };
 use crate::error::{Error, ErrorKind};
-use crate::types::{
-    ENTITY_TYPE_CODE_SYMBOL, EdgeKind, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig,
-};
+use crate::registry::ENTITY_TYPE_CODE_SYMBOL;
+use crate::types::{EdgeKind, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

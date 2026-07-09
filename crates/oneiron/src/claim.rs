@@ -39,9 +39,10 @@ use crate::affect::{
     validate_affect_trigger_claim_structure,
 };
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::types::{
-    ContextEntity, ContextPack, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, EdgeConfirmationStatus, EdgeInfo,
-    EdgeKind, EmptyContext, EmptyReason, EntityId, MemoryTimeline, MemoryTimelineRecord,
+    ContextEntity, ContextPack, ENTITY_ID_LEN, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
+    EmptyContext, EmptyReason, EntityId, MemoryTimeline, MemoryTimelineRecord,
     MemoryTimelineRecordState, ScoredEntity,
 };
 use crate::{

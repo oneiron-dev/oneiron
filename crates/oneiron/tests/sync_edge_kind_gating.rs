@@ -18,11 +18,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
+use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
-use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceClaimBody,
     EdgeProvenanceFlags, EdgeRef, EntityId, HnswConfig, SupersessionStatus, TimeRange, Vad, Vault,

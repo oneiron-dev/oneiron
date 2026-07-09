@@ -6,7 +6,7 @@ use oneiron::{
     HnswConfig, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, Result,
     StandingOutboundGrantsLensQuery, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
     WriteProvenance, project_receipts_by_brief, project_receipts_by_counterparty,
-    project_receipts_by_grant, types::ENTITY_TYPE_PERSON,
+    project_receipts_by_grant, registry::ENTITY_TYPE_PERSON,
 };
 use rmpv::Value;
 

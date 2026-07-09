@@ -19,12 +19,12 @@
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::types::{
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, EdgeActorClass,
-    EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
+    EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, TimeRange,
 };
 use oneiron::{
     DeleteReason, EdgeProvenanceClaimBody, EdgeRef, EntityId, HnswConfig, SupersessionStatus,

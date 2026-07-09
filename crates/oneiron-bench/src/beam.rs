@@ -41,7 +41,7 @@ const VANILLA_RAG_CHUNKING: &str = "one-run-jsonl-corpus-item-per-chunk";
 const VANILLA_RAG_EMBEDDER_ID: &str = "oneiron-eval-contract-v1";
 const DEFAULT_JSONL_RETRIEVAL_LIMIT: usize = 8;
 const BEAM_CONTRACT_EMBEDDING_DIMENSIONS: usize = 4;
-const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::types::ENTITY_TYPE_TURN;
+const BENCH_CONTRACT_ENTITY_TYPE: u8 = oneiron::registry::ENTITY_TYPE_TURN;
 
 type BeamResult<T> = Result<T, BeamError>;
 

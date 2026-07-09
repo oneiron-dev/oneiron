@@ -261,37 +261,37 @@ fn recency_half_life_table_is_contract_pinned() {
         &[
             (ENTITY_TYPE_CLAIM, 28.0),
             (ENTITY_TYPE_TURN, 28.0),
-            (crate::types::ENTITY_TYPE_SESSION, 28.0),
-            (crate::types::ENTITY_TYPE_MESSAGE, 28.0),
-            (crate::types::ENTITY_TYPE_PERSON, 365.0),
-            (crate::types::ENTITY_TYPE_RELATIONSHIP, 180.0),
+            (crate::registry::ENTITY_TYPE_SESSION, 28.0),
+            (crate::registry::ENTITY_TYPE_MESSAGE, 28.0),
+            (crate::registry::ENTITY_TYPE_PERSON, 365.0),
+            (crate::registry::ENTITY_TYPE_RELATIONSHIP, 180.0),
             (ENTITY_TYPE_EVENT, 30.0),
-            (crate::types::ENTITY_TYPE_SKILL, 90.0),
+            (crate::registry::ENTITY_TYPE_SKILL, 90.0),
             (ENTITY_TYPE_SUMMARY, 90.0),
-            (crate::types::ENTITY_TYPE_PLACE, 180.0),
-            (crate::types::ENTITY_TYPE_ASSET_TEXT, 90.0),
-            (crate::types::ENTITY_TYPE_CONVERSATION, 30.0),
-            (crate::types::ENTITY_TYPE_ORG, 180.0),
+            (crate::registry::ENTITY_TYPE_PLACE, 180.0),
+            (crate::registry::ENTITY_TYPE_ASSET_TEXT, 90.0),
+            (crate::registry::ENTITY_TYPE_CONVERSATION, 30.0),
+            (crate::registry::ENTITY_TYPE_ORG, 180.0),
             (ENTITY_TYPE_FACET, 180.0),
-            (crate::types::ENTITY_TYPE_WORLD, 180.0),
-            (crate::types::ENTITY_TYPE_ASSET, 90.0),
-            (crate::types::ENTITY_TYPE_NOTIFICATION, 7.0),
-            (crate::types::ENTITY_TYPE_TASK_LIST, 30.0),
-            (crate::types::ENTITY_TYPE_TASK, 30.0),
-            (crate::types::ENTITY_TYPE_MACHINE, 180.0),
-            (crate::types::ENTITY_TYPE_CODE_ARTIFACT, 90.0),
-            (crate::types::ENTITY_TYPE_REDACTION_AUDIT, 365.0),
-            (crate::types::ENTITY_TYPE_MODEL, 180.0),
-            (crate::types::ENTITY_TYPE_POLICY_MANIFEST, 365.0),
-            (crate::types::ENTITY_TYPE_FEDERATION_GRANT, 365.0),
-            (crate::types::ENTITY_TYPE_ACCESS_GRANT, 365.0),
-            (crate::types::ENTITY_TYPE_COUNTERPARTY_CONTACT, 365.0),
-            (crate::types::ENTITY_TYPE_OUTBOUND_GRANT, 365.0),
-            (crate::types::ENTITY_TYPE_PSYCH_PROFILE, 365.0),
+            (crate::registry::ENTITY_TYPE_WORLD, 180.0),
+            (crate::registry::ENTITY_TYPE_ASSET, 90.0),
+            (crate::registry::ENTITY_TYPE_NOTIFICATION, 7.0),
+            (crate::registry::ENTITY_TYPE_TASK_LIST, 30.0),
+            (crate::registry::ENTITY_TYPE_TASK, 30.0),
+            (crate::registry::ENTITY_TYPE_MACHINE, 180.0),
+            (crate::registry::ENTITY_TYPE_CODE_ARTIFACT, 90.0),
+            (crate::registry::ENTITY_TYPE_REDACTION_AUDIT, 365.0),
+            (crate::registry::ENTITY_TYPE_MODEL, 180.0),
+            (crate::registry::ENTITY_TYPE_POLICY_MANIFEST, 365.0),
+            (crate::registry::ENTITY_TYPE_FEDERATION_GRANT, 365.0),
+            (crate::registry::ENTITY_TYPE_ACCESS_GRANT, 365.0),
+            (crate::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT, 365.0),
+            (crate::registry::ENTITY_TYPE_OUTBOUND_GRANT, 365.0),
+            (crate::registry::ENTITY_TYPE_PSYCH_PROFILE, 365.0),
         ]
     );
     assert!(
-        retrieval_recency_half_life_days_for_type(crate::types::ENTITY_TYPE_PERSON)
+        retrieval_recency_half_life_days_for_type(crate::registry::ENTITY_TYPE_PERSON)
             > DEFAULT_RECENCY_HALF_LIFE_DAYS
     );
     assert_eq!(
@@ -3436,7 +3436,7 @@ fn inverted_ranges_are_rejected_on_put() -> Result<()> {
 // ── ARCH-0039 facet filter (ONE-1117) ──────────────────────────
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::types::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
 
 /// The query vector every facet test searches with.
 const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];

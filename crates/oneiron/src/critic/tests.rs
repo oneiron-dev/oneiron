@@ -1,5 +1,6 @@
 use super::*;
-use crate::types::{ENTITY_TYPE_CLAIM, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -349,7 +350,7 @@ fn reliability_claim_family_is_structured_under_critic_reliability() -> Result<(
     let anchor = EntityId::now();
     vault.put_entity(
         &anchor,
-        crate::types::ENTITY_TYPE_TASK,
+        crate::registry::ENTITY_TYPE_TASK,
         TimeRange { start: 1, end: 1 },
         1,
         &crate::types::task_body_for_test(crate::types::TaskRole::Task),

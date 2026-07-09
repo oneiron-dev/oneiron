@@ -5,8 +5,9 @@ use rmpv::Value;
 use super::*;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::SyncQueue;
-use crate::types::{ENTITY_TYPE_CLAIM, EntityId, TimeRange, VaultConfig};
+use crate::types::{EntityId, TimeRange, VaultConfig};
 
 #[derive(Debug)]
 struct RecordingEmbedder {

@@ -12,8 +12,8 @@ use oneiron::{
     GrantMintIntentScope, HnswConfig, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
     PromptRecompileStamp, ReceiptQuery, ReceiptRecord, Result, SessionLocalReceiptLog, TimeRange,
     Vault, VaultConfig, append_context_receipt_fields, context_pack::assemble_eiri_memory_board,
-    eiri_memory_board_state_ref, outbound_intent_receipt, resolve_eiri_v3_prompt,
-    types::ENTITY_TYPE_TURN, workspace_prompt_package_root,
+    eiri_memory_board_state_ref, outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
+    resolve_eiri_v3_prompt, workspace_prompt_package_root,
 };
 
 fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {

@@ -72,7 +72,7 @@ fn test_entity_id(seed: u8) -> EntityId {
 fn put_person(vault: &crate::Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(
         id,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         crate::types::TimeRange { start: 1, end: 1 },
         1,
         b"person",

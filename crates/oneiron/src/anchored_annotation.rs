@@ -53,9 +53,10 @@ use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShift};
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_TASK;
 use crate::types::{
-    ClaimCandidate, ENTITY_ID_LEN, ENTITY_TYPE_TASK, EdgeActorClass, EdgeKind, EntityId, TaskRole,
-    TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, ENTITY_ID_LEN, EdgeActorClass, EdgeKind, EntityId, TaskRole, TimeRange,
+    WriteActor, WriteEnvelope, WriteProvenance,
 };
 
 /// CLAIM predicate for a thread head (anchor + lifecycle state + drift).

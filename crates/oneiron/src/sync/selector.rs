@@ -34,10 +34,11 @@ use crate::federation::{
     FederationGrantScope, GuestShareEnvelope, GuestShareEnvelopeBody, decode_federation_grant_body,
     sign_guest_share_envelope,
 };
-use crate::types::{
+use crate::registry::{
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT,
-    ENTITY_TYPE_WORLD, EdgeKind, EntityId, LocalWorldId, TypeByteBand, band_of,
+    ENTITY_TYPE_WORLD, TypeByteBand, band_of,
 };
+use crate::types::{EdgeKind, EntityId, LocalWorldId};
 
 use super::bridge::parse_edge_key;
 use super::loro_support::{

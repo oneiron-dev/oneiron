@@ -7,7 +7,8 @@ use crate::code_artifact::{
     CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
 };
 use crate::error::ErrorKind;
-use crate::types::{ENTITY_TYPE_CLAIM, HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

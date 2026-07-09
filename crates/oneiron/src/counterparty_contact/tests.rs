@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::{
+use crate::registry::{
     ENTITY_TYPE_COUNTERPARTY_CONTACT, EntityClassification, TypeByteBand,
     entity_type_registry_entry,
 };

@@ -18,16 +18,18 @@ use crate::companion::{
 use crate::error::{Error, Result};
 use crate::pipeline::{PipelineBuilder, RetrievalWithTelemetry, WorldScope};
 use crate::psych_profile::{PsychMirrorSourceCandidate, psych_mirror_text_entropy};
+use crate::registry::{
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+};
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
 use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET,
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, EdgeConfirmationStatus, EdgeInfo,
-    EdgeKind, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
-    EiriMemoryBoardSlot, EiriMemoryBoardSource, EmptyContext, EmptyReason, EntityId, FieldProfile,
-    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
-    TimeRange, TokenAllocation,
+    EdgeConfirmationStatus, EdgeInfo, EdgeKind, EiriCompanionAssembly, EiriMemoryBoard,
+    EiriMemoryBoardBudget, EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource,
+    EmptyContext, EmptyReason, EntityId, FieldProfile, PackFormat, PackStats, ScoredEntity, Signal,
+    TemporalAnchorMode, TemporalGranularity, TimeRange, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 

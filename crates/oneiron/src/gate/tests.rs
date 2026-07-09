@@ -10,11 +10,11 @@ use crate::counterparty_contact::{
 use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
+use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::types::{
-    ClaimCandidate, ContextEntity, ContextPack, ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_PERSON, EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags,
-    PackItemAccounting, PackStats, PackTokenStats, ScoredEntity, TimeRange, WriteActor,
-    WriteProvenance,
+    ClaimCandidate, ContextEntity, ContextPack, EdgeActorClass, EdgeConfirmationStatus, EdgeKind,
+    EdgeProvenanceFlags, PackItemAccounting, PackStats, PackTokenStats, ScoredEntity, TimeRange,
+    WriteActor, WriteProvenance,
 };
 use std::time::Duration;
 
@@ -348,7 +348,7 @@ fn access_grant_blob(data: &[u8]) -> Vec<u8> {
 #[cfg(feature = "sync")]
 fn authority_log_blob(data: &[u8]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(crate::types::ENTITY_TYPE_AUTHORITY_LOG);
+    payload.push(crate::registry::ENTITY_TYPE_AUTHORITY_LOG);
     payload.extend_from_slice(&1_u64.to_be_bytes());
     payload.extend_from_slice(&1_u64.to_be_bytes());
     payload.extend_from_slice(&1_u64.to_be_bytes());
@@ -558,7 +558,7 @@ fn core_read_world_grant_manifest(actor_ref: &str, world: EntityId) -> Vec<u8> {
 fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Result<()> {
     let data = crate::claim::encode_claim_body(body)?;
     let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(crate::types::ENTITY_TYPE_CLAIM);
+    payload.push(crate::registry::ENTITY_TYPE_CLAIM);
     payload.extend_from_slice(&1_u64.to_be_bytes());
     payload.extend_from_slice(&1_u64.to_be_bytes());
     payload.extend_from_slice(&1_u64.to_be_bytes());
@@ -566,7 +566,7 @@ fn put_claim_body(vault: &crate::Vault, id: &EntityId, body: &ClaimBody) -> Resu
 
     vault.with_write_txn(|wtxn| {
         vault.store.entities.put(wtxn, id.as_bytes(), &payload)?;
-        let type_key = Store::encode_type_key(crate::types::ENTITY_TYPE_CLAIM, id);
+        let type_key = Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, id);
         vault.store.type_index.put(wtxn, &type_key, &[])?;
         Ok(())
     })
@@ -600,7 +600,7 @@ fn put_text_entity(
 fn put_vector_entity(vault: &crate::Vault, id: &EntityId, vector: &[f32]) -> Result<()> {
     vault.put_entity(
         id,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         test_time(1),
         1,
         b"vector entity",
@@ -635,7 +635,7 @@ fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Result<Vec<u8>> {
 
     let data = crate::claim::encode_claim_body(body)?;
     let mut blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    blob.push(crate::types::ENTITY_TYPE_CLAIM);
+    blob.push(crate::registry::ENTITY_TYPE_CLAIM);
     blob.extend_from_slice(&5_u64.to_be_bytes());
     blob.extend_from_slice(&5_u64.to_be_bytes());
     blob.extend_from_slice(&5_u64.to_be_bytes());
@@ -895,7 +895,7 @@ fn scoped_read_search_candidate_limit_is_not_widened_without_core_read_grants() 
         put_text_entity(
             &vault,
             &test_id(seed),
-            crate::types::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_PERSON,
             "nowiden",
             serde_json::json!({"name": format!("person-{seed}")}),
         )?;
@@ -923,7 +923,7 @@ fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
         put_text_entity(
             &vault,
             &test_id(seed),
-            crate::types::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_PERSON,
             "hybrid-union",
             serde_json::json!({"name": format!("text-{seed}")}),
         )?;
@@ -1087,7 +1087,7 @@ fn scoped_read_hydrate_preserves_deleted_claim_short_id_metadata() -> Result<()>
         .hydrate_short_id(short_id, content_hash)?
         .expect("deleted claim short id should preserve deletion metadata");
     assert_eq!(hydrated.id, claim_id);
-    assert_eq!(hydrated.entity_type, crate::types::ENTITY_TYPE_CLAIM);
+    assert_eq!(hydrated.entity_type, crate::registry::ENTITY_TYPE_CLAIM);
     assert!(hydrated.body.is_none());
     let deletion = hydrated.deletion.expect("deleted claim metadata");
     assert!(matches!(
@@ -1120,14 +1120,14 @@ fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
     put_text_entity(
         &vault,
         &source,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "edgevisible",
         serde_json::json!({"text": "edgevisible"}),
     )?;
     put_text_entity(
         &vault,
         &claim_subject,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "claim subject",
         serde_json::json!({"name": "subject"}),
     )?;
@@ -1182,14 +1182,14 @@ fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results()
     put_text_entity(
         &vault,
         &facet,
-        crate::types::ENTITY_TYPE_FACET,
+        crate::registry::ENTITY_TYPE_FACET,
         "facet",
         serde_json::json!({"name": "facet"}),
     )?;
     put_text_entity(
         &vault,
         &test_id(0x21),
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "claim subject",
         serde_json::json!({"name": "subject"}),
     )?;
@@ -1198,7 +1198,7 @@ fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results()
     put_text_entity(
         &vault,
         &readable_neighbor,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "neighbor target",
         serde_json::json!({"name": "neighbor"}),
     )?;
@@ -1252,14 +1252,14 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     put_text_entity(
         &vault,
         &kept_seed,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "kept seed",
         serde_json::json!({"text": "kept seed"}),
     )?;
     put_text_entity(
         &vault,
         &readable_neighbor,
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "readable neighbor",
         serde_json::json!({"name": "readable neighbor"}),
     )?;
@@ -1280,12 +1280,12 @@ fn scoped_read_context_pack_retains_neighbors_reached_from_kept_results_without_
     };
     let mut pack = ContextPack {
         results: vec![
-            entity(kept_seed, crate::types::ENTITY_TYPE_TURN, 1.0),
-            entity(denied_seed, crate::types::ENTITY_TYPE_CLAIM, 0.9),
+            entity(kept_seed, crate::registry::ENTITY_TYPE_TURN, 1.0),
+            entity(denied_seed, crate::registry::ENTITY_TYPE_CLAIM, 0.9),
         ],
         neighbors: vec![entity(
             readable_neighbor,
-            crate::types::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_PERSON,
             0.0,
         )],
         stats: PackStats {
@@ -1338,14 +1338,14 @@ fn scoped_read_context_pack_filters_before_response_limit() -> Result<()> {
     put_text_entity(
         &vault,
         &test_id(0x21),
-        crate::types::ENTITY_TYPE_PERSON,
+        crate::registry::ENTITY_TYPE_PERSON,
         "claim subject",
         serde_json::json!({"name": "subject"}),
     )?;
     put_text_entity(
         &vault,
         &facet,
-        crate::types::ENTITY_TYPE_FACET,
+        crate::registry::ENTITY_TYPE_FACET,
         "facet",
         serde_json::json!({"name": "facet"}),
     )?;
@@ -1477,7 +1477,7 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
     put_text_entity(
         &vault,
         &source,
-        crate::types::ENTITY_TYPE_TURN,
+        crate::registry::ENTITY_TYPE_TURN,
         "source",
         serde_json::json!({"text": "source"}),
     )?;
@@ -1522,7 +1522,7 @@ fn scoped_read_facet_grants_match_facet_of_edges() -> Result<()> {
     put_text_entity(
         &vault,
         &facet,
-        crate::types::ENTITY_TYPE_FACET,
+        crate::registry::ENTITY_TYPE_FACET,
         "facet",
         serde_json::json!({"name": "facet"}),
     )?;
@@ -4129,7 +4129,7 @@ fn legacy_source_trust_pack_entity_does_not_relax_policy_inputs() -> Result<()> 
 
     vault.put_entity(
         &test_id(0x56),
-        crate::types::ENTITY_TYPE_TASK_LIST,
+        crate::registry::ENTITY_TYPE_TASK_LIST,
         test_time(1),
         1,
         &legacy,
@@ -4150,7 +4150,13 @@ fn replay_path_skips_policy_source_trust_gate() -> Result<()> {
 
     vault
         .batch()
-        .put_replicated(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time(5),
+            5,
+            &data,
+        )
         .commit()?;
 
     assert!(
@@ -4171,7 +4177,13 @@ fn replicated_generated_auto_claim_merges_but_is_not_consolidatable() -> Result<
     let data = source_trust_claim_data(ClaimSource::Generated);
     vault
         .batch()
-        .put_replicated(&id, crate::types::ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            test_time(5),
+            5,
+            &data,
+        )
         .commit()?;
 
     let raw = vault
@@ -4278,7 +4290,7 @@ fn federated_admission_denial_does_not_regress_own_device_replay() -> Result<()>
         .batch()
         .put_replicated(
             &replay_id,
-            crate::types::ENTITY_TYPE_CLAIM,
+            crate::registry::ENTITY_TYPE_CLAIM,
             test_time(5),
             5,
             &replay_data,
@@ -4304,7 +4316,7 @@ fn gate_chokepoint_replicated_claim_stays_trust_blind() -> Result<()> {
         .batch()
         .put_replicated(
             &id,
-            crate::types::ENTITY_TYPE_CLAIM,
+            crate::registry::ENTITY_TYPE_CLAIM,
             test_time(5),
             5,
             &claim,

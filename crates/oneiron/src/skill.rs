@@ -6,7 +6,8 @@ use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::error::{Error, Result};
-use crate::types::{ENTITY_TYPE_SKILL, EntityId, TimeRange};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::types::{EntityId, TimeRange};
 
 pub const SKILL_RECORD_BODY_KEYS: [&str; 11] = [
     "skillId",

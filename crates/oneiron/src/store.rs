@@ -114,12 +114,13 @@ use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
-use crate::types::{
-    ENTITY_TYPE_CLAIM, EdgeKind, EntityId, Signal, StructuralKindRegistration, TypeByteBand,
-    VaultConfig, band_of, bytes_to_hex_lower, entity_type_registry_entry, short_id_prefix,
-    static_short_id_prefix_collision, validate_entity_type as validate_static_entity_type,
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand, band_of,
+    entity_type_registry_entry, short_id_prefix, static_short_id_prefix_collision,
+    validate_entity_type as validate_static_entity_type,
     validate_public_entity_type as validate_static_public_entity_type,
 };
+use crate::types::{EdgeKind, EntityId, Signal, VaultConfig, bytes_to_hex_lower};
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
@@ -2958,7 +2959,7 @@ fn load_structural_kind_registry(
 /// static claim shipped together with dynamic registration itself, so only
 /// its own exact legacy shape (handled separately above) can exist
 /// legitimately and anything else at byte 64 stays fail-closed.
-const POST_DYNAMIC_STATIC_KIND_BYTES: &[u8] = &[crate::types::ENTITY_TYPE_BLOB_ARTIFACT];
+const POST_DYNAMIC_STATIC_KIND_BYTES: &[u8] = &[crate::registry::ENTITY_TYPE_BLOB_ARTIFACT];
 
 fn is_post_dynamic_static_collision(registration: &StructuralKindRegistration) -> bool {
     POST_DYNAMIC_STATIC_KIND_BYTES.contains(&registration.type_byte)

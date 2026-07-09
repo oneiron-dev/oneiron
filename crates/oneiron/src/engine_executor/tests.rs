@@ -13,7 +13,7 @@ use crate::{
     FatalLlmError, FinishReason, HnswConfig, LlmGenerateFuture, LlmResponse, LlmStreamResult,
     LlmUsage, ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, VaultConfig, WriteActor,
-    types::ENTITY_TYPE_PERSON,
+    registry::ENTITY_TYPE_PERSON,
 };
 
 use super::*;

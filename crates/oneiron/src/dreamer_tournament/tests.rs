@@ -5,7 +5,8 @@ use crate::critic::{
     CriticLens, CritiqueArtifact, CritiqueArtifactStore, CritiqueProvenance, CritiqueSeverity,
     CritiqueVerdict, LensCatalog,
 };
-use crate::types::{ENTITY_TYPE_PERSON, EdgeActorClass, VaultConfig, WriteActor, WriteProvenance};
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::types::{EdgeActorClass, VaultConfig, WriteActor, WriteProvenance};
 
 use super::*;
 

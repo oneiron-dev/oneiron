@@ -18,16 +18,14 @@
 use std::sync::Arc;
 
 use loro::{LoroMap, LoroValue, ValueOrContainer};
+use oneiron::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN};
 use oneiron::sync::bridge::{
     Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::{
-    ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN, EdgeKind, TimeRange, Vad, VadAnnotation,
-    VadAnnotationSource,
-};
+use oneiron::types::{EdgeKind, TimeRange, Vad, VadAnnotation, VadAnnotationSource};
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
     VaultConfig,

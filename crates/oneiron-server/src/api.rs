@@ -26,7 +26,7 @@ use axum::{Router, middleware};
 use oneiron::{
     EdgeKind, ErrorKind, NotificationItem, ResumeBudget, ResumeBundle, SessionContext,
     UnprocessedItem, Vad, VadAnnotation, VadAnnotationSource,
-    types::{
+    registry::{
         ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTIFICATION,
         ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TURN,
     },
@@ -3158,11 +3158,11 @@ fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> 
         }
 
         match entity_type {
-            oneiron::types::ENTITY_TYPE_CLAIM => claim_ids.extend(ids),
-            oneiron::types::ENTITY_TYPE_PERSON => {
+            oneiron::registry::ENTITY_TYPE_CLAIM => claim_ids.extend(ids),
+            oneiron::registry::ENTITY_TYPE_PERSON => {
                 personas = discovered_entities(&ids, entity_type);
             }
-            oneiron::types::ENTITY_TYPE_CONVERSATION => {
+            oneiron::registry::ENTITY_TYPE_CONVERSATION => {
                 conversations = discovered_entities(&ids, entity_type);
             }
             _ => {}
@@ -9609,10 +9609,10 @@ fn apply_context_pack_response_retrieval_budget(
     let mut other = 0_usize;
     pack.results.retain(|entity| {
         let (count, limit) = match entity.entity_type {
-            oneiron::types::ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
-            oneiron::types::ENTITY_TYPE_TURN => (&mut turns, budget.turns),
-            oneiron::types::ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
-            oneiron::types::ENTITY_TYPE_FACET => (&mut facets, budget.facets),
+            oneiron::registry::ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
+            oneiron::registry::ENTITY_TYPE_TURN => (&mut turns, budget.turns),
+            oneiron::registry::ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
+            oneiron::registry::ENTITY_TYPE_FACET => (&mut facets, budget.facets),
             _ => (&mut other, budget.other),
         };
         if *count >= limit {
@@ -11130,7 +11130,7 @@ mod tests {
     use super::*;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
-    use oneiron::types::ENTITY_TYPE_POLICY_MANIFEST;
+    use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
     use serde_json::Map;
     use serde_json::Value;
     use tower::ServiceExt;
@@ -11312,7 +11312,7 @@ mod tests {
         vault
             .put_entity(
                 &claim_id,
-                oneiron::types::ENTITY_TYPE_CLAIM,
+                oneiron::registry::ENTITY_TYPE_CLAIM,
                 oneiron::TimeRange {
                     start: 100,
                     end: 100,
@@ -11649,15 +11649,15 @@ mod tests {
             vector: None,
         };
         pack.results = vec![
-            entity(claim_a, oneiron::types::ENTITY_TYPE_CLAIM),
-            entity(claim_b, oneiron::types::ENTITY_TYPE_CLAIM),
+            entity(claim_a, oneiron::registry::ENTITY_TYPE_CLAIM),
+            entity(claim_b, oneiron::registry::ENTITY_TYPE_CLAIM),
             entity(turn, ENTITY_TYPE_TURN),
         ];
         pack.neighbors = vec![
-            entity(neighbor, oneiron::types::ENTITY_TYPE_SUMMARY),
+            entity(neighbor, oneiron::registry::ENTITY_TYPE_SUMMARY),
             entity(
                 seeded_test_entity_id(0x0012_6505),
-                oneiron::types::ENTITY_TYPE_SUMMARY,
+                oneiron::registry::ENTITY_TYPE_SUMMARY,
             ),
         ];
         pack.stats.candidates_considered = 99;
@@ -11718,7 +11718,7 @@ mod tests {
             .vault
             .put_entity(
                 &id,
-                oneiron::types::ENTITY_TYPE_CLAIM,
+                oneiron::registry::ENTITY_TYPE_CLAIM,
                 oneiron::TimeRange {
                     start: learned_at,
                     end: learned_at,
@@ -12406,9 +12406,9 @@ mod tests {
         actor_class: oneiron::EdgeActorClass,
     ) {
         let actor_type = match actor_class {
-            oneiron::EdgeActorClass::Human => oneiron::types::ENTITY_TYPE_PERSON,
-            oneiron::EdgeActorClass::Agent => oneiron::types::ENTITY_TYPE_MACHINE,
-            oneiron::EdgeActorClass::System => oneiron::types::ENTITY_TYPE_MACHINE,
+            oneiron::EdgeActorClass::Human => oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::EdgeActorClass::Agent => oneiron::registry::ENTITY_TYPE_MACHINE,
+            oneiron::EdgeActorClass::System => oneiron::registry::ENTITY_TYPE_MACHINE,
         };
         server
             .vault
@@ -12566,7 +12566,7 @@ mod tests {
             .vault
             .put_entity(
                 &subject_ref,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange {
                     start: 200,
                     end: 200,
@@ -12663,7 +12663,7 @@ mod tests {
             .vault
             .put_entity(
                 &subject_ref,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange {
                     start: 600,
                     end: 600,
@@ -12777,7 +12777,7 @@ mod tests {
             .vault
             .put_entity(
                 &subject_ref,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange {
                     start: 300,
                     end: 300,
@@ -15282,7 +15282,7 @@ mod tests {
             .vault
             .put_entity(
                 &existing_persona_ref,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"persona entity without psych profile",
@@ -16103,7 +16103,7 @@ mod tests {
             .batch()
             .put(
                 &general_id,
-                oneiron::types::ENTITY_TYPE_TURN,
+                oneiron::registry::ENTITY_TYPE_TURN,
                 oneiron::TimeRange { start: 38, end: 38 },
                 38,
                 b"route-general-vault-data",
@@ -16493,7 +16493,7 @@ mod tests {
             .vault
             .put_entity(
                 &subject,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"subject",
@@ -16565,7 +16565,7 @@ mod tests {
             .vault
             .put_entity(
                 &subject,
-                oneiron::types::ENTITY_TYPE_PERSON,
+                oneiron::registry::ENTITY_TYPE_PERSON,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
                 b"subject",
@@ -18954,7 +18954,7 @@ mod tests {
             .text(&turn_b, &[("body", "eiri v4 needle beta")])
             .put(
                 &summary,
-                oneiron::types::ENTITY_TYPE_SUMMARY,
+                oneiron::registry::ENTITY_TYPE_SUMMARY,
                 oneiron::TimeRange {
                     start: 702,
                     end: 702,
@@ -19096,7 +19096,7 @@ mod tests {
             .batch()
             .put(
                 &asset_text,
-                oneiron::types::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
                 oneiron::TimeRange {
                     start: 1482,
                     end: 1482,
@@ -19139,7 +19139,7 @@ mod tests {
         let row = &body["memory_board"]["rows"][0];
         assert_eq!(
             row["entity_type"],
-            Value::from(oneiron::types::ENTITY_TYPE_ASSET_TEXT)
+            Value::from(oneiron::registry::ENTITY_TYPE_ASSET_TEXT)
         );
         let asset_ref = row["asset_ref"]
             .as_str()
@@ -19161,7 +19161,7 @@ mod tests {
         assert_eq!(hydrated["status"], Value::from("live"));
         assert_eq!(
             hydrated["entity_type"],
-            Value::from(oneiron::types::ENTITY_TYPE_ASSET_TEXT)
+            Value::from(oneiron::registry::ENTITY_TYPE_ASSET_TEXT)
         );
         assert_eq!(hydrated["item"]["txt"], Value::from(needle));
     }

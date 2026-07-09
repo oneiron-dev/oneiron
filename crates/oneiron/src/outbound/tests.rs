@@ -18,10 +18,9 @@ use crate::linkedin_connector::{
     LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatSandboxPolicy,
     LinkedInVerifiedSendPlan, run_linkedin_kill_switch,
 };
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, EdgeKind, VaultConfig,
-};
+use crate::types::{ENTITY_ID_LEN, EdgeKind, VaultConfig};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");

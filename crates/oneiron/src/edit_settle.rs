@@ -95,7 +95,8 @@ use crate::blob_artifact::{
 use crate::edit_roundtrip::{EditManifest, EditProposal, OfficeFormat};
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
-use crate::types::{ENTITY_ID_LEN, ENTITY_TYPE_BLOB_ARTIFACT, EntityId, TimeRange, WriteActor};
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::types::{ENTITY_ID_LEN, EntityId, TimeRange, WriteActor};
 
 /// Current settlement-record body schema version.
 pub const SETTLEMENT_SCHEMA_VERSION: u64 = 1;

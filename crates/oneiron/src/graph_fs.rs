@@ -18,11 +18,9 @@ use crate::error::{Error, Result};
 use crate::gate::{
     PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ, resolve_policy_manifest,
 };
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
-use crate::types::{
-    EDGE_KEY_LEN, ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, EdgeKind, EntityId,
-    bytes_to_hex_lower,
-};
+use crate::types::{EDGE_KEY_LEN, ENTITY_ID_LEN, EdgeKind, EntityId, bytes_to_hex_lower};
 
 pub const GRAPH_FS_PROJECTION_VERSION: &str = "graph-fs.v1";
 pub const GRAPH_FS_DEFAULT_PAGE_BYTE_CAP: usize = 16 * 1024;

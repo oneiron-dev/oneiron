@@ -21,16 +21,18 @@ use crate::companion::{CompanionLifecycleEvent, CompanionLifecycleEventKind};
 use crate::error::{Error, ErrorKind, Result};
 use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::ppr;
-use crate::store::Store;
-use crate::types::{
-    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
-    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN,
+use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
     ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK, EdgeKind, EdgeProvenanceFlags, EntityId, TaskRole,
-    TimeRange, Vad, WriteEnvelope, encode_edge_value, parse_strict_edge_record,
-    validate_edge_weight,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+};
+use crate::store::Store;
+use crate::types::{
+    ClaimCandidate, DecodedEdgeValue, EDGE_KEY_LEN, EDGE_VALUE_SEMANTIC_LEN,
+    EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN, ENTITY_ID_LEN, EdgeKind,
+    EdgeProvenanceFlags, EntityId, TaskRole, TimeRange, Vad, WriteEnvelope, encode_edge_value,
+    parse_strict_edge_record, validate_edge_weight,
 };
 
 pub(crate) const ENTITY_TYPE_OFFSET: usize = 0;
@@ -818,7 +820,9 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                 data,
                 allow_reserved_predicate,
                 ..
-            } if *entity_type == crate::types::ENTITY_TYPE_CLAIM && !*allow_reserved_predicate => {
+            } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && !*allow_reserved_predicate =>
+            {
                 crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
                     crate::gate::check_claim_policy_for_write(
                         store,
@@ -1107,7 +1111,7 @@ impl<'a> TxnBatchBuilder<'a> {
     ) -> Self {
         self.ops.push(BatchOp::Put {
             id: *id,
-            entity_type: crate::types::ENTITY_TYPE_CLAIM,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred,
             learned_at,
             data: data.to_vec(),
@@ -1233,7 +1237,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
 fn validate_public_raw_put(entity_type: u8, data: &[u8]) -> Result<()> {
     match entity_type {
-        crate::types::ENTITY_TYPE_CLAIM => {
+        crate::registry::ENTITY_TYPE_CLAIM => {
             let body = crate::claim::validate_claim_body_and_decode(data, false)?;
             if body.source.is_some() && !is_legacy_raw_claim_compatibility_body(&body) {
                 return Err(Error::InvalidClaimBody(ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE));
@@ -1360,7 +1364,7 @@ fn lexical_query_hint_for_replayed_put(
     data: &[u8],
 ) -> Result<Option<(EntityId, String)>> {
     if !replicated
-        || entity_type != crate::types::ENTITY_TYPE_CLAIM
+        || entity_type != crate::registry::ENTITY_TYPE_CLAIM
         || !id
             .as_bytes()
             .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
@@ -1581,7 +1585,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     && allow_reserved_predicate
                     && matches!(
                         entity_type,
-                        crate::types::ENTITY_TYPE_POLICY_MANIFEST
+                        crate::registry::ENTITY_TYPE_POLICY_MANIFEST
                             | ENTITY_TYPE_ACCESS_GRANT
                             | ENTITY_TYPE_OUTBOUND_GRANT
                     )
@@ -1641,7 +1645,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
                 had_vector_mutation |= applied.had_vector_mutation;
-                if entity_type == crate::types::ENTITY_TYPE_CLAIM
+                if entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !(allow_maintenance && allow_reserved_predicate)
                     && !applied.is_lexical_query_hint_claim
                 {
@@ -1681,7 +1685,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     )?;
                     had_graph_mutation |= materialized;
                 }
-                if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+                if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                     let mut text_indexing = LexicalHintTextIndexing {
                         analyzer,
                         manifest_checked: &mut text_manifest_checked,
@@ -1927,7 +1931,7 @@ fn contains_text_op(ops: &[BatchOp]) -> bool {
             allow_reserved_predicate,
             ..
         } => {
-            *entity_type == crate::types::ENTITY_TYPE_CLAIM
+            *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && *allow_maintenance
                 && *allow_reserved_predicate
                 && id
@@ -1953,7 +1957,7 @@ fn contains_local_claim_put(ops: &[BatchOp]) -> bool {
                     allow_maintenance,
                     allow_reserved_predicate,
                     ..
-                } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
+                } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM
                     && !(*allow_maintenance && *allow_reserved_predicate)
             )
     })
@@ -2010,7 +2014,7 @@ fn local_claim_op_id(op: &BatchOp) -> Option<EntityId> {
             allow_maintenance,
             allow_reserved_predicate,
             ..
-        } if *entity_type == crate::types::ENTITY_TYPE_CLAIM
+        } if *entity_type == crate::registry::ENTITY_TYPE_CLAIM
             && !(*allow_maintenance && *allow_reserved_predicate) =>
         {
             Some(*id)
@@ -2340,7 +2344,7 @@ fn apply_claim_candidate(
         store,
         wtxn,
         id,
-        crate::types::ENTITY_TYPE_CLAIM,
+        crate::registry::ENTITY_TYPE_CLAIM,
         occurred,
         learned_at,
         &data,
@@ -2467,7 +2471,7 @@ fn apply_put(
     let mut new_skill_record = None;
     let mut new_agent_definition = None;
     let mut decoded_claim_body = None;
-    if entity_type == crate::types::ENTITY_TYPE_CLAIM {
+    if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::validate_claim_body_and_decode(data, allow_reserved_predicate)?;
         is_lexical_query_hint_claim = body.predicate == crate::claim::PREDICATE_LEXICAL_QUERY_HINT;
         if is_lexical_query_hint_claim {
@@ -2506,7 +2510,7 @@ fn apply_put(
                 let Some(target_header) = EntityMetadataHeader::parse(target_raw) else {
                     return Err(Error::CorruptedIndex("entity header"));
                 };
-                if target_header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+                if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
                     return Err(Error::InvalidClaimBody(
                         "lexical query hint target must be claim",
                     ));
@@ -2571,19 +2575,19 @@ fn apply_put(
             }
         }
         decoded_claim_body = Some(body);
-    } else if entity_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT {
+    } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
         crate::code_artifact::validate_code_artifact_body_bytes(data)?;
-    } else if entity_type == crate::types::ENTITY_TYPE_BLOB_ARTIFACT {
+    } else if entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
         crate::blob_artifact::validate_blob_artifact_body_bytes(data)?;
-    } else if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
+    } else if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         if replicated {
             validate_replicated_authority_log_for_local_vault(store, wtxn, data)?;
         } else {
             crate::authority::validate_authority_log_entry_body_bytes(data)?;
         }
-    } else if entity_type == crate::types::ENTITY_TYPE_FEDERATION_GRANT {
+    } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         crate::federation::validate_federation_grant_body_bytes(data)?;
-    } else if entity_type == crate::types::ENTITY_TYPE_ACCESS_GRANT {
+    } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::validate_channel_identity_body_bytes(data)?;
@@ -2611,7 +2615,7 @@ fn apply_put(
             end: occurred.end,
         });
     }
-    let authority_first_seen_key = if entity_type == crate::types::ENTITY_TYPE_AUTHORITY_LOG {
+    let authority_first_seen_key = if entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
         let entry = crate::authority::decode_authority_log_entry_body(data)?;
         Some(crate::authority::authority_first_seen_sync_key(
             &crate::authority::authority_entry_hash(&entry)?,
@@ -2659,7 +2663,7 @@ fn apply_put(
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         let should_deindex_stale_text = body_changed && (replicated || !has_later_covering_text_op);
         let old_code_artifact_body =
-            if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
+            if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT && body_changed {
                 Some(old_record[ENTITY_METADATA_HEADER_LEN..].to_vec())
             } else {
                 None
@@ -2708,7 +2712,7 @@ fn apply_put(
             let prior = crate::agent_def::decode_agent_definition(prior_body)?;
             crate::agent_def::validate_agent_definition_update(&prior, updated)?;
         }
-        if old_type == crate::types::ENTITY_TYPE_CODE_ARTIFACT
+        if old_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT
             && body_changed
             && crate::code_revision::has_finalized_code_revision_in_txn(store, wtxn, &id)?
         {
@@ -2816,7 +2820,7 @@ fn apply_put(
         crate::hnsw::hnsw_deindex(store, wtxn, &id)?;
     }
     let pending_embedding_token =
-        if entity_type == crate::types::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
             let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
             if !body_changed && has_vector && !has_current_pending {
@@ -3518,7 +3522,7 @@ fn lexical_query_hint_claim_ids_for_target(
         let Some(header) = EntityMetadataHeader::parse(raw) else {
             return Err(Error::CorruptedIndex("entity header"));
         };
-        if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
             continue;
         }
         let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
@@ -3547,7 +3551,7 @@ fn legacy_lexical_query_hint_claim_ids_for_target(
 ) -> Result<Vec<EntityId>> {
     let mut candidates = Vec::new();
     let mut prefix = Vec::with_capacity(1 + crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX.len());
-    prefix.push(crate::types::ENTITY_TYPE_CLAIM);
+    prefix.push(crate::registry::ENTITY_TYPE_CLAIM);
     prefix.extend_from_slice(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX);
     for entry in store.type_index.prefix_iter(wtxn, &prefix)? {
         let (key, _) = entry?;
@@ -3599,7 +3603,7 @@ fn stored_entity_is_claim_type(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
-    Ok(header.entity_type == crate::types::ENTITY_TYPE_CLAIM)
+    Ok(header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
 }
 
 fn stored_claim_body(
@@ -3613,7 +3617,7 @@ fn stored_claim_body(
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
-    if header.entity_type != crate::types::ENTITY_TYPE_CLAIM {
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
     let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {

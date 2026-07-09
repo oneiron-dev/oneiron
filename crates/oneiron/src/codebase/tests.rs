@@ -4,10 +4,10 @@ use crate::code_artifact::{CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody};
 use crate::code_revision::{CODE_REVISION_CLAIM_PREDICATE, CodeRevision};
 use crate::error::{Error, ErrorKind};
 use crate::pipeline::WorldScope;
+use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::types::{
-    ClaimCandidate, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
-    EdgeActorClass, EdgeKind, HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig,
-    WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimCandidate, EdgeActorClass, EdgeKind, HnswConfig, PackFormat, TextAnalyzerConfig,
+    TimeRange, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 use std::cell::RefCell;
 use std::fs;

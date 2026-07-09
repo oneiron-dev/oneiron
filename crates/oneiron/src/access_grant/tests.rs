@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::ErrorKind;
-use crate::types::{
+use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, EntityClassification, TypeByteBand, entity_type_registry_entry,
 };
 

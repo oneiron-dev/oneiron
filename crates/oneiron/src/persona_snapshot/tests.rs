@@ -5,7 +5,8 @@ use crate::companion::{
 };
 use crate::deletion::DeleteReason;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::types::{ENTITY_TYPE_PERSON, EdgeActorClass, VaultConfig};
+use crate::registry::ENTITY_TYPE_PERSON;
+use crate::types::{EdgeActorClass, VaultConfig};
 use crate::{ErrorKind, Vault};
 
 fn test_vault() -> (tempfile::TempDir, Vault) {

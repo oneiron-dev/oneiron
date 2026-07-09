@@ -12,10 +12,11 @@ use crate::limits::{
     ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
 };
 use crate::ppr;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION};
 use crate::store::Store;
 use crate::types::{
-    ENTITY_ID_LEN, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_SESSION, EdgeKind,
-    EntityId, Vad, encode_edge_value, parse_entity_id, parse_strict_edge_record,
+    ENTITY_ID_LEN, EdgeKind, EntityId, Vad, encode_edge_value, parse_entity_id,
+    parse_strict_edge_record,
 };
 
 pub(crate) const CODE_REVISION_CLAIM_PREDICATE: &str = "code.revision";

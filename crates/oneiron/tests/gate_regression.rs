@@ -1,5 +1,5 @@
 use oneiron::error::{GateDenialOutcome, GateDenialReason};
-use oneiron::types::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
+use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
     Error, Result, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,

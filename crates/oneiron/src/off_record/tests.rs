@@ -7,10 +7,9 @@ use crate::outbound::{
     OutboundIntentDraft, OutboundIntentTrigger,
 };
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
+use crate::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, GateDecisionRecord};
-use crate::types::{
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN, EdgeKind, TimeRange, VaultConfig,
-};
+use crate::types::{EdgeKind, TimeRange, VaultConfig};
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");

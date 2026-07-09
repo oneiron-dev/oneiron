@@ -35,10 +35,8 @@ use crate::claim::{
 };
 use crate::companion::{CompanionExportClassification, CompanionRecordKind, CompanionScope};
 use crate::error::{Error, Result};
-use crate::types::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, EntityId,
-    TimeRange, bytes_to_hex_lower,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT};
+use crate::types::{EntityId, TimeRange, bytes_to_hex_lower};
 
 /// Schema version string carried by every persona snapshot compile stamp.
 ///

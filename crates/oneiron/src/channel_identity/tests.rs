@@ -1,11 +1,11 @@
 use super::*;
 use crate::Vault;
 use crate::error::ErrorKind;
-use crate::test_util::open_test_vault_with;
-use crate::types::{
-    ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TimeRange, TypeByteBand, VaultConfig,
-    entity_type_registry_entry,
+use crate::registry::{
+    ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TypeByteBand, entity_type_registry_entry,
 };
+use crate::test_util::open_test_vault_with;
+use crate::types::{TimeRange, VaultConfig};
 
 fn entity(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid entity id")

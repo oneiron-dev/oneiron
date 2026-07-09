@@ -1,8 +1,9 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::open_test_vault_with;
-use crate::types::{ENTITY_TYPE_PERSON, TimeRange, VaultConfig};
+use crate::types::{TimeRange, VaultConfig};
 
 fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid id")
@@ -102,7 +103,7 @@ fn core_read_world_grant(actor_ref: &str, world: EntityId) -> Value {
 fn put_policy_manifest(vault: &crate::Vault, id: EntityId, data: Vec<u8>) -> Result<()> {
     let ops = vec![BatchOp::Put {
         id,
-        entity_type: crate::types::ENTITY_TYPE_POLICY_MANIFEST,
+        entity_type: crate::registry::ENTITY_TYPE_POLICY_MANIFEST,
         occurred: time_range(1),
         learned_at: 1,
         data,

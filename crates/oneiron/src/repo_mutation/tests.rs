@@ -4,7 +4,7 @@ use std::thread;
 use tempfile::TempDir;
 
 use super::*;
-use crate::types::ENTITY_TYPE_TASK;
+use crate::registry::ENTITY_TYPE_TASK;
 use crate::{ErrorKind, VaultConfig};
 
 fn open_test_vault() -> (TempDir, Vault) {
