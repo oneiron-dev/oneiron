@@ -36,7 +36,7 @@ use crate::registry::{
     ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::types::WriteEnvelope;
+use crate::write_envelope::WriteEnvelope;
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";

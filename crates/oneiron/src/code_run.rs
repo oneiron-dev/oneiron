@@ -1591,7 +1591,9 @@ impl<'a> HostSelfDispatcher<'a> {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         );
-        body.evidence = Some(crate::types::write_envelope_evidence(envelope, None));
+        body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+            envelope, None,
+        ));
         body.source = Some(envelope.source());
         body
     }

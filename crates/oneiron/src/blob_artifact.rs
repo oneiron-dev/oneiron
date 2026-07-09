@@ -32,7 +32,11 @@ use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
 use crate::store::Store;
-use crate::types::{ClaimCandidate, TimeRange, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::types::TimeRange;
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 use heed::{RoTxn, RwTxn};
 
 pub const BLOB_ARTIFACT_BODY_KEYS: [&str; 2] = ["name", "media_type"];

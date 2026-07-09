@@ -18,7 +18,9 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::job_queue::JobId;
-use crate::types::{ClaimCandidate, TimeRange, WriteEnvelope};
+use crate::types::TimeRange;
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteEnvelope;
 
 pub const DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION: u64 = 1;
 pub const DREAMER_TOURNAMENT_MAX_ROUNDS_K: u16 = 2;

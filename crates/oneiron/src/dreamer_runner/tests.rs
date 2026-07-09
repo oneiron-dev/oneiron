@@ -5,7 +5,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState, RetryJob};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
-use crate::types::{VaultConfig, WriteActor, WriteProvenance};
+use crate::types::VaultConfig;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteProvenance;
 
 use super::*;
 
@@ -183,7 +185,7 @@ fn write_milestone_value_claim(
     stale: bool,
 ) -> Result<()> {
     let fixture = milestone_fixture(vault, claim_id, at)?;
-    let candidate = crate::types::ClaimCandidate::new(
+    let candidate = crate::write_envelope::ClaimCandidate::new(
         DREAMER_MILESTONE_PREDICATE,
         ClaimSubject::Entity(fixture.subject),
         value,
@@ -225,7 +227,7 @@ fn write_dreamer_boundary_claim(
         WriteProvenance::new(Value::from("dreamer-sync-boundary-test"))?,
         ClaimApprovalStatus::Approved,
     );
-    let candidate = crate::types::ClaimCandidate::new(
+    let candidate = crate::write_envelope::ClaimCandidate::new(
         predicate,
         ClaimSubject::Entity(subject),
         Value::from(predicate),

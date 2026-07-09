@@ -32,7 +32,9 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
-use crate::types::{ClaimCandidate, TimeRange, WriteEnvelope};
+use crate::types::TimeRange;
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteEnvelope;
 
 /// Generic [`JobQueue`] kind used by Dreamer runner jobs.
 pub const DREAMER_RUNNER_JOB_KIND: &str = "dreamer";

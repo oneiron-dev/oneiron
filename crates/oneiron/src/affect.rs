@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{ClaimBody, ClaimSubject, unit_interval_f32};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::types::ClaimCandidate;
+use crate::write_envelope::ClaimCandidate;
 
 pub mod coping;
 

@@ -13,7 +13,10 @@ use crate::federation::{
 };
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
-use crate::types::{HnswConfig, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::types::{HnswConfig, VaultConfig};
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

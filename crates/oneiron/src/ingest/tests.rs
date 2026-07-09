@@ -158,7 +158,7 @@ fn imported_evidence_admission_defaults_to_proposed_claim() -> crate::Result<()>
     let evidence = body.evidence.expect("write envelope evidence");
     let candidate_evidence = evidence_field(
         &evidence,
-        crate::types::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+        crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
     )
     .expect("candidate evidence");
     assert_eq!(

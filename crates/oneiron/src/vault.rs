@@ -108,10 +108,12 @@ use crate::store::{
     lmdb_database_open_guard,
 };
 use crate::types::{
-    ClaimCandidate, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
-    HydratedShortIdDeletionSource, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    ScoredEntity, TimeRange, VaultConfig, WriteEnvelope,
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, TimeRange,
+    VaultConfig,
 };
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteEnvelope;
 use crate::{
     BatchBuilder, ContextPackBuilder, MaintenanceBuilder, PipelineBuilder, RetrievalWithTelemetry,
     TxnBatchBuilder, bm25, hnsw, le_bytes_to_f32_vec, ppr, unix_seconds_now,

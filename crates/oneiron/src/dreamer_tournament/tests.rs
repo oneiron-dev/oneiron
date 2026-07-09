@@ -7,7 +7,9 @@ use crate::critic::{
 };
 use crate::edge::EdgeActorClass;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::types::{VaultConfig, WriteActor, WriteProvenance};
+use crate::types::VaultConfig;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteProvenance;
 
 use super::*;
 

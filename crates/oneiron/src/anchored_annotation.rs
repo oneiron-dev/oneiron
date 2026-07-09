@@ -56,9 +56,11 @@ use crate::edit_roundtrip::{AnchorEffect, Axis, CellRef, RangeRef, StructuralShi
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::types::{
-    ClaimCandidate, TaskRole, TimeRange, WriteActor, WriteEnvelope, WriteProvenance,
-};
+use crate::types::{TaskRole, TimeRange};
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 
 /// CLAIM predicate for a thread head (anchor + lifecycle state + drift).
 pub const ANNOTATION_THREAD_PREDICATE: &str = "annotation.thread";

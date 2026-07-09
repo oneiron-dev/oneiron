@@ -10,7 +10,11 @@ use serde_json::{Map, Value};
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::types::{ClaimCandidate, TimeRange, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::types::TimeRange;
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 
 pub const JSONL_TRANSCRIPT_SOURCE_ID: &str = "jsonl-transcript";
 

@@ -15,7 +15,8 @@ use crate::edit_roundtrip::{
 use crate::error::Error;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig, WriteActor};
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::write_envelope::WriteActor;
 
 /// The v1 bytes `put_workbook` uploads — the base every hand-built proposal is
 /// pinned to (a proposal is produced FROM the head it edits).
