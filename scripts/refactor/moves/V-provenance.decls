@@ -2,6 +2,7 @@
 crates/oneiron
 
 ## allowed
+crates/oneiron/src/deletion.rs
 crates/oneiron/src/provenance.rs
 crates/oneiron/src/vault.rs
 
