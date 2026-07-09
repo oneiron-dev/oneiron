@@ -76,5 +76,6 @@ crates/oneiron/src/vault/tests.rs	&crate::types::task_body_for_test(crate::types
 ## add
 crates/oneiron/src/habit.rs	//! Productivity-pack task-role vocabulary + task/habit checkin validators.
 crates/oneiron/src/habit.rs	#[cfg(test)]
+crates/oneiron/src/habit.rs	#[cfg(test)]
 crates/oneiron/src/habit.rs	mod tests {
 crates/oneiron/src/habit.rs	}
