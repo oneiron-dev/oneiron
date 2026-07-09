@@ -2,6 +2,7 @@ use core::assert_matches;
 use heed::types::Bytes;
 
 use super::*;
+use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::job_queue::{
@@ -11,7 +12,6 @@ use crate::store::{
     GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
 };
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {
@@ -24,7 +24,7 @@ fn test_config() -> VaultConfig {
             ef_construction: 200,
             ef_search: 128,
         },
-        text_analyzer: crate::types::TextAnalyzerConfig::default(),
+        text_analyzer: crate::config::TextAnalyzerConfig::default(),
         dict_search_paths: Vec::new(),
         skip_text_index_manifest_check: false,
     }

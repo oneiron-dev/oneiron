@@ -3,9 +3,9 @@ use tempfile::tempdir;
 
 use super::*;
 use crate::Vault;
+use crate::config::VaultConfig;
 use crate::store::Store;
 use crate::temporal::TimeRange;
-use crate::types::VaultConfig;
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

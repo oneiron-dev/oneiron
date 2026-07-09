@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::anchored_annotation::Anchor;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, MutationMode, OfficeFormat,
@@ -15,7 +16,6 @@ use crate::edit_roundtrip::{
 use crate::error::Error;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::write_envelope::WriteActor;
 
 /// The v1 bytes `put_workbook` uploads — the base every hand-built proposal is

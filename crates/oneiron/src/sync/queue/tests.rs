@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::VaultConfig;
 use crate::deletion::{
     HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, RedactionScope, TombstoneReason,
     TombstoneValueV2, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
@@ -10,7 +11,6 @@ use crate::sync::quarantine;
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::forward_rematerialize;
 use crate::temporal::TimeRange;
-use crate::types::VaultConfig;
 use core::assert_matches;
 
 const RECEIVER_SCRUB_WINDOW: &str = "2026-03";

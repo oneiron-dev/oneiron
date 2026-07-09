@@ -32,7 +32,7 @@ fn test_time(ts: u64) -> TimeRange {
 fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault =
-        crate::Vault::open(tmp.path(), crate::types::VaultConfig::default()).expect("open vault");
+        crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
     clear_policy_manifests_for_test(&vault);
     (tmp, vault)
 }
@@ -912,7 +912,7 @@ fn scoped_read_search_candidate_limit_is_not_widened_without_core_read_grants() 
 #[test]
 fn scoped_read_hybrid_candidate_limit_uses_text_vector_union() -> Result<()> {
     let _tmp = tempfile::tempdir().expect("temp dir");
-    let mut config = crate::types::VaultConfig::device();
+    let mut config = crate::config::VaultConfig::device();
     config.dimensions = 4;
     config.embedding_model = Some("scoped-read-test-model".to_owned());
     let vault = crate::Vault::open(_tmp.path(), config)?;
@@ -3354,7 +3354,7 @@ fn pending_gate_consent_survives_reopen() -> Result<()> {
     }
     drop(vault);
 
-    let reopened = crate::Vault::open(tmp.path(), crate::types::VaultConfig::default())?;
+    let reopened = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
     let id = test_id(0x93);
     let pending = reopened.with_write_txn(|wtxn| {
         reopened

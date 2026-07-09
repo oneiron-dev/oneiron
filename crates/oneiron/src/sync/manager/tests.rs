@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::VaultConfig;
+use crate::config::VaultConfig;
 use std::sync::mpsc;
 use std::time::Duration;
 

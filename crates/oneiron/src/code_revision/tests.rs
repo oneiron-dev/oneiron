@@ -6,10 +6,10 @@ use crate::claim::{
 use crate::code_artifact::{
     CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
 };
+use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::error::ErrorKind;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();

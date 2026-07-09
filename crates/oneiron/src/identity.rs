@@ -183,8 +183,8 @@ fn decode_client_id_row(raw: &[u8]) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::VaultConfig;
     use crate::test_util::open_test_vault_with;
-    use crate::types::VaultConfig;
     use core::assert_matches;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {

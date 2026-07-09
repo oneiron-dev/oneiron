@@ -4,12 +4,12 @@ use rmpv::Value;
 
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::config::VaultConfig;
 use crate::context_pack::{
     psych_mirror_source_candidate_from_claim, psych_mirror_source_candidate_from_context_entity,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::types::ContextEntity;
-use crate::types::VaultConfig;
 use crate::{ErrorKind, Vault};
 
 fn entity(byte: u8) -> EntityId {

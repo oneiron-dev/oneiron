@@ -16,7 +16,7 @@ use crate::temporal::TimeRange;
 
 fn test_manager() -> Arc<WindowManager> {
     let dir = tempfile::tempdir().unwrap();
-    let config = crate::types::VaultConfig::device();
+    let config = crate::config::VaultConfig::device();
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     Arc::new(WindowManager::new(
         vault,

@@ -1,6 +1,6 @@
 use super::*;
+use crate::config::VaultConfig;
 use crate::sync::bridge::Materializer;
-use crate::types::VaultConfig;
 use core::assert_matches;
 
 fn test_manager() -> Arc<WindowManager> {

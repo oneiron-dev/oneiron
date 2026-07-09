@@ -2,13 +2,13 @@ use core::assert_matches;
 use std::path::PathBuf;
 
 use super::*;
+use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
     TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
     TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
 use crate::temporal::TimeRange;
-use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {
@@ -517,7 +517,7 @@ fn bm25_field_schema_hash_ignores_scoring_knobs() {
 #[test]
 fn rank_profile_change_does_not_require_reindex() -> Result<()> {
     use crate::analyzer::AnalyzerChannel;
-    use crate::types::Bm25RankProfile;
+    use crate::config::Bm25RankProfile;
 
     const HANDSHAKE_KEYS: [&[u8]; 4] = [
         TEXT_INDEX_SCHEMA_VERSION_KEY,

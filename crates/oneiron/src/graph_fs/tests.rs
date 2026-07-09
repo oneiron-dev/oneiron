@@ -1,10 +1,10 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::config::VaultConfig;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::open_test_vault_with;
-use crate::types::VaultConfig;
 
 fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("valid id")

@@ -1510,7 +1510,7 @@ impl ApplyOpsGateMode {
 )]
 pub(crate) fn apply_ops(
     store: &Store,
-    config: &crate::types::VaultConfig,
+    config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
@@ -1531,7 +1531,7 @@ pub(crate) fn apply_ops(
 
 pub(crate) fn apply_ops_with_gate_mode(
     store: &Store,
-    config: &crate::types::VaultConfig,
+    config: &crate::config::VaultConfig,
     analyzer: &crate::analyzer::MultilingualAnalyzer,
     wtxn: &mut RwTxn<'_>,
     ops: Vec<BatchOp>,
@@ -3035,7 +3035,7 @@ struct AppliedVector {
 
 fn apply_vector(
     store: &Store,
-    config: &crate::types::VaultConfig,
+    config: &crate::config::VaultConfig,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     vector: &[f32],

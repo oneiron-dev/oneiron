@@ -2,11 +2,11 @@ use super::*;
 use rmpv::Value;
 
 use crate::channel_identity::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
+use crate::config::VaultConfig;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
-use crate::types::VaultConfig;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");

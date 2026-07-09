@@ -1,5 +1,5 @@
 use super::*;
-use crate::types::VaultConfig;
+use crate::config::VaultConfig;
 use ed25519_dalek::SigningKey;
 
 const TEST_RECEIPT_LEARNED_AT: u64 = 1_772_400_000;

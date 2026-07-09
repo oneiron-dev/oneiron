@@ -6,6 +6,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     encode_claim_body,
 };
+use crate::config::VaultConfig;
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::delivery_window::{
     DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowApnsInterruptionLevel, DeliveryWindowAppliesTo,
@@ -22,7 +23,6 @@ use crate::linkedin_connector::{
 };
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use crate::types::VaultConfig;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
