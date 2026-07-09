@@ -23,7 +23,7 @@ use crate::job_queue::{
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::types::WriteEnvelope;
+use crate::write_envelope::WriteEnvelope;
 
 /// Dedicated companion-register structural kind byte.
 ///

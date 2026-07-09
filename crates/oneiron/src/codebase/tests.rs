@@ -6,10 +6,11 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
 use crate::pipeline::WorldScope;
 use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
-use crate::types::{
-    ClaimCandidate, HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig, WriteActor,
-    WriteEnvelope, WriteProvenance,
-};
+use crate::types::{HnswConfig, PackFormat, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::WriteProvenance;
 use std::cell::RefCell;
 use std::fs;
 use std::path::Path;

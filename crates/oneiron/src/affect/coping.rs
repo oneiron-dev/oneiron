@@ -4,7 +4,7 @@ use super::{VadDelta, decode_entity_ref, decode_vad_delta, reject_duplicate, vad
 use crate::claim::{ClaimBody, ClaimSubject, unit_interval_f32};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::types::ClaimCandidate;
+use crate::write_envelope::ClaimCandidate;
 
 pub const COPING_OUTCOME_PREDICATE: &str = "coping.outcome";
 

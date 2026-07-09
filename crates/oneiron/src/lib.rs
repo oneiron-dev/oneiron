@@ -81,6 +81,7 @@ pub mod thread_lens;
 pub mod tokenizer;
 pub mod types;
 mod vault;
+pub mod write_envelope;
 
 pub use crate::access_grant::{
     ACCESS_GRANT_BODY_KEYS, ACCESS_GRANT_SCHEMA_VERSION, AccessGrant, AccessGrantCapability,
@@ -604,7 +605,7 @@ pub use crate::tokenizer::{
     PackTokenizer, count_context_pack_tokens,
 };
 pub use crate::types::{
-    Bm25RankProfile, ClaimCandidate, ContextEntity, ContextPack, ContextPackRetrievalBudget,
+    Bm25RankProfile, ContextEntity, ContextPack, ContextPackRetrievalBudget,
     EIRI_CONTEXT_VERSION_V4, EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget,
     EiriMemoryBoardRow, EiriMemoryBoardSlot, EiriMemoryBoardSource, EiriSessionRagState,
     EmptyContext, EmptyReason, FieldProfile, HnswConfig, HydratedShortIdDeletion,
@@ -613,12 +614,13 @@ pub use crate::types::{
     NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
     PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
     TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, UnprocessedItem, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    TokenAllocation, UnprocessedItem, VaultConfig,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,
     VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
+pub use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
 pub(crate) fn unix_seconds_now() -> u64 {
     SystemTime::now()
