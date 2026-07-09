@@ -112,9 +112,9 @@ fn empty_pack_stats() -> PackStats {
         neighbors_hydrated: 0,
         cosine_ghosts_dampened: 0,
         claims_suppressed: 0,
-        tokens: crate::types::PackTokenStats::default(),
-        items_truncated: crate::types::PackItemAccounting::item_budget(),
-        items_dropped: crate::types::PackItemAccounting::token_budget(),
+        tokens: crate::context_pack::PackTokenStats::default(),
+        items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
+        items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
     }
 }
 
@@ -3165,4 +3165,27 @@ fn context_pack_serialized_stats_populate_token_accounting() -> Result<()> {
     assert!(!serialized.value.stats.tokens.items.is_empty());
     assert!(serialized.run_id.is_some());
     Ok(())
+}
+
+#[test]
+fn context_pack_retrieval_budget_default_token_allocation_splits_other_weight() {
+    let budget = ContextPackRetrievalBudget::from_limit(20, TokenAllocation::default(), 7);
+
+    assert_eq!(budget.claims, 9);
+    assert_eq!(budget.turns, 2);
+    assert_eq!(budget.summaries, 5);
+    assert_eq!(budget.facets, 2);
+    assert_eq!(budget.other, 2);
+    assert_eq!(budget.selected_edges, 7);
+}
+
+#[test]
+fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible() {
+    let budget = ContextPackRetrievalBudget::from_limit(3, TokenAllocation::default(), 0);
+
+    assert!(budget.claims > 0);
+    assert!(budget.turns > 0);
+    assert!(budget.summaries > 0);
+    assert!(budget.facets > 0);
+    assert!(budget.other > 0);
 }

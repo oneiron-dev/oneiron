@@ -8,9 +8,9 @@ use crate::config::VaultConfig;
 use crate::distance::cosine_distance;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 use crate::error::{Error, Result};
+use crate::pipeline::ScoredEntity;
 use crate::store::Store;
 use crate::store::VECTOR_VERSION_KEY;
-use crate::types::ScoredEntity;
 
 const ENTRY_POINT_KEY: &[u8] = b"entry_point";
 pub(crate) const COUNT_KEY: &[u8] = b"count";

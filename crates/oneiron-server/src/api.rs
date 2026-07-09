@@ -11586,8 +11586,8 @@ mod tests {
                 cosine_ghosts_dampened: 0,
                 claims_suppressed: 0,
                 tokens: oneiron::PackTokenStats::default(),
-                items_truncated: oneiron::types::PackItemAccounting::item_budget(),
-                items_dropped: oneiron::types::PackItemAccounting::token_budget(),
+                items_truncated: oneiron::context_pack::PackItemAccounting::item_budget(),
+                items_dropped: oneiron::context_pack::PackItemAccounting::token_budget(),
             },
             empty: None,
         }

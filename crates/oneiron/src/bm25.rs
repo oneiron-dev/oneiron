@@ -42,9 +42,9 @@ use crate::analyzer::{AnalyzerChannel, AnalyzerContext, MultilingualAnalyzer, To
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::pipeline::ScoredEntity;
 use crate::registry::short_id_prefix;
 use crate::store::Store;
-use crate::types::ScoredEntity;
 
 // === Layout constants ===
 
