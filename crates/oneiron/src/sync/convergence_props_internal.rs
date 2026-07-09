@@ -22,7 +22,8 @@ use crate::sync::queue::SyncQueue;
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
-use crate::types::{TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::VaultConfig;
 
 /// 2026-03-15 00:00 UTC — matches `tests/sync_harness::T0`.
 const T0: u64 = 1_773_532_800;

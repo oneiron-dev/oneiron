@@ -26,12 +26,14 @@ use crate::registry::{
 };
 use crate::serialize::{SerializeConfig, SerializedPackTelemetry, serialize_pack_with_telemetry};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalSignal, Store};
+use crate::temporal::TemporalAnchorMode;
+use crate::temporal::TemporalGranularity;
+use crate::temporal::TimeRange;
 use crate::types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, EIRI_CONTEXT_VERSION_V4,
     EiriCompanionAssembly, EiriMemoryBoard, EiriMemoryBoardBudget, EiriMemoryBoardRow,
     EiriMemoryBoardSlot, EiriMemoryBoardSource, EmptyContext, EmptyReason, FieldProfile,
-    PackFormat, PackStats, ScoredEntity, Signal, TemporalAnchorMode, TemporalGranularity,
-    TimeRange, TokenAllocation,
+    PackFormat, PackStats, ScoredEntity, Signal, TokenAllocation,
 };
 use crate::{Vault, le_bytes_to_f32_vec};
 

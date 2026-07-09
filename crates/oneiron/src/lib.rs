@@ -77,6 +77,7 @@ pub mod surface_event;
 pub(crate) mod sweep;
 #[cfg(feature = "sync")]
 pub mod sync;
+pub mod temporal;
 pub mod thread_lens;
 pub mod tokenizer;
 pub mod types;
@@ -596,6 +597,7 @@ pub use crate::surface_event::{
     InboundSurfaceRouteOutcome, InboundSurfaceRouteReceipt, SURFACE_EVENT_SCHEMA_VERSION,
     SurfaceCounterpartyStamp, SurfaceEvent,
 };
+pub use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 pub use crate::thread_lens::{
     THREAD_LENS_INBOX_DRAFTS_KIND, THREAD_LENS_OF327_SEND_COMMAND, ThreadLensEntry,
     ThreadLensInstrument, ThreadLensSendBox, ThreadLensSendProgress, ThreadLensStepState,
@@ -613,8 +615,7 @@ pub use crate::types::{
     MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb,
     NotificationItem, PackFormat, PackItemTokenStats, PackSectionTokenStats, PackStats,
     PackTokenStats, ResumeBudget, ResumeBundle, ScoredEntity, SessionContext, Signal,
-    TemporalAnchorMode, TemporalGranularity, TextAnalyzerConfig, TextIndexOptions, TimeRange,
-    TokenAllocation, UnprocessedItem, VaultConfig,
+    TextAnalyzerConfig, TextIndexOptions, TokenAllocation, UnprocessedItem, VaultConfig,
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, TextIndexStatus, Vault, VaultDoctorDbManifestReport,

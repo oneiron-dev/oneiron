@@ -23,7 +23,7 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::sync::{export_updates_since, quarantined_records};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{DeleteReason, EntityId, HnswConfig, Vault, VaultConfig};
 
 /// 2026-02-15-ish — the same `YYYY-MM` literal family the deletion tests

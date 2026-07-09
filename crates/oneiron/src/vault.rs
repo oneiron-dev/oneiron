@@ -107,10 +107,10 @@ use crate::store::{
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION, TEXT_INDEX_SCHEMA_VERSION_KEY,
     lmdb_database_open_guard,
 };
+use crate::temporal::TimeRange;
 use crate::types::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
-    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, TimeRange,
-    VaultConfig,
+    MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, ScoredEntity, VaultConfig,
 };
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WriteEnvelope;

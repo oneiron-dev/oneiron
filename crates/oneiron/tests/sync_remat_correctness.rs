@@ -27,7 +27,7 @@ use oneiron::sync::bridge::{
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::TimeRange;
+use oneiron::temporal::TimeRange;
 use oneiron::{
     EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags, EntityId, HnswConfig, Vault,
     VaultConfig,

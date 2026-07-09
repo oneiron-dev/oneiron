@@ -73,7 +73,7 @@ fn put_person(vault: &crate::Vault, id: &EntityId) -> Result<()> {
     vault.put_entity(
         id,
         crate::registry::ENTITY_TYPE_PERSON,
-        crate::types::TimeRange { start: 1, end: 1 },
+        crate::temporal::TimeRange { start: 1, end: 1 },
         1,
         b"person",
     )
@@ -88,7 +88,12 @@ fn put_profile_claim(vault: &crate::Vault, id: &EntityId, subject: &EntityId) ->
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
     );
-    vault.put_claim(id, &body, crate::types::TimeRange { start: 1, end: 1 }, 2)
+    vault.put_claim(
+        id,
+        &body,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        2,
+    )
 }
 
 fn backing_target_for(

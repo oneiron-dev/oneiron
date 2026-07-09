@@ -7,7 +7,8 @@ use crate::store::{
     TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
     TEXT_INDEX_SCHEMA_VERSION_KEY,
 };
-use crate::types::{HnswConfig, TextAnalyzerConfig, TimeRange, VaultConfig};
+use crate::temporal::TimeRange;
+use crate::types::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 
 fn test_config() -> VaultConfig {
     VaultConfig {

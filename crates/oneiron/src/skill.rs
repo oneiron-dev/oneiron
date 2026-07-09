@@ -8,7 +8,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 pub const SKILL_RECORD_BODY_KEYS: [&str; 11] = [
     "skillId",

@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_PSYCH_PROFILE;
-use crate::types::TimeRange;
+use crate::temporal::TimeRange;
 
 /// Current PsychProfile record body schema version.
 pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 1;

@@ -27,7 +27,8 @@ use oneiron::sync::bridge::{
 use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::forward_rematerialize;
-use oneiron::types::{TaskRole, TimeRange};
+use oneiron::temporal::TimeRange;
+use oneiron::types::TaskRole;
 use oneiron::{EntityId, Vault, VaultConfig};
 use xxhash_rust::xxh3::xxh3_64;
 
