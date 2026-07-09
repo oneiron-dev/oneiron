@@ -205,6 +205,25 @@ def canon_props():
         (" " + R.canon("let x = crate::types::Foo;") + " " not in
          " " + R.canon("/// let x = crate::types::Foo;\nlet x = crate::registry::Foo;") + " ",
          "doc-comment text is not code"),
+        # single-arg CALL vertical reflow tolerated (rustfmt adds the comma)
+        (R.canon("f(x)") == R.canon("f(\n    x,\n)"),
+         "single-arg call vertical reflow tolerated"),
+        # vertically-wrapped one-TUPLE comma is semantic (non-call parens)
+        (R.canon("let t = (\n    y,\n);") != R.canon("let t = (\n    y\n);"),
+         "vertical one-tuple comma kept"),
+        # keyword before parens = expression position, comma semantic
+        (R.canon("return (\n    y,\n);") != R.canon("return (y);"),
+         "keyword-position tuple comma kept"),
+        # single-element bracket list reflow still tolerated
+        (R.canon("vec![x]") == R.canon("vec![\n    x,\n]"),
+         "single-element vec! reflow tolerated"),
+        # macro-call arg list reflow tolerated (`!` is call position)
+        (R.canon('m!("a", b)') == R.canon('m!(\n    "a",\n    b,\n)'),
+         "macro-call reflow tolerated"),
+        # nested block comments lex atomically — interior never leaks as code
+        (" " + R.canon("let x = (y,);") + " " not in
+         " " + R.canon("/* o /* i */ let x = (y,); */\nfn f() {}") + " ",
+         "nested block comment does not leak code"),
     ]
     ok = True
     for good, name in cases:
