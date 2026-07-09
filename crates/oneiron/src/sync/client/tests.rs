@@ -77,7 +77,7 @@ fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
 }
 
 fn task_body() -> Vec<u8> {
-    crate::types::task_body_for_test(crate::types::TaskRole::Task)
+    crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
 
 fn commit_local_entity(

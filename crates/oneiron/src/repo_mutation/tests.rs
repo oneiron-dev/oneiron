@@ -186,7 +186,7 @@ fn put_branch_subject(vault: &Vault) -> EntityId {
             ENTITY_TYPE_TASK,
             TimeRange { start: 1, end: 1 },
             1,
-            &crate::types::task_body_for_test(crate::types::TaskRole::Task),
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
         )
         .expect("branch subject");
     branch_subject

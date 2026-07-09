@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use loro::LoroDoc;
 use oneiron::edge::EdgeKind;
+use oneiron::habit::TaskRole;
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
 };
@@ -28,7 +29,6 @@ use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::forward_rematerialize;
 use oneiron::temporal::TimeRange;
-use oneiron::types::TaskRole;
 use oneiron::{EntityId, Vault, VaultConfig};
 use xxhash_rust::xxh3::xxh3_64;
 

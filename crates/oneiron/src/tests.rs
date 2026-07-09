@@ -10,6 +10,7 @@ use crate::edge::{
     decode_edge_value_for_kind, encode_edge_value,
 };
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::habit::TaskRole;
 use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -18,7 +19,6 @@ use crate::registry::{
     ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
     ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
-use crate::types::TaskRole;
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
 use rand::rngs::StdRng;

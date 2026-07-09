@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use loro::ExportMode;
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeProvenanceFlags};
+use oneiron::habit::TaskRole;
 use oneiron::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK};
 use oneiron::sync::bridge::{
     Materializer, OutboundSink, encode_edge_value_for_crdt, format_edge_key,
@@ -39,7 +40,6 @@ use oneiron::sync::manager::WindowManager;
 use oneiron::sync::queue::SyncQueue;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
-use oneiron::types::TaskRole;
 use oneiron::{
     DeleteReason, EdgeKind, EntityId, SupersessionStatus, TOMBSTONE_VALUE_V2_LEN, Vault,
 };
