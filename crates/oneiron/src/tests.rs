@@ -1264,7 +1264,7 @@ where
     // so the seam is armed by the time the header read happens.
     let rendezvous_rx = if rendezvous {
         let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-        crate::vault::install_after_header_read_signal(tx);
+        crate::deletion::install_after_header_read_signal(tx);
         Some(rx)
     } else {
         None
