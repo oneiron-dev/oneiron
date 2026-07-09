@@ -29,6 +29,7 @@ crates/oneiron/src/vault.rs
 ## error-literal
 crates/oneiron/src/context_pack.rs
 crates/oneiron/src/pipeline.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub use crate :: context_pack :: { ContextEntity , ContextPack , ContextPackBuilder , ContextPackRetrievalBudget , EmptyContext , EmptyReason , FieldProfile , PackFormat , PackItemTokenStats , PackSectionTokenStats , PackStats , PackTokenStats , SerializedContextPack , TokenAllocation }

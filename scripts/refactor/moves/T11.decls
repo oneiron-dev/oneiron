@@ -27,6 +27,7 @@ crates/oneiron/tests/sync_quarantine.rs
 
 ## error-literal
 crates/oneiron/src/habit.rs
+crates/oneiron/src/types.rs
 
 ## decl
 + pub mod habit
