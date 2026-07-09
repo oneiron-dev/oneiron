@@ -4,6 +4,7 @@ use std::path::Path;
 
 const PACK: &str = include_str!("../oneiron.skills.md");
 const API_RS: &str = include_str!("../src/api.rs");
+const OPENAPI_RS: &str = include_str!("../src/api/openapi.rs");
 const SKILL_PACK_ENDPOINT: &str = "/api/skills/oneiron.skills.md";
 const SKILL_PACK_LAYER_BOUNDARY: &str =
     "skills = how to think about memory; MCP tools = what to call";
@@ -242,11 +243,11 @@ fn tier3_error_catalog_uses_structured_recovery_fields() {
 #[test]
 fn mcp_discovery_advertisement_matches_committed_pack() {
     assert_eq!(
-        rust_string_const(API_RS, "SKILL_PACK_ENDPOINT"),
+        rust_string_const(OPENAPI_RS, "SKILL_PACK_ENDPOINT"),
         SKILL_PACK_ENDPOINT
     );
     assert_eq!(
-        rust_string_const(API_RS, "SKILL_PACK_LAYER_BOUNDARY"),
+        rust_string_const(OPENAPI_RS, "SKILL_PACK_LAYER_BOUNDARY"),
         SKILL_PACK_LAYER_BOUNDARY
     );
 
