@@ -188,6 +188,53 @@ def run():
         return False
 
 
+def edit_props():
+    """edit_delta_ok boundary properties (comment-interior frag-edit class,
+    #423 comment-atomic residual): interiors obey the same strict path rules;
+    marker changes and non-path deltas still fail."""
+    cases = [
+        # the code-level re-point class is untouched by the wrapper
+        (R.edit_delta_ok("crate::types::EntityId", "crate::entity_id::EntityId"),
+         "code path re-point still legal"),
+        # the ForeignWorldId doctest class: interior path re-point is legal
+        (R.edit_delta_ok("/// use oneiron::types::{EntityId, ForeignWorldId};",
+                         "/// use oneiron::entity_id::{EntityId, ForeignWorldId};"),
+         "doc-comment interior path re-point legal"),
+        # interior delta that is not a pure path segment stays illegal
+        (not R.edit_delta_ok("/// use oneiron::types::{EntityId};",
+                             "/// use oneiron::entity_id::{Other};"),
+         "doc-comment non-path interior delta rejected"),
+        # comment-marker change is not a legal declared edit
+        (not R.edit_delta_ok("/// use oneiron::types::EntityId;",
+                             "// use oneiron::entity_id::EntityId;"),
+         "comment-marker change rejected"),
+        # a no-op comment edit is still not a valid declared edit
+        (not R.edit_delta_ok("/// same text", "/// same text"),
+         "no-op comment edit rejected"),
+        # comment text may not smuggle a widening: `pub` insertion inside a
+        # comment interior is still not path-shaped
+        (not R.edit_delta_ok("/// fn f()", "/// pub fn f()"),
+         "interior pub insertion rejected"),
+        # code-line exceptions must NOT leak into comment interiors
+        # (Qodo/Codex on #426): string swaps and vis promotion are code
+        # classes; comment deltas are path re-points ONLY
+        (not R.edit_delta_ok('/// "old"', '/// "new"'),
+         "interior string-literal swap rejected"),
+        (not R.edit_delta_ok("///", "/// pub(crate)"),
+         "interior pub(crate) promotion rejected"),
+        # ...while both exceptions stay legal on real code lines
+        (R.edit_delta_ok('include_str!("../a.md")', 'include_str!("../../a.md")'),
+         "code string-literal swap still legal"),
+        (R.edit_delta_ok("fn f()", "pub(crate) fn f()"),
+         "code pub(crate) promotion still legal"),
+    ]
+    ok = True
+    for good, name in cases:
+        print("  ", "ok" if good else "FAIL", "edit:", name)
+        ok = ok and good
+    return ok
+
+
 def canon_props():
     """Canon boundary properties (#421 fallback hardening): the reflow
     tolerance must not equate semantically distinct token streams."""
@@ -241,7 +288,9 @@ if __name__ == "__main__":
                         "build_conformance.py"), "--check"])
     print("### canon boundary properties (reflow-fallback hardening):")
     cp = canon_props()
+    print("### edit_delta_ok boundary properties (comment-interior frag-edits):")
+    ep = edit_props()
     print("### v2 synthetic (move-to-new-file + insertion + edit + comment + flat-name):")
-    ok = cp and run() and fr.returncode == 0
+    ok = cp and ep and run() and fr.returncode == 0
     print("\nRESULT:", "PASS" if ok else "PROBLEM")
     sys.exit(0 if ok else 1)
