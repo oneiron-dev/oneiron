@@ -20,5 +20,5 @@ impl	-	impl Default for TokenAllocation	-	crates/oneiron/src/types.rs	crates/one
 struct	-	ContextPackRetrievalBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
 impl	-	impl ContextPackRetrievalBudget	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
 fn	-	allocate_context_pack_item_budgets	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack.rs	no
-fn	mod tests	context_pack_retrieval_budget_default_token_allocation_splits_other_weight	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
-fn	mod tests	context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
+fn	-	context_pack_retrieval_budget_default_token_allocation_splits_other_weight	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
+fn	-	context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_eligible	-	crates/oneiron/src/types.rs	crates/oneiron/src/context_pack/tests.rs	no
