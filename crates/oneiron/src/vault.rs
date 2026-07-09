@@ -129,7 +129,7 @@ const MIN_MAP_SIZE_BYTES: usize = 1 << 20;
 /// `edgeKinds.pprWeight` = 1.0), unwrapped at COMPILE time: the writers below
 /// hardwire kinds whose prior is pinned non-null, so a contract change to
 /// `null` fails the build instead of the write.
-const CLAIM_OF_DEFAULT_WEIGHT: f32 = match EdgeKind::ClaimOf.default_weight() {
+pub(crate) const CLAIM_OF_DEFAULT_WEIGHT: f32 = match EdgeKind::ClaimOf.default_weight() {
     Some(weight) => weight,
     None => panic!("contract pins a non-null pprWeight for claim_of"),
 };
@@ -137,7 +137,7 @@ const CLAIM_OF_DEFAULT_WEIGHT: f32 = match EdgeKind::ClaimOf.default_weight() {
 /// Contract stored-weight prior for `supersedes` edges (contracts.ts
 /// `edgeKinds.pprWeight` = 0.3); compile-time unwrapped like
 /// [`CLAIM_OF_DEFAULT_WEIGHT`].
-const SUPERSEDES_DEFAULT_WEIGHT: f32 = match EdgeKind::Supersedes.default_weight() {
+pub(crate) const SUPERSEDES_DEFAULT_WEIGHT: f32 = match EdgeKind::Supersedes.default_weight() {
     Some(weight) => weight,
     None => panic!("contract pins a non-null pprWeight for supersedes"),
 };
@@ -154,7 +154,7 @@ const MAX_TYPE_QUERY_RESULTS: usize = 100_000;
 const MAX_LEARNED_RANGE_RESULTS: usize = 100_000;
 
 /// Cap for `targets`/`sources` to prevent unbounded allocation.
-const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
+pub(crate) const MAX_EDGE_QUERY_RESULTS: usize = 100_000;
 
 /// Cap for `subtree` to prevent unbounded allocation on deep trees.
 const MAX_SUBTREE_RESULTS: usize = 50_000;
@@ -214,21 +214,21 @@ fn seed_default_policy_manifest(
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
 /// Avoids scanning all edge kinds for a given entity.
-fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
+pub(crate) fn edge_kind_prefix(id: &EntityId, kind: EdgeKind) -> [u8; EDGE_KIND_PREFIX_LEN] {
     let mut prefix = [0u8; EDGE_KIND_PREFIX_LEN];
     prefix[..ENTITY_ID_LEN].copy_from_slice(id.as_bytes());
     prefix[ENTITY_ID_LEN] = kind as u8;
     prefix
 }
 
-fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
+pub(crate) fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
     if key.len() != expected {
         return Err(Error::CorruptedIndex(context));
     }
     Ok(())
 }
 
-fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
+pub(crate) fn entity_id_from_type_index_key(key: &[u8]) -> Result<EntityId> {
     require_key_len(key, 17, "type index key")?;
     EntityId::from_bytes(
         key[1..17]
@@ -817,7 +817,7 @@ impl Vault {
     /// open. Lookup only — never opens a window (a delete must not fault a
     /// month into memory).
     #[cfg(feature = "sync")]
-    fn live_window(
+    pub(crate) fn live_window(
         &self,
         key: &crate::sync::WindowKey,
     ) -> Option<(
@@ -5100,7 +5100,7 @@ impl Vault {
         self.apply_replayed_tombstone(id, raw_value)
     }
 
-    fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
+    pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
@@ -6774,7 +6774,7 @@ impl Vault {
     ///
     /// Capped at `MAX_EDGE_QUERY_RESULTS` scanned peer rows to prevent
     /// unbounded allocation and worst-case filtered scans.
-    fn filtered_edge_peers(
+    pub(crate) fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
         db: &Database<Bytes, Bytes>,
