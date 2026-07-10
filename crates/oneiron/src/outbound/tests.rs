@@ -3206,7 +3206,17 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     // A seat-policy-suppressed dispatch (kill switch engaged) also passes
     // the gate but never becomes an effect: no debit.
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB1));
+    let agent = entity(0xB1);
+    let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
     let key_id = entity(0xB9);
     vault.register_connector_key(
