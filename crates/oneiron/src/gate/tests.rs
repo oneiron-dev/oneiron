@@ -5634,3 +5634,169 @@ fn pinned_actor_ids_not_storable() -> Result<()> {
     }
     Ok(())
 }
+
+// AGENT-2 security hardening F1/F2: the external-effect door derives the
+// definition ceiling only from a BOUND identity pair — a Proposed-ceiling
+// agent cannot borrow an Auto identity's ceiling by mixing its own
+// `actor_entity_ref` with the Auto identity's `actor_ref` (or vice versa);
+// every mismatched/unparsable pair fails closed to a held effect.
+#[test]
+fn effect_actor_identity_binding_fails_closed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let auto_id = test_id(0x55);
+    vault.fork_system_agent(
+        &auto_id,
+        SystemAgentPreset::Scout,
+        "eiri.scout.auto",
+        test_time(1),
+        1,
+    )?;
+    let herald_id = test_id(0x56);
+    vault.fork_system_agent(
+        &herald_id,
+        SystemAgentPreset::Herald,
+        "eiri.herald.proposed",
+        test_time(1),
+        1,
+    )?;
+
+    // Manifest: the AUTO identity gets an agent-class Auto row plus a scoped
+    // grant covering the send verb — fully auto-eligible when bound.
+    let mut data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        &auto_id.to_hex(),
+        "external:send",
+        Value::Map(vec![(Value::from("channel"), Value::from("email"))]),
+        None,
+    )]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &auto_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC5, &data)?;
+    let policy = resolve(&vault)?;
+
+    let effect_for = |actor_ref: Option<String>, entity_ref: Option<EntityId>| {
+        let mut effect = external_effect_gate_input("unused", "send", "email");
+        effect.actor.actor_class = "agent".to_owned();
+        effect.actor.actor_ref = actor_ref;
+        effect.provenance.actor_entity_ref = entity_ref;
+        effect
+    };
+
+    let mut wtxn = vault.store.env.write_txn()?;
+
+    // Control: the bound pair on the Auto identity is auto-eligible.
+    let (_, decision) = check_external_effect_policy(
+        &vault.store,
+        &mut wtxn,
+        &effect_for(Some(auto_id.to_hex()), Some(auto_id)),
+        &policy,
+    )?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow, "bound Auto pair");
+
+    // Borrow attempt: the Proposed identity's provenance under the Auto
+    // identity's actor_ref must NOT reach execution.
+    let (_, decision) = check_external_effect_policy(
+        &vault.store,
+        &mut wtxn,
+        &effect_for(Some(auto_id.to_hex()), Some(herald_id)),
+        &policy,
+    )?;
+    assert_eq!(
+        decision.outcome(),
+        GateOutcome::Pending,
+        "mismatched pair (auto ref, proposed identity) must hold"
+    );
+
+    // Reverse mismatch fails closed the same way.
+    let (_, decision) = check_external_effect_policy(
+        &vault.store,
+        &mut wtxn,
+        &effect_for(Some(herald_id.to_hex()), Some(auto_id)),
+        &policy,
+    )?;
+    assert_eq!(
+        decision.outcome(),
+        GateOutcome::Pending,
+        "mismatched pair (proposed ref, auto identity) must hold"
+    );
+
+    // An unparsable actor_ref with a real identity is a disagreement.
+    let (_, decision) = check_external_effect_policy(
+        &vault.store,
+        &mut wtxn,
+        &effect_for(Some("not-an-entity-id".to_owned()), Some(auto_id)),
+        &policy,
+    )?;
+    assert_eq!(
+        decision.outcome(),
+        GateOutcome::Pending,
+        "unparsable actor_ref must hold"
+    );
+    drop(wtxn);
+    Ok(())
+}
+
+// AGENT-2 security hardening F3 (upgrade case): a legacy occupant of a
+// reserved system-agent actor id — possible only in a pre-reservation vault,
+// the apply_put guard blocks new ones — must NOT inherit the preset's
+// compiled ceiling; the reserved byte confers preset authority only while it
+// is system-owned (unoccupied).
+#[test]
+fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let store = &vault.store;
+
+    // Simulate the pre-upgrade occupant through the raw store door.
+    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
+    let mut payload = Vec::new();
+    payload.push(ENTITY_TYPE_PERSON);
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(b"legacy occupant");
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .entities
+            .put(wtxn, scout_id.as_bytes(), &payload)?;
+        let type_key = Store::encode_type_key(ENTITY_TYPE_PERSON, &scout_id);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })?;
+
+    let rtxn = store.env.read_txn()?;
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &rtxn,
+            WriteActor::new(scout_id, EdgeActorClass::Agent),
+        ),
+        Some(PolicyApprovalCeiling::Proposed),
+        "an occupied reserved byte must not inherit Scout's compiled Auto"
+    );
+    // Unoccupied reserved bytes keep conferring the compiled preset ceilings.
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &rtxn,
+            WriteActor::new(
+                SystemAgentPreset::Keeper.actor_entity_id(),
+                EdgeActorClass::Agent,
+            ),
+        ),
+        Some(PolicyApprovalCeiling::Auto)
+    );
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &rtxn,
+            WriteActor::new(
+                SystemAgentPreset::Herald.actor_entity_id(),
+                EdgeActorClass::Agent,
+            ),
+        ),
+        Some(PolicyApprovalCeiling::Proposed)
+    );
+    Ok(())
+}

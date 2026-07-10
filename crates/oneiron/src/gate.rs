@@ -1839,12 +1839,8 @@ pub(crate) fn agent_definition_ceiling_for_actor(
         return None;
     }
     let entity_ref = actor.entity_ref();
-    if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
-        return Some(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
-    }
     let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
-        Ok(Some(raw)) => raw,
-        Ok(None) => return Some(PolicyApprovalCeiling::Proposed),
+        Ok(raw) => raw,
         Err(error) => {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
@@ -1853,6 +1849,28 @@ pub(crate) fn agent_definition_ceiling_for_actor(
             );
             return Some(PolicyApprovalCeiling::Proposed);
         }
+    };
+    if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
+        // A pinned preset byte confers preset authority only while it is
+        // system-owned, i.e. UNOCCUPIED (presets are never persisted and the
+        // apply_put guard reserves the write door). A legacy occupant from a
+        // pre-reservation vault must not inherit the preset's compiled
+        // ceiling — it fails closed to Proposed instead.
+        return match raw {
+            None => Some(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling())),
+            Some(_) => {
+                tracing::warn!(
+                    actor_entity_id = %entity_ref.to_hex(),
+                    preset = preset.preset_id(),
+                    "reserved system agent actor id is occupied by a stored entity; \
+                     refusing preset authority and failing closed to proposed",
+                );
+                Some(PolicyApprovalCeiling::Proposed)
+            }
+        };
+    }
+    let Some(raw) = raw else {
+        return Some(PolicyApprovalCeiling::Proposed);
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         tracing::warn!(
@@ -1882,6 +1900,47 @@ pub(crate) fn agent_definition_ceiling_for_actor(
             Some(PolicyApprovalCeiling::Proposed)
         }
     }
+}
+
+/// Resolves the definition ceiling for an AGENT-class EXTERNAL-EFFECT actor,
+/// first binding the host-supplied identity pair (F1/F2 hardening): effect
+/// inputs carry `actor_ref` (the string the manifest rows and grants key on)
+/// and `provenance.actor_entity_ref` (the audited identity) as independent
+/// fields, so the clamp must refuse to derive authority until they agree on
+/// ONE governing identity. Any mismatched, unparsable, or absent pair fails
+/// closed to `Some(Proposed)` — the request is held, never widened. (The
+/// claim and edge-provenance doors derive both fields from a single
+/// `WriteActor`/record and are bound by construction.)
+fn agent_definition_ceiling_for_effect_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor_ref: Option<&str>,
+    actor_entity_ref: Option<EntityId>,
+) -> Option<PolicyApprovalCeiling> {
+    let governing = match (actor_ref, actor_entity_ref) {
+        (Some(actor_ref), Some(entity_ref)) => match EntityId::from_hex(actor_ref) {
+            Ok(ref_id) if ref_id == entity_ref => entity_ref,
+            _ => {
+                tracing::warn!(
+                    actor_ref,
+                    actor_entity_ref = %entity_ref.to_hex(),
+                    "agent effect actor_ref does not match actor_entity_ref; \
+                     failing closed to proposed",
+                );
+                return Some(PolicyApprovalCeiling::Proposed);
+            }
+        },
+        (None, Some(entity_ref)) => entity_ref,
+        // Without a provenance identity the gate denies the effect outright
+        // (DenyMissingActorProvenance); resolve fail-closed regardless so no
+        // path ever derives authority from an unaudited ref.
+        (Some(_) | None, None) => return Some(PolicyApprovalCeiling::Proposed),
+    };
+    agent_definition_ceiling_for_actor(
+        store,
+        txn,
+        WriteActor::new(governing, EdgeActorClass::Agent),
+    )
 }
 
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
@@ -2346,21 +2405,20 @@ pub(crate) fn check_external_effect_policy(
     if let Some((grant_id, _grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
     }
-    // Recover the resolver's WriteActor from the effect input's hex actor_ref;
-    // only class "agent" can carry a definition bound.
+    // Only class "agent" carries a definition bound. The ceiling is resolved
+    // from the ONE governing identity: host-supplied `actor_ref` and
+    // `actor_entity_ref` are independent fields, so they must agree before
+    // any authority is derived — an unbound pair would let a Proposed-ceiling
+    // agent borrow an Auto identity's ceiling (or launder its audit
+    // attribution). A mismatched, unparsable, or absent pair fails closed to
+    // Proposed.
     let agent_definition_ceiling = if hydrated_effect.actor.actor_class.trim() == "agent" {
-        hydrated_effect
-            .actor
-            .actor_ref
-            .as_deref()
-            .and_then(|actor_ref| EntityId::from_hex(actor_ref).ok())
-            .and_then(|id| {
-                agent_definition_ceiling_for_actor(
-                    store,
-                    &*wtxn,
-                    WriteActor::new(id, EdgeActorClass::Agent),
-                )
-            })
+        agent_definition_ceiling_for_effect_actor(
+            store,
+            &*wtxn,
+            hydrated_effect.actor.actor_ref.as_deref(),
+            hydrated_effect.provenance.actor_entity_ref,
+        )
     } else {
         None
     };
