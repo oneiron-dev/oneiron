@@ -860,7 +860,7 @@ impl OutboundDispatchPipeline {
 
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let (gate_decision_id, gate_decision) =
+        let (gate_decision_id, gate_decision, _effector_charge) =
             gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
         wtxn.commit().map_err(Error::from)?;
 

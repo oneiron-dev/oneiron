@@ -275,7 +275,7 @@ impl Vault {
             has_permission: request.gate.has_permission,
             policy_risk: request.gate.policy_risk.to_gate(),
         };
-        let (gate_decision_id, decision) =
+        let (gate_decision_id, decision, _effector_charge) =
             gate::check_external_effect_policy(&self.store, &mut wtxn, &effect, &policy)?;
         let reason_codes = decision
             .reason_codes()

@@ -15,6 +15,10 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
     sensitivity_band_from_value,
 };
+use crate::connector_key::{
+    self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
+    EffectorBudgetOnExhaust,
+};
 use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
     decode_counterparty_contact_body, decode_counterparty_contact_index_value,
@@ -106,7 +110,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 11;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 12;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -439,6 +443,7 @@ pub(crate) enum GateMetricReasonClass {
     PolicyManifestAuthority,
     ExternalEffectAuthority,
     CounterpartyOptOut,
+    EffectorBudget,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -457,6 +462,7 @@ impl GateMetricReasonClass {
             Self::PolicyManifestAuthority => "policy_manifest_authority",
             Self::ExternalEffectAuthority => "external_effect_authority",
             Self::CounterpartyOptOut => "counterparty_opt_out",
+            Self::EffectorBudget => "effector_budget",
         }
     }
 
@@ -473,6 +479,7 @@ impl GateMetricReasonClass {
             Self::PolicyManifestAuthority => 8,
             Self::ExternalEffectAuthority => 9,
             Self::CounterpartyOptOut => 10,
+            Self::EffectorBudget => 11,
         }
     }
 
@@ -489,6 +496,7 @@ impl GateMetricReasonClass {
             Self::PolicyManifestAuthority,
             Self::ExternalEffectAuthority,
             Self::CounterpartyOptOut,
+            Self::EffectorBudget,
         ]
     }
 }
@@ -507,6 +515,8 @@ pub(crate) enum GateReasonCode {
     PendingPolicyManifestAuthority,
     PendingExternalEffectAuthority,
     DenyCounterpartyOptOut,
+    DenyEffectorBudgetExhausted,
+    DenyConnectorKeySuspended,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -525,6 +535,8 @@ impl GateReasonCode {
             Self::PendingPolicyManifestAuthority => "gate.pending.policy_manifest_authority",
             Self::PendingExternalEffectAuthority => "gate.pending.external_effect_authority",
             Self::DenyCounterpartyOptOut => "gate.deny.counterparty_opt_out",
+            Self::DenyEffectorBudgetExhausted => "gate.deny.effector_budget_exhausted",
+            Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
         }
     }
 
@@ -543,6 +555,9 @@ impl GateReasonCode {
             Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
             Self::PendingExternalEffectAuthority => GateMetricReasonClass::ExternalEffectAuthority,
             Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
+            Self::DenyEffectorBudgetExhausted | Self::DenyConnectorKeySuspended => {
+                GateMetricReasonClass::EffectorBudget
+            }
         }
     }
 }
@@ -2184,7 +2199,7 @@ pub(crate) fn check_external_effect_policy(
     wtxn: &mut heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
-) -> Result<(GateDecisionId, GateDecision)> {
+) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
     let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
     let matched_grant = standing_outbound_grant_for_effect(store, wtxn, &hydrated_effect, policy)?;
@@ -2192,7 +2207,7 @@ pub(crate) fn check_external_effect_policy(
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
     }
     let input = hydrated_effect.gate_input();
-    let decision = policy.evaluate_gate(&input);
+    let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
     let created_at = crate::unix_seconds_now();
@@ -2200,6 +2215,82 @@ pub(crate) fn check_external_effect_policy(
         .external_effect
         .as_ref()
         .and_then(|effect| effect.standing_grant_ref.clone());
+
+    // GOV-01 connector-key stage (ONE-1416). Unset-is-noop: with no
+    // governing key the decision, receipts, and charge (None) are exactly
+    // pre-change. The status wall and the budget stage are BOTH guarded on
+    // would-be-Allow (M1 resolution 2026-07-10): a law-class deny from
+    // `evaluate_gate` (e.g. counterparty opt-out) keeps its reason code and
+    // never consumes budget.
+    let normalized_channel = connector_key::normalize_connector_key(&hydrated_effect.channel);
+    let governing = connector_key::governing_connector_key(
+        store,
+        wtxn,
+        &normalized_channel,
+        hydrated_effect.provenance.actor_entity_ref.as_ref(),
+    )?;
+    let mut effector_charge = None;
+    if let Some((key_id, mut key)) = governing
+        && decision.outcome() == GateOutcome::Allow
+    {
+        if key.status != ConnectorKeyStatus::Active {
+            let status_reason = match key.status {
+                ConnectorKeyStatus::Suspended => "connector_key_suspended",
+                ConnectorKeyStatus::Revoked => "connector_key_revoked",
+                ConnectorKeyStatus::Pending => "connector_key_pending",
+                ConnectorKeyStatus::Active => unreachable!("guarded above"),
+            };
+            decision = GateDecision::deny(GateReasonCode::DenyConnectorKeySuspended)
+                .with_receipt_reasons([status_reason])
+                .with_receipt_reasons(external_effect_receipt_reasons(
+                    input
+                        .external_effect
+                        .as_ref()
+                        .expect("external effect input"),
+                ));
+        } else {
+            let outcome = connector_key::charge_effector_budgets(
+                store,
+                wtxn,
+                &key_id,
+                &mut key,
+                &normalized_channel,
+                hydrated_effect.send_ref.is_some(),
+                created_at,
+            )?;
+            match outcome {
+                EffectorBudgetChargeOutcome::NoRows(charge)
+                | EffectorBudgetChargeOutcome::Charged(charge) => {
+                    effector_charge = Some(charge);
+                }
+                EffectorBudgetChargeOutcome::Exhausted {
+                    row_index,
+                    on_exhaust,
+                    charge,
+                } => {
+                    if on_exhaust == EffectorBudgetOnExhaust::Suspend {
+                        connector_key::suspend_connector_key_in_txn(
+                            store,
+                            wtxn,
+                            &key_id,
+                            &key,
+                            format!("budget_exhausted:row:{row_index}"),
+                            created_at,
+                        )?;
+                    }
+                    decision = GateDecision::deny(GateReasonCode::DenyEffectorBudgetExhausted)
+                        .with_receipt_reasons(["effector_budget_exhausted"])
+                        .with_receipt_reasons(external_effect_receipt_reasons(
+                            input
+                                .external_effect
+                                .as_ref()
+                                .expect("external effect input"),
+                        ));
+                    effector_charge = Some(charge);
+                }
+            }
+        }
+    }
 
     store.append_gate_decision_in_txn(
         wtxn,
@@ -2236,7 +2327,7 @@ pub(crate) fn check_external_effect_policy(
     }
     record_gate_decision_metrics(&decision);
 
-    Ok((decision_id, decision))
+    Ok((decision_id, decision, effector_charge))
 }
 
 fn standing_outbound_grant_for_effect(

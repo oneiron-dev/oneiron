@@ -2657,3 +2657,162 @@ fn manifests_emit_concrete_schema_on_demand_links() {
         "/v1/core/outbound/capabilities/slack"
     );
 }
+
+// --- GOV-01 connector-key effector budgets (ONE-1416) ------------------------
+
+fn email_send_dispatch_request(actor: OutboundDispatchActor, seq: u32) -> OutboundDispatchRequest {
+    OutboundDispatchRequest::new(
+        format!("outbound:intent:budget-{seq}"),
+        format!("intent:budget-{seq}"),
+        dispatch_intent(OutboundIntentTrigger::agent_immediate(format!(
+            "session:budget-{seq}"
+        ))),
+        actor,
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_000 + u64::from(seq),
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+}
+
+#[test]
+fn dispatch_with_no_key_and_empty_budget_key_are_equivalent()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let dispatch_once = |with_key: bool| -> std::result::Result<
+        OutboundDispatchResult,
+        Box<dyn std::error::Error>,
+    > {
+        let (_tmp, vault) = temp_vault();
+        let agent = entity(0xA1);
+        let actor = OutboundDispatchActor::agent(agent);
+        put_policy_manifest(
+            &vault,
+            0xD0,
+            &policy_manifest(
+                actor.actor_ref.as_deref().expect("actor ref"),
+                "email",
+                &["send"],
+            ),
+        )?;
+        if with_key {
+            vault.register_connector_key(
+                &entity(0xB9),
+                crate::ConnectorKeyRecord::active("email", None, Vec::new(), 1_000),
+            )?;
+        }
+        let mut executor = RecordingExecutor::default();
+        Ok(vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 0), &mut executor)?)
+    };
+
+    let without_key = dispatch_once(false)?;
+    let with_empty_key = dispatch_once(true)?;
+    assert_eq!(without_key.outcome, with_empty_key.outcome);
+    assert_eq!(without_key.gate_outcome, with_empty_key.gate_outcome);
+    assert_eq!(
+        without_key.gate_reason_codes,
+        with_empty_key.gate_reason_codes
+    );
+    assert_eq!(
+        without_key.receipt.policy_trace,
+        with_empty_key.receipt.policy_trace
+    );
+    // Receipts are field-identical modulo the per-run gate decision id.
+    let strip = |result: &OutboundDispatchResult| {
+        let mut fields = result.receipt.fields.clone();
+        fields.remove("gate_decision_ref");
+        fields
+    };
+    assert_eq!(strip(&without_key), strip(&with_empty_key));
+    Ok(())
+}
+
+#[test]
+fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0xA1);
+    let actor = OutboundDispatchActor::agent(agent);
+    put_policy_manifest(
+        &vault,
+        0xD0,
+        &policy_manifest(
+            actor.actor_ref.as_deref().expect("actor ref"),
+            "email",
+            &["send"],
+        ),
+    )?;
+    let key_id = entity(0xB7);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            "email",
+            None,
+            vec![crate::EffectorBudget::sends(
+                2,
+                crate::EffectorBudgetWindow::Calendar {
+                    period: crate::CalendarPeriod::Day,
+                    tz: None,
+                },
+                crate::EffectorBudgetOnExhaust::Suspend,
+            )],
+            1_000,
+        ),
+    )?;
+
+    let mut executor = RecordingExecutor::default();
+    // AC6: sends 1-2 deliver.
+    for seq in 1..=2 {
+        let result = vault.dispatch_outbound_intent(
+            email_send_dispatch_request(actor.clone(), seq),
+            &mut executor,
+        )?;
+        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    }
+    // Send 3: suppressed, exhausted, and the key flips Suspended.
+    let result = vault
+        .dispatch_outbound_intent(email_send_dispatch_request(actor.clone(), 3), &mut executor)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        result.gate_reason_codes,
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+    let record = vault.get_connector_key(&key_id)?.expect("key");
+    assert_eq!(record.status, crate::ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        record.suspended_reason.as_deref(),
+        Some("budget_exhausted:row:0")
+    );
+
+    // AC7: the suspension is a real ceiling — the 4th dispatch hits the
+    // status wall (NOT the exhausted code), proving suspension outlives the
+    // exhausting call and would outlive a window rollover.
+    let result = vault
+        .dispatch_outbound_intent(email_send_dispatch_request(actor.clone(), 4), &mut executor)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        result.gate_reason_codes,
+        vec!["gate.deny.connector_key_suspended"]
+    );
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("gate_receipt_reasons")
+            .map(String::as_str),
+        Some("connector_key_suspended")
+    );
+
+    // After an owner resume, budgets evaluate again — and, same window,
+    // re-deny with the exhausted code (the reason-code difference across the
+    // three phases is the AC).
+    vault.resume_connector_key(&key_id, 2_000)?;
+    let result = vault
+        .dispatch_outbound_intent(email_send_dispatch_request(actor, 5), &mut executor)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        result.gate_reason_codes,
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+    // Only the first two sends reached the connector.
+    assert_eq!(executor.calls.len(), 2);
+    Ok(())
+}
