@@ -1208,95 +1208,69 @@ fn system_agent_toggle_key(preset: SystemAgentPreset) -> Vec<u8> {
     key
 }
 
-/// Durable "this reserved system-agent actor id was EVER occupied" marker
-/// (`vault_meta`, one byte). The `apply_put` guard reserves the write door,
-/// so a stored entity at a pinned preset id can only come from a legacy
-/// pre-reservation vault. Occupancy alone is not a durable predicate —
-/// hard-deleting the occupant would resurrect the preset's compiled Auto —
-/// so the gate resolver records this marker the first time it observes an
-/// occupied reserved id, and the preset arm honours it forever after.
-const SYSTEM_AGENT_RESERVED_OCCUPIED_KEY_PREFIX: &[u8] = b"agent_def:reserved_actor_occupied:v1:";
+/// The durable reserved-id occupancy census (`vault_meta`, ONE key, ONE byte).
+///
+/// The value is a bitmask over [`SystemAgentPreset::all`] declaration order:
+/// bit `i` is set iff preset `i`'s pinned actor id was occupied by a stored
+/// entity when the census ran. The KEY's PRESENCE means the census completed.
+///
+/// Modelling the census as a SINGLE atomic write (rather than per-id markers
+/// plus a separate completion flag) makes the fail-closed guarantee
+/// structural, not an argument about write ordering across keys: the write
+/// either commits in full or not at all, so a "completed but with occupancy
+/// missing" state is UNREACHABLE. If the write fails, the key is absent and
+/// the resolver withholds ALL preset Auto (fail closed).
+const SYSTEM_AGENT_RESERVED_CENSUS_KEY: &[u8] = b"agent_def:reserved_actor_census:v2";
 
-fn reserved_actor_occupied_key(preset: SystemAgentPreset) -> Vec<u8> {
-    let mut key = SYSTEM_AGENT_RESERVED_OCCUPIED_KEY_PREFIX.to_vec();
-    key.extend_from_slice(preset.preset_id().as_bytes());
-    key
+const fn reserved_preset_bit(preset: SystemAgentPreset) -> u8 {
+    match preset {
+        SystemAgentPreset::Scout => 1 << 0,
+        SystemAgentPreset::Keeper => 1 << 1,
+        SystemAgentPreset::Creative => 1 << 2,
+        SystemAgentPreset::Herald => 1 << 3,
+        SystemAgentPreset::Guide => 1 << 4,
+    }
 }
 
-/// True when this reserved actor id has ever been observed occupied. A read
-/// error fails closed (reported as "ever occupied"), never as pristine.
-pub(crate) fn reserved_actor_id_ever_occupied(
+/// The completed census bitmask, or `None` when the census has not durably
+/// completed (key absent) OR its read fails — both fail closed, so the
+/// resolver withholds preset Auto rather than granting it on missing state.
+pub(crate) fn reserved_actor_census(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-    preset: SystemAgentPreset,
-) -> bool {
-    match store
-        .vault_meta
-        .get(txn, &reserved_actor_occupied_key(preset))
-    {
-        Ok(marker) => marker.is_some(),
+) -> Option<u8> {
+    match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_CENSUS_KEY) {
+        Ok(Some([mask])) => Some(*mask),
+        Ok(Some(_)) | Ok(None) => None,
         Err(error) => {
             tracing::warn!(
-                preset = preset.preset_id(),
                 %error,
-                "reserved system agent occupancy marker read failed; failing closed",
+                "reserved system agent census read failed; failing closed",
             );
-            true
+            None
         }
     }
 }
 
-/// Durably records that a reserved system-agent actor id was observed
-/// occupied. Idempotent.
-pub(crate) fn mark_reserved_actor_id_occupied(
-    store: &crate::store::Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    preset: SystemAgentPreset,
-) -> Result<()> {
-    store
-        .vault_meta
-        .put(wtxn, &reserved_actor_occupied_key(preset), &[0x01])?;
-    Ok(())
+/// True when the completed census recorded this reserved id as occupied
+/// (now or at census time). `census` is the mask from [`reserved_actor_census`].
+#[must_use]
+pub(crate) fn reserved_actor_id_was_occupied(census: u8, preset: SystemAgentPreset) -> bool {
+    census & reserved_preset_bit(preset) != 0
 }
 
-/// Marks that the one-time reserved-id occupancy census has durably completed.
-const SYSTEM_AGENT_RESERVED_SCAN_KEY: &[u8] = b"agent_def:reserved_actor_scan:v1";
-
-/// True once the reserved-id occupancy census has durably completed. A read
-/// error fails closed (reported as NOT completed), so preset authority is
-/// withheld rather than granted on a failed read.
-pub(crate) fn reserved_actor_census_completed(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-) -> bool {
-    match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_SCAN_KEY) {
-        Ok(marker) => marker.is_some(),
-        Err(error) => {
-            tracing::warn!(
-                %error,
-                "reserved system agent census flag read failed; failing closed",
-            );
-            false
-        }
-    }
-}
-
-/// One-time census of ALL five reserved system-agent actor ids, recording an
-/// occupancy marker for each one currently occupied, then setting the
-/// census-completed flag LAST.
+/// One-time census of ALL five reserved system-agent actor ids, committed as
+/// ONE atomic `vault_meta` value (the occupancy bitmask; see
+/// [`SYSTEM_AGENT_RESERVED_CENSUS_KEY`]).
 ///
-/// This is the ONLY writer of the occupancy markers, and it runs solely from
-/// the write door every entity materialization funnels through
-/// (`batch.rs::apply_put`) — never on the read/gate path (the ceiling
-/// resolver stays read-only). `Vault::open` writes the default policy
-/// manifest through `apply_put`, so the census runs (observing any on-disk
-/// legacy occupant) before any caller holds the vault handle; a census write
-/// failure aborts that transaction (open fails) rather than proceeding.
-///
-/// Because the flag is set LAST, a partial/failed census leaves the flag
-/// UNSET, and the resolver withholds preset Auto while the flag is unset
-/// ([`reserved_actor_census_completed`]) — so "could not record occupancy"
-/// fails closed to Proposed instead of resurrecting compiled Auto.
+/// Runs solely from the write door every entity materialization funnels
+/// through (`batch.rs::apply_put`) — never on the read/gate path, so the
+/// ceiling resolver stays read-only. `Vault::open` writes the default policy
+/// manifest through `apply_put`, so the census runs — observing any on-disk
+/// legacy occupant — before any caller holds the vault handle; and no NEW
+/// occupant can appear afterward because `apply_put` reserves the write door
+/// for these ids. A census write failure aborts the transaction (open fails,
+/// or the triggering write fails) and leaves the key absent — fail closed.
 /// Idempotent; steady-state cost is one `vault_meta` read.
 pub(crate) fn scan_reserved_actor_ids_once(
     store: &crate::store::Store,
@@ -1304,11 +1278,12 @@ pub(crate) fn scan_reserved_actor_ids_once(
 ) -> Result<()> {
     if store
         .vault_meta
-        .get(wtxn, SYSTEM_AGENT_RESERVED_SCAN_KEY)?
+        .get(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY)?
         .is_some()
     {
         return Ok(());
     }
+    let mut mask = 0_u8;
     for preset in SystemAgentPreset::all() {
         let id = preset.actor_entity_id();
         if store.entities.get(wtxn, id.as_bytes())?.is_some() {
@@ -1316,16 +1291,15 @@ pub(crate) fn scan_reserved_actor_ids_once(
                 actor_entity_id = %id.to_hex(),
                 preset = preset.preset_id(),
                 "reserved system agent actor id is occupied by a legacy entity; \
-                 recording durable occupancy marker",
+                 recording durable occupancy in the census",
             );
-            mark_reserved_actor_id_occupied(store, wtxn, preset)?;
+            mask |= reserved_preset_bit(preset);
         }
     }
-    // Set the completion flag LAST: a failure above leaves it unset, and the
-    // resolver withholds preset Auto until it is set.
+    // ONE write: the census (occupancy + completion) commits atomically.
     store
         .vault_meta
-        .put(wtxn, SYSTEM_AGENT_RESERVED_SCAN_KEY, &[0x01])?;
+        .put(wtxn, SYSTEM_AGENT_RESERVED_CENSUS_KEY, &[mask])?;
     Ok(())
 }
 

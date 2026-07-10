@@ -5953,7 +5953,7 @@ fn deleted_reserved_id_occupant_does_not_resurrect_preset_auto() -> Result<()> {
         store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
         store
             .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
         Ok(())
     })?;
 
@@ -6032,7 +6032,7 @@ fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
         store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
         store
             .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
         Ok(())
     })?;
 
@@ -6097,7 +6097,7 @@ fn incomplete_census_withholds_preset_auto() -> Result<()> {
     vault.with_write_txn(|wtxn| {
         store
             .vault_meta
-            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+            .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
         Ok(())
     })?;
 

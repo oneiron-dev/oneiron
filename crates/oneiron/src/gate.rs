@@ -1882,28 +1882,30 @@ fn agent_bearing_for_entity(
     };
 
     if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
-        // A pinned preset id confers preset authority only when three things
-        // hold: the occupancy census has DURABLY completed (its markers +
-        // flag committed), the id is not currently occupied, and it was never
-        // recorded as ever occupied. If the census has not completed — because
-        // its writes never committed (R1) — Auto is WITHHELD: "could not
-        // record occupancy" fails closed to Proposed rather than resurrecting
-        // compiled Auto. `apply_put` runs the census (open writes the default
-        // manifest through it, observing any on-disk legacy occupant before
-        // any caller holds the vault); a deleted occupant then hits the
-        // durable marker (delete-to-widen closed).
-        let census_completed = crate::agent_def::reserved_actor_census_completed(store, txn);
-        let ever_occupied = crate::agent_def::reserved_actor_id_ever_occupied(store, txn, preset);
-        if occupied || ever_occupied || !census_completed {
+        // A pinned preset id confers preset authority only when the occupancy
+        // census has DURABLY completed AND recorded this id as never occupied
+        // AND it is not occupied right now. If the census has not completed —
+        // because its single atomic write never committed (R1) — its value is
+        // absent and Auto is WITHHELD: "could not record occupancy" fails
+        // closed to Proposed rather than resurrecting compiled Auto.
+        // `apply_put` runs the census (open writes the default manifest
+        // through it, observing any on-disk legacy occupant before any caller
+        // holds the vault), so a deleted occupant stays recorded in the census
+        // (delete-to-widen closed).
+        let census_recorded_occupied = match crate::agent_def::reserved_actor_census(store, txn) {
+            Some(census) => crate::agent_def::reserved_actor_id_was_occupied(census, preset),
+            // Census not durably completed (or unreadable) → fail closed.
+            None => true,
+        };
+        if occupied || census_recorded_occupied {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
                 preset = preset.preset_id(),
                 occupied,
-                ever_occupied,
-                census_completed,
-                "reserved system agent actor id is occupied, has been occupied, \
-                 or its occupancy census has not completed; refusing preset \
-                 authority and failing closed to proposed",
+                census_recorded_occupied,
+                "reserved system agent actor id is occupied, was recorded \
+                 occupied, or its occupancy census has not completed; refusing \
+                 preset authority and failing closed to proposed",
             );
             return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
         }
