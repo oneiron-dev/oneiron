@@ -535,13 +535,18 @@ pub use crate::llm::{
     BudgetLease, BudgetPromptTemplate, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel,
     BudgetSteeringSignal, BudgetThreshold, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_BUDGET_RESERVE_UNITS, DEFAULT_ON_DEVICE_SAFEGUARD_TIER,
-    DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback, FatalLlmError, FinishReason,
+    DEFAULT_SAFEGUARD_MODEL_BINDING, DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES,
+    DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS, DREAMER_STEP_VALUE_KEYS,
+    DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE, DREAMER_TRAP_VALUE_KEYS,
+    DREAMER_TRAP_VALUE_SCHEMA_VERSION, DeterministicFallback, DreamerTrapKind, DreamerTrapState,
+    DurableStepContext, DurableStepError, DurableStepResult, FatalLlmError, FinishReason,
     ImageContent, LlmBackend, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage,
     ModelId, ModelIdError, ModelLocality, ModelTierRef, ReasoningEffort, ResponseFormat,
-    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, TierPrecedence,
-    UnsupportedCapability,
+    RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, StepOutcome,
+    StepProgression, TierPrecedence, TrapRef, UnsupportedCapability, call_as_step,
+    consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::off_record::{
