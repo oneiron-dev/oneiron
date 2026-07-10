@@ -5321,6 +5321,194 @@ fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
     Ok(())
 }
 
+// --- GOV-10 charter -> compiled policy (ONE-1417) ------------------------------
+
+#[test]
+fn charter_enforcement_requires_the_human_stamp() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7B);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // (a) After propose alone, enforcement is unchanged: the matching
+    // never-line does not bind.
+    let pending = vault.propose_connector_charter(&key_id, "never send on line", 1_001)?;
+    let (decision, _) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // (b) A wrong re-presented hash is rejected and enforcement stays
+    // unchanged.
+    assert!(matches!(
+        vault.approve_connector_charter(&key_id, [0xEE; 32], "owner", 1_002),
+        Err(Error::ConnectorCharterApprovalMismatch)
+    ));
+    let (decision, _) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+
+    // (c) The stamped charter binds: the same dispatch now denies on the
+    // never-list and consumes no budget (charge None).
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_003)?;
+    let deny_before =
+        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Deny);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.charter_never_list"]
+    );
+    assert!(decision.receipt_reasons().contains(&"charter_never_list"));
+    assert!(charge.is_none(), "a never-list deny never reaches budgets");
+    let deny_after =
+        gate_metrics_snapshot().count(GateOutcome::Deny, GateMetricReasonClass::CharterPolicy);
+    assert!(deny_after > deny_before, "CharterPolicy deny metric counts");
+
+    Ok(())
+}
+
+#[test]
+fn charter_compiled_caps_enforce_like_key_budgets() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7C);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active("line", None, Vec::new(), 1_000),
+    )?;
+    let pending = vault.propose_connector_charter(&key_id, "cap 2 sends per day on line", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // Sends 1-2 admit and debit the compiled row at index 0x8000; the ladder
+    // fires on compiled rows exactly like key rows (Silent50 at 50%, then
+    // Plan80 + Land95 at 100%).
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    let charge = charge.expect("charged");
+    assert_eq!(charge.matched_rows, vec![0x8000]);
+    assert_eq!(charge.read.rows.len(), 1);
+    assert_eq!(charge.read.rows[0].row_index, 0x8000);
+    assert_eq!(charge.read.rows[0].used, 1);
+    assert_eq!(
+        charge
+            .ladder_events
+            .iter()
+            .map(|event| event.threshold)
+            .collect::<Vec<_>>(),
+        vec![crate::BudgetThreshold::Silent50]
+    );
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    let plan80_fired = charge
+        .expect("charged")
+        .ladder_events
+        .iter()
+        .any(|event| event.threshold == crate::BudgetThreshold::Plan80);
+    assert!(plan80_fired, "ladder fires on compiled rows too");
+
+    // The compiled-cap usage row exists at index 0x8000.
+    let usage_key = crate::connector_key::connector_key_usage_row_key(&key_id, 0x8000);
+    let usage_row_exists = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.vault_meta.get(&rtxn, &usage_key)?.is_some()
+    };
+    assert!(usage_row_exists, "compiled-cap usage row at 0x8000");
+    // The self.* meter read includes the compiled-cap row (echo property
+    // holds post-GOV-10).
+    let read = vault
+        .effector_budget_read("line", None)?
+        .expect("governing key");
+    assert_eq!(read.rows.len(), 1);
+    assert_eq!(read.rows[0].row_index, 0x8000);
+    assert_eq!(read.rows[0].used, 2);
+
+    // The third send exhausts the compiled row: suspend-the-key with the
+    // charter-local index in the reason.
+    let (decision, _) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+    let record = vault.get_connector_key(&key_id)?.expect("record");
+    assert_eq!(record.status, crate::ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        record.suspended_reason.as_deref(),
+        Some("budget_exhausted:charter_row:0")
+    );
+
+    // Approving a REPLACEMENT charter clears the positional 0x8000 usage
+    // rows in the same txn.
+    let replacement =
+        vault.propose_connector_charter(&key_id, "cap 3 sends per day on line", 1_010)?;
+    vault.approve_connector_charter(&key_id, replacement.compiled_hash, "owner", 1_011)?;
+    let usage_row_exists = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.vault_meta.get(&rtxn, &usage_key)?.is_some()
+    };
+    assert!(!usage_row_exists, "re-stamp cleared compiled-cap usage");
+    Ok(())
+}
+
+#[test]
+fn charter_and_key_rows_debit_as_one_atomic_union() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7D);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::sends(
+                10,
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Suspend,
+            )],
+            1_000,
+        ),
+    )?;
+    let pending = vault.propose_connector_charter(&key_id, "cap 1 sends per day on line", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // The first send debits BOTH rows of the union in one evaluation.
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    let charge = charge.expect("charged");
+    assert_eq!(charge.matched_rows, vec![0, 0x8000]);
+    assert_eq!(charge.read.rows[0].used, 1, "key row debited");
+    assert_eq!(charge.read.rows[1].used, 1, "charter row debited");
+
+    // The second send is refused by the charter row and the key row's usage
+    // stays at 1 — no partial debit leaks from the refused evaluation.
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.effector_budget_exhausted"]
+    );
+    let charge = charge.expect("exhaustion charge");
+    assert_eq!(charge.read.rows[0].used, 1, "key row NOT debited");
+    assert_eq!(charge.read.rows[1].used, 1);
+    assert_eq!(
+        vault
+            .get_connector_key(&key_id)?
+            .expect("record")
+            .suspended_reason
+            .as_deref(),
+        Some("budget_exhausted:charter_row:0")
+    );
+    Ok(())
+}
+
 // AGENT-2 AC test 10 (B2 resolution): the edge-provenance no-matching-row
 // auto exception is suppressed for ANY definition-bound actor — Proposed AND
 // Auto — while non-definition actors keep today's exception.
@@ -6199,5 +6387,66 @@ fn reopened_legacy_vault_censuses_occupant_before_first_delete() -> Result<()> {
         ),
         Some(PolicyApprovalCeiling::Auto)
     );
+    Ok(())
+}
+
+#[test]
+fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7E);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::sends(
+                5,
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Suspend,
+            )],
+            1_000,
+        ),
+    )?;
+    let pending = vault.propose_connector_charter(&key_id, "never delete on line", 1_001)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // Hand-corrupt the stored charter text while keeping the stale stamp.
+    let mut record = vault.get_connector_key(&key_id)?.expect("record");
+    record.charter.as_mut().expect("charter").text = "never delete on line (edited)".to_owned();
+    vault.with_write_txn(|wtxn| {
+        crate::connector_key::rewrite_connector_key_in_txn(&vault.store, wtxn, &key_id, &record)
+    })?;
+
+    let pending_before =
+        gate_metrics_snapshot().count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.pending.charter_drift"]
+    );
+    assert!(decision.receipt_reasons().contains(&"charter_drift"));
+    assert!(charge.is_none(), "drift skips ALL debits");
+    let read = vault
+        .effector_budget_read("line", None)?
+        .expect("governing key");
+    assert_eq!(read.rows[0].used, 0, "no debit occurred under drift");
+    let pending_after =
+        gate_metrics_snapshot().count(GateOutcome::Pending, GateMetricReasonClass::CharterPolicy);
+    assert!(
+        pending_after > pending_before,
+        "CharterPolicy pending metric counts"
+    );
+
+    // A fresh propose/approve cycle re-stamps and restores enforcement.
+    let restamp = vault.propose_connector_charter(&key_id, "never delete on line", 1_010)?;
+    vault.approve_connector_charter(&key_id, restamp.compiled_hash, "owner", 1_011)?;
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert!(charge.expect("budget stage ran").matched_rows.contains(&0));
     Ok(())
 }

@@ -175,6 +175,9 @@ pub enum ErrorKind {
     InvalidAccessGrantBody,
     InvalidOutboundGrantBody,
     InvalidConnectorKeyBody,
+    ConnectorCharterCompile,
+    ConnectorCharterApprovalMismatch,
+    ConnectorCharterMissing,
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
     InvalidDisclosureScope,
@@ -869,6 +872,17 @@ pub enum Error {
     /// transitions) failed pinned structural validation. Nothing was written.
     #[error("invalid connector key body: {0}")]
     InvalidConnectorKeyBody(&'static str),
+    /// A connector charter failed deterministic compilation (GOV-10).
+    /// Fail-closed: nothing was staged.
+    #[error("connector charter compile failed at line {line_number}: {message}")]
+    ConnectorCharterCompile { line_number: u32, message: String },
+    /// A charter approve re-presented a compiled hash that does not match
+    /// the staged proposal. Enforcement is unchanged.
+    #[error("connector charter approval hash mismatch")]
+    ConnectorCharterApprovalMismatch,
+    /// A charter approve/discard found no staged proposal on the key.
+    #[error("connector charter proposal not found")]
+    ConnectorCharterMissing,
     /// A ChannelIdentity record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid channel identity body: {0}")]
@@ -1450,6 +1464,9 @@ impl Error {
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,
+            Self::ConnectorCharterCompile { .. } => ErrorKind::ConnectorCharterCompile,
+            Self::ConnectorCharterApprovalMismatch => ErrorKind::ConnectorCharterApprovalMismatch,
+            Self::ConnectorCharterMissing => ErrorKind::ConnectorCharterMissing,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
