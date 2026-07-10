@@ -786,6 +786,15 @@ pub struct AuthorityFold {
     pub fork_alarms: Vec<AuthorityForkAlarm>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    /// Every (grant_ref → pact ids) binding a folded valid Connect has EVER
+    /// established, merged by union across branches.
+    ///
+    /// Concurrent valid Connects can bind one pact id to two different
+    /// grant_refs on divergent branches; the pact-state merge keeps a single
+    /// deterministic binding, so this registry is what keeps the DISCARDED
+    /// binding pact-bound: a grant that appears here never falls back to
+    /// `Unpacted` legacy-allow.
+    pub federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -815,19 +824,36 @@ impl AuthorityFold {
 /// Activation of `grant_ref` under the fold's pact states.
 ///
 /// Grants without lifecycle entries stay `Unpacted` (legacy-allow); pact-bound
-/// grants confer access only while their pact is `Active`.
+/// grants confer access only while their pact is `Active`. A grant whose
+/// binding lost a divergent-binding merge is no longer any pact state's
+/// operative `grant_ref`, but it stays registered in
+/// [`AuthorityFold::federation_grant_bindings`] and reports `Inactive` with
+/// its pact's current status — it never returns to `Unpacted` or `Active`.
 #[must_use]
 pub fn federation_grant_activation(
     fold: &AuthorityFold,
     grant_ref: &EntityId,
 ) -> FederationGrantActivation {
-    match fold.pact_for_grant(grant_ref) {
-        None => FederationGrantActivation::Unpacted,
-        Some(state) if state.status == FederationPactStatus::Active => {
+    if let Some(state) = fold.pact_for_grant(grant_ref) {
+        return if state.status == FederationPactStatus::Active {
             FederationGrantActivation::Active
-        }
-        Some(state) => FederationGrantActivation::Inactive(state.status),
+        } else {
+            FederationGrantActivation::Inactive(state.status)
+        };
     }
+    let Some(pact_ids) = fold.federation_grant_bindings.get(grant_ref) else {
+        return FederationGrantActivation::Unpacted;
+    };
+    // Superseded binding: fail closed with the most restrictive status among
+    // the pacts this grant was ever bound to (defensively Suspended if a
+    // registered pact has no state, which the fold never produces).
+    let status = pact_ids
+        .iter()
+        .filter_map(|pact_id| fold.federation_pacts.get(pact_id))
+        .map(|state| state.status)
+        .max()
+        .unwrap_or(FederationPactStatus::Suspended);
+    FederationGrantActivation::Inactive(status)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -845,6 +871,7 @@ struct FoldState {
     delayed_rotation_veto_revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
+    federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     seqs: BTreeMap<AuthorityKey, u64>,
 }
 
@@ -1373,6 +1400,7 @@ fn fold_authority_log_once(
             authority_forks: Vec::new(),
             fork_alarms: Vec::new(),
             federation_pacts: BTreeMap::new(),
+            federation_grant_bindings: BTreeMap::new(),
             issues,
         };
     }
@@ -1418,6 +1446,9 @@ fn fold_authority_log_once(
         federation_pacts: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
+        federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.federation_grant_bindings.clone()
+        }),
         issues,
     }
 }
@@ -1935,6 +1966,7 @@ fn fold_entry_state(
             delayed_rotation_veto_revocations: BTreeMap::new(),
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
+            federation_grant_bindings: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
         upsert_device(&mut state, device);
@@ -2384,6 +2416,13 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             }
         }
     }
+    for (grant_ref, pact_ids) in &right.federation_grant_bindings {
+        merged
+            .federation_grant_bindings
+            .entry(*grant_ref)
+            .or_default()
+            .extend(pact_ids.iter().copied());
+    }
     for (key, device) in &right.roster {
         match merged.roster.get_mut(key) {
             Some(existing) => {
@@ -2561,12 +2600,14 @@ fn apply_federation_lifecycle(
         if action.kind != FederationLifecycleKind::Connect {
             return Err(FederationLifecycleRejection::UnknownPact);
         }
-        // Re-connection is a NEW pact_id AND a new grant: a grant_ref bound
-        // to ANY pact of ANY status is never re-covered by a fresh pact.
+        // Re-connection is a NEW pact_id AND a new grant: a grant_ref that
+        // has EVER appeared in a pact binding (the registry is a superset of
+        // the live pact states' grant_refs — every binding enters through a
+        // Connect) is never re-covered by a fresh pact, including bindings
+        // discarded by a divergent-binding merge.
         if state
-            .federation_pacts
-            .values()
-            .any(|existing| existing.grant_ref == action.grant_ref)
+            .federation_grant_bindings
+            .contains_key(&action.grant_ref)
         {
             return Err(FederationLifecycleRejection::GrantAlreadyBound);
         }
@@ -2583,6 +2624,11 @@ fn apply_federation_lifecycle(
         verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
         let peer_owner_key = verify_lifecycle_gesture(state, action, &claimed_digest, None)?;
         let effective_scope = local_outbound_scope(&local_vault_id, &action.peer_vault_id, scope);
+        state
+            .federation_grant_bindings
+            .entry(action.grant_ref)
+            .or_default()
+            .insert(action.pact_id);
         state.federation_pacts.insert(
             action.pact_id,
             FederationPactState {
@@ -2700,13 +2746,32 @@ fn apply_federation_lifecycle(
     Ok(())
 }
 
+/// Deterministic, commutative pick between two equally ranked pact states:
+/// the lexicographic-min (scope_digest, grant_ref) side. The pair is always
+/// discriminating for divergent states, since divergence implies at least one
+/// of the two fields differs.
+fn pact_merge_tiebreak_side<'a>(
+    left: &'a FederationPactState,
+    right: &'a FederationPactState,
+) -> &'a FederationPactState {
+    if (left.scope_digest, left.grant_ref) <= (right.scope_digest, right.grant_ref) {
+        left
+    } else {
+        right
+    }
+}
+
 /// Commutative, associative-in-output, idempotent per-pact merge join.
 ///
 /// Terminal-wins regardless of epoch (revocations-win); two terminals resolve
 /// by fixed precedence Dissolved > Disconnected > Promoted; non-terminals
-/// resolve by max epoch; equal-epoch divergent digests suspend fail-closed;
-/// equal-epoch equal-digest Actives intersect their effective scopes.
-/// Determinism-only picks use the lexicographic-min scope digest / peer key.
+/// resolve by max epoch; equal-epoch divergent digests OR divergent grant
+/// bindings suspend fail-closed; equal-epoch equal-digest same-binding
+/// Actives intersect their effective scopes. Determinism-only picks use the
+/// lexicographic-min (scope digest, grant_ref) side / min peer key. A binding
+/// discarded by any pick stays denied through
+/// `FoldState::federation_grant_bindings` (union-merged), so no grant that
+/// ever appeared in a pact binding regains `Unpacted` legacy-allow.
 fn merge_pact_states(
     left: &FederationPactState,
     right: &FederationPactState,
@@ -2735,11 +2800,7 @@ fn merge_pact_states(
                 right.clone()
             };
         }
-        return if left.scope_digest <= right.scope_digest {
-            left.clone()
-        } else {
-            right.clone()
-        };
+        return pact_merge_tiebreak_side(left, right).clone();
     }
     if left.pact_epoch != right.pact_epoch {
         return if left.pact_epoch > right.pact_epoch {
@@ -2749,7 +2810,7 @@ fn merge_pact_states(
         };
     }
     if left.status == FederationPactStatus::Active && right.status == FederationPactStatus::Active {
-        if left.scope_digest == right.scope_digest {
+        if left.scope_digest == right.scope_digest && left.grant_ref == right.grant_ref {
             let mut merged = left.clone();
             // Concurrent unilateral narrows are both honored.
             merged.effective_scope = left.effective_scope.intersect(&right.effective_scope);
@@ -2761,15 +2822,13 @@ fn merge_pact_states(
                 .min(right.peer_owner_key.clone());
             return merged;
         }
-        // Divergent concurrent re-pacts: an equivocation-shaped conflict.
-        // Fail closed at the shared epoch; heals via a fresh dual-signed
-        // Rescope at epoch+1.
-        let base = if left.scope_digest < right.scope_digest {
-            left
-        } else {
-            right
-        };
-        let mut merged = base.clone();
+        // Divergent concurrent re-pacts (digest) or concurrent Connects
+        // binding one pact id to two different grants (grant_ref): both are
+        // equivocation-shaped conflicts on the consent axis. Fail closed at
+        // the shared epoch; heals via a fresh dual-signed Rescope at epoch+1
+        // naming the surviving binding. The losing grant_ref stays denied via
+        // the grant-binding registry.
+        let mut merged = pact_merge_tiebreak_side(left, right).clone();
         merged.status = FederationPactStatus::Suspended;
         merged.successor_vault_id = None;
         merged.terminal_epoch = None;
@@ -2778,11 +2837,7 @@ fn merge_pact_states(
     if left.status == FederationPactStatus::Suspended
         && right.status == FederationPactStatus::Suspended
     {
-        return if left.scope_digest <= right.scope_digest {
-            left.clone()
-        } else {
-            right.clone()
-        };
+        return pact_merge_tiebreak_side(left, right).clone();
     }
     if left.status == FederationPactStatus::Suspended {
         left.clone()

@@ -703,6 +703,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         delayed_rotation_veto_revocations: BTreeMap::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_grant_bindings: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     let entry = cosign_ed(
@@ -769,6 +770,7 @@ fn single_owner_state(seed: u8) -> (SigningKey, AuthorityKey, AuthorityEntryHash
         delayed_rotation_veto_revocations: BTreeMap::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_grant_bindings: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     (owner, owner_key, parent, state)
@@ -4329,6 +4331,7 @@ fn fold_state_with_pact(fixture: &PactFixture, status: Option<FederationPactStat
         delayed_rotation_veto_revocations: BTreeMap::new(),
         authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
+        federation_grant_bindings: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key, 0)]),
     };
     if let Some(status) = status {
@@ -4461,15 +4464,20 @@ struct LifecycleDag {
     entries: Vec<AuthorityLogEntry>,
     pact_two: [u8; 32],
     pact_three: [u8; 32],
+    pact_four: [u8; 32],
+    grant_four_a: EntityId,
+    grant_four_b: EntityId,
     low_scope: FederationPactScope,
     low_digest: [u8; 32],
     scope_three: FederationPactScope,
     digest_three: [u8; 32],
 }
 
-/// Eleven-entry lifecycle+device DAG exercising the three merge shapes:
+/// Thirteen-entry lifecycle+device DAG exercising the four merge shapes:
 /// concurrent narrows (intersection incl. band ⊥), concurrent divergent
-/// repacts (Suspended), and Disconnect vs higher-epoch repact (terminal wins).
+/// repacts (Suspended), Disconnect vs higher-epoch repact (terminal wins),
+/// and concurrent Connects binding one pact id to two grants (Suspended,
+/// both grants denied).
 fn lifecycle_dag() -> LifecycleDag {
     let facet = scope_entity;
     let fixture = pact_fixture_with_scope(
@@ -4619,6 +4627,29 @@ fn lifecycle_dag() -> LifecycleDag {
         ),
     );
 
+    // Concurrent Connects binding one pact id to two different grants: the
+    // transcript carries no grant_ref, so one honest gesture covers both.
+    let pact_four = [0xB4; 32];
+    let grant_four_a = scope_entity(0x34);
+    let grant_four_b = scope_entity(0x35);
+    let scope_four = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    let nonce_four = [0x76; 16];
+    let connect_four_a = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        11,
+        connect_action_with(&fixture, pact_four, grant_four_a, &scope_four, nonce_four),
+    );
+    let connect_four_b = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        12,
+        connect_action_with(&fixture, pact_four, grant_four_b, &scope_four, nonce_four),
+    );
+
     let digest_three = scope_digest_for(&scope_three, &nonce_three);
     let entries = vec![
         fixture.genesis.clone(),
@@ -4632,12 +4663,17 @@ fn lifecycle_dag() -> LifecycleDag {
         connect_three,
         repact_three,
         disconnect_three,
+        connect_four_a,
+        connect_four_b,
     ];
     LifecycleDag {
         fixture,
         entries,
         pact_two,
         pact_three,
+        pact_four,
+        grant_four_a,
+        grant_four_b,
         low_scope,
         low_digest,
         scope_three,
@@ -4692,6 +4728,20 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     assert_eq!(p3.terminal_epoch, Some(1));
     assert_eq!(p3.scope_digest, dag.digest_three);
     assert_eq!(p3.pact_scope, dag.scope_three);
+
+    // P4: concurrent Connects binding one pact id to two grants suspend the
+    // pact and deny BOTH grants — the discarded binding must never fall back
+    // to Unpacted legacy-allow.
+    let p4 = &fold.federation_pacts[&dag.pact_four];
+    assert_eq!(p4.status, FederationPactStatus::Suspended);
+    assert_eq!(p4.pact_epoch, 1);
+    assert_eq!(p4.grant_ref, dag.grant_four_a.min(dag.grant_four_b));
+    for grant in [dag.grant_four_a, dag.grant_four_b] {
+        assert_eq!(
+            federation_grant_activation(&fold, &grant),
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        );
+    }
 }
 
 #[test]
@@ -4747,7 +4797,7 @@ fn lifecycle_entries_use_existing_type_122_doors() {
 proptest! {
     #[test]
     fn federation_lifecycle_fold_is_permutation_invariant(
-        perm in prop::collection::vec(0_usize..11, 11),
+        perm in prop::collection::vec(0_usize..13, 13),
     ) {
         let dag = lifecycle_dag();
         let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
@@ -4809,4 +4859,163 @@ fn federation_lifecycle_rejects_all_zero_peer_vault_id() {
     let err = encode_authority_log_entry_body(&entry)
         .expect_err("all-zero peer vault id must fail closed for unilateral kinds");
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+}
+
+#[test]
+fn federation_divergent_grant_bindings_suspend_and_deny_both_grants() {
+    let fixture = pact_fixture(168);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let grant_a = fixture.grant_ref;
+    let grant_b = scope_entity(0x45);
+    // Same pact id, same scope/nonce (equal digests) — the pact transcript
+    // carries no grant_ref, so ONE honest peer gesture covers both bindings;
+    // divergence detection must not ride the digest check.
+    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_b = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        2,
+        connect_action_with(
+            &fixture,
+            fixture.pact_id,
+            grant_b,
+            &fixture.scope,
+            fixture.pact_nonce,
+        ),
+    );
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect_a,
+        connect_b,
+    ]);
+    assert!(
+        fold.issues.is_empty(),
+        "both connects fold valid on their branches"
+    );
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(
+        pact.status,
+        FederationPactStatus::Suspended,
+        "divergent grant bindings must suspend, never silently keep one"
+    );
+    assert_eq!(pact.pact_epoch, 1);
+    assert_eq!(
+        pact.grant_ref,
+        grant_a.min(grant_b),
+        "deterministic tie-break"
+    );
+    for grant in [grant_a, grant_b] {
+        assert_eq!(
+            federation_grant_activation(&fold, &grant),
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended),
+            "no Unpacted escape for a grant that appeared in a pact binding"
+        );
+        assert!(
+            fold.federation_grant_bindings[&grant].contains(&fixture.pact_id),
+            "both bindings must be registered"
+        );
+    }
+}
+
+#[test]
+fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
+    let fixture = pact_fixture(172);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let grant_a = fixture.grant_ref;
+    let grant_b = scope_entity(0x46);
+    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_b = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        2,
+        connect_action_with(
+            &fixture,
+            fixture.pact_id,
+            grant_b,
+            &fixture.scope,
+            fixture.pact_nonce,
+        ),
+    );
+    let connect_a_hash = authority_entry_hash(&connect_a).unwrap();
+    let connect_b_hash = authority_entry_hash(&connect_b).unwrap();
+    // Equal digests: the surviving binding is the lexicographic-min grant.
+    let winner = grant_a.min(grant_b);
+    let loser = grant_a.max(grant_b);
+
+    // A repact naming the DISCARDED binding must not heal.
+    let heal_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    let bad_heal = lifecycle_entry(
+        &fixture,
+        vec![connect_a_hash, connect_b_hash],
+        3,
+        repact_action_with(&fixture, fixture.pact_id, loser, 2, &heal_scope, [0x6E; 16]),
+    );
+    let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect_a.clone(),
+        connect_b.clone(),
+        bad_heal,
+    ]);
+    assert_eq!(
+        lifecycle_rejection(&fold, bad_heal_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+    assert_eq!(
+        fold.federation_pacts[&fixture.pact_id].status,
+        FederationPactStatus::Suspended
+    );
+
+    // An epoch+1 dual-signed repact naming the surviving grant restores
+    // exactly that grant; the discarded binding stays denied.
+    let heal_nonce = [0x6F; 16];
+    let heal = lifecycle_entry(
+        &fixture,
+        vec![connect_a_hash, connect_b_hash],
+        4,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            winner,
+            2,
+            &heal_scope,
+            heal_nonce,
+        ),
+    );
+    // Nor can the discarded binding be re-covered by a fresh pact.
+    let rebind = lifecycle_entry(
+        &fixture,
+        vec![connect_a_hash, connect_b_hash],
+        5,
+        connect_action_with(&fixture, [0xD4; 32], loser, &fixture.scope, [0x70; 16]),
+    );
+    let rebind_hash = authority_entry_hash(&rebind).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect_a,
+        connect_b,
+        heal,
+        rebind,
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 2);
+    assert_eq!(pact.grant_ref, winner);
+    assert_eq!(
+        federation_grant_activation(&fold, &winner),
+        FederationGrantActivation::Active
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &loser),
+        FederationGrantActivation::Inactive(FederationPactStatus::Active),
+        "the discarded binding never returns to Unpacted or Active"
+    );
+    assert_eq!(
+        lifecycle_rejection(&fold, rebind_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
 }
