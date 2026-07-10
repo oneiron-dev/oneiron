@@ -223,6 +223,589 @@ fn expired_lease_redrains_without_double_fill() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct RemoteFixtureEmbedder {
+    model_id: String,
+    dimensions: usize,
+    locality: EmbedderLocality,
+    fail: bool,
+    seen: Mutex<Vec<EntityId>>,
+}
+
+impl RemoteFixtureEmbedder {
+    fn new(model_id: &str, dimensions: usize, locality: EmbedderLocality) -> Self {
+        Self {
+            model_id: model_id.to_owned(),
+            dimensions,
+            locality,
+            fail: false,
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn failing(mut self) -> Self {
+        self.fail = true;
+        self
+    }
+
+    fn seen(&self) -> Vec<EntityId> {
+        self.seen.lock().unwrap().clone()
+    }
+
+    /// Two-hot fixture direction, deliberately not collinear with
+    /// [`RecordingEmbedder`]'s one-hot vectors so a search can tell which
+    /// embedder produced the stored row.
+    fn fixture_vector(index: usize, dimensions: usize) -> Vec<f32> {
+        let mut vector = vec![0.0; dimensions];
+        vector[index % dimensions] = 0.6;
+        vector[(index + 1) % dimensions] = 0.8;
+        vector
+    }
+}
+
+impl Embedder for RemoteFixtureEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        self.locality
+    }
+
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        if self.fail {
+            return Err(Error::InvalidConfig("remote embedder offline".to_owned()));
+        }
+        self.seen
+            .lock()
+            .unwrap()
+            .extend(inputs.iter().map(|input| input.entity_id));
+        Ok(inputs
+            .iter()
+            .enumerate()
+            .map(|(index, _)| Self::fixture_vector(index, self.dimensions))
+            .collect())
+    }
+}
+
+/// Rung-2 transport double: quantizes fixture vectors to int8+scale on the
+/// "wire" and dequantizes on receipt, as a host int8-transport impl would.
+#[derive(Debug)]
+struct Int8TransportEmbedder {
+    model_id: String,
+    originals: Vec<Vec<f32>>,
+    seen: Mutex<Vec<EntityId>>,
+}
+
+impl Int8TransportEmbedder {
+    fn new(model_id: &str, originals: Vec<Vec<f32>>) -> Self {
+        Self {
+            model_id: model_id.to_owned(),
+            originals,
+            seen: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn seen(&self) -> Vec<EntityId> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+impl Embedder for Int8TransportEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        self.originals[0].len()
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::ThirdParty
+    }
+
+    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        self.seen
+            .lock()
+            .unwrap()
+            .extend(inputs.iter().map(|input| input.entity_id));
+        Ok(inputs
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let original = &self.originals[index % self.originals.len()];
+                let max_abs = original.iter().fold(0.0f32, |acc, v| acc.max(v.abs()));
+                let scale = max_abs / 127.0;
+                let codes: Vec<i8> = original
+                    .iter()
+                    .map(|v| (v / scale).round().clamp(-127.0, 127.0) as i8)
+                    .collect();
+                dequantize_int8_embedding(&codes, scale)
+            })
+            .collect())
+    }
+}
+
+#[derive(Debug)]
+struct FixedDecision(EgressDecision);
+
+impl EgressPredicate for FixedDecision {
+    fn decide(&self, _input: &PendingEmbeddingInput) -> EgressDecision {
+        self.0
+    }
+}
+
+#[derive(Debug)]
+struct AllowOnly(EntityId);
+
+impl EgressPredicate for AllowOnly {
+    fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision {
+        if input.entity_id == self.0 {
+            EgressDecision::Allow
+        } else {
+            EgressDecision::NoVerdict
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct WarnCapture {
+    messages: Arc<Mutex<Vec<String>>>,
+}
+
+impl WarnCapture {
+    fn messages(&self) -> Vec<String> {
+        self.messages.lock().unwrap().clone()
+    }
+}
+
+impl tracing::Subscriber for WarnCapture {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.level() == &tracing::Level::WARN
+    }
+
+    fn new_span(&self, _attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut message = String::new();
+        event.record(&mut MessageVisitor(&mut message));
+        self.messages.lock().unwrap().push(message);
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+struct MessageVisitor<'a>(&'a mut String);
+
+impl tracing::field::Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0.push_str(&format!("{value:?}"));
+        }
+    }
+}
+
+fn routed_reconciler(
+    vault: &Arc<Vault>,
+    local: &Arc<RecordingEmbedder>,
+    remote: Arc<dyn Embedder>,
+    decision: EgressDecision,
+) -> Result<PendingEmbeddingReconciler> {
+    PendingEmbeddingReconciler::new(Arc::clone(vault), Arc::clone(local) as Arc<dyn Embedder>)
+        .with_batch_size(8)
+        .with_remote_rung(RemoteRung::new(remote, Arc::new(FixedDecision(decision))))
+}
+
+#[test]
+fn no_verdict_routes_local_and_drains() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let ids = [entity_id(0x50), entity_id(0x51), entity_id(0x52)];
+    for (index, id) in ids.iter().enumerate() {
+        put_claim(&vault, *id, &format!("nv-{index}"))?;
+    }
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = routed_reconciler(
+        &vault,
+        &local,
+        remote.clone() as Arc<dyn Embedder>,
+        EgressDecision::NoVerdict,
+    )?;
+
+    let report = reconciler.reconcile_once_at(10)?;
+    assert_eq!(report.filled, 3);
+    assert_eq!(report.egress_no_verdict, 3);
+    assert_eq!(report.egress_denied, 0);
+    assert_eq!(report.routed_remote, 0);
+    assert_eq!(report.remote_failed_fallback_local, 0);
+    assert!(remote.seen().is_empty(), "no bytes may leave the device");
+    assert_eq!(local.seen().len(), 3);
+    for id in &ids {
+        assert!(pending_token(&vault, id)?.is_none());
+    }
+
+    let drained = reconciler.reconcile_once_at(20)?;
+    assert_eq!(drained.leased, 0);
+    assert_eq!(drained.active_leases, 0);
+    Ok(())
+}
+
+#[test]
+fn deny_routes_local() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let ids = [entity_id(0x54), entity_id(0x55)];
+    for (index, id) in ids.iter().enumerate() {
+        put_claim(&vault, *id, &format!("deny-{index}"))?;
+    }
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = routed_reconciler(
+        &vault,
+        &local,
+        remote.clone() as Arc<dyn Embedder>,
+        EgressDecision::Deny,
+    )?;
+
+    let report = reconciler.reconcile_once_at(10)?;
+    assert_eq!(report.filled, 2);
+    assert_eq!(report.egress_denied, 2);
+    assert_eq!(report.egress_no_verdict, 0);
+    assert_eq!(report.routed_remote, 0);
+    assert!(remote.seen().is_empty());
+    assert_eq!(local.seen().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn allow_routes_remote_filled_and_searchable() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let ids = [entity_id(0x56), entity_id(0x57)];
+    for (index, id) in ids.iter().enumerate() {
+        put_claim(&vault, *id, &format!("allow-{index}"))?;
+    }
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = routed_reconciler(
+        &vault,
+        &local,
+        remote.clone() as Arc<dyn Embedder>,
+        EgressDecision::Allow,
+    )?;
+
+    let report = reconciler.reconcile_once_at(10)?;
+    assert_eq!(report.filled, 2);
+    assert_eq!(report.routed_remote, 2);
+    assert_eq!(report.egress_denied, 0);
+    assert_eq!(report.egress_no_verdict, 0);
+    assert_eq!(report.remote_failed_fallback_local, 0);
+    assert!(local.seen().is_empty(), "primary must not see allowed work");
+    assert_eq!(remote.seen().len(), 2);
+
+    for (index, id) in remote.seen().iter().enumerate() {
+        let query = RemoteFixtureEmbedder::fixture_vector(index, 4);
+        let results = vault.search_vector(&query, 2)?;
+        let hit = results
+            .iter()
+            .find(|scored| scored.id == *id)
+            .expect("remote-filled vector must be searchable");
+        assert!(
+            hit.score > 0.999,
+            "stored vector must be the remote fixture, got score {}",
+            hit.score
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn remote_failure_falls_back_local_and_warns() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let ids = [entity_id(0x58), entity_id(0x59)];
+    for (index, id) in ids.iter().enumerate() {
+        put_claim(&vault, *id, &format!("fail-{index}"))?;
+    }
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(
+        RemoteFixtureEmbedder::new("test/embedder@v1", 4, EmbedderLocality::ThirdParty).failing(),
+    );
+    let reconciler = routed_reconciler(
+        &vault,
+        &local,
+        remote as Arc<dyn Embedder>,
+        EgressDecision::Allow,
+    )?;
+
+    let capture = WarnCapture::default();
+    let report =
+        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10))?;
+
+    assert_eq!(report.filled, 2);
+    assert_eq!(report.remote_failed_fallback_local, 2);
+    assert_eq!(report.routed_remote, 0);
+    assert_eq!(local.seen().len(), 2, "fallback must embed locally");
+    assert!(
+        capture
+            .messages()
+            .iter()
+            .any(|message| message.contains("remote embed failed")),
+        "fallback must log a warning, got {:?}",
+        capture.messages()
+    );
+    for id in &ids {
+        assert!(pending_token(&vault, id)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn int8_round_trip_through_remote_rung() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let ids = [entity_id(0x5A), entity_id(0x5B)];
+    for (index, id) in ids.iter().enumerate() {
+        put_claim(&vault, *id, &format!("int8-{index}"))?;
+    }
+
+    let originals = vec![
+        vec![0.83, -0.41, 0.29, 0.57],
+        vec![-0.12, 0.94, -0.33, 0.08],
+    ];
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(Int8TransportEmbedder::new(
+        "test/embedder@v1",
+        originals.clone(),
+    ));
+    let reconciler = routed_reconciler(
+        &vault,
+        &local,
+        remote.clone() as Arc<dyn Embedder>,
+        EgressDecision::Allow,
+    )?;
+
+    let report = reconciler.reconcile_once_at(10)?;
+    assert_eq!(report.filled, 2);
+    assert_eq!(report.routed_remote, 2);
+
+    for (index, id) in remote.seen().iter().enumerate() {
+        let original = &originals[index % originals.len()];
+        let results = vault.search_vector(original, 2)?;
+        let hit = results
+            .iter()
+            .find(|scored| scored.id == *id)
+            .expect("round-tripped vector must be searchable");
+        assert!(
+            hit.score >= 0.999,
+            "int8 round-trip cosine must be >= 0.999, got {}",
+            hit.score
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dequantize_int8_embedding_scales_codes() {
+    assert_eq!(
+        dequantize_int8_embedding(&[-127, 0, 64], 0.5),
+        vec![-63.5, 0.0, 32.0]
+    );
+}
+
+#[test]
+fn with_remote_rung_validates_configuration() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let allow = || Arc::new(FixedDecision(EgressDecision::Allow)) as Arc<dyn EgressPredicate>;
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let on_device_remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OnDevice,
+    ));
+    let Err(err) = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_remote_rung(RemoteRung::new(
+        on_device_remote as Arc<dyn Embedder>,
+        allow(),
+    )) else {
+        panic!("OnDevice remote rung must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "remote rung embedder must not be OnDevice")
+    );
+
+    let remote_primary = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let remote = || {
+        Arc::new(RemoteFixtureEmbedder::new(
+            "test/embedder@v1",
+            4,
+            EmbedderLocality::ThirdParty,
+        )) as Arc<dyn Embedder>
+    };
+    let Err(err) =
+        PendingEmbeddingReconciler::new(Arc::clone(&vault), remote_primary as Arc<dyn Embedder>)
+            .with_remote_rung(RemoteRung::new(remote(), allow()))
+    else {
+        panic!("non-OnDevice primary must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "remote rung requires an OnDevice primary embedder")
+    );
+
+    let Err(err) = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_remote_rung(RemoteRung::new(remote(), allow()))?
+    .with_remote_rung(RemoteRung::new(remote(), allow())) else {
+        panic!("duplicate remote rung must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "a remote rung is already configured")
+    );
+    Ok(())
+}
+
+#[test]
+fn remote_rung_dims_and_model_gates() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    put_claim(&vault, entity_id(0x5C), "gated")?;
+    let allow = || Arc::new(FixedDecision(EgressDecision::Allow)) as Arc<dyn EgressPredicate>;
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let wrong_dims = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        8,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_remote_rung(RemoteRung::new(
+        wrong_dims.clone() as Arc<dyn Embedder>,
+        allow(),
+    ))?;
+    let err = reconciler.reconcile_once_at(10).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::DimensionMismatch {
+            expected: 4,
+            got: 8
+        }
+    ));
+    assert!(wrong_dims.seen().is_empty());
+    assert!(local.seen().is_empty(), "gates fire before any embed call");
+
+    let wrong_model = Arc::new(RemoteFixtureEmbedder::new(
+        "other/embedder@v2",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_remote_rung(RemoteRung::new(
+        wrong_model.clone() as Arc<dyn Embedder>,
+        allow(),
+    ))?;
+    let err = reconciler.reconcile_once_at(10).unwrap_err();
+    assert!(matches!(
+        err,
+        Error::EmbeddingModelChanged { ref stored, ref requested }
+            if stored == "test/embedder@v1" && requested == "other/embedder@v2"
+    ));
+    assert!(wrong_model.seen().is_empty());
+    assert!(local.seen().is_empty());
+    Ok(())
+}
+
+#[test]
+fn remote_lease_window_uses_rung_duration() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let allowed = entity_id(0x5D);
+    let held_back = entity_id(0x5E);
+    put_claim(&vault, allowed, "remote-lease")?;
+    put_claim(&vault, held_back, "local-lease")?;
+
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_batch_size(8)
+    .with_remote_rung(RemoteRung::new(
+        remote as Arc<dyn Embedder>,
+        Arc::new(AllowOnly(allowed)),
+    ))?;
+
+    let batch = reconciler.lease_due_jobs(1)?;
+    assert_eq!(batch.work.len(), 2);
+    assert_eq!(batch.egress_no_verdict, 1);
+
+    let rtxn = vault.store.env.read_txn()?;
+    let remote_raw = vault
+        .store
+        .sync_state
+        .get(&rtxn, pending_embedding_lease_key(&allowed).as_str())?
+        .expect("remote lease row");
+    let remote_lease = decode_pending_embedding_lease(remote_raw).expect("decode remote lease");
+    assert_eq!(
+        remote_lease.expires_at_ms,
+        1 + DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS
+    );
+
+    let local_raw = vault
+        .store
+        .sync_state
+        .get(&rtxn, pending_embedding_lease_key(&held_back).as_str())?
+        .expect("local lease row");
+    let local_lease = decode_pending_embedding_lease(local_raw).expect("decode local lease");
+    assert_eq!(
+        local_lease.expires_at_ms,
+        1 + DEFAULT_PENDING_EMBEDDING_LEASE_MS
+    );
+    Ok(())
+}
+
 #[test]
 fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     let (_dir, vault) = test_vault();
@@ -248,5 +831,83 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     assert_eq!(report.filled, 1);
     assert_eq!(embedder.seen(), vec![id]);
     assert!(pending_token(&vault, &id)?.is_none());
+    Ok(())
+}
+
+/// OnDevice primary that always fails `embed`, for the partition-order
+/// stall regression below.
+#[derive(Debug)]
+struct FailingLocalEmbedder {
+    model_id: String,
+    dimensions: usize,
+}
+
+impl Embedder for FailingLocalEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn embed(&self, _inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        Err(Error::InvalidConfig("primary embedder offline".to_owned()))
+    }
+}
+
+/// Codex F1 regression (ONE-1338 respin): the remote batch runs BEFORE the
+/// local batch, so a primary failure — which aborts the pass, as it always
+/// has — cannot strand never-attempted remote-routed rows behind their
+/// long 120s leases. The remote claim must be attempted and filled even
+/// though the pass itself errors on the local batch.
+#[test]
+fn local_failure_does_not_strand_remote_work() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let remote_routed = entity_id(0x5F);
+    let local_routed = entity_id(0x60);
+    put_claim(&vault, remote_routed, "remote-first")?;
+    put_claim(&vault, local_routed, "local-after")?;
+
+    let failing_primary = Arc::new(FailingLocalEmbedder {
+        model_id: "test/embedder@v1".to_owned(),
+        dimensions: 4,
+    });
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler =
+        PendingEmbeddingReconciler::new(Arc::clone(&vault), failing_primary as Arc<dyn Embedder>)
+            .with_batch_size(8)
+            .with_remote_rung(RemoteRung::new(
+                remote.clone() as Arc<dyn Embedder>,
+                Arc::new(AllowOnly(remote_routed)),
+            ))?;
+
+    let err = reconciler.reconcile_once_at(10).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "primary embedder offline"),
+        "the local-batch primary failure still propagates (pinned behavior)"
+    );
+
+    assert_eq!(
+        remote.seen(),
+        vec![remote_routed],
+        "the remote batch must have been attempted before the local failure"
+    );
+    assert!(
+        pending_token(&vault, &remote_routed)?.is_none(),
+        "the remote-routed claim must be filled despite the aborted pass"
+    );
+    assert!(
+        pending_token(&vault, &local_routed)?.is_some(),
+        "the local claim stays pending behind its short lease"
+    );
     Ok(())
 }

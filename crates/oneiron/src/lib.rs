@@ -346,11 +346,13 @@ pub use crate::eiri::{
 };
 #[cfg(feature = "sync")]
 pub use crate::embed::{
-    DEFAULT_PENDING_EMBEDDING_LEASE_MS, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler,
+    DEFAULT_PENDING_EMBEDDING_LEASE_MS, DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS,
+    PendingEmbeddingReconcileReport, PendingEmbeddingReconciler, RemoteRung,
 };
 pub use crate::embed::{
     EMBED_PRIORITY_BACKFILL, EMBED_PRIORITY_DEVICE, EMBED_PRIORITY_SERVER,
-    EMBED_PRIORITY_SURFACED_HOT, Embedder, EmbedderLocality, PendingEmbeddingInput,
+    EMBED_PRIORITY_SURFACED_HOT, EgressDecision, EgressPredicate, Embedder, EmbedderLocality,
+    PendingEmbeddingInput, dequantize_int8_embedding,
 };
 pub use crate::engine_executor::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME,
