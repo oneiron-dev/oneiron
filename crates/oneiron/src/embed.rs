@@ -16,6 +16,11 @@ pub const EMBED_PRIORITY_BACKFILL: u8 = 3;
 #[cfg(feature = "sync")]
 pub const DEFAULT_PENDING_EMBEDDING_LEASE_MS: u64 = 30_000;
 
+/// Default lease window for remote-routed embed work (E2: remote rungs get
+/// longer lease windows). 4x the local default.
+#[cfg(feature = "sync")]
+pub const DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS: u64 = 120_000;
+
 /// Where an embedder runs relative to the vault owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EmbedderLocality {
@@ -46,6 +51,63 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>>;
 }
 
+/// Tri-state PII egress verdict for one pending claim (ONE-EMBED E6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EgressDecision {
+    Allow,
+    Deny,
+    NoVerdict,
+}
+
+/// Host-supplied egress gate. The OneiroNER PII head's verdict lives
+/// host-side; the engine never knows what PII is. Consulted for EVERY
+/// claim routed to a non-OnDevice embedder.
+pub trait EgressPredicate: Send + Sync {
+    /// Egress verdict for one pending claim. `Deny` and `NoVerdict` both
+    /// route the claim to the local (OnDevice) embedder — fail-closed; a
+    /// missing verdict can never send bytes off-device and never stalls
+    /// the queue.
+    ///
+    /// Called under a held write transaction: host trait impls invoked
+    /// under a held txn/lock must be non-blocking cached lookups; hosts run
+    /// arbitrary inference in the async phases the engine exposes for it.
+    fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
+}
+
+/// A configured non-OnDevice rung.
+#[cfg(feature = "sync")]
+pub struct RemoteRung {
+    pub embedder: std::sync::Arc<dyn Embedder>,
+    pub predicate: std::sync::Arc<dyn EgressPredicate>,
+    pub lease_duration_ms: u64,
+}
+
+#[cfg(feature = "sync")]
+impl RemoteRung {
+    /// Builds a rung with the default remote lease window
+    /// ([`DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS`]).
+    #[must_use]
+    pub fn new(
+        embedder: std::sync::Arc<dyn Embedder>,
+        predicate: std::sync::Arc<dyn EgressPredicate>,
+    ) -> Self {
+        Self {
+            embedder,
+            predicate,
+            lease_duration_ms: DEFAULT_REMOTE_PENDING_EMBEDDING_LEASE_MS,
+        }
+    }
+}
+
+/// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.
+/// Server sends int8+scale; the HOST dequantizes before returning vectors
+/// through `Embedder::embed` (E4: INT8 is transport-only, never stored;
+/// the f16 storage conversion is the EMB-3 row format's job).
+#[must_use]
+pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
+    codes.iter().map(|c| f32::from(*c) * scale).collect()
+}
+
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingEmbeddingLease {
@@ -53,11 +115,21 @@ struct PendingEmbeddingLease {
     token: Vec<u8>,
 }
 
+/// Which embedder a leased claim was routed to. Never persisted: the lease
+/// wire format is unchanged and a crashed pass re-decides on re-drain.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmbedRoute {
+    Local,
+    Remote,
+}
+
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone)]
 struct LeasedPendingEmbedding {
     input: PendingEmbeddingInput,
     lease_value: Vec<u8>,
+    route: EmbedRoute,
 }
 
 #[cfg(feature = "sync")]
@@ -66,6 +138,8 @@ struct LeaseBatch {
     work: Vec<LeasedPendingEmbedding>,
     active_leases: usize,
     stale_jobs: usize,
+    egress_denied: usize,
+    egress_no_verdict: usize,
 }
 
 /// Summary from one reconciler pass.
@@ -78,6 +152,10 @@ pub struct PendingEmbeddingReconcileReport {
     pub embedded: usize,
     pub filled: usize,
     pub stale_fills: usize,
+    pub routed_remote: usize,
+    pub egress_denied: usize,
+    pub egress_no_verdict: usize,
+    pub remote_failed_fallback_local: usize,
 }
 
 /// Per-vault pending-embedding reconciler.
@@ -87,6 +165,7 @@ pub struct PendingEmbeddingReconciler {
     embedder: std::sync::Arc<dyn Embedder>,
     batch_size: usize,
     lease_duration_ms: u64,
+    remote_rung: Option<RemoteRung>,
 }
 
 #[cfg(feature = "sync")]
@@ -101,6 +180,7 @@ impl PendingEmbeddingReconciler {
             embedder,
             batch_size: 32,
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
+            remote_rung: None,
         }
     }
 
@@ -116,6 +196,31 @@ impl PendingEmbeddingReconciler {
         self
     }
 
+    /// Attaches a remote rung (rung 1 = `OwnerServer`, rung 2 = `ThirdParty`;
+    /// the rung is `embedder.locality()`). Requires: remote locality !=
+    /// `OnDevice`, and the PRIMARY embedder locality == `OnDevice`
+    /// (fail-closed-to-local needs a local target). At most one remote rung
+    /// per reconciler.
+    pub fn with_remote_rung(mut self, rung: RemoteRung) -> Result<Self> {
+        if rung.embedder.locality() == EmbedderLocality::OnDevice {
+            return Err(Error::InvalidConfig(
+                "remote rung embedder must not be OnDevice".to_owned(),
+            ));
+        }
+        if self.embedder.locality() != EmbedderLocality::OnDevice {
+            return Err(Error::InvalidConfig(
+                "remote rung requires an OnDevice primary embedder".to_owned(),
+            ));
+        }
+        if self.remote_rung.is_some() {
+            return Err(Error::InvalidConfig(
+                "a remote rung is already configured".to_owned(),
+            ));
+        }
+        self.remote_rung = Some(rung);
+        Ok(self)
+    }
+
     pub fn reconcile_once(&self) -> Result<PendingEmbeddingReconcileReport> {
         self.reconcile_once_at(unix_millis_now())
     }
@@ -127,38 +232,98 @@ impl PendingEmbeddingReconciler {
             leased: batch.work.len(),
             active_leases: batch.active_leases,
             stale_jobs: batch.stale_jobs,
+            egress_denied: batch.egress_denied,
+            egress_no_verdict: batch.egress_no_verdict,
             ..PendingEmbeddingReconcileReport::default()
         };
         if batch.work.is_empty() {
             return Ok(report);
         }
 
-        let inputs: Vec<PendingEmbeddingInput> =
-            batch.work.iter().map(|work| work.input.clone()).collect();
-        let vectors = self.embedder.embed(&inputs)?;
-        if vectors.len() != batch.work.len() {
-            return Err(Error::InvariantViolation(
-                "embedder returned mismatched vector count",
-            ));
-        }
-        report.embedded = vectors.len();
+        let (remote_work, local_work): (Vec<_>, Vec<_>) = batch
+            .work
+            .into_iter()
+            .partition(|work| work.route == EmbedRoute::Remote);
 
-        for (work, vector) in batch.work.iter().zip(vectors.iter()) {
-            if self.complete_leased_work(work, vector)? {
-                report.filled += 1;
-            } else {
-                report.stale_fills += 1;
+        self.embed_and_fill_local(&local_work, &mut report)?;
+
+        if !remote_work.is_empty() {
+            let rung = self.remote_rung.as_ref().ok_or(Error::InvariantViolation(
+                "remote-routed work without a remote rung",
+            ))?;
+            let inputs: Vec<PendingEmbeddingInput> =
+                remote_work.iter().map(|work| work.input.clone()).collect();
+            match rung.embedder.embed(&inputs) {
+                Ok(vectors) => {
+                    if vectors.len() != remote_work.len() {
+                        return Err(Error::InvariantViolation(
+                            "embedder returned mismatched vector count",
+                        ));
+                    }
+                    report.routed_remote += remote_work.len();
+                    report.embedded += vectors.len();
+                    self.fill_batch(&remote_work, &vectors, &mut report)?;
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "remote embed failed; falling back to local");
+                    report.remote_failed_fallback_local += remote_work.len();
+                    self.embed_and_fill_local(&remote_work, &mut report)?;
+                }
             }
         }
 
         Ok(report)
     }
 
+    fn embed_and_fill_local(
+        &self,
+        work: &[LeasedPendingEmbedding],
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<()> {
+        if work.is_empty() {
+            return Ok(());
+        }
+        let inputs: Vec<PendingEmbeddingInput> =
+            work.iter().map(|item| item.input.clone()).collect();
+        let vectors = self.embedder.embed(&inputs)?;
+        if vectors.len() != work.len() {
+            return Err(Error::InvariantViolation(
+                "embedder returned mismatched vector count",
+            ));
+        }
+        report.embedded += vectors.len();
+        self.fill_batch(work, &vectors, report)
+    }
+
+    fn fill_batch(
+        &self,
+        work: &[LeasedPendingEmbedding],
+        vectors: &[Vec<f32>],
+        report: &mut PendingEmbeddingReconcileReport,
+    ) -> Result<()> {
+        for (item, vector) in work.iter().zip(vectors.iter()) {
+            if self.complete_leased_work(item, vector)? {
+                report.filled += 1;
+            } else {
+                report.stale_fills += 1;
+            }
+        }
+        Ok(())
+    }
+
     fn validate_embedder_for_vault(&self) -> Result<()> {
-        if self.embedder.dimensions() != self.vault.config.dimensions {
+        self.validate_one_embedder(self.embedder.as_ref())?;
+        if let Some(rung) = &self.remote_rung {
+            self.validate_one_embedder(rung.embedder.as_ref())?;
+        }
+        Ok(())
+    }
+
+    fn validate_one_embedder(&self, embedder: &dyn Embedder) -> Result<()> {
+        if embedder.dimensions() != self.vault.config.dimensions {
             return Err(Error::DimensionMismatch {
                 expected: self.vault.config.dimensions,
-                got: self.embedder.dimensions(),
+                got: embedder.dimensions(),
             });
         }
         let Some(config_model) = self.vault.config.embedding_model.as_deref() else {
@@ -166,10 +331,10 @@ impl PendingEmbeddingReconciler {
                 "embedding model is required before embedding reconciliation".to_owned(),
             ));
         };
-        if config_model != self.embedder.model_id() {
+        if config_model != embedder.model_id() {
             return Err(Error::EmbeddingModelChanged {
                 stored: config_model.to_owned(),
-                requested: self.embedder.model_id().to_owned(),
+                requested: embedder.model_id().to_owned(),
             });
         }
         Ok(())
@@ -209,16 +374,33 @@ impl PendingEmbeddingReconciler {
                     continue;
                 }
 
-                let expires_at_ms = now_ms.saturating_add(self.lease_duration_ms);
+                let (route, lease_duration_ms) = match &self.remote_rung {
+                    None => (EmbedRoute::Local, self.lease_duration_ms),
+                    Some(rung) => match rung.predicate.decide(&input) {
+                        EgressDecision::Allow => (EmbedRoute::Remote, rung.lease_duration_ms),
+                        EgressDecision::Deny => {
+                            batch.egress_denied += 1;
+                            (EmbedRoute::Local, self.lease_duration_ms)
+                        }
+                        EgressDecision::NoVerdict => {
+                            batch.egress_no_verdict += 1;
+                            (EmbedRoute::Local, self.lease_duration_ms)
+                        }
+                    },
+                };
+
+                let expires_at_ms = now_ms.saturating_add(lease_duration_ms);
                 let lease_value =
                     encode_pending_embedding_lease(expires_at_ms, &input.pending_embedding_token);
                 self.vault
                     .store
                     .sync_state
                     .put(wtxn, key.as_str(), lease_value.as_slice())?;
-                batch
-                    .work
-                    .push(LeasedPendingEmbedding { input, lease_value });
+                batch.work.push(LeasedPendingEmbedding {
+                    input,
+                    lease_value,
+                    route,
+                });
             }
             Ok(())
         })?;
