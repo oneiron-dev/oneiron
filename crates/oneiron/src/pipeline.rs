@@ -1645,7 +1645,14 @@ impl<'a> PipelineBuilder<'a> {
             // scores survive in the Rerank components.
             let mut rerank_merged_components = None;
             let mut reranked_trace_scores = None;
-            if let Some((reranker, options)) = self.rerank.as_ref() {
+            // Empty block: reranking zero candidates is a semantic no-op —
+            // never invoke the host impl, so an otherwise-empty retrieval
+            // cannot fail on reranker behavior and no needless work happens
+            // under the held read txn. (The fail-closed top_n/query
+            // validation at the top of run_for_pack still applies.)
+            if let Some((reranker, options)) = self.rerank.as_ref()
+                && options.top_n.min(scores.len()) > 0
+            {
                 let query = rerank_query.as_deref().unwrap_or_default();
                 let block_len = options.top_n.min(scores.len());
                 let block_ids: Vec<EntityId> =

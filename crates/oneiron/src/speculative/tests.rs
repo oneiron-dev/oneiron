@@ -477,3 +477,54 @@ fn fire_hot_bumps_pending_embedding_claims() -> Result<()> {
     );
     Ok(())
 }
+
+/// Grok #473-F7: warm-fill must dedupe against already-appended warm
+/// entries, not only against the fresh id set — a warm-internal repeat
+/// (latent today: pipeline output is unique, but the warm pack is session
+/// state) must not double-append. The duplicate warm pack is injected
+/// directly into the private session state to pin the guard itself.
+#[test]
+fn warm_fill_never_double_appends_a_warm_internal_duplicate() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let fresh_id = entity_id(0x91);
+    let dup_id = entity_id(0x92);
+    let other_id = entity_id(0x93);
+    put_text(&vault, fresh_id, "dedupe fresh fixture")?;
+
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let warm_dup = ScoredEntity {
+        id: dup_id,
+        score: 0.5,
+    };
+    let warm_other = ScoredEntity {
+        id: other_id,
+        score: 0.4,
+    };
+    session.warm = Some(WarmPack {
+        scores: vec![warm_dup, warm_dup, warm_other],
+        run_id: None,
+    });
+    session.last_signature = partial_signature(&partial("x", &strings(&["warmed"]), &[]));
+
+    let final_labels = strings(&["changed"]);
+    let outcome = session.finalize(partial("dedupe fresh fixture", &final_labels, &[]))?;
+    let SpeculativeFinal::Finalized {
+        scores,
+        warm_appended,
+        ..
+    } = outcome
+    else {
+        panic!("changed signature must finalize");
+    };
+
+    let appended_ids: Vec<EntityId> = scores.iter().skip(1).map(|scored| scored.id).collect();
+    assert_eq!(scores[0].id, fresh_id);
+    assert_eq!(
+        appended_ids,
+        vec![dup_id, other_id],
+        "the warm-internal duplicate must append exactly once, in warm order"
+    );
+    assert_eq!(warm_appended, 2);
+    Ok(())
+}

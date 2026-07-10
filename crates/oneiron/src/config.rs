@@ -53,6 +53,13 @@ pub struct VaultConfig {
     /// previous behavior). The concrete value (256/384) is the bake-off's
     /// output — this stays config, never a compiled constant.
     ///
+    /// Recall tradeoff: the funnel trades recall for traversal speed.
+    /// Candidate selection happens in the prefix space, and the rescore is
+    /// exact only over the retrieved beam — a vector distant in the prefix
+    /// but near in full dimensions can fall outside the beam and be missed
+    /// entirely. Recall is bounded by the beam width
+    /// (`hnsw.ef_search.max(limit)`) and rises with `ef_search`.
+    ///
     /// Turning `fast_dims` on (or changing it) for an existing POPULATED
     /// vault is a graph-shape change and is not supported online: the open
     /// fails with [`crate::Error::HnswConfigChanged`]. Re-create the vault,

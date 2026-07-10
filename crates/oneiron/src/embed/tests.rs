@@ -911,3 +911,101 @@ fn local_failure_does_not_strand_remote_work() -> Result<()> {
     );
     Ok(())
 }
+
+/// Qodo #466-F2: a 0ms remote lease is born expired — every pass would
+/// re-lease and re-embed the same rows. Rejected at attach time alongside
+/// the other rung validations.
+#[test]
+fn zero_remote_lease_duration_is_rejected() {
+    let (_dir, vault) = test_vault();
+    let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let mut rung = RemoteRung::new(
+        remote as Arc<dyn Embedder>,
+        Arc::new(FixedDecision(EgressDecision::Allow)),
+    );
+    rung.lease_duration_ms = 0;
+
+    let Err(err) = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&local) as Arc<dyn Embedder>,
+    )
+    .with_remote_rung(rung) else {
+        panic!("a 0ms remote lease must be rejected");
+    };
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "remote rung lease duration must be greater than zero")
+    );
+}
+
+/// Qodo #466-F1: when the remote batch completed but the local batch then
+/// fails the pass, the completed remote counters must surface via a warn
+/// (the report itself is dropped with the error — pinned propagation). A
+/// PURE-local failure stays silent, as EMB-1 always propagated it.
+#[test]
+fn partial_remote_completion_is_logged_when_local_batch_fails() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let remote_routed = entity_id(0x62);
+    let local_routed = entity_id(0x63);
+    put_claim(&vault, remote_routed, "partial-remote")?;
+    put_claim(&vault, local_routed, "partial-local")?;
+
+    let failing_primary = Arc::new(FailingLocalEmbedder {
+        model_id: "test/embedder@v1".to_owned(),
+        dimensions: 4,
+    });
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        Arc::clone(&failing_primary) as Arc<dyn Embedder>,
+    )
+    .with_batch_size(8)
+    .with_remote_rung(RemoteRung::new(
+        remote as Arc<dyn Embedder>,
+        Arc::new(AllowOnly(remote_routed)),
+    ))?;
+
+    let capture = WarnCapture::default();
+    let result =
+        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10));
+    assert!(result.is_err(), "the local failure still fails the pass");
+    assert!(
+        capture
+            .messages()
+            .iter()
+            .any(|message| message.contains("local batch failed after remote work completed")),
+        "completed remote work must surface in a warning, got {:?}",
+        capture.messages()
+    );
+
+    // Pure-local failure (no remote work attempted): silent propagation.
+    let (_dir2, vault2) = test_vault();
+    put_claim(&vault2, entity_id(0x64), "pure-local")?;
+    let reconciler = PendingEmbeddingReconciler::new(
+        Arc::clone(&vault2),
+        Arc::new(FailingLocalEmbedder {
+            model_id: "test/embedder@v1".to_owned(),
+            dimensions: 4,
+        }) as Arc<dyn Embedder>,
+    );
+    let capture = WarnCapture::default();
+    let result =
+        tracing::subscriber::with_default(capture.clone(), || reconciler.reconcile_once_at(10));
+    assert!(result.is_err());
+    assert!(
+        capture
+            .messages()
+            .iter()
+            .all(|message| !message.contains("local batch failed after remote work completed")),
+        "a pure-local failure must not claim remote work completed"
+    );
+    Ok(())
+}
