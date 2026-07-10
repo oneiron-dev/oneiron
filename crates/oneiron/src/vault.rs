@@ -566,7 +566,10 @@ impl Vault {
         query: &[f32],
         limit: usize,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
-        if query.len() != self.config.dimensions {
+        // EMB-2: a `fast_dims`-length query is a first-class prefix query.
+        if query.len() != self.config.dimensions
+            && self.config.fast_dims.map(usize::from) != Some(query.len())
+        {
             return Err(Error::DimensionMismatch {
                 expected: self.config.dimensions,
                 got: query.len(),
@@ -580,7 +583,18 @@ impl Vault {
         let started = Instant::now();
         let results = {
             let rtxn = self.store.env.read_txn()?;
-            hnsw::hnsw_search(&self.store, &self.config, &rtxn, query, limit)?
+            // The direct vault path stays the exact-quality path for
+            // full-length queries; the skip-rescore hot lane is a pipeline
+            // feature (a `fast_dims`-length query is inherently prefix-only
+            // on every path — no full query exists to rescore).
+            hnsw::hnsw_search(
+                &self.store,
+                &self.config,
+                &rtxn,
+                query,
+                limit,
+                /* skip_rescore = */ false,
+            )?
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,

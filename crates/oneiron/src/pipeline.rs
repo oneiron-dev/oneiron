@@ -511,6 +511,7 @@ pub struct PipelineBuilder<'a> {
     telemetry_action: RetrievalAction,
     capture_retrieval_trace: bool,
     rerank: Option<(&'a dyn Reranker, RerankOptions)>,
+    skip_vector_rescore: bool,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -544,6 +545,7 @@ impl<'a> PipelineBuilder<'a> {
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             rerank: None,
+            skip_vector_rescore: false,
         }
     }
 
@@ -580,6 +582,14 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
         self.vector_search = Some((vector.to_vec(), limit));
+        self
+    }
+
+    /// Voice-hot-lane knob (ONE-EMBED E3): score the vector channel on the
+    /// `fast_dims` prefix only, skipping the exact full-dim rescore. Inert
+    /// when `fast_dims` is not configured.
+    pub fn skip_vector_rescore(mut self, skip: bool) -> Self {
+        self.skip_vector_rescore = skip;
         self
     }
 
@@ -1150,7 +1160,11 @@ impl<'a> PipelineBuilder<'a> {
                 || claim_gate_text_widening_active;
 
             if let Some((query_vector, limit)) = &self.vector_search {
-                if query_vector.len() != self.vault.config.dimensions {
+                // EMB-2: a `fast_dims`-length query is a first-class prefix
+                // query on the funnel read path.
+                if query_vector.len() != self.vault.config.dimensions
+                    && self.vault.config.fast_dims.map(usize::from) != Some(query_vector.len())
+                {
                     return Err(Error::DimensionMismatch {
                         expected: self.vault.config.dimensions,
                         got: query_vector.len(),
@@ -1172,6 +1186,7 @@ impl<'a> PipelineBuilder<'a> {
                     &rtxn,
                     query_vector,
                     channel_limit,
+                    self.skip_vector_rescore,
                 )?;
                 add_signal_score_components(
                     &mut signal_components,
@@ -2105,7 +2120,11 @@ fn retrieval_trace_fork_hash(
     let mut hasher = Sha256::new();
     fork_hash_bytes(&mut hasher, b"oneiron.retrieval_trace.fork_hash.v1");
 
-    fork_hash_vector_query(&mut hasher, builder.vector_search.as_ref());
+    fork_hash_vector_query(
+        &mut hasher,
+        builder.vector_search.as_ref(),
+        builder.skip_vector_rescore,
+    );
     fork_hash_text_query(&mut hasher, builder.text_search.as_ref());
     fork_hash_phonetic_query(&mut hasher, builder.phonetic_search.as_deref());
     fork_hash_temporal_query(&mut hasher, builder.temporal_search.as_ref());
@@ -2132,7 +2151,7 @@ fn retrieval_trace_fork_hash(
     fork_hash_bool(&mut hasher, builder.temporal_adaptive_default);
     fork_hash_recency_weight_table(&mut hasher);
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
-    fork_hash_scoring_constants(&mut hasher);
+    fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_candidate_set(&mut hasher, candidate_set);
 
@@ -2157,7 +2176,11 @@ fn fork_hash_rerank(
     fork_hash_str(hasher, effective_query.unwrap_or_default());
 }
 
-fn fork_hash_vector_query(hasher: &mut Sha256, query: Option<&(Vec<f32>, usize)>) {
+fn fork_hash_vector_query(
+    hasher: &mut Sha256,
+    query: Option<&(Vec<f32>, usize)>,
+    skip_vector_rescore: bool,
+) {
     let Some((vector, limit)) = query else {
         fork_hash_bool(hasher, false);
         return;
@@ -2168,6 +2191,8 @@ fn fork_hash_vector_query(hasher: &mut Sha256, query: Option<&(Vec<f32>, usize)>
     for value in vector {
         fork_hash_f32(hasher, *value);
     }
+    // EMB-2 hot lane: prefix-only vs rescored orders are different forks.
+    fork_hash_bool(hasher, skip_vector_rescore);
 }
 
 fn fork_hash_text_query(hasher: &mut Sha256, query: Option<&(String, usize)>) {
@@ -2345,7 +2370,7 @@ fn fork_hash_retrieval_blend_weights(hasher: &mut Sha256, weights: RetrievalBlen
     fork_hash_f32(hasher, weights.gravity);
 }
 
-fn fork_hash_scoring_constants(hasher: &mut Sha256) {
+fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     fork_hash_f32(hasher, RETRIEVAL_TRACE_RRF_K);
     fork_hash_f32(hasher, PPR_DAMPING);
     fork_hash_f64(hasher, RECENCY_DECAY_TAU_SECS);
@@ -2354,6 +2379,8 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256) {
     fork_hash_f64(hasher, ALPHA_TAU_SECS);
     fork_hash_f64(hasher, TEMPORAL_FLOOR);
     fork_hash_f32(hasher, COSINE_GHOST_VECTOR_THRESHOLD);
+    // EMB-2: the funnel prefix changes vector-channel scoring space.
+    fork_hash_u32(hasher, u32::from(fast_dims.unwrap_or(0)));
 }
 
 fn retrieval_trace_candidate_set(

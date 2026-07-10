@@ -45,6 +45,19 @@ impl Default for HnswConfig {
 pub struct VaultConfig {
     /// Embedding vector dimension.
     pub dimensions: usize,
+    /// MRL fast-lane prefix length (ONE-EMBED E3). When `Some(fd)`, the NSW
+    /// graph is built and traversed over the first `fd` vector components
+    /// and queries may be either full-length or `fd`-length; top candidates
+    /// are exact-rescored against full-dim rows unless skip-rescore is set.
+    /// Must satisfy `1 <= fd < dimensions`. `None` = full-dim graph (the
+    /// previous behavior). The concrete value (256/384) is the bake-off's
+    /// output — this stays config, never a compiled constant.
+    ///
+    /// Turning `fast_dims` on (or changing it) for an existing POPULATED
+    /// vault is a graph-shape change and is not supported online: the open
+    /// fails with [`crate::Error::HnswConfigChanged`]. Re-create the vault,
+    /// or ride EMB-4's `begin_embedding_migration` re-embed once that lands.
+    pub fast_dims: Option<u16>,
     /// Embedding model identifier used for vector compatibility checks.
     ///
     /// `None` is allowed only for genuinely vector-less vaults. Once vector
@@ -265,6 +278,7 @@ impl VaultConfig {
     pub fn device() -> Self {
         Self {
             dimensions: 1024,
+            fast_dims: None,
             embedding_model: None,
             map_size: 1 << 30,
             max_readers: 126,
@@ -280,6 +294,7 @@ impl VaultConfig {
     pub fn server() -> Self {
         Self {
             dimensions: 4096,
+            fast_dims: None,
             embedding_model: None,
             map_size: 1 << 33,
             max_readers: 126,

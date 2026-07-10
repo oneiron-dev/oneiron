@@ -672,6 +672,7 @@ fn beam_search_strict_rejects_corrupted_neighbor_rows() -> Result<()> {
             ef: 2,
             lenient_neighbors: false,
             check_existence: false,
+            score_dims: 4,
         },
         &mut 0,
     )
@@ -901,7 +902,14 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
     assert_eq!(read_count(&vault.store, &rtxn)?, 2);
     // 5. A query at the deleted node's position never returns it and the
     //    search over the victim's region still resolves to a live node.
-    let hits = hnsw_search(&vault.store, &vault.config, &rtxn, &[1.0, 0.0, 0.0, 0.0], 5)?;
+    let hits = hnsw_search(
+        &vault.store,
+        &vault.config,
+        &rtxn,
+        &[1.0, 0.0, 0.0, 0.0],
+        5,
+        false,
+    )?;
     assert!(
         hits.iter().all(|hit| hit.id != from),
         "search must not return the deleted node"
@@ -1592,4 +1600,339 @@ fn select_best_entry_point_keeps_suggested_on_fully_reachable_graph_with_single_
         ops <= single_bfs_budget,
         "expected single-BFS early-exit, got {ops} ops > {single_bfs_budget}"
     );
+}
+
+// ===== EMB-2 (ONE-1334) MRL funnel =====
+
+fn funnel_config(dims: usize, fast_dims: Option<u16>, ef: usize) -> VaultConfig {
+    let mut config = VaultConfig::device();
+    config.dimensions = dims;
+    config.fast_dims = fast_dims;
+    config.embedding_model = Some("test-model-v1".to_owned());
+    config.map_size = 64 * 1024 * 1024;
+    config.hnsw.m_max_0 = 16;
+    config.hnsw.ef_construction = ef;
+    config.hnsw.ef_search = ef;
+    config
+}
+
+/// Inserts entities + vectors through the public write path so construction
+/// exercises the real (prefix-scored) insert code. Ids ascend with index.
+fn build_funnel_vault(vault: &Vault, vectors: &[Vec<f32>]) -> Result<Vec<EntityId>> {
+    let mut ids = Vec::with_capacity(vectors.len());
+    for index in 0..vectors.len() {
+        let id = id_from_u64(index as u64 + 1);
+        vault.put_entity(&id, 1, point(1, 1), 1, b"node")?;
+        ids.push(id);
+    }
+    let mut batch = vault.batch();
+    for (id, vector) in ids.iter().zip(vectors) {
+        batch = batch.vector(id, vector);
+    }
+    batch.commit()?;
+    Ok(ids)
+}
+
+/// Exact top-k by cosine distance over the first `dims` components, ties by
+/// id bytes ascending (the pinned funnel tiebreak).
+fn brute_force_top_k(
+    ids: &[EntityId],
+    vectors: &[Vec<f32>],
+    query: &[f32],
+    dims: usize,
+    k: usize,
+) -> Vec<EntityId> {
+    let mut scored: Vec<HeapEntry> = ids
+        .iter()
+        .zip(vectors)
+        .map(|(id, vector)| HeapEntry {
+            id: *id,
+            distance: cosine_distance(
+                &query[..dims.min(query.len())],
+                &vector[..dims.min(vector.len())],
+            ),
+        })
+        .collect();
+    scored.sort_unstable();
+    scored.truncate(k);
+    scored.into_iter().map(|entry| entry.id).collect()
+}
+
+#[test]
+fn funnel_rescore_matches_brute_force_full_dim_top10() -> Result<()> {
+    const N: usize = 96;
+    const DIMS: usize = 8;
+    // ef_search >= fixture count: the beam holds every reachable node, so
+    // recall@10 == 1.0 is structural, not flaky (AC1).
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(
+        temp_dir.path(),
+        funnel_config(DIMS, Some((DIMS / 2) as u16), N.max(128)),
+    )?;
+    let mut state = 0x1334;
+    let vectors: Vec<Vec<f32>> = (0..N).map(|_| pseudo_vector(&mut state, DIMS)).collect();
+    let ids = build_funnel_vault(&vault, &vectors)?;
+
+    let mut query_state = 0xBEEF;
+    for _ in 0..6 {
+        let query = pseudo_vector(&mut query_state, DIMS);
+        let got: Vec<EntityId> = vault
+            .search_vector(&query, 10)?
+            .into_iter()
+            .map(|scored| scored.id)
+            .collect();
+        let expected = brute_force_top_k(&ids, &vectors, &query, DIMS, 10);
+        assert_eq!(
+            got, expected,
+            "funnel rescore must equal exact full-dim top-10 (same ids, same order)"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn funnel_prefix_length_query_returns_prefix_ranking() -> Result<()> {
+    const N: usize = 64;
+    const DIMS: usize = 8;
+    const FAST: usize = DIMS / 2;
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(
+        temp_dir.path(),
+        funnel_config(DIMS, Some(FAST as u16), N.max(128)),
+    )?;
+    let mut state = 0x1334_0002;
+    let vectors: Vec<Vec<f32>> = (0..N).map(|_| pseudo_vector(&mut state, DIMS)).collect();
+    let ids = build_funnel_vault(&vault, &vectors)?;
+
+    let full_query = pseudo_vector(&mut state, DIMS);
+    let prefix_query = &full_query[..FAST];
+    let got: Vec<EntityId> = vault
+        .search_vector(prefix_query, 10)?
+        .into_iter()
+        .map(|scored| scored.id)
+        .collect();
+    let expected = brute_force_top_k(&ids, &vectors, prefix_query, FAST, 10);
+    assert_eq!(
+        got, expected,
+        "a fast_dims-length query must rank by prefix similarity"
+    );
+    Ok(())
+}
+
+/// Three vectors whose prefix ranking and full-dim ranking provably differ:
+/// v1/v2 share a prefix with opposite tails, v3 is prefix-close to neither.
+fn skip_rescore_fixture() -> Vec<Vec<f32>> {
+    vec![
+        vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        vec![1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0],
+        vec![0.9, 0.1, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    ]
+}
+
+#[test]
+fn funnel_skip_rescore_flag_controls_ranking_space() -> Result<()> {
+    const DIMS: usize = 8;
+    const FAST: usize = 4;
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), funnel_config(DIMS, Some(FAST as u16), 128))?;
+    let vectors = skip_rescore_fixture();
+    let ids = build_funnel_vault(&vault, &vectors)?;
+    let query = &vectors[0];
+
+    // Prefix space: v1 and v2 tie exactly (identical prefixes) -> id asc,
+    // then v3. Full space: v1, then v3, then v2 (opposite tail).
+    let prefix_order = vec![ids[0], ids[1], ids[2]];
+    let full_order = vec![ids[0], ids[2], ids[1]];
+
+    // Direct vault path exposes raw channel order: full-length queries
+    // always rescore (no flag on this path).
+    let vault_path: Vec<EntityId> = vault
+        .search_vector(query, 10)?
+        .into_iter()
+        .map(|scored| scored.id)
+        .collect();
+    assert_eq!(vault_path, full_order, "vault path must rescore");
+    let vault_prefix_path: Vec<EntityId> = vault
+        .search_vector(&query[..FAST], 10)?
+        .into_iter()
+        .map(|scored| scored.id)
+        .collect();
+    assert_eq!(
+        vault_prefix_path, prefix_order,
+        "a fast_dims-length query is inherently prefix-only"
+    );
+
+    // Pipeline final ordering is the 1186-D3 blend, not raw channel order,
+    // so the flag is asserted via channel-limit MEMBERSHIP: with a
+    // channel limit of 2, prefix ranking admits {v1, v2} while the rescored
+    // ranking admits {v1, v3}.
+    let members = |scores: Vec<ScoredEntity>| -> HashSet<EntityId> {
+        scores.into_iter().map(|scored| scored.id).collect()
+    };
+    let rescored = members(vault.query().search_vector(query, 2).limit(10).run()?);
+    assert_eq!(
+        rescored,
+        HashSet::from([ids[0], ids[2]]),
+        "default (skip=false) must admit the full-dim top-2"
+    );
+
+    let hot_lane = members(
+        vault
+            .query()
+            .search_vector(query, 2)
+            .skip_vector_rescore(true)
+            .limit(10)
+            .run()?,
+    );
+    assert_eq!(
+        hot_lane,
+        HashSet::from([ids[0], ids[1]]),
+        "skip_vector_rescore(true) must admit the prefix top-2"
+    );
+
+    let prefix_query_members = members(
+        vault
+            .query()
+            .search_vector(&query[..FAST], 2)
+            .limit(10)
+            .run()?,
+    );
+    assert_eq!(
+        hot_lane, prefix_query_members,
+        "hot lane must match the fast_dims-length-query channel behavior"
+    );
+    Ok(())
+}
+
+#[test]
+fn funnel_dim_mismatch_rejected_on_vault_and_pipeline() -> Result<()> {
+    const DIMS: usize = 8;
+    const FAST: usize = 4;
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), funnel_config(DIMS, Some(FAST as u16), 128))?;
+    build_funnel_vault(&vault, &skip_rescore_fixture())?;
+
+    for bad_len in [3, 5, 7, 9] {
+        let bad_query = vec![1.0_f32; bad_len];
+        let err = vault.search_vector(&bad_query, 10).unwrap_err();
+        assert_matches!(
+            err,
+            Error::DimensionMismatch { expected: DIMS, got } if got == bad_len
+        );
+        let err = vault
+            .query()
+            .search_vector(&bad_query, 10)
+            .run()
+            .unwrap_err();
+        assert_matches!(
+            err,
+            Error::DimensionMismatch { expected: DIMS, got } if got == bad_len
+        );
+    }
+
+    // No phantom acceptance: with fast_dims None, a prefix-length query
+    // still errors on both paths.
+    let temp_dir_plain = tempdir()?;
+    let plain = Vault::open(temp_dir_plain.path(), funnel_config(DIMS, None, 128))?;
+    build_funnel_vault(&plain, &skip_rescore_fixture())?;
+    let prefix_query = vec![1.0_f32; FAST];
+    let err = plain.search_vector(&prefix_query, 10).unwrap_err();
+    assert_matches!(
+        err,
+        Error::DimensionMismatch {
+            expected: DIMS,
+            got: FAST
+        }
+    );
+    let err = plain
+        .query()
+        .search_vector(&prefix_query, 10)
+        .run()
+        .unwrap_err();
+    assert_matches!(
+        err,
+        Error::DimensionMismatch {
+            expected: DIMS,
+            got: FAST
+        }
+    );
+    Ok(())
+}
+
+/// Prefix-identical / full-dim-opposite pairs: under prefix construction the
+/// paired nodes are mutual nearest neighbors; under full-dim construction
+/// they repel. Proves construction actually slices (AC6) while the funnel
+/// rescore still restores the exact full-dim top-k.
+fn adversarial_vectors(pairs: usize, dims: usize, fast: usize, state: &mut u64) -> Vec<Vec<f32>> {
+    let mut vectors = Vec::with_capacity(pairs * 2);
+    for _ in 0..pairs {
+        let prefix = pseudo_vector(state, fast);
+        let tail = pseudo_vector(state, dims - fast);
+        let mut aligned = prefix.clone();
+        aligned.extend(tail.iter().copied());
+        let mut opposed = prefix;
+        opposed.extend(tail.iter().map(|value| -value));
+        vectors.push(aligned);
+        vectors.push(opposed);
+    }
+    vectors
+}
+
+#[test]
+fn funnel_construction_slices_prefix_and_rescore_restores_exactness() -> Result<()> {
+    const DIMS: usize = 8;
+    const FAST: usize = 4;
+    const PAIRS: usize = 24;
+    let mut state = 0x1334_0006;
+    let vectors = adversarial_vectors(PAIRS, DIMS, FAST, &mut state);
+
+    let funnel_dir = tempdir()?;
+    let funnel_vault = Vault::open(
+        funnel_dir.path(),
+        funnel_config(DIMS, Some(FAST as u16), 128),
+    )?;
+    let ids = build_funnel_vault(&funnel_vault, &vectors)?;
+
+    let full_dir = tempdir()?;
+    let full_vault = Vault::open(full_dir.path(), funnel_config(DIMS, None, 128))?;
+    build_funnel_vault(&full_vault, &vectors)?;
+
+    let funnel_rtxn = funnel_vault.store.env.read_txn()?;
+    let full_rtxn = full_vault.store.env.read_txn()?;
+    let mut any_difference = false;
+    for id in &ids {
+        let funnel_neighbors: HashSet<EntityId> =
+            load_neighbors(&funnel_vault.store, &funnel_rtxn, id)?
+                .into_iter()
+                .collect();
+        let full_neighbors: HashSet<EntityId> = load_neighbors(&full_vault.store, &full_rtxn, id)?
+            .into_iter()
+            .collect();
+        if funnel_neighbors != full_neighbors {
+            any_difference = true;
+            break;
+        }
+    }
+    assert!(
+        any_difference,
+        "prefix construction must produce a different graph shape than full-dim construction"
+    );
+    drop(funnel_rtxn);
+    drop(full_rtxn);
+
+    let mut query_state = 0x1334_0007;
+    for _ in 0..5 {
+        let query = pseudo_vector(&mut query_state, DIMS);
+        let got: Vec<EntityId> = funnel_vault
+            .search_vector(&query, 10)?
+            .into_iter()
+            .map(|scored| scored.id)
+            .collect();
+        let expected = brute_force_top_k(&ids, &vectors, &query, DIMS, 10);
+        assert_eq!(
+            got, expected,
+            "funnel rescore must restore exact full-dim top-k on the adversarial fixture"
+        );
+    }
+    Ok(())
 }
