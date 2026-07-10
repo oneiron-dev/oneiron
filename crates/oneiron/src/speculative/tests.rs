@@ -35,11 +35,7 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
 
-fn partial<'a>(
-    text: &'a str,
-    labels: &'a [String],
-    terms: &'a [String],
-) -> SpeculativePartial<'a> {
+fn partial<'a>(text: &'a str, labels: &'a [String], terms: &'a [String]) -> SpeculativePartial<'a> {
     SpeculativePartial {
         text,
         query_vector: None,
@@ -60,7 +56,8 @@ fn count_runs(vault: &Vault, action: RetrievalAction) -> Result<usize> {
 fn refires_only_on_signature_diff() -> Result<()> {
     let (_dir, vault) = test_vault();
     put_text(&vault, entity_id(0x11), "kyoto trip planning")?;
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
 
     let labels = strings(&["Kyoto"]);
     let terms = strings(&["trip"]);
@@ -83,7 +80,8 @@ fn refires_only_on_signature_diff() -> Result<()> {
 #[test]
 fn fire_cap_exhausts_after_max_fires() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
 
     for index in 0..6_usize {
         let labels = strings(&[&format!("entity-{index}")]);
@@ -109,9 +107,13 @@ fn speculative_fires_are_telemetry_tagged_and_round_trip() -> Result<()> {
 
     // Pre-existing row with another action must keep decoding alongside
     // the new variant.
-    vault.query().search_text("tagged fixture", 5).run_with_telemetry()?;
+    vault
+        .query()
+        .search_text("tagged fixture", 5)
+        .run_with_telemetry()?;
 
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
     for index in 0..3_usize {
         let labels = strings(&[&format!("tag-{index}")]);
         let decision = session.observe_partial(partial("tagged fixture", &labels, &[]))?;
@@ -125,7 +127,8 @@ fn speculative_fires_are_telemetry_tagged_and_round_trip() -> Result<()> {
         .count();
     assert_eq!(speculative, 3, "exactly one tagged row per fire");
     assert!(
-        runs.iter().any(|run| run.action == RetrievalAction::Pipeline),
+        runs.iter()
+            .any(|run| run.action == RetrievalAction::Pipeline),
         "pre-existing rows must still decode"
     );
 
@@ -142,10 +145,14 @@ fn promote_path_returns_warm_pack_verbatim_with_no_new_rows() -> Result<()> {
     put_text(&vault, entity_id(0x31), "promote fixture alpha")?;
     put_text(&vault, entity_id(0x32), "promote fixture beta")?;
 
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
     let labels = strings(&["promote"]);
     let fired = session.observe_partial(partial("promote fixture", &labels, &[]))?;
-    let SpeculativeFireDecision::Fired { run_id: fire_run_id } = fired else {
+    let SpeculativeFireDecision::Fired {
+        run_id: fire_run_id,
+    } = fired
+    else {
         panic!("expected a fire");
     };
     let warm: Vec<ScoredEntity> = session.warm_candidates().to_vec();
@@ -176,7 +183,8 @@ fn finalize_runs_full_pass_and_warm_fills() -> Result<()> {
     put_text(&vault, warm_b, "alfaseed apricot")?;
     put_text(&vault, fresh_c, "gammaseed grape")?;
 
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
     let fire_labels = strings(&["alpha"]);
     let fired = session.observe_partial(partial("alfaseed", &fire_labels, &[]))?;
     assert!(matches!(fired, SpeculativeFireDecision::Fired { .. }));
@@ -219,7 +227,8 @@ fn finalize_runs_full_pass_and_warm_fills() -> Result<()> {
 #[test]
 fn empty_signature_never_fires() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
 
     let empty: Vec<String> = Vec::new();
     let whitespace = strings(&["   ", ""]);
@@ -236,7 +245,8 @@ fn empty_signature_never_fires() -> Result<()> {
 fn fire_error_leaves_session_state_unchanged() -> Result<()> {
     let (_dir, vault) = test_vault();
     put_text(&vault, entity_id(0x51), "retry fixture")?;
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
 
     let labels = strings(&["retry"]);
     let bad_vector = [f32::NAN, 0.0, 0.0, 0.0];
@@ -248,7 +258,10 @@ fn fire_error_leaves_session_state_unchanged() -> Result<()> {
             salient_terms: &[],
         })
         .unwrap_err();
-    assert!(!matches!(err, Error::InvalidConfig(_)), "vector component error expected: {err:?}");
+    assert!(
+        !matches!(err, Error::InvalidConfig(_)),
+        "vector component error expected: {err:?}"
+    );
     assert_eq!(session.fires_used(), 0);
     assert!(session.warm_candidates().is_empty());
 
@@ -310,7 +323,10 @@ fn zero_limits_fail_closed_and_zero_cap_is_legal() -> Result<()> {
     let outcome = session.finalize(partial("limits fixture", &labels, &[]))?;
     assert!(matches!(
         outcome,
-        SpeculativeFinal::Finalized { warm_appended: 0, .. }
+        SpeculativeFinal::Finalized {
+            warm_appended: 0,
+            ..
+        }
     ));
     Ok(())
 }
@@ -444,7 +460,8 @@ fn fire_hot_bumps_pending_embedding_claims() -> Result<()> {
         .text(&claim_id, &[("body", "hotbump needle")])
         .commit()?;
 
-    let mut session = SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
+    let mut session =
+        SpeculativeSession::new(Arc::clone(&vault), SpeculativeSessionConfig::default());
     let labels = strings(&["hotbump"]);
     let fired = session.observe_partial(partial("hotbump needle", &labels, &[]))?;
     assert!(matches!(fired, SpeculativeFireDecision::Fired { .. }));
