@@ -652,6 +652,14 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
         ),
     )?;
 
+    // Zero-amount settlements are rejected (nothing to record; keeps the
+    // usage entry log bounded by the row limit).
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 0, 0, 2_000, "settle:zero"),
+        Err(Error::InvalidConnectorKeyBody(
+            "settle amount must be at least 1"
+        ))
+    ));
     // Event identity is required and shape-checked.
     assert!(matches!(
         vault.settle_connector_spend(&id, 0, 10, 2_000, "  "),
@@ -732,5 +740,50 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
             "content-mismatched replay (row {row}, amount {amount}) must fail closed"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn stored_form_must_be_canonical() -> Result<()> {
+    // The read path (connector index, gate resolution, row matching) is
+    // keyed on normalized channel strings, so validate rejects any record
+    // whose STORED connector/channel_class is not already canonical — a
+    // non-canonical stored key would exist but silently fail to govern.
+    let non_canonical_connector =
+        ConnectorKeyRecord::active(" Slack-Chat ", None, Vec::new(), 1_000);
+    assert!(matches!(
+        encode_connector_key_body(&non_canonical_connector),
+        Err(Error::InvalidConnectorKeyBody(
+            "connector must be stored normalized"
+        ))
+    ));
+
+    let mut non_canonical_class = EffectorBudget::rate(5, 60);
+    non_canonical_class.channel_class = Some("Slack-Chat".to_owned());
+    let record = ConnectorKeyRecord::active("slack", None, vec![non_canonical_class], 1_000);
+    assert!(matches!(
+        encode_connector_key_body(&record),
+        Err(Error::InvalidConnectorKeyBody(
+            "channel_class must be stored normalized"
+        ))
+    ));
+
+    // The Vault write door normalizes before validating, so messy owner
+    // input still registers — stored canonical — and governs the normalized
+    // effect (the AC15 gate test covers the governs half end-to-end).
+    let (_tmp, vault) = temp_vault();
+    let mut messy = ConnectorKeyRecord::active(" Slack-Chat ", None, Vec::new(), 1_000);
+    messy.budgets = vec![EffectorBudget::rate(5, 60)];
+    messy.budgets[0].channel_class = Some(" Slack-Chat ".to_owned());
+    let registered = vault.register_connector_key(&test_id(0xE7), messy)?;
+    assert_eq!(registered.connector, "slack_chat");
+    assert_eq!(
+        registered.budgets[0].channel_class.as_deref(),
+        Some("slack_chat")
+    );
+    assert!(
+        vault.connector_key_for("slack-chat", None)?.is_some(),
+        "stored form == index form: the canonical lookup resolves the key"
+    );
     Ok(())
 }

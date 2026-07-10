@@ -492,6 +492,15 @@ fn validate_connector_token(connector: &str) -> Result<()> {
     if connector.as_bytes().contains(&0) {
         return Err(invalid_body("connector must not contain NUL"));
     }
+    // The stored form MUST be the canonical (normalized) form: the connector
+    // index key and the gate's governing-key lookup are both derived from
+    // the normalized channel, so a record stored non-canonical would exist
+    // but never match — a budget key that silently fails to govern. Vault
+    // write doors normalize before validate; this makes the invariant hold
+    // for every encode/decode, including replicated or imported bodies.
+    if connector != normalize_connector_key(connector) {
+        return Err(invalid_body("connector must be stored normalized"));
+    }
     Ok(())
 }
 
@@ -524,10 +533,16 @@ fn validate_budget_row(budget: &EffectorBudget) -> Result<()> {
             }
         }
     }
-    if let Some(channel_class) = budget.channel_class.as_deref()
-        && normalize_connector_key(channel_class).is_empty()
-    {
-        return Err(invalid_body("channel_class must not be blank"));
+    if let Some(channel_class) = budget.channel_class.as_deref() {
+        if normalize_connector_key(channel_class).is_empty() {
+            return Err(invalid_body("channel_class must not be blank"));
+        }
+        // Same stored-form == index-form invariant as the connector token:
+        // row matching compares against the normalized effect channel, so a
+        // non-canonical stored narrowing would never match any dispatch.
+        if channel_class != normalize_connector_key(channel_class) {
+            return Err(invalid_body("channel_class must be stored normalized"));
+        }
     }
     Ok(())
 }
@@ -1830,6 +1845,11 @@ impl Vault {
         }
         if event_ref.as_bytes().contains(&0) {
             return Err(invalid_body("settle event_ref must not contain NUL"));
+        }
+        // A zero-amount settlement records nothing and would only grow the
+        // usage entry log; entry counts stay bounded by the row limit.
+        if minor_units == 0 {
+            return Err(invalid_body("settle amount must be at least 1"));
         }
         let settled_at = crate::unix_seconds_now();
 
