@@ -71,6 +71,7 @@ pub mod receipt;
 pub mod recovery;
 pub mod registry;
 pub mod repo_mutation;
+pub mod rerank;
 pub mod run_tree;
 pub mod serialize;
 pub mod settings;
@@ -584,6 +585,7 @@ pub use crate::repo_mutation::{
     repo_commit_for_provenance_claim, repo_commit_provenance, repo_commit_provenance_from_git_note,
     repo_provenance_git_note,
 };
+pub use crate::rerank::{RERANK_TOP_N_DEFAULT, RerankCandidate, RerankOptions, Reranker};
 pub use crate::run_tree::{
     RunTree, RunTreeAdapter, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeNode,
     RunTreeRepair, RunTreeStatus, RunTreeTimestamps, render_run_tree,

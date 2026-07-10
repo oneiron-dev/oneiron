@@ -33,6 +33,7 @@ use crate::registry::{
     ENTITY_TYPE_SESSION, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
+use crate::rerank::{RerankCandidate, RerankOptions, Reranker};
 use crate::store::{
     RetrievalAction, RetrievalBlendWeights, RetrievalRunId, RetrievalRunRecord,
     RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
@@ -509,6 +510,7 @@ pub struct PipelineBuilder<'a> {
     temporal_now: Option<u64>,
     telemetry_action: RetrievalAction,
     capture_retrieval_trace: bool,
+    rerank: Option<(&'a dyn Reranker, RerankOptions)>,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -541,6 +543,7 @@ impl<'a> PipelineBuilder<'a> {
             temporal_now: None,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
+            rerank: None,
         }
     }
 
@@ -561,6 +564,17 @@ impl<'a> PipelineBuilder<'a> {
     /// Enables opt-in per-stage retrieval trace capture for this run.
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.capture_retrieval_trace = enabled;
+        self
+    }
+
+    /// Attaches a host-injected top-N reranker for this run (RET-010,
+    /// 1186-D2). Presence IS the feature flag: no reranker attached means
+    /// rerank is off and the pipeline behaves exactly as before. The block
+    /// size is `options.top_n`; the pipeline never overfetches on rerank's
+    /// behalf — the reranker only sees more than `result_limit` candidates
+    /// when the caller's per-channel limits exceed `result_limit`.
+    pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
+        self.rerank = Some((reranker, options));
         self
     }
 
@@ -986,6 +1000,32 @@ impl<'a> PipelineBuilder<'a> {
             )));
         }
 
+        // RET-010 rerank knobs fail closed before any channel work, in the
+        // same spirit as the rank profile above: an invalid `top_n` or a
+        // missing query is a caller bug even when the block would be empty
+        // on this run.
+        let rerank_query = match self.rerank.as_ref() {
+            None => None,
+            Some((_, options)) => {
+                if options.top_n == 0 {
+                    return Err(Error::InvalidConfig(
+                        "rerank top_n must be greater than zero".to_owned(),
+                    ));
+                }
+                let query = options
+                    .query
+                    .as_deref()
+                    .or_else(|| self.text_search.as_ref().map(|(query, _)| query.as_str()));
+                let Some(query) = query else {
+                    return Err(Error::InvalidConfig(
+                        "rerank requires a query: set RerankOptions::query or search_text"
+                            .to_owned(),
+                    ));
+                };
+                Some(query.to_owned())
+            }
+        };
+
         if self.text_search.is_some() {
             self.vault.ensure_text_index_trusted()?;
         }
@@ -1009,6 +1049,7 @@ impl<'a> PipelineBuilder<'a> {
             empty_reason,
             signal_components,
             blend_components,
+            rerank_merged_components,
             retrieval_trace,
         ) = {
             let mut ranked_lists = Vec::new();
@@ -1578,6 +1619,90 @@ impl<'a> PipelineBuilder<'a> {
 
             let before_limit = scores.len();
             fusion::sort_scored_entities_desc(&mut scores);
+
+            // RET-010 rerank hook: post-sort, pre-budget/pre-truncate, so the
+            // reranker sees the blended+filtered ordering over more than
+            // `result_limit` candidates and the budget/truncate operate on
+            // the final relevance order. Score-ladder reassignment: the block
+            // is permuted by (rerank score desc, id bytes asc) but position i
+            // keeps the i-th highest ENGINE score, so every downstream
+            // order-by-score is stable with the rerank order; raw reranker
+            // scores survive in the Rerank components.
+            let mut rerank_merged_components = None;
+            let mut reranked_trace_scores = None;
+            if let Some((reranker, options)) = self.rerank.as_ref() {
+                let query = rerank_query.as_deref().unwrap_or_default();
+                let block_len = options.top_n.min(scores.len());
+                let block_ids: Vec<EntityId> =
+                    scores[..block_len].iter().map(|scored| scored.id).collect();
+                let ladder: Vec<f32> = scores[..block_len]
+                    .iter()
+                    .map(|scored| scored.score)
+                    .collect();
+                let candidates: Vec<RerankCandidate<'_>> = scores[..block_len]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, scored)| RerankCandidate {
+                        id: scored.id,
+                        score: scored.score,
+                        rank: (index + 1).min(u32::MAX as usize) as u32,
+                        claim: claim_gate
+                            .decisions
+                            .get(&scored.id)
+                            .and_then(|decision| decision.as_ref()),
+                    })
+                    .collect();
+                let rerank_scores = reranker.rerank(query, &candidates)?;
+                drop(candidates);
+                if rerank_scores.len() != block_len {
+                    return Err(Error::InvariantViolation(
+                        "reranker returned mismatched score count",
+                    ));
+                }
+                if rerank_scores.iter().any(|score| !score.is_finite()) {
+                    return Err(Error::InvariantViolation(
+                        "reranker returned non-finite score",
+                    ));
+                }
+
+                let mut order: Vec<usize> = (0..block_len).collect();
+                order.sort_by(|&left, &right| {
+                    rerank_scores[right]
+                        .partial_cmp(&rerank_scores[left])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| block_ids[left].as_bytes().cmp(block_ids[right].as_bytes()))
+                });
+                let mut rerank_components =
+                    HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
+                for (new_pos, &old_pos) in order.iter().enumerate() {
+                    scores[new_pos] = ScoredEntity {
+                        id: block_ids[old_pos],
+                        score: ladder[new_pos],
+                    };
+                    rerank_components
+                        .entry(block_ids[old_pos])
+                        .or_default()
+                        .push(RetrievalScoreComponent {
+                            signal: RetrievalSignal::Rerank,
+                            rank: (new_pos + 1).min(u32::MAX as usize) as u32,
+                            score: rerank_scores[old_pos],
+                        });
+                }
+
+                // Rerank components append AFTER the blend components in each
+                // entity's vector (pinned merge order; no dedup, no re-sort).
+                let mut merged = blend_components.clone();
+                for (id, components) in rerank_components {
+                    merged.entry(id).or_default().extend(components);
+                }
+                rerank_merged_components = Some(merged);
+
+                if capture_retrieval_trace {
+                    reranked_trace_scores =
+                        Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
+                }
+            }
+
             if let Some(context_pack_budget) = self.context_pack_budget {
                 apply_context_pack_retrieval_budget(
                     &mut scores,
@@ -1614,6 +1739,7 @@ impl<'a> PipelineBuilder<'a> {
                     blend_weights,
                     explicit_time_dependent_now,
                     occurred_range,
+                    rerank_query.as_deref(),
                     &candidate_set,
                 );
                 Some(RetrievalTrace {
@@ -1633,11 +1759,17 @@ impl<'a> PipelineBuilder<'a> {
                         &blend_components,
                         trace_candidate_limit,
                     ),
+                    // Rerank inactive: passthrough mirror of `final` (the
+                    // 1186-D5 reserved slot). Active: the post-rerank,
+                    // pre-budget/pre-truncate ordering with the rerank
+                    // components appended after the blend components.
                     reranked: retrieval_trace_stage_record(
                         RetrievalTraceStage::Reranked,
-                        &final_scores,
+                        reranked_trace_scores.as_deref().unwrap_or(&final_scores),
                         &signal_components,
-                        &blend_components,
+                        rerank_merged_components
+                            .as_ref()
+                            .unwrap_or(&blend_components),
                         trace_candidate_limit,
                     ),
                     final_stage: retrieval_trace_stage_record(
@@ -1661,6 +1793,7 @@ impl<'a> PipelineBuilder<'a> {
                 empty_reason,
                 signal_components,
                 blend_components,
+                rerank_merged_components,
                 retrieval_trace,
             )
         };
@@ -1678,8 +1811,13 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
 
-        let score_breakdown =
-            telemetry_score_breakdown(&scores, &signal_components, &blend_components);
+        let score_breakdown = telemetry_score_breakdown(
+            &scores,
+            &signal_components,
+            rerank_merged_components
+                .as_ref()
+                .unwrap_or(&blend_components),
+        );
         let ppr_search_executed = self
             .ppr_search
             .as_ref()
@@ -1961,6 +2099,7 @@ fn retrieval_trace_fork_hash(
     blend_weights: RetrievalBlendWeights,
     explicit_time_dependent_now_secs: Option<u64>,
     resolved_occurred_range: Option<(u64, u64)>,
+    rerank_query: Option<&str>,
     candidate_set: &[[u8; ENTITY_ID_LEN]],
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
@@ -1994,9 +2133,28 @@ fn retrieval_trace_fork_hash(
     fork_hash_recency_weight_table(&mut hasher);
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
     fork_hash_scoring_constants(&mut hasher);
+    fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_candidate_set(&mut hasher, candidate_set);
 
     hasher.finalize().into()
+}
+
+/// RET-010 rerank segment. Appending the active bool shifts ALL fork hashes
+/// relative to pre-RET-010 binaries; accepted — 1186-D5 pins
+/// schema+determinism within a binary, not cross-version hash stability.
+fn fork_hash_rerank(
+    hasher: &mut Sha256,
+    rerank: Option<&(&dyn Reranker, RerankOptions)>,
+    effective_query: Option<&str>,
+) {
+    let Some((reranker, options)) = rerank else {
+        fork_hash_bool(hasher, false);
+        return;
+    };
+    fork_hash_bool(hasher, true);
+    fork_hash_str(hasher, reranker.id());
+    fork_hash_u64(hasher, options.top_n as u64);
+    fork_hash_str(hasher, effective_query.unwrap_or_default());
 }
 
 fn fork_hash_vector_query(hasher: &mut Sha256, query: Option<&(Vec<f32>, usize)>) {
