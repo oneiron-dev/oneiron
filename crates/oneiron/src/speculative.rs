@@ -242,7 +242,9 @@ impl SpeculativeSession {
             .run_with_pending_vectors()?;
 
         let mut scores = fresh.value;
-        let fresh_ids: BTreeSet<crate::entity_id::EntityId> =
+        // Dedupe against fresh results AND already-appended warm entries:
+        // a warm-internal repeat must not double-append.
+        let mut seen: BTreeSet<crate::entity_id::EntityId> =
             scores.iter().map(|scored| scored.id).collect();
         let mut warm_appended = 0;
         if let Some(warm) = self.warm {
@@ -250,7 +252,7 @@ impl SpeculativeSession {
                 if scores.len() >= self.config.final_limit {
                     break;
                 }
-                if fresh_ids.contains(&candidate.id) {
+                if !seen.insert(candidate.id) {
                     continue;
                 }
                 scores.push(candidate);

@@ -43,6 +43,8 @@ const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
 const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
 const ERR_VECTOR_ROW_TOO_SHORT: &str = "hnsw vector row shorter than scoring dimensions";
+const ERR_VECTOR_ROW_MISSING_AT_RESCORE: &str =
+    "hnsw vector row disappeared between beam traversal and rescore in one snapshot";
 const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
 const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
@@ -923,6 +925,14 @@ pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> R
 /// `fast_dims`-length query can never be rescored — no full query exists —
 /// so the flag is implicit there. With `fast_dims: None` the behavior is
 /// identical to the pre-funnel path and `skip_rescore` is inert.
+///
+/// Recall contract: the rescore restores exact full-dim ORDERING of the
+/// retrieved beam only — it is not global exactness. Candidate selection
+/// happens in prefix space, so a vector that is distant in the prefix but
+/// near in full dimensions may never enter the `ef_search.max(limit)`-wide
+/// beam and can never be rescored back in. Recall is beam-bounded and
+/// rises with `ef_search`; a beam covering the whole reachable corpus
+/// recovers brute-force parity.
 pub(crate) fn hnsw_search(
     store: &Store,
     config: &VaultConfig,
@@ -976,9 +986,13 @@ pub(crate) fn hnsw_search(
         let mut vector_buffer = Vec::with_capacity(query_vector.len());
         for entry in &mut nearest {
             let Some(row) = load_vector_into(store, rtxn, &entry.id, &mut vector_buffer)? else {
-                // Beam results were existence-checked within this same read
-                // snapshot; keep the prefix distance defensively.
-                continue;
+                // Unreachable under LMDB snapshot isolation: every beam
+                // result loaded its row within THIS rtxn to be scored at
+                // all. If it fires anyway the index is inconsistent — fail
+                // closed rather than leave this entry's PREFIX distance to
+                // be ranked against the others' full-dim distances (two
+                // incompatible scales in one ordering).
+                return Err(Error::CorruptedIndex(ERR_VECTOR_ROW_MISSING_AT_RESCORE));
             };
             // Same fail-closed rule as `score_prefix`: a row shorter than
             // the full query is a truncated/corrupted row and must not

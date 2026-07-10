@@ -1662,8 +1662,12 @@ fn brute_force_top_k(
 fn funnel_rescore_matches_brute_force_full_dim_top10() -> Result<()> {
     const N: usize = 96;
     const DIMS: usize = 8;
-    // ef_search >= fixture count: the beam holds every reachable node, so
-    // recall@10 == 1.0 is structural, not flaky (AC1).
+    // ef_search >= fixture count is the brief's OWN pin for AC1 ("leaves
+    // beam-escape flake room" otherwise): the beam holds every reachable
+    // node, so recall@10 == 1.0 is structural, not flaky. This proves
+    // exact ORDERING of the rescored beam in the beam-covers-corpus
+    // regime; beam-bounded recall under narrower beams is covered by
+    // `funnel_recall_is_beam_bounded_and_rises_with_ef_search`.
     let temp_dir = tempdir()?;
     let vault = Vault::open(
         temp_dir.path(),
@@ -1861,8 +1865,10 @@ fn funnel_dim_mismatch_rejected_on_vault_and_pipeline() -> Result<()> {
 
 /// Prefix-identical / full-dim-opposite pairs: under prefix construction the
 /// paired nodes are mutual nearest neighbors; under full-dim construction
-/// they repel. Proves construction actually slices (AC6) while the funnel
-/// rescore still restores the exact full-dim top-k.
+/// they repel. Proves construction actually slices (AC6) while the beam
+/// rescore still matches brute force in this fixture's beam-covers-corpus
+/// regime (recall under narrower beams is covered by
+/// `funnel_recall_is_beam_bounded_and_rises_with_ef_search`).
 fn adversarial_vectors(pairs: usize, dims: usize, fast: usize, state: &mut u64) -> Vec<Vec<f32>> {
     let mut vectors = Vec::with_capacity(pairs * 2);
     for _ in 0..pairs {
@@ -1879,7 +1885,7 @@ fn adversarial_vectors(pairs: usize, dims: usize, fast: usize, state: &mut u64) 
 }
 
 #[test]
-fn funnel_construction_slices_prefix_and_rescore_restores_exactness() -> Result<()> {
+fn funnel_construction_slices_prefix_and_beam_rescore_matches_brute_force() -> Result<()> {
     const DIMS: usize = 8;
     const FAST: usize = 4;
     const PAIRS: usize = 24;
@@ -1931,7 +1937,7 @@ fn funnel_construction_slices_prefix_and_rescore_restores_exactness() -> Result<
         let expected = brute_force_top_k(&ids, &vectors, &query, DIMS, 10);
         assert_eq!(
             got, expected,
-            "funnel rescore must restore exact full-dim top-k on the adversarial fixture"
+            "beam rescore must equal brute force while the beam covers the corpus"
         );
     }
     Ok(())
@@ -1993,5 +1999,75 @@ fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
         .limit(3)
         .run()?;
     assert_eq!(hot_lane.len(), 3);
+    Ok(())
+}
+
+/// Grok #473-F5: NON-vacuous recall coverage. The pinned AC1 fixture runs
+/// with a beam covering the corpus (deterministic by design, per the brief's
+/// "ef_search >= fixture count" clause); this test is its complement — a
+/// beam strictly narrower than the corpus, where the funnel's recall is
+/// genuinely beam-bounded: prefix-space candidate selection can miss
+/// full-space neighbors and the rescore cannot bring them back.
+#[test]
+fn funnel_recall_is_beam_bounded_and_rises_with_ef_search() -> Result<()> {
+    const DIMS: usize = 8;
+    const FAST: usize = 4;
+    const PAIRS: usize = 80; // 160 vectors, prefix-tied/tail-opposed
+    const K: usize = 10;
+    let mut state = 0x1334_00F5;
+    let vectors = adversarial_vectors(PAIRS, DIMS, FAST, &mut state);
+    let corpus = vectors.len();
+    let queries: Vec<Vec<f32>> = (0..8).map(|_| pseudo_vector(&mut state, DIMS)).collect();
+    let ids: Vec<EntityId> = (1..=corpus as u64).map(id_from_u64).collect();
+
+    let temp_dir = tempdir()?;
+    {
+        // Build once; construction width stays fixed (part of the compat
+        // record) while ef_search is retuned per reopen (search-time only).
+        let vault = Vault::open(temp_dir.path(), funnel_config(DIMS, Some(FAST as u16), 64))?;
+        build_funnel_vault(&vault, &vectors)?;
+    }
+
+    let recall_at = |ef_search: usize| -> Result<f64> {
+        let mut config = funnel_config(DIMS, Some(FAST as u16), 64);
+        config.hnsw.ef_search = ef_search;
+        let vault = Vault::open(temp_dir.path(), config)?;
+        let mut hits = 0_usize;
+        for query in &queries {
+            let got: HashSet<EntityId> = vault
+                .search_vector(query, K)?
+                .into_iter()
+                .map(|scored| scored.id)
+                .collect();
+            hits += brute_force_top_k(&ids, &vectors, query, DIMS, K)
+                .into_iter()
+                .filter(|id| got.contains(id))
+                .count();
+        }
+        Ok(hits as f64 / (queries.len() * K) as f64)
+    };
+
+    // Deterministic seeded fixture; measured once at pinning time:
+    // narrow = 0.3375, mid = 0.8625, full = 1.0.
+    let narrow = recall_at(K)?; // effective beam = ef.max(limit) = 10
+    let mid = recall_at(48)?;
+    let full = recall_at(corpus)?;
+
+    assert!(
+        narrow < 1.0,
+        "non-vacuous: a beam of {K} over {corpus} vectors must actually miss, got recall {narrow}"
+    );
+    assert!(
+        narrow >= 0.25,
+        "sanity floor for the deterministic fixture, got {narrow}"
+    );
+    assert!(
+        narrow < mid && mid <= full,
+        "recall must rise with ef_search: {narrow} < {mid} <= {full}"
+    );
+    assert!(
+        (full - 1.0).abs() < f64::EPSILON,
+        "a beam covering the corpus recovers brute-force parity (the pinned AC1 regime), got {full}"
+    );
     Ok(())
 }
