@@ -321,6 +321,7 @@ impl DreamerConsolidationScope {
 /// turns may seed first-party claims; every other role — including
 /// [`DreamerTurnRole::Unknown`] — is excluded fail-closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DreamerTurnRole {
     User,
     Assistant,

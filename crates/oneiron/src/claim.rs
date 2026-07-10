@@ -1721,9 +1721,9 @@ pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
 }
 
 /// GATE-11: a generated-origin claim may never serve as extraction evidence
-/// or corroboration for another first-party write — only original turn
-/// records are admissible evidence inputs. Reads declared source AND the
-/// federated pre-restamp origin, like [`claim_consolidatable`].
+/// or corroboration for another first-party write — generated output must
+/// never corroborate itself into higher trust. Reads declared source AND
+/// the federated pre-restamp origin, like [`claim_consolidatable`].
 ///
 /// Unlike consolidatability, approval status does NOT clear evidence
 /// admissibility: an `Approved` Generated claim is merge-eligible but still
