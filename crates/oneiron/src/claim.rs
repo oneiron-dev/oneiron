@@ -793,6 +793,10 @@ impl ClaimSource {
 
 const CLAIM_SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
 const CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY: &str = "federated_original_source";
+/// Scope key carrying the GATE-05 evidence-taint class stamped by the
+/// promotion writer when a consolidation meet lands at/below `tool_output`
+/// (engine-owned scope-map pattern, like `federated_original_source`).
+pub(crate) const CLAIM_SCOPE_EVIDENCE_TAINT_KEY: &str = "evidence_taint";
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
 const DEFAULT_CLAIM_SENSITIVITY_BAND: u8 = 0;
@@ -840,6 +844,34 @@ fn claim_federated_original_source(body: &ClaimBody) -> Option<ClaimSource> {
         // treats it as generated-origin so authority consumers fail closed.
         MapValue::Duplicate => Some(ClaimSource::Generated),
     }
+}
+
+/// GATE-05 evidence-taint reader (ONE-1385): the trust-lattice meet class
+/// recorded on a derived claim whose evidence passed through external
+/// sources. A duplicated or unparseable taint marker is ambiguous; read
+/// admission treats it as maximally tainted (`Imported`, the lattice
+/// bottom) so authority consumers fail closed.
+pub(crate) fn claim_evidence_taint(body: &ClaimBody) -> Option<ClaimSource> {
+    let Some(Value::Map(entries)) = &body.scope else {
+        return None;
+    };
+
+    match single_map_value(entries, CLAIM_SCOPE_EVIDENCE_TAINT_KEY) {
+        MapValue::Missing => None,
+        MapValue::Present(value) => Some(
+            value
+                .as_str()
+                .and_then(ClaimSource::parse)
+                .unwrap_or(ClaimSource::Imported),
+        ),
+        MapValue::Duplicate => Some(ClaimSource::Imported),
+    }
+}
+
+/// A taint meet at/below `tool_output` in the D10 lattice blocks
+/// consolidation until a human re-stamp (`Approved`) clears admission.
+const fn evidence_taint_blocks_consolidation(taint: ClaimSource) -> bool {
+    matches!(taint, ClaimSource::ToolOutput | ClaimSource::Imported)
 }
 
 pub(crate) fn claim_generated_origin(body: &ClaimBody) -> bool {
@@ -1733,6 +1765,8 @@ pub(crate) fn claim_surfaceable(body: &ClaimBody) -> bool {
 pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
     claim_surfaceable(body)
         && !(body.approval == ClaimApprovalStatus::Auto && claim_generated_origin(body))
+        && !(claim_evidence_taint(body).is_some_and(evidence_taint_blocks_consolidation)
+            && body.approval != ClaimApprovalStatus::Approved)
 }
 
 /// GATE-11: a generated-origin claim may never serve as extraction evidence
