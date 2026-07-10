@@ -15,8 +15,8 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, decode_authority_log_entry_body, genesis_vault_id,
-    validate_authority_log_entry_body_bytes,
+    AuthorityOp, FederationGrantActivation, decode_authority_log_entry_body,
+    federation_grant_activation, genesis_vault_id, validate_authority_log_entry_body_bytes,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
@@ -579,7 +579,15 @@ pub fn authorize_sync_selector(
     if grant.member_ref != selector.member_ref {
         return Err(selector_err(SelectorError::MemberNotGranted));
     }
-    Ok(())
+    // Pact activation gate (ONE-1408): grants without lifecycle entries stay
+    // authorized (Unpacted legacy-allow — shipped guest grants must not
+    // brick); pact-bound grants confer access only while Active. The fold is
+    // recomputed on every call by design (no caching in this chain).
+    let fold = vault.authority_fold()?;
+    match federation_grant_activation(&fold, &selector.grant_id) {
+        FederationGrantActivation::Unpacted | FederationGrantActivation::Active => Ok(()),
+        FederationGrantActivation::Inactive(_) => Err(selector_err(SelectorError::GrantInactive)),
+    }
 }
 
 fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {

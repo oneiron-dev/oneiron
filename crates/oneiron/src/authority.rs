@@ -22,6 +22,11 @@ use crate::batch::EntityMetadataHeader;
 use crate::batch::apply_ops;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::{
+    FederationDirectionScope, FederationPactScope, decode_federation_direction_scope_value,
+    decode_federation_pact_scope_value, encode_federation_pact_scope,
+    federation_direction_scope_value, federation_pact_scope_value,
+};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::temporal::TimeRange;
 use crate::unix_seconds_now;
@@ -95,11 +100,25 @@ const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
 const OP_KIND_RECOVERY_REBOOT: &str = "recovery_reboot";
 const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
+const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
 
 const CONFIRM_KIND_ACCEPT: &str = "accept";
 const CONFIRM_KIND_RESCOPE: &str = "rescope";
 const CONFIRM_KIND_A2A_CONNECT: &str = "a2a_connect";
 const CONFIRM_KIND_REVOKE: &str = "revoke";
+
+const LIFECYCLE_KIND_CONNECT: &str = "connect";
+const LIFECYCLE_KIND_RESCOPE: &str = "rescope";
+const LIFECYCLE_KIND_DISCONNECT: &str = "disconnect";
+const LIFECYCLE_KIND_PROMOTE: &str = "promote";
+const LIFECYCLE_KIND_DISSOLVE: &str = "dissolve";
+
+/// Domain-separated transcript prefix for federation pact gestures.
+pub const FEDERATION_PACT_DOMAIN: &[u8] = b"oneiron/federation/pact/v1";
+/// Domain-separated prefix for the federation pact scope commitment.
+pub const FEDERATION_SCOPE_COMMIT_DOMAIN: &[u8] = b"oneiron/federation/pact-scope/v1";
+/// Upper bound for encoded federation pact scope bytes in a lifecycle op.
+pub const MAX_PACT_SCOPE_BYTES: usize = 4096;
 
 const MAX_PARENTS: usize = 32;
 const MAX_COSIGNS: usize = 8;
@@ -308,6 +327,174 @@ pub struct AuthorityConfirmAction {
     pub nonce: [u8; 16],
 }
 
+/// Federation relationship lifecycle kind (OF-156, option B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FederationLifecycleKind {
+    /// Dual-signed pact creation.
+    Connect,
+    /// Dual-signed re-pact (epoch bump) or unilateral effective-scope narrow.
+    Rescope,
+    /// Unilateral terminal severance.
+    Disconnect,
+    /// Dual-signed terminal succession into a co-owned vault.
+    Promote,
+    /// Unilateral terminal dissolution.
+    Dissolve,
+}
+
+impl FederationLifecycleKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Connect => LIFECYCLE_KIND_CONNECT,
+            Self::Rescope => LIFECYCLE_KIND_RESCOPE,
+            Self::Disconnect => LIFECYCLE_KIND_DISCONNECT,
+            Self::Promote => LIFECYCLE_KIND_PROMOTE,
+            Self::Dissolve => LIFECYCLE_KIND_DISSOLVE,
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            LIFECYCLE_KIND_CONNECT => Some(Self::Connect),
+            LIFECYCLE_KIND_RESCOPE => Some(Self::Rescope),
+            LIFECYCLE_KIND_DISCONNECT => Some(Self::Disconnect),
+            LIFECYCLE_KIND_PROMOTE => Some(Self::Promote),
+            LIFECYCLE_KIND_DISSOLVE => Some(Self::Dissolve),
+            _ => None,
+        }
+    }
+}
+
+/// Peer owner's signed gesture over the pact transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FederationPactGesture {
+    /// Peer owner authority key (Ed25519 or P-256).
+    pub signer: AuthorityKey,
+    /// Raw signature bytes over [`federation_pact_transcript`]; 64 bytes for
+    /// both suites.
+    pub signature: Vec<u8>,
+}
+
+/// Fold-verified federation lifecycle payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FederationLifecycleAction {
+    /// Lifecycle kind.
+    pub kind: FederationLifecycleKind,
+    /// Shared pact identifier — identical on both vaults' logs.
+    pub pact_id: [u8; 32],
+    /// Local type-124 FEDERATION_GRANT entity this pact governs.
+    pub grant_ref: EntityId,
+    /// Peer vault id (peer's genesis hash).
+    pub peer_vault_id: AuthorityVaultId,
+    /// Pact consent epoch: Connect == 1; repact/Promote == cur+1;
+    /// narrow/Disconnect/Dissolve == cur.
+    pub pact_epoch: u64,
+    /// Full disclosed scope pair. Some for Connect and Rescope-repact only.
+    pub pact_scope: Option<FederationPactScope>,
+    /// Local-outbound effective scope. Some ONLY for Rescope-narrow.
+    pub effective_scope: Option<FederationDirectionScope>,
+    /// Keyed scope commitment. Some for Connect / Rescope-repact / Promote.
+    pub scope_digest: Option<[u8; 32]>,
+    /// Peer owner gesture. Some for Connect / Rescope-repact / Promote.
+    pub gesture: Option<FederationPactGesture>,
+    /// Successor co-owned vault id. Some ONLY for Promote.
+    pub successor_vault_id: Option<AuthorityVaultId>,
+    /// Pact nonce feeding the scope commitment and transcript. Never all-zero.
+    pub pact_nonce: [u8; 16],
+}
+
+/// Fold-derived status of one federation pact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FederationPactStatus {
+    /// Pact is live; its grant confers access.
+    Active,
+    /// Equivocation-shaped divergence detected; confers nothing until a fresh
+    /// dual-signed re-pact heals it.
+    Suspended,
+    /// Terminal: succeeded by a co-owned vault.
+    Promoted,
+    /// Terminal: unilaterally severed.
+    Disconnected,
+    /// Terminal: unilaterally dissolved.
+    Dissolved,
+}
+
+impl FederationPactStatus {
+    /// Terminal statuses reject every further lifecycle op.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Promoted | Self::Disconnected | Self::Dissolved)
+    }
+}
+
+/// Fold-derived state of one federation pact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FederationPactState {
+    /// Current pact status.
+    pub status: FederationPactStatus,
+    /// Governed type-124 FEDERATION_GRANT entity.
+    pub grant_ref: EntityId,
+    /// Peer vault id.
+    pub peer_vault_id: AuthorityVaultId,
+    /// Peer owner key pinned at Connect (TOFU).
+    pub peer_owner_key: AuthorityKey,
+    /// Current pact consent epoch.
+    pub pact_epoch: u64,
+    /// Dual-signed scope commitment for the current ceiling.
+    pub scope_digest: [u8; 32],
+    /// Dual-signed ceiling scope pair.
+    pub pact_scope: FederationPactScope,
+    /// OUR outbound overlay, always ⊑ our half of the ceiling.
+    pub effective_scope: FederationDirectionScope,
+    /// Successor co-owned vault id, set by Promote.
+    pub successor_vault_id: Option<AuthorityVaultId>,
+    /// Epoch at which the pact went terminal.
+    pub terminal_epoch: Option<u64>,
+}
+
+/// Activation of a federation grant against the fold-derived pact state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FederationGrantActivation {
+    /// No lifecycle entries name this grant; legacy-allow.
+    Unpacted,
+    /// Pact-bound and Active.
+    Active,
+    /// Pact-bound and non-Active; confers nothing.
+    Inactive(FederationPactStatus),
+}
+
+/// Deterministic per-entry rejection reason for lifecycle ops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FederationLifecycleRejection {
+    /// Non-Connect op names a pact absent from ancestry.
+    UnknownPact,
+    /// Connect names an already-known pact id.
+    DuplicateConnect,
+    /// Connect names a grant_ref already bound to a pact, or a lifecycle op
+    /// names a grant_ref that conflicts with the pact's recorded binding.
+    GrantAlreadyBound,
+    /// Op targets a terminal (Promoted/Disconnected/Dissolved) pact.
+    TerminalPact,
+    /// Rescope-narrow/Promote on a suspended pact.
+    SuspendedPact,
+    /// Pact epoch violates the per-kind epoch rule.
+    EpochMismatch,
+    /// Required peer gesture is missing.
+    GestureMissing,
+    /// Peer gesture failed verification (bad signature, local-roster signer,
+    /// or non-pinned signer).
+    GestureInvalid,
+    /// Scope digest does not commit to the carried scope, or Promote's digest
+    /// differs from the stored one.
+    ScopeDigestMismatch,
+    /// Unilateral narrow escapes the dual-signed ceiling.
+    WidenWithoutGesture,
+    /// Op names a different peer vault than the pact records.
+    PeerVaultMismatch,
+    /// Carried scope failed structural validation.
+    ScopeInvalid,
+}
+
 /// Device authority material carried by genesis/enroll/rotate/recovery ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceAuthority {
@@ -391,6 +578,8 @@ pub enum AuthorityOp {
         /// Target authority entry hash to suppress under most-restrictive-wins.
         pending_widen_hash: AuthorityEntryHash,
     },
+    /// Federation relationship lifecycle op (OF-156, option B).
+    FederationLifecycle(FederationLifecycleAction),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -518,6 +707,13 @@ pub enum AuthorityFoldIssue {
         /// Conflicting signer sequence number.
         seq: u64,
     },
+    /// Federation lifecycle entry rejected by the pact state machine.
+    FederationLifecycleRejected {
+        /// Rejected entry hash.
+        entry: AuthorityEntryHash,
+        /// Deterministic rejection reason.
+        reason: FederationLifecycleRejection,
+    },
 }
 
 /// Fold-visible AUTH-5 state for one detected signer fork.
@@ -585,8 +781,50 @@ pub struct AuthorityFold {
     pub authority_forks: Vec<AuthorityFork>,
     /// Owner-facing AUTHORITY FORK alarms, one per detected fork.
     pub fork_alarms: Vec<AuthorityForkAlarm>,
+    /// Fold-derived federation pact states keyed by pact id.
+    pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+impl AuthorityFold {
+    /// Pact state governing `grant_ref`, if any lifecycle entries name it.
+    ///
+    /// Concurrent Connects on divergent branches can bind one grant_ref under
+    /// two pact ids; the MOST-RESTRICTIVE status wins (Dissolved >
+    /// Disconnected > Promoted > Suspended > Active; ties: lowest pact id) so
+    /// a grant shadowed by any non-Active pact never authorizes.
+    #[must_use]
+    pub fn pact_for_grant(&self, grant_ref: &EntityId) -> Option<&FederationPactState> {
+        let mut best: Option<&FederationPactState> = None;
+        for state in self.federation_pacts.values() {
+            if state.grant_ref != *grant_ref {
+                continue;
+            }
+            if best.is_none_or(|current| state.status > current.status) {
+                best = Some(state);
+            }
+        }
+        best
+    }
+}
+
+/// Activation of `grant_ref` under the fold's pact states.
+///
+/// Grants without lifecycle entries stay `Unpacted` (legacy-allow); pact-bound
+/// grants confer access only while their pact is `Active`.
+#[must_use]
+pub fn federation_grant_activation(
+    fold: &AuthorityFold,
+    grant_ref: &EntityId,
+) -> FederationGrantActivation {
+    match fold.pact_for_grant(grant_ref) {
+        None => FederationGrantActivation::Unpacted,
+        Some(state) if state.status == FederationPactStatus::Active => {
+            FederationGrantActivation::Active
+        }
+        Some(state) => FederationGrantActivation::Inactive(state.status),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -603,6 +841,7 @@ struct FoldState {
     /// concurrent with, or older than, the delayed rotation that revoked them.
     delayed_rotation_veto_revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
+    federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     seqs: BTreeMap<AuthorityKey, u64>,
 }
 
@@ -734,6 +973,104 @@ pub fn verify_authority_signature(signature: &AuthoritySignature, transcript: &[
         }
         _ => false,
     }
+}
+
+/// Domain-separated, side-symmetric transcript both pact owners sign.
+///
+/// `vault_a`/`vault_b` may be passed in either order; the transcript sorts
+/// them ascending byte-wise into `vault_lo`/`vault_hi`, so both sides sign
+/// byte-identical bytes. `successor_vault_id` must be `Some` exactly for
+/// [`FederationLifecycleKind::Promote`].
+#[allow(clippy::too_many_arguments)]
+pub fn federation_pact_transcript(
+    kind: FederationLifecycleKind,
+    pact_id: &[u8; 32],
+    vault_a: &AuthorityVaultId,
+    vault_b: &AuthorityVaultId,
+    pact_epoch: u64,
+    scope_digest: &[u8; 32],
+    successor_vault_id: Option<&AuthorityVaultId>,
+    pact_nonce: &[u8; 16],
+) -> Result<Vec<u8>> {
+    if (kind == FederationLifecycleKind::Promote) != successor_vault_id.is_some() {
+        return Err(invalid_authority());
+    }
+    let (vault_lo, vault_hi) = if vault_a <= vault_b {
+        (vault_a, vault_b)
+    } else {
+        (vault_b, vault_a)
+    };
+    let value = Value::Map(vec![
+        (Value::from("kind"), Value::from(kind.as_str())),
+        (Value::from("pact_id"), binary_value(*pact_id)),
+        (Value::from("vault_lo"), binary_value(*vault_lo)),
+        (Value::from("vault_hi"), binary_value(*vault_hi)),
+        (Value::from("pact_epoch"), Value::from(pact_epoch)),
+        (Value::from("scope_digest"), binary_value(*scope_digest)),
+        (
+            Value::from("successor_vault_id"),
+            successor_vault_id.map_or(Value::Nil, |successor| binary_value(*successor)),
+        ),
+        (Value::from("pact_nonce"), binary_value_16(*pact_nonce)),
+    ]);
+    let unsigned = encode_value(&value)?;
+    let mut transcript = Vec::with_capacity(FEDERATION_PACT_DOMAIN.len() + unsigned.len());
+    transcript.extend_from_slice(FEDERATION_PACT_DOMAIN);
+    transcript.extend_from_slice(&unsigned);
+    Ok(transcript)
+}
+
+/// Domain-separated nonce commitment over canonical pact scope bytes.
+///
+/// `blake3(FEDERATION_SCOPE_COMMIT_DOMAIN || pact_nonce || canonical_scope)`;
+/// the gesture transcript carries only this digest, so a gesture shown to a
+/// third party does not disclose scope contents.
+#[must_use]
+pub fn federation_scope_digest(pact_nonce: &[u8; 16], canonical_scope: &[u8]) -> [u8; 32] {
+    let mut material = Vec::with_capacity(
+        FEDERATION_SCOPE_COMMIT_DOMAIN.len() + pact_nonce.len() + canonical_scope.len(),
+    );
+    material.extend_from_slice(FEDERATION_SCOPE_COMMIT_DOMAIN);
+    material.extend_from_slice(pact_nonce);
+    material.extend_from_slice(canonical_scope);
+    *blake3::hash(&material).as_bytes()
+}
+
+/// Builds a peer gesture by signing the pact transcript with `signer`.
+///
+/// Pure helper usable from either side of the pact; the closure signs the
+/// domain-prefixed transcript bytes (the `sign_guest_share_envelope` pattern).
+#[allow(clippy::too_many_arguments)]
+pub fn sign_federation_pact_gesture<S>(
+    kind: FederationLifecycleKind,
+    pact_id: &[u8; 32],
+    vault_a: &AuthorityVaultId,
+    vault_b: &AuthorityVaultId,
+    pact_epoch: u64,
+    scope_digest: &[u8; 32],
+    successor_vault_id: Option<&AuthorityVaultId>,
+    pact_nonce: &[u8; 16],
+    signer_key: AuthorityKey,
+    signer: S,
+) -> Result<FederationPactGesture>
+where
+    S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+{
+    let transcript = federation_pact_transcript(
+        kind,
+        pact_id,
+        vault_a,
+        vault_b,
+        pact_epoch,
+        scope_digest,
+        successor_vault_id,
+        pact_nonce,
+    )?;
+    let signature = signer(&transcript)?;
+    Ok(FederationPactGesture {
+        signer: signer_key,
+        signature,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -1032,6 +1369,7 @@ fn fold_authority_log_once(
             vetoed_widens: BTreeSet::new(),
             authority_forks: Vec::new(),
             fork_alarms: Vec::new(),
+            federation_pacts: BTreeMap::new(),
             issues,
         };
     }
@@ -1074,6 +1412,9 @@ fn fold_authority_log_once(
             .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
         authority_forks,
         fork_alarms,
+        federation_pacts: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
         issues,
     }
 }
@@ -1590,6 +1931,7 @@ fn fold_entry_state(
             vetoed_widens: context.vetoed_widens.clone(),
             delayed_rotation_veto_revocations: BTreeMap::new(),
             authority_forks: BTreeMap::new(),
+            federation_pacts: BTreeMap::new(),
             seqs: BTreeMap::new(),
         };
         upsert_device(&mut state, device);
@@ -1685,6 +2027,16 @@ fn fold_entry_state(
     if op_reuses_existing_device_key(&state, &entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    if let AuthorityOp::FederationLifecycle(action) = &entry.op {
+        if let Err(reason) = apply_federation_lifecycle(&mut state, action) {
+            return EntryFold::Invalid(AuthorityFoldIssue::FederationLifecycleRejected {
+                entry: hash,
+                reason,
+            });
+        }
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
+    }
     if context.vetoed_widens.contains(&hash)
         && op_is_delayable_widen(&state, &entry.op, &participants)
     {
@@ -1720,7 +2072,8 @@ fn fold_entry_state(
         | AuthorityOp::RotateKey { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. } => {}
+        | AuthorityOp::VetoPendingWiden { .. }
+        | AuthorityOp::FederationLifecycle(_) => {}
     }
     if !state_has_authority_consent_for_entry(&state, context, hash) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
@@ -1914,7 +2267,8 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::RevokeDevice { .. }
         | AuthorityOp::SetCeiling { .. }
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. } => false,
+        | AuthorityOp::VetoPendingWiden { .. }
+        | AuthorityOp::FederationLifecycle(_) => false,
     }
 }
 
@@ -1932,7 +2286,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetCeiling { .. }
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. } => false,
+        | AuthorityOp::VetoPendingWiden { .. }
+        | AuthorityOp::FederationLifecycle(_) => false,
     }
 }
 
@@ -2015,6 +2370,16 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     }
     for vetoed in &merged.vetoed_widens {
         merged.pending_widens.remove(vetoed);
+    }
+    for (pact_id, right_pact) in &right.federation_pacts {
+        match merged.federation_pacts.get_mut(pact_id) {
+            Some(left_pact) => {
+                *left_pact = merge_pact_states(left_pact, right_pact);
+            }
+            None => {
+                merged.federation_pacts.insert(*pact_id, right_pact.clone());
+            }
+        }
     }
     for (key, device) in &right.roster {
         match merged.roster.get_mut(key) {
@@ -2101,6 +2466,322 @@ fn apply_op(
             }
         }
         AuthorityOp::VetoPendingWiden { .. } => {}
+        // The VetoPendingWiden precedent: `apply_op` returns `()` and cannot
+        // emit rejections; all lifecycle validation and state transitions
+        // live in `fold_entry_state`'s lifecycle arm.
+        AuthorityOp::FederationLifecycle(_) => {}
+    }
+}
+
+/// Local-outbound half of a pact scope pair.
+///
+/// `lo_to_hi` when the local vault id is the byte-wise smaller of the pair,
+/// else `hi_to_lo`. Inverting this is a SILENT reciprocal overshare — every
+/// arm resolves its outbound half through this one helper.
+fn local_outbound_scope(
+    local_vault_id: &AuthorityVaultId,
+    peer_vault_id: &AuthorityVaultId,
+    scope: &FederationPactScope,
+) -> FederationDirectionScope {
+    if local_vault_id <= peer_vault_id {
+        scope.lo_to_hi.clone()
+    } else {
+        scope.hi_to_lo.clone()
+    }
+}
+
+fn verify_pact_scope_digest(
+    scope: &FederationPactScope,
+    pact_nonce: &[u8; 16],
+    claimed_digest: &[u8; 32],
+) -> std::result::Result<(), FederationLifecycleRejection> {
+    let canonical_scope = encode_federation_pact_scope(scope)
+        .map_err(|_| FederationLifecycleRejection::ScopeInvalid)?;
+    if federation_scope_digest(pact_nonce, &canonical_scope) == *claimed_digest {
+        Ok(())
+    } else {
+        Err(FederationLifecycleRejection::ScopeDigestMismatch)
+    }
+}
+
+/// Verifies the embedded peer gesture against the side-symmetric transcript.
+///
+/// `pinned_peer_key` is `None` only for Connect (TOFU — the trust event is
+/// approving the connection); every later gesture must verify under the
+/// pinned peer owner key. A signer present in the LOCAL roster is always
+/// rejected: a local device must never impersonate the peer.
+fn verify_lifecycle_gesture(
+    state: &FoldState,
+    action: &FederationLifecycleAction,
+    scope_digest: &[u8; 32],
+    pinned_peer_key: Option<&AuthorityKey>,
+) -> std::result::Result<AuthorityKey, FederationLifecycleRejection> {
+    let Some(gesture) = &action.gesture else {
+        return Err(FederationLifecycleRejection::GestureMissing);
+    };
+    if state.roster.contains_key(&gesture.signer) {
+        return Err(FederationLifecycleRejection::GestureInvalid);
+    }
+    if pinned_peer_key.is_some_and(|pinned| *pinned != gesture.signer) {
+        return Err(FederationLifecycleRejection::GestureInvalid);
+    }
+    let transcript = federation_pact_transcript(
+        action.kind,
+        &action.pact_id,
+        &state.vault_id,
+        &action.peer_vault_id,
+        action.pact_epoch,
+        scope_digest,
+        action.successor_vault_id.as_ref(),
+        &action.pact_nonce,
+    )
+    .map_err(|_| FederationLifecycleRejection::GestureInvalid)?;
+    let signature = AuthoritySignature {
+        suite: gesture.signer.suite(),
+        public_key: gesture.signer.clone(),
+        signature: gesture.signature.clone(),
+    };
+    if verify_authority_signature(&signature, &transcript) {
+        Ok(gesture.signer.clone())
+    } else {
+        Err(FederationLifecycleRejection::GestureInvalid)
+    }
+}
+
+/// Full D5 transition table, evaluated against the merged ancestry state.
+fn apply_federation_lifecycle(
+    state: &mut FoldState,
+    action: &FederationLifecycleAction,
+) -> std::result::Result<(), FederationLifecycleRejection> {
+    let local_vault_id = state.vault_id;
+    let Some(pact) = state.federation_pacts.get(&action.pact_id).cloned() else {
+        if action.kind != FederationLifecycleKind::Connect {
+            return Err(FederationLifecycleRejection::UnknownPact);
+        }
+        // Re-connection is a NEW pact_id AND a new grant: a grant_ref bound
+        // to ANY pact of ANY status is never re-covered by a fresh pact.
+        if state
+            .federation_pacts
+            .values()
+            .any(|existing| existing.grant_ref == action.grant_ref)
+        {
+            return Err(FederationLifecycleRejection::GrantAlreadyBound);
+        }
+        if action.pact_epoch != 1 {
+            return Err(FederationLifecycleRejection::EpochMismatch);
+        }
+        let scope = action
+            .pact_scope
+            .as_ref()
+            .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
+        let claimed_digest = action
+            .scope_digest
+            .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
+        verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
+        let peer_owner_key = verify_lifecycle_gesture(state, action, &claimed_digest, None)?;
+        let effective_scope = local_outbound_scope(&local_vault_id, &action.peer_vault_id, scope);
+        state.federation_pacts.insert(
+            action.pact_id,
+            FederationPactState {
+                status: FederationPactStatus::Active,
+                grant_ref: action.grant_ref,
+                peer_vault_id: action.peer_vault_id,
+                peer_owner_key,
+                pact_epoch: action.pact_epoch,
+                scope_digest: claimed_digest,
+                pact_scope: scope.clone(),
+                effective_scope,
+                successor_vault_id: None,
+                terminal_epoch: None,
+            },
+        );
+        return Ok(());
+    };
+
+    if pact.status.is_terminal() {
+        return Err(FederationLifecycleRejection::TerminalPact);
+    }
+    if action.kind == FederationLifecycleKind::Connect {
+        return Err(FederationLifecycleRejection::DuplicateConnect);
+    }
+    if action.peer_vault_id != pact.peer_vault_id {
+        return Err(FederationLifecycleRejection::PeerVaultMismatch);
+    }
+    if action.grant_ref != pact.grant_ref {
+        return Err(FederationLifecycleRejection::GrantAlreadyBound);
+    }
+
+    let mut pact = pact;
+    match action.kind {
+        FederationLifecycleKind::Connect => {
+            return Err(FederationLifecycleRejection::DuplicateConnect);
+        }
+        FederationLifecycleKind::Rescope if action.effective_scope.is_some() => {
+            // Narrow form: unilateral effective-scope overlay under the
+            // dual-signed ceiling; epoch unchanged.
+            if pact.status == FederationPactStatus::Suspended {
+                return Err(FederationLifecycleRejection::SuspendedPact);
+            }
+            if action.pact_epoch != pact.pact_epoch {
+                return Err(FederationLifecycleRejection::EpochMismatch);
+            }
+            let effective = action
+                .effective_scope
+                .as_ref()
+                .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
+            let ceiling =
+                local_outbound_scope(&local_vault_id, &pact.peer_vault_id, &pact.pact_scope);
+            if !effective.is_narrowing_of(&ceiling) {
+                return Err(FederationLifecycleRejection::WidenWithoutGesture);
+            }
+            pact.effective_scope = effective.clone();
+        }
+        FederationLifecycleKind::Rescope => {
+            // Repact form: dual-signed epoch bump; heals a suspended pact.
+            if action.pact_epoch.checked_sub(1) != Some(pact.pact_epoch) {
+                return Err(FederationLifecycleRejection::EpochMismatch);
+            }
+            let scope = action
+                .pact_scope
+                .as_ref()
+                .ok_or(FederationLifecycleRejection::ScopeInvalid)?;
+            let claimed_digest = action
+                .scope_digest
+                .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
+            verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
+            verify_lifecycle_gesture(state, action, &claimed_digest, Some(&pact.peer_owner_key))?;
+            pact.status = FederationPactStatus::Active;
+            pact.pact_epoch = action.pact_epoch;
+            pact.scope_digest = claimed_digest;
+            pact.pact_scope = scope.clone();
+            pact.effective_scope =
+                local_outbound_scope(&local_vault_id, &pact.peer_vault_id, scope);
+        }
+        FederationLifecycleKind::Promote => {
+            if pact.status == FederationPactStatus::Suspended {
+                return Err(FederationLifecycleRejection::SuspendedPact);
+            }
+            if action.pact_epoch.checked_sub(1) != Some(pact.pact_epoch) {
+                return Err(FederationLifecycleRejection::EpochMismatch);
+            }
+            // Promote carries no scope bytes: its digest must EQUAL the
+            // stored one (byte equality, no recompute).
+            let claimed_digest = action
+                .scope_digest
+                .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
+            if claimed_digest != pact.scope_digest {
+                return Err(FederationLifecycleRejection::ScopeDigestMismatch);
+            }
+            verify_lifecycle_gesture(state, action, &claimed_digest, Some(&pact.peer_owner_key))?;
+            pact.status = FederationPactStatus::Promoted;
+            pact.pact_epoch = action.pact_epoch;
+            pact.successor_vault_id = action.successor_vault_id;
+            pact.terminal_epoch = Some(action.pact_epoch);
+        }
+        FederationLifecycleKind::Disconnect => {
+            if action.pact_epoch != pact.pact_epoch {
+                return Err(FederationLifecycleRejection::EpochMismatch);
+            }
+            pact.status = FederationPactStatus::Disconnected;
+            pact.terminal_epoch = Some(pact.pact_epoch);
+        }
+        FederationLifecycleKind::Dissolve => {
+            if action.pact_epoch != pact.pact_epoch {
+                return Err(FederationLifecycleRejection::EpochMismatch);
+            }
+            pact.status = FederationPactStatus::Dissolved;
+            pact.terminal_epoch = Some(pact.pact_epoch);
+        }
+    }
+    state.federation_pacts.insert(action.pact_id, pact);
+    Ok(())
+}
+
+/// Commutative, associative-in-output, idempotent per-pact merge join.
+///
+/// Terminal-wins regardless of epoch (revocations-win); two terminals resolve
+/// by fixed precedence Dissolved > Disconnected > Promoted; non-terminals
+/// resolve by max epoch; equal-epoch divergent digests suspend fail-closed;
+/// equal-epoch equal-digest Actives intersect their effective scopes.
+/// Determinism-only picks use the lexicographic-min scope digest / peer key.
+fn merge_pact_states(left: &FederationPactState, right: &FederationPactState) -> FederationPactState {
+    let left_terminal = left.status.is_terminal();
+    let right_terminal = right.status.is_terminal();
+    if left_terminal != right_terminal {
+        return if left_terminal {
+            left.clone()
+        } else {
+            right.clone()
+        };
+    }
+    if left_terminal && right_terminal {
+        if left.status != right.status {
+            return if left.status > right.status {
+                left.clone()
+            } else {
+                right.clone()
+            };
+        }
+        if left.pact_epoch != right.pact_epoch {
+            return if left.pact_epoch > right.pact_epoch {
+                left.clone()
+            } else {
+                right.clone()
+            };
+        }
+        return if left.scope_digest <= right.scope_digest {
+            left.clone()
+        } else {
+            right.clone()
+        };
+    }
+    if left.pact_epoch != right.pact_epoch {
+        return if left.pact_epoch > right.pact_epoch {
+            left.clone()
+        } else {
+            right.clone()
+        };
+    }
+    if left.status == FederationPactStatus::Active && right.status == FederationPactStatus::Active {
+        if left.scope_digest == right.scope_digest {
+            let mut merged = left.clone();
+            // Concurrent unilateral narrows are both honored.
+            merged.effective_scope = left.effective_scope.intersect(&right.effective_scope);
+            // Concurrent duplicate Connects can pin different verified peer
+            // roster keys; the pick is determinism-only.
+            merged.peer_owner_key = left
+                .peer_owner_key
+                .clone()
+                .min(right.peer_owner_key.clone());
+            return merged;
+        }
+        // Divergent concurrent re-pacts: an equivocation-shaped conflict.
+        // Fail closed at the shared epoch; heals via a fresh dual-signed
+        // Rescope at epoch+1.
+        let base = if left.scope_digest < right.scope_digest {
+            left
+        } else {
+            right
+        };
+        let mut merged = base.clone();
+        merged.status = FederationPactStatus::Suspended;
+        merged.successor_vault_id = None;
+        merged.terminal_epoch = None;
+        return merged;
+    }
+    if left.status == FederationPactStatus::Suspended
+        && right.status == FederationPactStatus::Suspended
+    {
+        return if left.scope_digest <= right.scope_digest {
+            left.clone()
+        } else {
+            right.clone()
+        };
+    }
+    if left.status == FederationPactStatus::Suspended {
+        left.clone()
+    } else {
+        right.clone()
     }
 }
 
@@ -2245,7 +2926,62 @@ fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             Ok(())
         }
+        AuthorityOp::FederationLifecycle(action) => validate_federation_lifecycle_action(action),
     }
+}
+
+fn validate_federation_lifecycle_action(action: &FederationLifecycleAction) -> Result<()> {
+    if action.pact_id.iter().all(|byte| *byte == 0)
+        || action.pact_nonce.iter().all(|byte| *byte == 0)
+        || action.pact_epoch == 0
+    {
+        return Err(invalid_authority());
+    }
+    let present = (
+        action.pact_scope.is_some(),
+        action.effective_scope.is_some(),
+        action.scope_digest.is_some(),
+        action.gesture.is_some(),
+        action.successor_vault_id.is_some(),
+    );
+    // Per-kind optional matrix; Rescope forms are discriminated purely by key
+    // presence (repact = pact_scope+scope_digest+gesture, narrow =
+    // effective_scope) and a mix fails both.
+    let matrix_ok = match action.kind {
+        FederationLifecycleKind::Connect => present == (true, false, true, true, false),
+        FederationLifecycleKind::Rescope => {
+            present == (true, false, true, true, false)
+                || present == (false, true, false, false, false)
+        }
+        FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve => {
+            present == (false, false, false, false, false)
+        }
+        FederationLifecycleKind::Promote => present == (false, false, true, true, true),
+    };
+    if !matrix_ok {
+        return Err(invalid_authority());
+    }
+    if let Some(scope) = &action.pact_scope {
+        let encoded = encode_federation_pact_scope(scope).map_err(|_| invalid_authority())?;
+        if encoded.len() > MAX_PACT_SCOPE_BYTES {
+            return Err(invalid_authority());
+        }
+    }
+    if let Some(effective) = &action.effective_scope {
+        effective.validate().map_err(|_| invalid_authority())?;
+    }
+    if let Some(successor) = &action.successor_vault_id
+        && successor.iter().all(|byte| *byte == 0)
+    {
+        return Err(invalid_authority());
+    }
+    if let Some(gesture) = &action.gesture {
+        gesture.signer.validate()?;
+        if gesture.signature.len() != 64 {
+            return Err(invalid_authority());
+        }
+    }
+    Ok(())
 }
 
 fn validate_pending_widen_delay_secs(delay_secs: u64) -> Result<()> {
@@ -2400,7 +3136,62 @@ fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) ->
                 binary_value(*pending_widen_hash),
             ),
         ]),
+        AuthorityOp::FederationLifecycle(action) => {
+            let mut fields = vec![
+                (
+                    Value::from(OP_KEY_KIND),
+                    Value::from(OP_KIND_FEDERATION_LIFECYCLE),
+                ),
+                (
+                    Value::from("lifecycle_kind"),
+                    Value::from(action.kind.as_str()),
+                ),
+                (Value::from("pact_id"), binary_value(action.pact_id)),
+                (
+                    Value::from("grant_ref"),
+                    Value::from(action.grant_ref.to_hex()),
+                ),
+                (
+                    Value::from("peer_vault_id"),
+                    binary_value(action.peer_vault_id),
+                ),
+                (Value::from("pact_epoch"), Value::from(action.pact_epoch)),
+                (Value::from("pact_nonce"), binary_value_16(action.pact_nonce)),
+            ];
+            if let Some(scope) = &action.pact_scope {
+                fields.push((
+                    Value::from("pact_scope"),
+                    federation_pact_scope_value(scope),
+                ));
+            }
+            if let Some(effective) = &action.effective_scope {
+                fields.push((
+                    Value::from("effective_scope"),
+                    federation_direction_scope_value(effective),
+                ));
+            }
+            if let Some(digest) = &action.scope_digest {
+                fields.push((Value::from("scope_digest"), binary_value(*digest)));
+            }
+            if let Some(gesture) = &action.gesture {
+                fields.push((Value::from("gesture"), gesture_value(gesture)));
+            }
+            if let Some(successor) = &action.successor_vault_id {
+                fields.push((Value::from("successor_vault_id"), binary_value(*successor)));
+            }
+            Value::Map(fields)
+        }
     }
+}
+
+fn gesture_value(gesture: &FederationPactGesture) -> Value {
+    Value::Map(vec![
+        (Value::from("signer"), key_value(&gesture.signer)),
+        (
+            Value::from("signature"),
+            Value::Binary(gesture.signature.clone()),
+        ),
+    ])
 }
 
 fn legacy_genesis_encoding_candidate(entry: &AuthorityLogEntry) -> bool {
@@ -2662,8 +3453,91 @@ fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 pending_widen_hash: decode_hash(required(entries, "pending_widen_hash")?)?,
             })
         }
+        OP_KIND_FEDERATION_LIFECYCLE => decode_federation_lifecycle_op(entries),
         _ => Err(invalid_authority()),
     }
+}
+
+fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
+    let kind = required(entries, "lifecycle_kind")?
+        .as_str()
+        .and_then(FederationLifecycleKind::parse)
+        .ok_or_else(invalid_authority)?;
+    let mut expected = vec![
+        OP_KEY_KIND,
+        "lifecycle_kind",
+        "pact_id",
+        "grant_ref",
+        "peer_vault_id",
+        "pact_epoch",
+        "pact_nonce",
+    ];
+    match kind {
+        FederationLifecycleKind::Connect => {
+            expected.extend(["pact_scope", "scope_digest", "gesture"]);
+        }
+        FederationLifecycleKind::Rescope => {
+            // The two-form discriminator: `effective_scope` present = narrow
+            // form; otherwise the repact key set applies. A mix (or neither)
+            // fails both forms' strict key sets below.
+            if optional(entries, "effective_scope").is_some() {
+                expected.push("effective_scope");
+            } else {
+                expected.extend(["pact_scope", "scope_digest", "gesture"]);
+            }
+        }
+        FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve => {}
+        FederationLifecycleKind::Promote => {
+            expected.extend(["scope_digest", "gesture", "successor_vault_id"]);
+        }
+    }
+    validate_keys(entries, &expected)?;
+    let grant_ref_hex = required(entries, "grant_ref")?
+        .as_str()
+        .ok_or_else(invalid_authority)?;
+    let grant_ref = EntityId::from_hex(grant_ref_hex).map_err(|_| invalid_authority())?;
+    if grant_ref.to_hex() != grant_ref_hex {
+        return Err(invalid_authority());
+    }
+    let pact_scope = optional(entries, "pact_scope")
+        .map(|value| decode_federation_pact_scope_value(value).map_err(|_| invalid_authority()))
+        .transpose()?;
+    let effective_scope = optional(entries, "effective_scope")
+        .map(|value| {
+            decode_federation_direction_scope_value(value).map_err(|_| invalid_authority())
+        })
+        .transpose()?;
+    let scope_digest = optional(entries, "scope_digest")
+        .map(decode_hash)
+        .transpose()?;
+    let gesture = optional(entries, "gesture").map(decode_gesture).transpose()?;
+    let successor_vault_id = optional(entries, "successor_vault_id")
+        .map(decode_hash)
+        .transpose()?;
+    Ok(AuthorityOp::FederationLifecycle(FederationLifecycleAction {
+        kind,
+        pact_id: decode_hash(required(entries, "pact_id")?)?,
+        grant_ref,
+        peer_vault_id: decode_hash(required(entries, "peer_vault_id")?)?,
+        pact_epoch: required(entries, "pact_epoch")?
+            .as_u64()
+            .ok_or_else(invalid_authority)?,
+        pact_scope,
+        effective_scope,
+        scope_digest,
+        gesture,
+        successor_vault_id,
+        pact_nonce: decode_16(required(entries, "pact_nonce")?)?,
+    }))
+}
+
+fn decode_gesture(value: &Value) -> Result<FederationPactGesture> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &["signer", "signature"])?;
+    Ok(FederationPactGesture {
+        signer: decode_key(required(entries, "signer")?)?,
+        signature: bytes(required(entries, "signature")?)?.to_vec(),
+    })
 }
 
 fn decode_device(value: &Value) -> Result<DeviceAuthority> {

@@ -700,6 +700,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         vetoed_widens: BTreeSet::new(),
         delayed_rotation_veto_revocations: BTreeMap::new(),
         authority_forks: BTreeMap::new(),
+        federation_pacts: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     let entry = cosign_ed(
@@ -765,6 +766,7 @@ fn single_owner_state(seed: u8) -> (SigningKey, AuthorityKey, AuthorityEntryHash
         vetoed_widens: BTreeSet::new(),
         delayed_rotation_veto_revocations: BTreeMap::new(),
         authority_forks: BTreeMap::new(),
+        federation_pacts: BTreeMap::new(),
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
     };
     (owner, owner_key, parent, state)
