@@ -5058,3 +5058,46 @@ fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
     );
     Ok(())
 }
+
+#[derive(Default)]
+struct CountingErroringReranker {
+    calls: std::sync::Mutex<usize>,
+}
+
+impl Reranker for CountingErroringReranker {
+    fn id(&self) -> &str {
+        "test/reranker-counting-erroring@v1"
+    }
+
+    fn rerank(&self, _query: &str, _candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        *self.calls.lock().unwrap() += 1;
+        Err(Error::InvalidConfig(
+            "reranker must not run on an empty block".to_owned(),
+        ))
+    }
+}
+
+/// Qodo #472-F3: an empty rerank block is a semantic no-op — the host impl
+/// must never be invoked, so an otherwise-empty retrieval cannot fail
+/// solely on reranker behavior.
+#[test]
+fn rerank_skips_empty_block_without_invoking_reranker() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_text(&vault, entity_id(0xE8), "indexed but unrelated")?;
+
+    let reranker = CountingErroringReranker::default();
+    let results = vault
+        .query()
+        .search_text("zeromatch query tokens", 10)
+        .limit(10)
+        .rerank(&reranker, RerankOptions::default())
+        .run()?;
+
+    assert!(results.is_empty(), "the retrieval itself is empty");
+    assert_eq!(
+        *reranker.calls.lock().unwrap(),
+        0,
+        "the reranker must never be invoked on an empty block"
+    );
+    Ok(())
+}
