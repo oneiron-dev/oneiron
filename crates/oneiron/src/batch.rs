@@ -2282,6 +2282,7 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     store.temporal_learned.delete(wtxn, &learned_key)?;
 
     crate::dreamer_runner::deindex_dreamer_milestone_claim(store, wtxn, id)?;
+    crate::llm::deindex_dreamer_step_claim(store, wtxn, id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     neighbors.sort_unstable();
     neighbors.dedup();
@@ -2793,6 +2794,7 @@ fn apply_put(
         crate::dreamer_runner::index_dreamer_milestone_claim_for_put(
             store, wtxn, &id, body, learned_at,
         )?;
+        crate::llm::index_dreamer_step_claim_for_put(store, wtxn, &id, body, learned_at)?;
     }
     if let Some(key) = authority_first_seen_key {
         let observed_secs =
