@@ -198,25 +198,27 @@
     "response": {
       "body": {
         "context_version": "v4",
-        "evidence": {
-          "result_ids": [
-            "7e000000000000000000000012210001"
-          ],
-          "retrieval_run_id": "<retrieval-run-id>",
-          "scores": [
+        "disclosure": {
+          "clamped_out": 1,
+          "interlocutors": [
             {
-              "components": [
-                {
-                  "rank": 1,
-                  "score": 0.4305951,
-                  "signal": "text"
-                }
-              ],
-              "final_rank": 1,
-              "final_score": 1.0,
-              "result_id": "7e000000000000000000000012210001"
+              "claims_not_instructions": true,
+              "class": "unknown",
+              "speaker": "7e000000000000000000000012210004"
             }
           ],
+          "mode": "absence_clamp",
+          "notice": null
+        },
+        "empty": {
+          "hint": "Try removing filters or widening the world, type, or time scope",
+          "reason": "filter_matched_none",
+          "totalInScope": 0
+        },
+        "evidence": {
+          "result_ids": [],
+          "retrieval_run_id": "<retrieval-run-id>",
+          "scores": [],
           "telemetry_persisted": true
         },
         "interlocutors": [
@@ -243,52 +245,41 @@
             "scope": "neutral",
             "scope_source": "neutral_default"
           },
-          "rows": [
-            {
-              "content_hash": "de",
-              "entity_type": 1,
-              "id": "7e000000000000000000000012210001",
-              "row_index": 0,
-              "score": 1.0,
-              "short_id": "tn1",
-              "slot": "turns",
-              "source": "result"
-            }
-          ],
+          "disclosure": {
+            "clamped_out": 1,
+            "interlocutors": [
+              {
+                "claims_not_instructions": true,
+                "class": "unknown",
+                "speaker": "7e000000000000000000000012210004"
+              }
+            ],
+            "mode": "absence_clamp",
+            "notice": null
+          },
+          "rows": [],
           "version": "v4"
         },
         "neighbors": [],
-        "results": [
-          {
-            "content_hash": "de",
-            "entity_type": 1,
-            "fields": {
-              "at": 1782357600,
-              "spkr": "user",
-              "txt": "blue hallway contractneedle"
-            },
-            "id": "7e000000000000000000000012210001",
-            "score": 1.0,
-            "short_id": "tn1"
-          }
-        ],
+        "results": [],
         "session_rag": {
-          "last_result_ids": [
-            "7e000000000000000000000012210001"
-          ],
+          "last_result_ids": [],
           "last_retrieval_run_id": "<retrieval-run-id>",
           "query_count": 1,
           "revision": 1,
           "session_id": "7e000000000000000000000012210004"
         },
         "state": {
-          "kind": "ok"
+          "hint": "Try removing filters or widening the world, type, or time scope",
+          "kind": "missing_data",
+          "reason": "filter_matched_none",
+          "total_in_scope": 0
         },
         "stats": {
-          "candidates_considered": 1,
+          "candidates_considered": 0,
           "claims_suppressed": 0,
           "cosine_ghosts_dampened": 0,
-          "entities_hydrated": 1,
+          "entities_hydrated": 0,
           "items_dropped": {
             "count": 0,
             "reason": "token_budget"

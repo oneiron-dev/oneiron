@@ -15,6 +15,7 @@ use crate::companion::{
     CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
     decode_companion_record_body,
 };
+use crate::disclosure::{DisclosureAssembly, DisclosureContext, DisclosureMode};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::eiri::EIRI_CONTEXT_VERSION_V4;
 use crate::eiri::EiriCompanionAssembly;
@@ -167,6 +168,9 @@ struct HydrateOptions<'a> {
     /// pre-assembly validation. The hydrator projects fields from these
     /// instead of re-decoding, so each surfaced claim body is decoded once.
     claim_bodies: Option<&'a HashMap<EntityId, ClaimBody>>,
+    /// OF-365 disclosure clamp: hydrated edge lists filter non-admitted
+    /// targets next to the off-record fence check.
+    clamp: Option<&'a DisclosureContext>,
 }
 
 #[must_use = "ContextPackBuilder executes no query until a terminal `.run*()` method is called"]
@@ -190,23 +194,33 @@ pub struct ContextPackBuilder<'a> {
     signals_used: Vec<Signal>,
     world_scope: WorldScope,
     non_base_world_fraction: f32,
+    disclosure: Option<DisclosureContext>,
 }
 
 struct ContextPackRun<'a> {
     pack: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
     store: &'a Store,
+    clamped_out: u64,
 }
 
 pub struct UnfinalizedContextPack<'a> {
     pub value: ContextPack,
     telemetry_run_id: Option<RetrievalRunId>,
     store: &'a Store,
+    clamped_out: u64,
 }
 
 impl UnfinalizedContextPack<'_> {
     pub fn discard_telemetry(&mut self) {
         discard_failed_context_pack_telemetry(self.store, self.telemetry_run_id.take());
+    }
+
+    /// Scored candidates dropped by the disclosure clamp's candidate sweep
+    /// this assembly (OF-365 ILD-2). Non-clamped runs report 0.
+    #[must_use]
+    pub fn clamped_out(&self) -> u64 {
+        self.clamped_out
     }
 
     pub fn finish_projected_json(
@@ -293,7 +307,16 @@ impl<'a> ContextPackBuilder<'a> {
             signals_used: Vec::new(),
             world_scope: WorldScope::All,
             non_base_world_fraction: DEFAULT_NON_BASE_WORLD_CLAIM_FRACTION,
+            disclosure: None,
         }
+    }
+
+    /// Attaches the OF-365 disclosure clamp for this assembly. Absent means
+    /// `OwnerAlone` — byte-identical legacy behavior for every existing
+    /// caller (the server decides when a context is mandatory).
+    pub fn disclosure_context(mut self, ctx: DisclosureContext) -> Self {
+        self.disclosure = Some(ctx);
+        self
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {
@@ -618,6 +641,7 @@ impl<'a> ContextPackBuilder<'a> {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
             store: run.store,
+            clamped_out: run.clamped_out,
         })
     }
 
@@ -643,7 +667,6 @@ impl<'a> ContextPackBuilder<'a> {
             let pipeline_signals = pipeline_output.signals;
             let scored = pipeline_output.scores;
             validate_scored_candidates(&scored)?;
-            let surfaced_candidate_count = scored.len();
             let claim_bodies = pipeline_output.claim_bodies;
             let mut claims_suppressed = pipeline_output.claims_suppressed;
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
@@ -653,12 +676,41 @@ impl<'a> ContextPackBuilder<'a> {
             let mut claim_bodies = claim_bodies;
             let quarantine_index = load_pack_quarantine_index(&self.vault.store, &rtxn)?;
 
+            // OF-365 disclosure clamp, enforcement point 1 (candidate sweep,
+            // the only point that counts): drop non-admitted scored ids
+            // before hydration. Absence is the boundary — a clamped id never
+            // reaches hydration, results, or stats.
+            let clamp = self.disclosure.as_ref();
+            let mut scored = scored;
+            let mut clamped_out: u64 = 0;
+            if let Some(ctx) = clamp
+                && ctx.mode() != DisclosureMode::OwnerAlone
+            {
+                let mut kept = Vec::with_capacity(scored.len());
+                for entry in scored {
+                    if disclosure_admits_candidate(
+                        &self.vault.store,
+                        &rtxn,
+                        ctx,
+                        &entry.id,
+                        &claim_bodies,
+                    )? {
+                        kept.push(entry);
+                    } else {
+                        clamped_out = clamped_out.saturating_add(1);
+                    }
+                }
+                scored = kept;
+            }
+            let surfaced_candidate_count = scored.len();
+
             let result_options = HydrateOptions {
                 hydrate_fields: self.hydrate,
                 include_edges: hydrate_result_edges,
                 include_vectors: self.include_vectors,
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
+                clamp,
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
@@ -710,6 +762,7 @@ impl<'a> ContextPackBuilder<'a> {
                     self.edge_hop,
                     selected_edge_budget,
                     &result_ids,
+                    clamp,
                 )?
             } else {
                 EdgeWalkResult::default()
@@ -730,6 +783,7 @@ impl<'a> ContextPackBuilder<'a> {
                 include_vectors: self.include_vectors,
                 edge_cache,
                 claim_bodies: Some(&claim_bodies),
+                clamp,
             };
 
             if self.include_edges && self.edge_hop > 0 {
@@ -739,6 +793,7 @@ impl<'a> ContextPackBuilder<'a> {
                         &rtxn,
                         &entity.id,
                         edge_cache,
+                        clamp,
                     )?);
                 }
             }
@@ -774,6 +829,11 @@ impl<'a> ContextPackBuilder<'a> {
                 &mut claim_bodies,
                 &quarantine_index,
             )?;
+            // OF-365 enforcement point 4 — final fail-closed sweep: the pack
+            // build FAILS rather than leaks a non-admitted id.
+            if let Some(ctx) = clamp {
+                validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
+            }
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
             let pack_is_empty = results.is_empty() && neighbors.is_empty();
@@ -807,6 +867,7 @@ impl<'a> ContextPackBuilder<'a> {
                 },
                 telemetry_run_id,
                 store,
+                clamped_out,
             })
         })();
 
@@ -871,6 +932,7 @@ pub fn assemble_eiri_memory_board(
     pack: &ContextPack,
     budget: EiriMemoryBoardBudget,
     companion: Option<EiriCompanionAssembly>,
+    disclosure: Option<DisclosureAssembly>,
 ) -> EiriMemoryBoard {
     let mut rows = Vec::with_capacity(pack.results.len() + pack.neighbors.len());
     rows.extend(
@@ -902,6 +964,7 @@ pub fn assemble_eiri_memory_board(
         budget,
         rows: filtered,
         companion,
+        disclosure,
     }
 }
 
@@ -960,6 +1023,84 @@ fn eiri_memory_board_row_order(
 
 fn context_pack_validation_error(id: EntityId, reason: &'static str) -> Error {
     Error::ContextPackValidation { id, reason }
+}
+
+/// OF-365 candidate-sweep admission (enforcement point 1). Fail-closed: a
+/// scored id whose payload row is missing is not admitted.
+fn disclosure_admits_candidate(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    ctx: &DisclosureContext,
+    id: &EntityId,
+    claim_bodies: &HashMap<EntityId, ClaimBody>,
+) -> Result<bool> {
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity metadata header"));
+    };
+    ctx.admits(store, rtxn, id, header.entity_type, claim_bodies.get(id))
+}
+
+/// OF-365 edge-target admission (enforcement points 2 and 3): a non-admitted
+/// target is neither admitted as a neighbor, traversed through, nor exposed
+/// in a serialized edge list — even the bare target id names the room.
+/// `None` clamp admits everything (legacy behavior).
+fn disclosure_admits_target(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    clamp: Option<&DisclosureContext>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(ctx) = clamp else {
+        return Ok(true);
+    };
+    if ctx.mode() == DisclosureMode::OwnerAlone {
+        return Ok(true);
+    }
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return Err(Error::CorruptedIndex("entity metadata header"));
+    };
+    ctx.admits(store, rtxn, id, header.entity_type, None)
+}
+
+/// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
+/// surviving entity id (results, neighbors, and every edge target inside
+/// them) and FAILS the pack build on any non-admitted survivor instead of
+/// serving a leaky pack. The red-team suite asserts this cannot fire
+/// spuriously.
+fn validate_pack_disclosure(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    ctx: &DisclosureContext,
+    results: &[ContextEntity],
+    neighbors: &[ContextEntity],
+) -> Result<()> {
+    if ctx.mode() == DisclosureMode::OwnerAlone {
+        return Ok(());
+    }
+    for entity in results.iter().chain(neighbors.iter()) {
+        if !ctx.admits(store, rtxn, &entity.id, entity.entity_type, None)? {
+            return Err(Error::DisclosureClampViolation(
+                "non-admitted entity survived pack assembly",
+            ));
+        }
+        let Some(edges) = &entity.edges else {
+            continue;
+        };
+        for edge in edges {
+            if !disclosure_admits_target(store, rtxn, Some(ctx), &edge.target)? {
+                return Err(Error::DisclosureClampViolation(
+                    "non-admitted edge target survived pack assembly",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_scored_candidates(scored: &[ScoredEntity]) -> Result<()> {
@@ -1683,6 +1824,7 @@ fn hydrate_entity(
             rtxn,
             &id,
             options.edge_cache,
+            options.clamp,
         )?)
     } else {
         None
@@ -1947,6 +2089,7 @@ fn load_entity_edges(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
+    clamp: Option<&DisclosureContext>,
 ) -> Result<Vec<EdgeInfo>> {
     let edges = if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
         edges.clone()
@@ -1954,12 +2097,18 @@ fn load_entity_edges(
         scan_edges_for_entity(store, rtxn, id)?
     };
     // OF-326 THE FENCE: serialized edge lists must not expose fenced
-    // off-record targets — even the bare target id names the room.
+    // off-record targets — even the bare target id names the room. The
+    // OF-365 clamp (enforcement point 3) filters non-admitted targets on the
+    // same principle.
     let mut kept = Vec::with_capacity(edges.len());
     for edge in edges {
-        if !crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
-            kept.push(edge);
+        if crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
+            continue;
         }
+        if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
+            continue;
+        }
+        kept.push(edge);
     }
     Ok(kept)
 }
@@ -1999,6 +2148,7 @@ fn walk_edges(
     hops: u32,
     selected_edge_budget: usize,
     exclude: &HashSet<EntityId>,
+    clamp: Option<&DisclosureContext>,
 ) -> Result<EdgeWalkResult> {
     if hops == 0 || selected_edge_budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
@@ -2050,6 +2200,11 @@ fn walk_edges(
                 // admitted as a neighbor nor traversed through — an edge
                 // from an on-record result must not hydrate the room.
                 if crate::off_record::off_record_fence_active(store, rtxn, &edge.target)? {
+                    continue;
+                }
+                // OF-365 clamp (enforcement point 2): a non-admitted entity
+                // is never admitted as a neighbor NOR traversed through.
+                if !disclosure_admits_target(store, rtxn, clamp, &edge.target)? {
                     continue;
                 }
                 candidates

@@ -630,6 +630,7 @@ fn dispatch_pipeline_records_context_receipt_field_set()
         model: Some("test-model-v1".to_owned()),
         reasoning_effort: Some("high".to_owned()),
         prompt_input_ref: None,
+        disclosure_stamp: None,
     };
     let request = OutboundDispatchRequest::new(
         "outbound:intent:invite-kenji",

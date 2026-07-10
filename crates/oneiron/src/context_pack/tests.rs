@@ -158,6 +158,7 @@ fn eiri_memory_board_serializes_rows_in_stable_slot_order() {
             persona_ref: Some("persona-alpha".to_owned()),
             expression: Some("professional".to_owned()),
         }),
+        None,
     );
 
     let value = serde_json::to_value(&board).expect("memory board serializes");
@@ -239,8 +240,12 @@ fn eiri_memory_board_routes_asset_rows_by_ref_without_local_downgrade() {
         empty: None,
     };
 
-    let board =
-        assemble_eiri_memory_board(&pack, EiriMemoryBoardBudget::new(0, 0, 0, 0, 0, 2), None);
+    let board = assemble_eiri_memory_board(
+        &pack,
+        EiriMemoryBoardBudget::new(0, 0, 0, 0, 0, 2),
+        None,
+        None,
+    );
     let asset_row = board
         .rows
         .iter()
@@ -751,6 +756,7 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
             include_vectors: false,
             edge_cache: None,
             claim_bodies: None,
+            clamp: None,
         },
         &mut claims_suppressed,
     ) {
@@ -1455,10 +1461,24 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
 
     reset_edge_scan_count();
     let rtxn = vault.store.env.read_txn()?;
-    let walked = walk_edges(&vault.store, &rtxn, &[root], 1, 10, &HashSet::from([root]))?;
+    let walked = walk_edges(
+        &vault.store,
+        &rtxn,
+        &[root],
+        1,
+        10,
+        &HashSet::from([root]),
+        None,
+    )?;
     assert_eq!(edge_scan_count(), 1, "walk should scan the root once");
 
-    let cached_edges = load_entity_edges(&vault.store, &rtxn, &root, Some(&walked.scanned_edges))?;
+    let cached_edges = load_entity_edges(
+        &vault.store,
+        &rtxn,
+        &root,
+        Some(&walked.scanned_edges),
+        None,
+    )?;
     assert_eq!(cached_edges.len(), 1);
     assert_eq!(
         edge_scan_count(),
@@ -1466,8 +1486,13 @@ fn include_edges_reuses_walk_scans_for_results() -> Result<()> {
         "loading root edges from the walk cache should not rescan"
     );
 
-    let uncached_edges =
-        load_entity_edges(&vault.store, &rtxn, &child, Some(&walked.scanned_edges))?;
+    let uncached_edges = load_entity_edges(
+        &vault.store,
+        &rtxn,
+        &child,
+        Some(&walked.scanned_edges),
+        None,
+    )?;
     assert!(uncached_edges.is_empty());
     assert_eq!(
         edge_scan_count(),
@@ -3189,4 +3214,496 @@ fn context_pack_retrieval_budget_default_small_limit_keeps_positive_buckets_elig
     assert!(budget.summaries > 0);
     assert!(budget.facets > 0);
     assert!(budget.other > 0);
+}
+
+// ─── OF-365 disclosure clamp red-team suite (ONE-1517, design §14.4) ────────
+//
+// Every assertion is on the ASSEMBLED CONTEXT (pack/board contents), never on
+// model output. Absence is the boundary: a clamped id must appear NOWHERE as
+// a tracked reference.
+
+fn disclosure_id(seed: u8) -> EntityId {
+    EntityId::from_bytes([seed; 16]).expect("valid entity id")
+}
+
+fn seed_disclosure_contact(vault: &Vault, contact_id: EntityId, counterparty: &str) {
+    let record = crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+        disclosure_id(0xA0),
+        counterparty,
+        10,
+    )
+    .expect("contact record");
+    vault
+        .create_counterparty_contact(&contact_id, &record)
+        .expect("create counterparty contact");
+}
+
+fn known_contact_entry(contact_id: EntityId, label: &str) -> crate::interlocutor::Interlocutor {
+    crate::interlocutor::Interlocutor::known_contact(
+        contact_id,
+        label,
+        crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction,
+    )
+}
+
+fn absence_ctx_for_contact(vault: &Vault, contact_id: EntityId) -> DisclosureContext {
+    DisclosureContext::resolve(
+        vault,
+        crate::interlocutor::InterlocutorSet::without_owner(vec![known_contact_entry(
+            contact_id,
+            "kenji@example.com",
+        )]),
+    )
+    .expect("resolve disclosure context")
+}
+
+fn supervised_ctx_for_contact(vault: &Vault, contact_id: EntityId) -> DisclosureContext {
+    DisclosureContext::resolve(
+        vault,
+        crate::interlocutor::InterlocutorSet::with_session_owner(vec![known_contact_entry(
+            contact_id,
+            "kenji@example.com",
+        )]),
+    )
+    .expect("resolve disclosure context")
+}
+
+fn put_disclosure_turn(vault: &Vault, id: &EntityId, text: &str) {
+    put_text_entity(
+        vault,
+        id,
+        ENTITY_TYPE_TURN,
+        text,
+        serde_json::json!({ "txt": text }),
+    )
+    .expect("put turn");
+}
+
+fn put_disclosure_claim(
+    vault: &Vault,
+    id: &EntityId,
+    subject: EntityId,
+    predicate: &str,
+    text: &str,
+    band: Option<&str>,
+) {
+    let mut body = crate::claim::ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    if let Some(band) = band {
+        body.scope = Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from(band),
+        )]));
+    }
+    let data = crate::claim::encode_claim_body(&body).expect("encode claim");
+    vault
+        .batch()
+        .put(
+            id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &data,
+        )
+        .text(id, &[("body", text)])
+        .commit()
+        .expect("put claim");
+}
+
+fn pack_ids(pack: &ContextPack) -> Vec<EntityId> {
+    pack.results
+        .iter()
+        .chain(pack.neighbors.iter())
+        .map(|entity| entity.id)
+        .collect()
+}
+
+fn assert_id_absent_everywhere(pack: &ContextPack, id: &EntityId, label: &str) {
+    assert!(
+        !pack_ids(pack).contains(id),
+        "{label}: clamped id must not appear in results/neighbors"
+    );
+    for entity in pack.results.iter().chain(pack.neighbors.iter()) {
+        if let Some(edges) = &entity.edges {
+            assert!(
+                edges.iter().all(|edge| edge.target != *id),
+                "{label}: clamped id must not appear in any serialized edge list"
+            );
+        }
+    }
+}
+
+#[test]
+fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC1);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+
+    let party = disclosure_id(0xD1);
+    let party_fact = disclosure_id(0xD2);
+    let off_record = disclosure_id(0xD3);
+    let band2 = disclosure_id(0xD4);
+    let marked = disclosure_id(0xD5);
+    let diary = disclosure_id(0xD6);
+    put_disclosure_turn(&vault, &party, "hanami party planning needle");
+    put_disclosure_claim(
+        &vault,
+        &party_fact,
+        party,
+        "event.headcount",
+        "party guest count needle",
+        Some("public"),
+    );
+    put_disclosure_turn(&vault, &off_record, "off record confession needle");
+    vault.enter_off_record_session("room-n1", crate::off_record::OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("room-n1", &off_record)?;
+    put_disclosure_claim(
+        &vault,
+        &band2,
+        party,
+        "profile.health_note",
+        "clinic visit needle",
+        Some("sensitive"),
+    );
+    put_disclosure_turn(&vault, &marked, "owner marked private needle");
+    vault.set_disclosure_tier_a(&marked, 100)?;
+    put_disclosure_turn(&vault, &diary, "private diary entry needle");
+
+    let scope =
+        crate::disclosure::DisclosureScope::task_scoped("party planning", vec![party], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+
+    let run = vault
+        .context_pack()
+        .search_text("needle", 10)
+        .disclosure_context(ctx.clone())
+        .run_unfinalized_with_telemetry()?;
+    let clamped_out = run.clamped_out();
+    let pack = run.value;
+
+    let surfaced = pack_ids(&pack);
+    assert!(surfaced.contains(&party), "in-scope party event surfaces");
+    assert!(
+        surfaced.contains(&party_fact),
+        "claims about the allowlisted party are the payload"
+    );
+    for (id, label) in [
+        (off_record, "off-record turn"),
+        (band2, "band-2 claim"),
+        (marked, "owner-marked turn"),
+        (diary, "tier-B out-of-scope turn"),
+    ] {
+        assert_id_absent_everywhere(&pack, &id, label);
+    }
+    assert!(clamped_out > 0, "candidate sweep counts its removals");
+    assert_eq!(
+        ctx.receipt_stamp(),
+        "mode=absence_clamp;interlocutors=known_contact:kenji@example.com"
+    );
+
+    // Board rows agree with the pack (AC 5) and carry the disclosure block.
+    let board = assemble_eiri_memory_board(
+        &pack,
+        EiriMemoryBoardBudget::new(8, 8, 8, 8, 8, 8),
+        None,
+        Some(ctx.assembly(clamped_out)),
+    );
+    let board_ids: Vec<String> = board.rows.iter().map(|row| row.id.clone()).collect();
+    assert!(board_ids.contains(&party.to_hex()));
+    for id in [off_record, band2, marked, diary] {
+        assert!(
+            !board_ids.contains(&id.to_hex()),
+            "clamped id must not appear in board rows"
+        );
+    }
+    let disclosure = board.disclosure.expect("board disclosure block");
+    assert_eq!(disclosure.mode, "absence_clamp");
+    assert_eq!(disclosure.clamped_out, clamped_out);
+    Ok(())
+}
+
+#[test]
+fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC2);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+
+    let party = disclosure_id(0xD7);
+    let diary = disclosure_id(0xD8);
+    put_disclosure_turn(&vault, &party, "party summary needle2");
+    put_disclosure_turn(&vault, &diary, "private diary tangent");
+    vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &diary, 0.9)?;
+
+    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+
+    let pack = vault
+        .context_pack()
+        .search_text("needle2", 10)
+        .include_edges(true)
+        .edge_hop(1)
+        .disclosure_context(ctx)
+        .run()?;
+
+    assert!(pack_ids(&pack).contains(&party));
+    assert!(
+        pack.neighbors.is_empty(),
+        "tier-B out-of-scope 1-hop neighbor must be absent"
+    );
+    assert_id_absent_everywhere(&pack, &diary, "out-of-scope edge neighbor");
+
+    // Control: the same assembly without the clamp DOES hydrate the neighbor
+    // (proves the absence above is the clamp, not missing data).
+    let unclamped = vault
+        .context_pack()
+        .search_text("needle2", 10)
+        .include_edges(true)
+        .edge_hop(1)
+        .run()?;
+    assert!(pack_ids(&unclamped).contains(&diary));
+    Ok(())
+}
+
+#[test]
+fn n3_unknown_counterparty_yields_empty_pack_not_error() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let turn = disclosure_id(0xD9);
+    put_disclosure_turn(&vault, &turn, "anything at all needle3");
+
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        crate::interlocutor::InterlocutorSet::without_owner(vec![
+            crate::interlocutor::Interlocutor::unknown("stranger", false),
+        ]),
+    )?;
+    let pack = vault
+        .context_pack()
+        .search_text("needle3", 10)
+        .disclosure_context(ctx)
+        .run()?;
+
+    assert!(pack.results.is_empty() && pack.neighbors.is_empty());
+    assert!(
+        pack.empty.is_some(),
+        "empty-context envelope, not an error: {:?}",
+        pack.empty
+    );
+    Ok(())
+}
+
+#[test]
+fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC3);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+    let diary = disclosure_id(0xDA);
+    put_disclosure_turn(&vault, &diary, "tier b private memory needle7");
+    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+
+    // Assembly 1 — supervised: Tier B present.
+    let supervised = supervised_ctx_for_contact(&vault, contact_id);
+    let pack = vault
+        .context_pack()
+        .search_text("needle7", 10)
+        .disclosure_context(supervised)
+        .run()?;
+    assert!(pack_ids(&pack).contains(&diary), "supervised admits Tier B");
+
+    // Assembly 2 — owner dropped: same query, id absent.
+    let clamped = absence_ctx_for_contact(&vault, contact_id);
+    let pack = vault
+        .context_pack()
+        .search_text("needle7", 10)
+        .disclosure_context(clamped)
+        .run()?;
+    assert_id_absent_everywhere(&pack, &diary, "owner-drop flip");
+
+    // Assembly 3 — owner back: present again (mode is request-keyed, no
+    // cache to poison).
+    let supervised = supervised_ctx_for_contact(&vault, contact_id);
+    let pack = vault
+        .context_pack()
+        .search_text("needle7", 10)
+        .disclosure_context(supervised)
+        .run()?;
+    assert!(pack_ids(&pack).contains(&diary), "flip back is stateless");
+    Ok(())
+}
+
+#[test]
+fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_a = disclosure_id(0xC4);
+    let contact_b = disclosure_id(0xC5);
+    seed_disclosure_contact(&vault, contact_a, "a@example.com");
+    seed_disclosure_contact(&vault, contact_b, "b@example.com");
+
+    let event_a = disclosure_id(0xDB);
+    let event_b = disclosure_id(0xDC);
+    let event_c = disclosure_id(0xDD);
+    put_disclosure_turn(&vault, &event_a, "event alpha needle8");
+    put_disclosure_turn(&vault, &event_b, "event beta needle8");
+    put_disclosure_turn(&vault, &event_c, "event gamma needle8");
+
+    vault.set_counterparty_disclosure_scope(
+        &contact_a,
+        &crate::disclosure::DisclosureScope::task_scoped("ab", vec![event_a, event_b], 100)?,
+    )?;
+    vault.set_counterparty_disclosure_scope(
+        &contact_b,
+        &crate::disclosure::DisclosureScope::task_scoped("bc", vec![event_b, event_c], 100)?,
+    )?;
+
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        crate::interlocutor::InterlocutorSet::without_owner(vec![
+            known_contact_entry(contact_a, "a@example.com"),
+            known_contact_entry(contact_b, "b@example.com"),
+        ]),
+    )?;
+    let pack = vault
+        .context_pack()
+        .search_text("needle8", 10)
+        .disclosure_context(ctx)
+        .run()?;
+
+    let surfaced = pack_ids(&pack);
+    assert!(surfaced.contains(&event_b), "shared scope member admitted");
+    assert_id_absent_everywhere(&pack, &event_a, "A-only scope member");
+    assert_id_absent_everywhere(&pack, &event_c, "B-only scope member");
+    Ok(())
+}
+
+#[test]
+fn n10_tier_a_never_traversed_into_even_from_in_scope_seed() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC6);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+
+    let party = disclosure_id(0xDE);
+    let vaulted = disclosure_id(0xDF);
+    put_disclosure_turn(&vault, &party, "party seed needle10");
+    put_disclosure_turn(&vault, &vaulted, "reachable only by edge");
+    vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &vaulted, 0.9)?;
+    // The target is IN scope but owner-marked Tier A: tier supremacy blocks
+    // the walk regardless of the allowlist (I2).
+    vault.set_disclosure_tier_a(&vaulted, 100)?;
+    let scope =
+        crate::disclosure::DisclosureScope::task_scoped("party", vec![party, vaulted], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+    let pack = vault
+        .context_pack()
+        .search_text("needle10", 10)
+        .include_edges(true)
+        .edge_hop(2)
+        .disclosure_context(ctx)
+        .run()?;
+
+    assert!(pack_ids(&pack).contains(&party));
+    assert_id_absent_everywhere(&pack, &vaulted, "edge-reachable Tier-A entity");
+    Ok(())
+}
+
+#[test]
+fn n11_tier_a_carve_out_is_mode_keyed_not_data_loss() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC7);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+    let subject = disclosure_id(0xE0);
+    put_disclosure_turn(&vault, &subject, "subject turn");
+    let band2 = disclosure_id(0xE1);
+    put_disclosure_claim(
+        &vault,
+        &band2,
+        subject,
+        "profile.health_note",
+        "clinic details needle11",
+        Some("sensitive"),
+    );
+
+    // OwnerAlone (no context attached) returns the Tier-A claim.
+    let pack = vault.context_pack().search_text("needle11", 10).run()?;
+    assert!(pack_ids(&pack).contains(&band2));
+
+    // An explicit OwnerAlone context is byte-identical in effect.
+    let owner_ctx =
+        DisclosureContext::resolve(&vault, crate::interlocutor::InterlocutorSet::owner_alone())?;
+    let run = vault
+        .context_pack()
+        .search_text("needle11", 10)
+        .disclosure_context(owner_ctx)
+        .run_unfinalized_with_telemetry()?;
+    assert!(pack_ids(&run.value).contains(&band2));
+    assert_eq!(run.clamped_out(), 0, "OwnerAlone clamps nothing");
+
+    // The same query under Supervised does not return it.
+    let supervised = supervised_ctx_for_contact(&vault, contact_id);
+    let pack = vault
+        .context_pack()
+        .search_text("needle11", 10)
+        .disclosure_context(supervised)
+        .run()?;
+    assert_id_absent_everywhere(&pack, &band2, "mode-keyed Tier-A carve-out");
+    Ok(())
+}
+
+#[test]
+fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC8);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+    let marked = disclosure_id(0xE2);
+    put_disclosure_turn(&vault, &marked, "smuggled row");
+    vault.set_disclosure_tier_a(&marked, 100)?;
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+
+    let smuggled = ContextEntity {
+        id: marked,
+        short_id: "tn_smuggled".to_owned(),
+        content_hash: 0,
+        entity_type: ENTITY_TYPE_TURN,
+        score: 1.0,
+        fields: None,
+        edges: None,
+        vector: None,
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let err = validate_pack_disclosure(&vault.store, &rtxn, &ctx, &[smuggled], &[])
+        .expect_err("THE PACK BUILD FAILS RATHER THAN LEAKS");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::DisclosureClampViolation
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_alone_and_absent_context_stay_identical() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let turn = disclosure_id(0xE3);
+    put_disclosure_turn(&vault, &turn, "regression needle12");
+
+    let bare = vault.context_pack().search_text("needle12", 10).run()?;
+    let owner_ctx =
+        DisclosureContext::resolve(&vault, crate::interlocutor::InterlocutorSet::owner_alone())?;
+    let with_ctx = vault
+        .context_pack()
+        .search_text("needle12", 10)
+        .disclosure_context(owner_ctx)
+        .run()?;
+
+    assert_eq!(pack_ids(&bare), pack_ids(&with_ctx));
+    assert_eq!(bare.results.len(), with_ctx.results.len());
+    Ok(())
 }

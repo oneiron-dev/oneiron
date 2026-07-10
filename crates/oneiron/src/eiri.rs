@@ -156,6 +156,11 @@ pub struct EiriMemoryBoard {
     pub budget: EiriMemoryBoardBudget,
     pub rows: Vec<EiriMemoryBoardRow>,
     pub companion: Option<EiriCompanionAssembly>,
+    /// OF-365 disclosure block for the assembly that produced this board.
+    /// Absent (and skipped in serialization, keeping pre-ILD board refs
+    /// stable) when no disclosure context was supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disclosure: Option<crate::disclosure::DisclosureAssembly>,
 }
 
 /// Session-scoped RAG cursor returned by Eiri Context v4 surfaces.
