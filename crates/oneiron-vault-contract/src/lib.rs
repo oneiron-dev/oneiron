@@ -38,6 +38,7 @@ pub fn valid_vault_name(name: &str) -> bool {
         return false;
     }
     (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b[b.len() - 1] != b'-'
         && b.iter()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
@@ -95,6 +96,13 @@ pub enum CtlRequest {
     Ping,
 }
 
+/// Untagged: variant selection is structural, tried in declaration order.
+/// INVARIANT: each variant's required-field set must stay disjoint from every
+/// variant above it, and new variants are appended last — otherwise a
+/// malformed reply can silently match a later, more permissive variant
+/// (e.g. `Ok`). Supervisors that need strict rejection should deserialize the
+/// concrete response shape they expect for the request they sent. Tagging
+/// this enum is a wire break — contract v2 material.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CtlResponse {
@@ -156,6 +164,28 @@ pub struct LedgerUpdate {
     pub entries: Vec<WakeEntry>,
 }
 
+impl LedgerUpdate {
+    /// Reject-not-truncate enforcement of the wire limits: op discriminator,
+    /// token shape, entry count, per-entry bounds. Supervisors call this
+    /// immediately after parsing an untrusted push.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.op == "ledger_update", "unknown op");
+        let t = self.token.expose();
+        anyhow::ensure!(
+            t.len() == TOKEN_LEN * 2 && t.bytes().all(|b| b.is_ascii_hexdigit()),
+            "malformed token"
+        );
+        anyhow::ensure!(
+            self.entries.len() <= MAX_LEDGER_ENTRIES,
+            "too many ledger entries"
+        );
+        for e in &self.entries {
+            e.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerAck {
     pub ok: bool,
@@ -187,15 +217,18 @@ pub fn read_credentials(mut r: impl Read) -> anyhow::Result<Credentials> {
         anyhow::bail!("credentials short read: {e}");
     }
     let mut trailing = [0u8; 1];
-    match r.read(&mut trailing) {
-        Ok(0) => {}
-        Ok(_) => {
-            buf.zeroize();
-            anyhow::bail!("credentials fd carried trailing bytes");
-        }
-        Err(e) => {
-            buf.zeroize();
-            anyhow::bail!("credentials EOF check failed: {e}");
+    loop {
+        match r.read(&mut trailing) {
+            Ok(0) => break,
+            Ok(_) => {
+                buf.zeroize();
+                anyhow::bail!("credentials fd carried trailing bytes");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                buf.zeroize();
+                anyhow::bail!("credentials EOF check failed: {e}");
+            }
         }
     }
     let mut dek = [0u8; DEK_LEN];
@@ -206,7 +239,10 @@ pub fn read_credentials(mut r: impl Read) -> anyhow::Result<Credentials> {
     Ok(Credentials { dek, token })
 }
 
-/// Supervisor side: write DEK ‖ token and close (drop) the write end.
+/// Supervisor side: write DEK ‖ token. Pass the writer BY VALUE so its fd
+/// closes when this returns — the vault's EOF check blocks until the write
+/// end closes, so handing in `&mut w` (which `impl Write` permits) risks a
+/// startup hang.
 pub fn write_credentials(
     mut w: impl Write,
     dek: &[u8; DEK_LEN],
@@ -233,12 +269,18 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    // Byte-wise: never slices the &str, so non-ASCII input returns None
+    // instead of panicking on a char boundary.
+    let b = s.as_bytes();
+    if !b.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+    b.chunks_exact(2)
+        .map(|p| {
+            let hi = (p[0] as char).to_digit(16)?;
+            let lo = (p[1] as char).to_digit(16)?;
+            Some(((hi as u8) << 4) | lo as u8)
+        })
         .collect()
 }
 
@@ -304,8 +346,45 @@ mod tests {
         assert!(valid_vault_name("a"));
         assert!(!valid_vault_name(""));
         assert!(!valid_vault_name("-a"));
+        assert!(!valid_vault_name("a-"));
         assert!(!valid_vault_name("A"));
         assert!(!valid_vault_name("a.b"));
         assert!(!valid_vault_name(&"x".repeat(64)));
+    }
+
+    #[test]
+    fn from_hex_rejects_malformed() {
+        assert!(from_hex("abc").is_none()); // odd length
+        assert!(from_hex("zz").is_none()); // non-hex
+        assert!(from_hex("€a").is_none()); // even byte length, non-ASCII: must not panic
+    }
+
+    #[test]
+    fn ledger_update_validate() {
+        let mut u = LedgerUpdate {
+            op: "ledger_update".into(),
+            vault: "v".into(),
+            token: TokenHex::from_token(&[0u8; TOKEN_LEN]),
+            rev: 1,
+            entries: vec![],
+        };
+        u.validate().unwrap();
+
+        u.op = "nope".into();
+        assert!(u.validate().is_err());
+        u.op = "ledger_update".into();
+
+        u.token = TokenHex::new("zz".into());
+        assert!(u.validate().is_err());
+        u.token = TokenHex::from_token(&[0u8; TOKEN_LEN]);
+
+        u.entries = (0..=MAX_LEDGER_ENTRIES)
+            .map(|i| WakeEntry {
+                id: format!("e{i}"),
+                at: Schedule::Exact { at: 0 },
+                reason_tag: String::new(),
+            })
+            .collect();
+        assert!(u.validate().is_err());
     }
 }
