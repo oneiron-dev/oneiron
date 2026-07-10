@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 oneiron = { path = "../oneiron" }
-napi = { version = "3", default-features = false, features = ["napi8"] }
+napi = { version = "3", default-features = false, features = ["napi8", "serde-json"] }
 napi-derive = "3"
 serde = { workspace = true }
 serde_json = { workspace = true }

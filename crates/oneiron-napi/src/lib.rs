@@ -1,4 +1,7 @@
+mod facade;
 mod types;
+
+pub use facade::{ActorScopedVault, VaultBridge};
 
 use std::sync::Arc;
 
