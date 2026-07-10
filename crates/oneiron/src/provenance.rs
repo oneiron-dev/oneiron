@@ -1249,7 +1249,7 @@ impl Vault {
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
-            &mut wtxn,
+            &wtxn,
             &retracted_claim_body,
             &retracted,
             claim.actor_class,
@@ -1523,7 +1523,7 @@ impl Vault {
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
             &self.store,
-            &mut wtxn,
+            &wtxn,
             &claim_body,
             &record,
             actor_class,
@@ -1603,7 +1603,7 @@ impl Vault {
                 )?;
             crate::gate::check_edge_provenance_claim_policy(
                 &self.store,
-                &mut wtxn,
+                &wtxn,
                 &closed_claim_body,
                 &closed_record,
                 closure.actor_class,

@@ -5416,13 +5416,12 @@ fn resolver_maps_actors() -> Result<()> {
     vault.put_entity(&person_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
 
     {
-        let mut rtxn = store.env.write_txn()?;
-        let rtxn = &mut rtxn;
+        let rtxn = store.env.read_txn()?;
         // Pinned system actor ids resolve to the compiled preset ceilings.
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(
                     SystemAgentPreset::Herald.actor_entity_id(),
                     EdgeActorClass::Agent
@@ -5433,7 +5432,7 @@ fn resolver_maps_actors() -> Result<()> {
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(
                     SystemAgentPreset::Scout.actor_entity_id(),
                     EdgeActorClass::Agent
@@ -5445,7 +5444,7 @@ fn resolver_maps_actors() -> Result<()> {
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
             ),
             Some(PolicyApprovalCeiling::Auto)
@@ -5454,7 +5453,7 @@ fn resolver_maps_actors() -> Result<()> {
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(scout_fork_id, EdgeActorClass::Human),
             ),
             None
@@ -5463,7 +5462,7 @@ fn resolver_maps_actors() -> Result<()> {
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(test_id(0x53), EdgeActorClass::Agent),
             ),
             Some(PolicyApprovalCeiling::Proposed)
@@ -5472,7 +5471,7 @@ fn resolver_maps_actors() -> Result<()> {
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                rtxn,
+                &rtxn,
                 WriteActor::new(person_id, EdgeActorClass::Agent),
             ),
             None
@@ -5485,11 +5484,11 @@ fn resolver_maps_actors() -> Result<()> {
     narrowed.ceiling = AgentCeiling::Proposed;
     vault.update_agent_definition(&scout_fork_id, &narrowed, test_time(2), 2)?;
     {
-        let mut rtxn = store.env.write_txn()?;
+        let rtxn = store.env.read_txn()?;
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                &mut rtxn,
+                &rtxn,
                 WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
             ),
             Some(PolicyApprovalCeiling::Proposed)
@@ -5766,11 +5765,11 @@ fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()>
         Ok(())
     })?;
 
-    let mut rtxn = store.env.write_txn()?;
+    let rtxn = store.env.read_txn()?;
     assert_eq!(
         agent_definition_ceiling_for_actor(
             store,
-            &mut rtxn,
+            &rtxn,
             WriteActor::new(scout_id, EdgeActorClass::Agent),
         ),
         Some(PolicyApprovalCeiling::Proposed),
@@ -5780,7 +5779,7 @@ fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()>
     assert_eq!(
         agent_definition_ceiling_for_actor(
             store,
-            &mut rtxn,
+            &rtxn,
             WriteActor::new(
                 SystemAgentPreset::Keeper.actor_entity_id(),
                 EdgeActorClass::Agent,
@@ -5791,7 +5790,7 @@ fn legacy_occupant_of_reserved_actor_id_gets_no_preset_authority() -> Result<()>
     assert_eq!(
         agent_definition_ceiling_for_actor(
             store,
-            &mut rtxn,
+            &rtxn,
             WriteActor::new(
                 SystemAgentPreset::Herald.actor_entity_id(),
                 EdgeActorClass::Agent,
@@ -5919,111 +5918,32 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
     Ok(())
 }
 
-// AGENT-2 security hardening F3 (delete-to-widen): once a reserved
-// system-agent actor id has been observed occupied, the durable marker keeps
-// it fail-closed even after the occupant is hard-deleted — deleting a legacy
-// occupant must not resurrect the preset's compiled Auto.
+// AGENT-2 F3 (delete-to-widen): a legacy occupant of a reserved system-agent
+// id is censused at the write door (apply_put), which marks it durably; the
+// read-only resolver then refuses preset Auto for that id forever, even after
+// the occupant is hard-deleted.
 #[test]
 fn deleted_reserved_id_occupant_does_not_resurrect_preset_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let store = &vault.store;
     let scout_id = SystemAgentPreset::Scout.actor_entity_id();
 
-    // Pristine: the reserved id confers Scout's compiled Auto.
+    // Pristine: the census ran at open (flag set, nothing occupied), so the
+    // reserved id confers Scout's compiled Auto.
     {
-        let mut wtxn = store.env.write_txn()?;
+        let rtxn = store.env.read_txn()?;
         assert_eq!(
             agent_definition_ceiling_for_actor(
                 store,
-                &mut wtxn,
+                &rtxn,
                 WriteActor::new(scout_id, EdgeActorClass::Agent),
             ),
             Some(PolicyApprovalCeiling::Auto)
         );
-        wtxn.commit()?;
     }
 
-    // A legacy occupant appears (only reachable in a pre-reservation vault;
-    // apply_put refuses these ids) and is observed by a gate door.
-    let mut payload = vec![ENTITY_TYPE_PERSON];
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"legacy occupant");
-    vault.with_write_txn(|wtxn| {
-        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
-        Ok(())
-    })?;
-    {
-        let mut wtxn = store.env.write_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &mut wtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed),
-            "an occupied reserved id must not inherit Scout's compiled Auto"
-        );
-        wtxn.commit()?;
-    }
-
-    // The occupant is hard-deleted. The reserved id is now byte-identical to
-    // a pristine one, but the durable marker refuses preset authority.
-    vault.with_write_txn(|wtxn| {
-        store.entities.delete(wtxn, scout_id.as_bytes())?;
-        Ok(())
-    })?;
-    assert!(vault.get_raw(&scout_id)?.is_none());
-    {
-        let mut wtxn = store.env.write_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &mut wtxn,
-                WriteActor::new(scout_id, EdgeActorClass::Agent),
-            ),
-            Some(PolicyApprovalCeiling::Proposed),
-            "deleting the occupant must not resurrect preset Auto"
-        );
-        wtxn.commit()?;
-    }
-
-    // Sibling reserved ids are untouched by another id's marker.
-    {
-        let mut wtxn = store.env.write_txn()?;
-        assert_eq!(
-            agent_definition_ceiling_for_actor(
-                store,
-                &mut wtxn,
-                WriteActor::new(
-                    SystemAgentPreset::Keeper.actor_entity_id(),
-                    EdgeActorClass::Agent,
-                ),
-            ),
-            Some(PolicyApprovalCeiling::Auto)
-        );
-        wtxn.commit()?;
-    }
-    Ok(())
-}
-
-// AGENT-2 F3 (delete-to-widen, round 2): a legacy occupant that is NEVER used
-// as an actor is still censused by ordinary vault activity — any entity put or
-// any gate actor resolution — so deleting it cannot resurrect preset Auto.
-// (Round 1 only marked the id being resolved, which an unused occupant never
-// triggered; this test fails against that implementation.)
-#[test]
-fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let store = &vault.store;
-    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
-
-    // A pre-reservation vault carrying an occupant nobody ever resolves. The
-    // occupant predates this code, so the one-time census has never run —
-    // model that by clearing the scan flag that opening a fresh vault set (in
-    // production the occupant is on disk before open, and open's first
-    // apply_put censuses it).
+    // Model a genuine pre-reservation vault: a legacy occupant on disk and the
+    // one-time census never run (clear the flag the fresh open set).
     let mut payload = vec![ENTITY_TYPE_PERSON];
     payload.extend_from_slice(&1_u64.to_be_bytes());
     payload.extend_from_slice(&1_u64.to_be_bytes());
@@ -6037,8 +5957,87 @@ fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
         Ok(())
     })?;
 
-    // Ordinary, unrelated vault activity: one entity put through apply_put.
-    // The census runs there — the occupant is never resolved as an actor.
+    // Any write-door activity runs the census, which observes the occupant
+    // and marks it durably. (In production this is open's own first apply_put,
+    // before any caller holds the vault.)
+    vault.put_entity(
+        &test_id(0x59),
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"unrelated",
+    )?;
+    {
+        let rtxn = store.env.read_txn()?;
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_id, EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Proposed),
+            "an occupied reserved id must not inherit Scout's compiled Auto"
+        );
+    }
+
+    // Hard-delete the occupant. The id is now byte-identical to a pristine
+    // one, but the durable marker refuses preset authority.
+    vault.with_write_txn(|wtxn| {
+        store.entities.delete(wtxn, scout_id.as_bytes())?;
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&scout_id)?.is_none());
+    {
+        let rtxn = store.env.read_txn()?;
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_id, EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Proposed),
+            "deleting the occupant must not resurrect preset Auto"
+        );
+        // A never-occupied sibling stays pristine.
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(
+                    SystemAgentPreset::Keeper.actor_entity_id(),
+                    EdgeActorClass::Agent,
+                ),
+            ),
+            Some(PolicyApprovalCeiling::Auto)
+        );
+    }
+    Ok(())
+}
+
+// AGENT-2 F3 (unobserved occupant): the census marks ALL occupied reserved
+// ids in one pass, so an occupant that is never used as an actor is still
+// marked by ordinary write-door activity and cannot be deleted to widen.
+#[test]
+fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let store = &vault.store;
+    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
+
+    let mut payload = vec![ENTITY_TYPE_PERSON];
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(b"legacy occupant");
+    vault.with_write_txn(|wtxn| {
+        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
+        store
+            .vault_meta
+            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+        Ok(())
+    })?;
+
+    // Unrelated write-door activity runs the census; the occupant is never
+    // resolved as an actor.
     vault.put_entity(
         &test_id(0x59),
         ENTITY_TYPE_PERSON,
@@ -6047,86 +6046,70 @@ fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
         b"unrelated",
     )?;
 
-    // The occupant is hard-deleted without ever having been an actor.
     vault.with_write_txn(|wtxn| {
         store.entities.delete(wtxn, scout_id.as_bytes())?;
         Ok(())
     })?;
     assert!(vault.get_raw(&scout_id)?.is_none());
 
-    let mut wtxn = store.env.write_txn()?;
+    let rtxn = store.env.read_txn()?;
     assert_eq!(
         agent_definition_ceiling_for_actor(
             store,
-            &mut wtxn,
+            &rtxn,
             WriteActor::new(scout_id, EdgeActorClass::Agent),
         ),
         Some(PolicyApprovalCeiling::Proposed),
         "an unobserved occupant must be censused before deletion can widen the id"
     );
-    // A never-occupied sibling stays pristine.
-    assert_eq!(
-        agent_definition_ceiling_for_actor(
-            store,
-            &mut wtxn,
-            WriteActor::new(
-                SystemAgentPreset::Keeper.actor_entity_id(),
-                EdgeActorClass::Agent,
-            ),
-        ),
-        Some(PolicyApprovalCeiling::Auto)
-    );
-    wtxn.commit()?;
     Ok(())
 }
 
-// The census also runs from the gate door, so a vault whose first activity is
-// a gate resolution (no entity put at all) is covered too.
+// AGENT-2 R1 (census fails closed): if the occupancy census has NOT durably
+// completed — because its marker/flag writes never committed — the resolver
+// WITHHOLDS preset Auto (resolves Proposed) rather than granting it. The flag
+// is set LAST by the census, so a partial/failed census leaves it unset, and
+// the read-only resolver treats "census not completed" as fail-closed. This
+// is deterministic: clearing the flag models the un-committed state.
 #[test]
-fn gate_resolution_censuses_reserved_ids_before_deletion() -> Result<()> {
+fn incomplete_census_withholds_preset_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let store = &vault.store;
     let scout_id = SystemAgentPreset::Scout.actor_entity_id();
 
-    let mut payload = vec![ENTITY_TYPE_PERSON];
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(&1_u64.to_be_bytes());
-    payload.extend_from_slice(b"legacy occupant");
+    // Sanity: with the census completed at open, a pristine id is Auto.
+    {
+        let rtxn = store.env.read_txn()?;
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_id, EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Auto)
+        );
+    }
+
+    // Model "the census never durably completed": clear the completion flag
+    // directly (a marker/flag write that never committed leaves this state).
+    // No occupant is present, so ONLY the census-completed gate can hold the
+    // id — reverting that gate makes this resolve Auto (mutation-verified).
     vault.with_write_txn(|wtxn| {
-        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
         store
             .vault_meta
             .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
         Ok(())
     })?;
 
-    // First vault activity is a gate resolution of an UNRELATED actor.
-    {
-        let mut wtxn = store.env.write_txn()?;
-        let _ = agent_definition_ceiling_for_actor(
-            store,
-            &mut wtxn,
-            WriteActor::new(test_id(0x5A), EdgeActorClass::Agent),
-        );
-        wtxn.commit()?;
-    }
-
-    vault.with_write_txn(|wtxn| {
-        store.entities.delete(wtxn, scout_id.as_bytes())?;
-        Ok(())
-    })?;
-
-    let mut wtxn = store.env.write_txn()?;
+    let rtxn = store.env.read_txn()?;
     assert_eq!(
         agent_definition_ceiling_for_actor(
             store,
-            &mut wtxn,
+            &rtxn,
             WriteActor::new(scout_id, EdgeActorClass::Agent),
         ),
         Some(PolicyApprovalCeiling::Proposed),
-        "the gate door censuses reserved ids too"
+        "preset Auto is withheld until the occupancy census durably completes"
     );
-    wtxn.commit()?;
     Ok(())
 }

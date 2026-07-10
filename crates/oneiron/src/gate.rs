@@ -1832,13 +1832,13 @@ pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
 ///   agent must not be silent.
 pub(crate) fn agent_definition_ceiling_for_actor(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     actor: WriteActor,
 ) -> Option<PolicyApprovalCeiling> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return None;
     }
-    match agent_bearing_for_entity(store, wtxn, actor.entity_ref()) {
+    match agent_bearing_for_entity(store, txn, actor.entity_ref()) {
         AgentBearing::Bound(ceiling) => Some(ceiling),
         // B3: a deleted definition can no longer drop its self-limit.
         AgentBearing::Absent => Some(PolicyApprovalCeiling::Proposed),
@@ -1860,23 +1860,16 @@ enum AgentBearing {
     NonAgent,
 }
 
-/// Classifies a governing entity id, censusing the durable reserved-id
-/// occupancy markers before any preset id can be resolved (F3).
+/// Classifies a governing entity id from stored state. READ-ONLY: the durable
+/// occupancy census is written solely by `apply_put`
+/// ([`crate::agent_def::scan_reserved_actor_ids_once`]); this resolver only
+/// consults it. Read failures resolve fail-closed to `Bound(Proposed)`.
 fn agent_bearing_for_entity(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     entity_ref: EntityId,
 ) -> AgentBearing {
-    // Census the reserved ids first: occupancy is only observable while the
-    // occupant is stored, so this must precede any resolution (or deletion).
-    if let Err(error) = crate::agent_def::scan_reserved_actor_ids_once(store, wtxn) {
-        tracing::warn!(
-            %error,
-            "reserved system agent occupancy census failed; \
-             preset authority stays subject to the per-id marker",
-        );
-    }
-    let occupied = match store.entities.get(wtxn, entity_ref.as_bytes()) {
+    let occupied = match store.entities.get(txn, entity_ref.as_bytes()) {
         Ok(raw) => raw.is_some(),
         Err(error) => {
             tracing::warn!(
@@ -1889,39 +1882,35 @@ fn agent_bearing_for_entity(
     };
 
     if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
-        // A pinned preset id confers preset authority only while it is
-        // system-owned. `apply_put` reserves the write door, so an occupant
-        // can only come from a legacy pre-reservation vault — and occupancy
-        // must be remembered DURABLY, otherwise hard-deleting the occupant
-        // would resurrect the preset's compiled Auto (delete-to-widen).
-        let ever_occupied = crate::agent_def::reserved_actor_id_ever_occupied(store, wtxn, preset);
-        if occupied
-            && !ever_occupied
-            && let Err(error) =
-                crate::agent_def::mark_reserved_actor_id_occupied(store, wtxn, preset)
-        {
-            tracing::warn!(
-                actor_entity_id = %entity_ref.to_hex(),
-                preset = preset.preset_id(),
-                %error,
-                "failed to record reserved system agent occupancy marker",
-            );
-        }
-        if occupied || ever_occupied {
+        // A pinned preset id confers preset authority only when three things
+        // hold: the occupancy census has DURABLY completed (its markers +
+        // flag committed), the id is not currently occupied, and it was never
+        // recorded as ever occupied. If the census has not completed — because
+        // its writes never committed (R1) — Auto is WITHHELD: "could not
+        // record occupancy" fails closed to Proposed rather than resurrecting
+        // compiled Auto. `apply_put` runs the census (open writes the default
+        // manifest through it, observing any on-disk legacy occupant before
+        // any caller holds the vault); a deleted occupant then hits the
+        // durable marker (delete-to-widen closed).
+        let census_completed = crate::agent_def::reserved_actor_census_completed(store, txn);
+        let ever_occupied = crate::agent_def::reserved_actor_id_ever_occupied(store, txn, preset);
+        if occupied || ever_occupied || !census_completed {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
                 preset = preset.preset_id(),
                 occupied,
                 ever_occupied,
-                "reserved system agent actor id is (or has been) occupied; \
-                 refusing preset authority and failing closed to proposed",
+                census_completed,
+                "reserved system agent actor id is occupied, has been occupied, \
+                 or its occupancy census has not completed; refusing preset \
+                 authority and failing closed to proposed",
             );
             return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
         }
         return AgentBearing::Bound(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
     }
 
-    let Ok(Some(raw)) = store.entities.get(wtxn, entity_ref.as_bytes()) else {
+    let Ok(Some(raw)) = store.entities.get(txn, entity_ref.as_bytes()) else {
         return AgentBearing::Absent;
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {
@@ -1983,7 +1972,7 @@ const NON_AGENT_EFFECT_ACTOR_CLASSES: [&str; 3] = ["human", "system", "first_par
 /// entity's kind, so they are bound by construction.)
 fn agent_definition_ceiling_for_effect_actor(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     actor_class: &str,
     actor_ref: Option<&str>,
     actor_entity_ref: Option<EntityId>,
@@ -2036,7 +2025,7 @@ fn agent_definition_ceiling_for_effect_actor(
         }
     }
 
-    match agent_bearing_for_entity(store, wtxn, governing) {
+    match agent_bearing_for_entity(store, txn, governing) {
         // Entity-type-wins: an agent-bearing identity is clamped regardless of
         // the class the caller asserted.
         AgentBearing::Bound(ceiling) => Some(ceiling),
@@ -2392,7 +2381,7 @@ pub(crate) fn check_claim_policy_for_write(
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
             let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
-            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, wtxn, actor);
+            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
@@ -2534,7 +2523,7 @@ pub(crate) fn check_external_effect_policy(
     // class assertions.
     let agent_definition_ceiling = agent_definition_ceiling_for_effect_actor(
         store,
-        wtxn,
+        &*wtxn,
         &hydrated_effect.actor.actor_class,
         hydrated_effect.actor.actor_ref.as_deref(),
         hydrated_effect.provenance.actor_entity_ref,
@@ -2973,7 +2962,7 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 
 pub(crate) fn check_edge_provenance_claim_policy(
     store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
     record: &crate::provenance::EdgeProvenanceClaimBody,
     actor_class: EdgeActorClass,
@@ -2982,7 +2971,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
     if policy.enforces_write_gate() {
         let agent_definition_ceiling = agent_definition_ceiling_for_actor(
             store,
-            wtxn,
+            txn,
             WriteActor::new(record.actor_entity_ref, actor_class),
         );
         let input = claim_gate_input(

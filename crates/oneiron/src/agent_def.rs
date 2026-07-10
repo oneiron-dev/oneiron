@@ -1259,22 +1259,45 @@ pub(crate) fn mark_reserved_actor_id_occupied(
     Ok(())
 }
 
-/// Marks that the one-time reserved-id occupancy census has run.
+/// Marks that the one-time reserved-id occupancy census has durably completed.
 const SYSTEM_AGENT_RESERVED_SCAN_KEY: &[u8] = b"agent_def:reserved_actor_scan:v1";
 
+/// True once the reserved-id occupancy census has durably completed. A read
+/// error fails closed (reported as NOT completed), so preset authority is
+/// withheld rather than granted on a failed read.
+pub(crate) fn reserved_actor_census_completed(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> bool {
+    match store.vault_meta.get(txn, SYSTEM_AGENT_RESERVED_SCAN_KEY) {
+        Ok(marker) => marker.is_some(),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "reserved system agent census flag read failed; failing closed",
+            );
+            false
+        }
+    }
+}
+
 /// One-time census of ALL five reserved system-agent actor ids, recording an
-/// occupancy marker for each one currently occupied.
+/// occupancy marker for each one currently occupied, then setting the
+/// census-completed flag LAST.
 ///
-/// Occupancy is only observable while the occupant is still stored, so the
-/// census must run before a legacy occupant can be deleted — otherwise the
-/// deleted id is byte-indistinguishable from a pristine one and
-/// `delete-to-widen` reopens. Marking only the id being resolved is too lazy:
-/// an occupant never used as an actor would never be marked, and deleting it
-/// would resurrect the preset's compiled Auto. This runs from the door every
-/// entity materialization funnels through (`batch.rs::apply_put`) and from
-/// every gate actor resolution (`gate.rs::agent_bearing_for_entity`), so any
-/// vault activity at all populates the markers before a targeted deletion can
-/// land. Idempotent; steady-state cost is one `vault_meta` read.
+/// This is the ONLY writer of the occupancy markers, and it runs solely from
+/// the write door every entity materialization funnels through
+/// (`batch.rs::apply_put`) — never on the read/gate path (the ceiling
+/// resolver stays read-only). `Vault::open` writes the default policy
+/// manifest through `apply_put`, so the census runs (observing any on-disk
+/// legacy occupant) before any caller holds the vault handle; a census write
+/// failure aborts that transaction (open fails) rather than proceeding.
+///
+/// Because the flag is set LAST, a partial/failed census leaves the flag
+/// UNSET, and the resolver withholds preset Auto while the flag is unset
+/// ([`reserved_actor_census_completed`]) — so "could not record occupancy"
+/// fails closed to Proposed instead of resurrecting compiled Auto.
+/// Idempotent; steady-state cost is one `vault_meta` read.
 pub(crate) fn scan_reserved_actor_ids_once(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1298,6 +1321,8 @@ pub(crate) fn scan_reserved_actor_ids_once(
             mark_reserved_actor_id_occupied(store, wtxn, preset)?;
         }
     }
+    // Set the completion flag LAST: a failure above leaves it unset, and the
+    // resolver withholds preset Auto until it is set.
     store
         .vault_meta
         .put(wtxn, SYSTEM_AGENT_RESERVED_SCAN_KEY, &[0x01])?;
