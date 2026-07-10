@@ -1,6 +1,6 @@
 direction: down
 
-vault: LMDB Environment (18 databases) {
+vault: LMDB Environment (28 databases) {
   style.fill: transparent
   style.stroke: "#E63E2A"
   style.border-radius: 12
@@ -8,7 +8,7 @@ vault: LMDB Environment (18 databases) {
   style.font-size: 16
   style.bold: true
 
-  grid-columns: 3
+  grid-columns: 4
   grid-gap: 16
 
   core: "Core" {
@@ -24,6 +24,7 @@ vault: LMDB Environment (18 databases) {
     type_index
     short_ids
     short_ids_reverse
+    vault_meta
   }
 
   vector: "Vector" {
@@ -52,6 +53,8 @@ vault: LMDB Environment (18 databases) {
     text_postings
     text_meta
     text_forward
+    text_bm25_field_stats
+    text_doc_field_lengths
   }
 
   graph: "Graph" {
@@ -81,6 +84,7 @@ vault: LMDB Environment (18 databases) {
     temporal_occurred_start
     temporal_occurred_end
     temporal_learned
+    temporal_long_intervals
   }
 
   phonetic: "Phonetic" {
@@ -93,5 +97,33 @@ vault: LMDB Environment (18 databases) {
 
 
     phonetic_index
+    phonetic_forward
+  }
+
+  sync: "Sync" {
+    shape: class
+    style.fill: "#1E1E1E"
+    style.stroke: "#C4824D"
+    style.border-radius: 8
+    style.font-color: "#ffffff"
+    style.font-size: 13
+
+
+    sync_state
+    sync_queue
+  }
+
+  jobs: "Jobs" {
+    shape: class
+    style.fill: "#1E1E1E"
+    style.stroke: "#6BA87D"
+    style.border-radius: 8
+    style.font-color: "#ffffff"
+    style.font-size: 13
+
+
+    job_records
+    job_ready
+    job_dedupe
   }
 }
