@@ -256,6 +256,9 @@ const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
+/// Maps a scheduled outbound job id to the gate surface its first dispatch
+/// produced, so an idempotent replay can re-surface the original decision.
+const OUTBOUND_GATE_BINDING_KEY_PREFIX: &[u8] = b"outbound_gate_binding:v0:";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
 const GATE_RECEIPT_REASON_MAX_LEN: usize = 128;
 const PENDING_GATE_CONSENT_DREAMER_RUN_ID_MAX_LEN: usize = 128;
@@ -1572,6 +1575,23 @@ impl Store {
         Ok(None)
     }
 
+    /// Persists the opaque gate-surface bytes for a scheduled outbound job id
+    /// (its own committed write txn). Overwrites any prior value for the id.
+    pub(crate) fn put_outbound_gate_binding(&self, job_id: &[u8; 16], value: &[u8]) -> Result<()> {
+        let key = outbound_gate_binding_key(job_id);
+        let mut wtxn = self.env.write_txn()?;
+        self.vault_meta.put(&mut wtxn, &key, value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads the persisted gate-surface bytes for a scheduled outbound job id.
+    pub(crate) fn outbound_gate_binding(&self, job_id: &[u8; 16]) -> Result<Option<Vec<u8>>> {
+        let key = outbound_gate_binding_key(job_id);
+        let rtxn = self.env.read_txn()?;
+        Ok(self.vault_meta.get(&rtxn, &key)?.map(<[u8]>::to_vec))
+    }
+
     pub(crate) fn gate_decision_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -2677,6 +2697,13 @@ fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
     let mut key = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 16);
     key.extend_from_slice(GATE_DECISION_KEY_PREFIX);
     key.extend_from_slice(&decision_id.as_bytes());
+    key
+}
+
+fn outbound_gate_binding_key(job_id: &[u8; 16]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(OUTBOUND_GATE_BINDING_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(OUTBOUND_GATE_BINDING_KEY_PREFIX);
+    key.extend_from_slice(job_id);
     key
 }
 

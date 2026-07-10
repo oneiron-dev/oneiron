@@ -18,9 +18,10 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, ClaimInput, ClaimListFilter, CompanionRecordInput,
-    Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade, NeighborOpts, RecallScope,
-    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, Vault, VaultConfig,
-    WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
+    ConsolidationJobInput, Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade,
+    NeighborOpts, OutboundDraftInput, RecallScope, SafeDeleteReason, StructuralEdgeSpec,
+    StructuralPutInput, TextIndexField, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
+    WitnessTurn, parse_actor_key,
 };
 
 type BoundaryResult<T> = std::result::Result<T, String>;
@@ -538,6 +539,101 @@ pub struct NapiMemoryPack {
     pub pack_version: u32,
     /// Text rendering in the requested format; absent = typed only.
     pub rendered: Option<String>,
+}
+
+/// One Dreamer consolidation enqueue (BRIDGE-03).
+#[napi(object)]
+pub struct NapiConsolidationJobInput {
+    /// `micro` | `meso` | `macro`.
+    pub scope: String,
+    /// Opaque job input.
+    pub input: serde_json::Value,
+    /// Optional run correlation id.
+    pub run_id: Option<String>,
+    /// Optional advisory dedupe key.
+    pub dedupe_key: Option<String>,
+    /// Unix seconds; omitted ⇒ now.
+    pub now: Option<i64>,
+}
+
+/// Reference to one queued Dreamer job (poll model, W2).
+#[napi(object)]
+pub struct NapiDreamerJobRef {
+    /// 32-hex job id.
+    pub job_ref: String,
+    /// Queue state at enqueue time.
+    pub state: String,
+    /// True when the dedupe key coalesced onto an existing job.
+    pub existing: bool,
+}
+
+/// Poll view of one Dreamer job.
+#[napi(object)]
+pub struct NapiDreamerJobView {
+    /// 32-hex job id.
+    pub job_ref: String,
+    /// `queued` | `leased` | `paused` | `completed` | `failed` | `cancelled`.
+    pub state: String,
+    /// Queue job kind.
+    pub kind: String,
+    /// Worker label holding the lease, if leased.
+    pub lease_owner: Option<String>,
+    /// Admission attempts so far.
+    pub attempt_count: u32,
+    /// Run correlation id, if any.
+    pub run_id: Option<String>,
+    /// Last failure message, if any.
+    pub last_error: Option<String>,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// Unix seconds.
+    pub updated_at: i64,
+}
+
+/// One outbound schedule request (rides OF-327; the bridge never delivers).
+#[napi(object)]
+#[derive(Clone)]
+pub struct NapiOutboundDraftInput {
+    /// Verb (e.g. `send`).
+    pub verb: String,
+    /// Channel (e.g. `email`).
+    pub channel: String,
+    /// Delivery target.
+    pub target: String,
+    /// Principal the send acts for, if delegated.
+    pub on_behalf_of: Option<String>,
+    /// Content entity ref.
+    pub content_ref: Option<String>,
+    /// Facade-enforced idempotency key (no double-enqueue).
+    pub idempotency_key: Option<String>,
+    /// Advisory dedupe key carried onto the receipt.
+    pub dedupe_key: Option<String>,
+    /// `commitment_timer_wake` | `gap_queue` | `agent_immediate`.
+    pub trigger: String,
+    /// What fired the trigger.
+    pub trigger_ref: String,
+    /// Owning job/brief ref, if any.
+    pub job_ref: Option<String>,
+    /// Unix seconds; omitted ⇒ now.
+    pub occurred_at: Option<i64>,
+}
+
+/// Receipt for one scheduled outbound intent.
+#[napi(object)]
+pub struct NapiOutboundIntentReceipt {
+    /// Stable intent ref (`intent:<job-hex>`).
+    pub intent_ref: String,
+    /// `held` expected; `suppressed` on gate denial; `already_scheduled`
+    /// on dedupe.
+    pub outcome: String,
+    /// Gate outcome, absent on dedupe.
+    pub gate_outcome: Option<String>,
+    /// Persisted gate decision ref, queryable via `receipts()`.
+    pub gate_decision_ref: Option<String>,
+    /// Gate reason codes.
+    pub gate_reason_codes: Vec<String>,
+    /// True when the idempotency key coalesced.
+    pub deduped: bool,
 }
 
 /// Selector for `forget`: a claim short ref, or `{subjectRef, predicate}`.
@@ -1257,6 +1353,110 @@ impl ActorScopedVault {
         })
     }
 
+    /// Enqueues one Dreamer consolidation job; long work returns a job
+    /// ref to poll (W2 — no async FFI).
+    #[napi]
+    pub fn enqueue_consolidation(
+        &self,
+        input: NapiConsolidationJobInput,
+    ) -> napi::Result<NapiDreamerJobRef> {
+        let engine_input = ConsolidationJobInput {
+            scope: input.scope,
+            input: input.input,
+            run_id: input.run_id,
+            dedupe_key: input.dedupe_key,
+            now: ts_opt_to_engine(input.now, "now").map_err(boundary_error)?,
+        };
+        let job = self
+            .facade()?
+            .enqueue_consolidation(&engine_input)
+            .map_err(|e| facade_error(&e))?;
+        Ok(NapiDreamerJobRef {
+            job_ref: job.job_ref,
+            state: job.state,
+            existing: job.existing,
+        })
+    }
+
+    /// Polls one Dreamer job's status; `null` for unknown job refs.
+    #[napi]
+    pub fn dreamer_job_status(&self, job_ref: String) -> napi::Result<Option<NapiDreamerJobView>> {
+        let view = self
+            .facade()?
+            .dreamer_job_status(&job_ref)
+            .map_err(|e| facade_error(&e))?;
+        view.map(|view| {
+            Ok(NapiDreamerJobView {
+                job_ref: view.job_ref,
+                state: view.state,
+                kind: view.kind,
+                lease_owner: view.lease_owner,
+                attempt_count: view.attempt_count,
+                run_id: view.run_id,
+                last_error: view.last_error,
+                created_at: ts_from_engine(view.created_at, "created_at")
+                    .map_err(boundary_error)?,
+                updated_at: ts_from_engine(view.updated_at, "updated_at")
+                    .map_err(boundary_error)?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Seed-write entry point (EF-301 consumer): every element is FORCED
+    /// proposed regardless of source, individually gated, with receipts.
+    #[napi]
+    pub fn seed_claims(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitReceipt>> {
+        let mut engine_claims = Vec::with_capacity(claims.len());
+        for claim in &claims {
+            engine_claims.push(claim_input_to_engine(claim).map_err(boundary_error)?);
+        }
+        let receipts = self
+            .facade()?
+            .seed_claims(&engine_claims)
+            .map_err(|e| facade_error(&e))?;
+        Ok(receipts
+            .into_iter()
+            .map(commit_receipt_from_engine)
+            .collect())
+    }
+
+    /// Schedules one outbound intent through the OF-327 chokepoint: durable
+    /// idempotent enqueue + gate check under a Hold window. The bridge
+    /// never delivers; receipts surface via `receipts()`.
+    #[napi]
+    pub fn schedule_outbound(
+        &self,
+        draft: NapiOutboundDraftInput,
+    ) -> napi::Result<NapiOutboundIntentReceipt> {
+        let engine_draft = OutboundDraftInput {
+            verb: draft.verb,
+            channel: draft.channel,
+            target: draft.target,
+            on_behalf_of: draft.on_behalf_of,
+            content_ref: draft.content_ref,
+            idempotency_key: draft.idempotency_key,
+            dedupe_key: draft.dedupe_key,
+            trigger: draft.trigger,
+            trigger_ref: draft.trigger_ref,
+            job_ref: draft.job_ref,
+            occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
+                .map_err(boundary_error)?,
+        };
+        let receipt = self
+            .facade()?
+            .schedule_outbound(&engine_draft)
+            .map_err(|e| facade_error(&e))?;
+        Ok(NapiOutboundIntentReceipt {
+            intent_ref: receipt.intent_ref,
+            outcome: receipt.outcome,
+            gate_outcome: receipt.gate_outcome,
+            gate_decision_ref: receipt.gate_decision_ref,
+            gate_reason_codes: receipt.gate_reason_codes,
+            deduped: receipt.deduped,
+        })
+    }
+
     /// Reads one blob version's bytes (hash-verified engine-side) as a
     /// standard base64 string; `null` when the version does not exist.
     #[napi]
@@ -1298,6 +1498,24 @@ mod tests {
             assert!(
                 !source.contains(needle),
                 "{name} must not reference {needle}"
+            );
+        }
+    }
+
+    /// BRIDGE-03 trust-ceiling fitness: no napi surface source constructs
+    /// an Auto approval — the bridge never sets Auto (needle split so this
+    /// test never matches itself).
+    #[test]
+    fn napi_surface_never_constructs_auto_approval() {
+        let needle = concat!("ClaimApprovalStatus::", "Auto");
+        for (name, source) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("types.rs", include_str!("types.rs")),
+            ("facade.rs", include_str!("facade.rs")),
+        ] {
+            assert!(
+                !source.contains(needle),
+                "{name} must not construct {needle}"
             );
         }
     }
