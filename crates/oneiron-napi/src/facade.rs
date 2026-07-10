@@ -1123,12 +1123,15 @@ impl ActorScopedVault {
         })
     }
 
-    /// BM25 text query over the engine index.
+    /// BM25 text query over the engine index. The standard N-API query
+    /// (8 KiB) and result (1,000) caps apply.
     #[napi]
     pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<Vec<NapiLexicalHit>> {
+        crate::validate_query_len(&query).map_err(boundary_error)?;
+        let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
         let hits = self
             .facade()?
-            .query_bm25(&query, limit as usize)
+            .query_bm25(&query, limit)
             .map_err(|e| facade_error(&e))?;
         Ok(hits
             .into_iter()
@@ -1184,6 +1187,8 @@ impl ActorScopedVault {
         limit: u32,
         format: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
+        crate::validate_query_len(&query).map_err(boundary_error)?;
+        let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
         let effort = Effort::parse(&effort).ok_or_else(|| {
             boundary_error(format!(
                 "unknown effort {effort:?}; use minimal, standard, or deep"
@@ -1195,14 +1200,7 @@ impl ActorScopedVault {
         });
         let pack = self
             .facade()?
-            .recall(
-                &query,
-                effort,
-                &scope,
-                limit as usize,
-                format.as_deref(),
-                None,
-            )
+            .recall(&query, effort, &scope, limit, format.as_deref(), None)
             .map_err(|e| facade_error(&e))?;
         Ok(NapiMemoryPack {
             items: pack
@@ -1316,6 +1314,22 @@ mod tests {
 
         assert_eq!(decode_blob_base64("aGVsbG8=").unwrap(), b"hello");
         assert!(decode_blob_base64("not base64!").is_err());
+    }
+
+    /// N1: queryBm25/recall honor the standard N-API query and result
+    /// caps (helpers shared with the systems layer in lib.rs).
+    #[test]
+    fn boundary_applies_search_caps_to_query_verbs() {
+        let oversized_query = "q".repeat(crate::MAX_NAPI_QUERY_BYTES + 1);
+        let err = reason(crate::validate_query_len(&oversized_query));
+        assert!(err.contains("query must be <="), "got: {err}");
+
+        let err = reason(crate::parse_search_limit(crate::MAX_NAPI_SEARCH_LIMIT + 1));
+        assert!(err.contains("limit must be <="), "got: {err}");
+        assert_eq!(
+            crate::parse_search_limit(crate::MAX_NAPI_SEARCH_LIMIT).unwrap(),
+            crate::MAX_NAPI_SEARCH_LIMIT as usize
+        );
     }
 
     #[test]
