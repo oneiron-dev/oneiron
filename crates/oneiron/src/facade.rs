@@ -2299,6 +2299,7 @@ impl MemoryFacade<'_> {
         &self,
         input: &ConsolidationJobInput,
     ) -> FacadeResult<DreamerJobRef> {
+        self.verified_actor_class()?;
         let scope = match input.scope.as_str() {
             "micro" => DreamerConsolidationScope::Micro,
             "meso" => DreamerConsolidationScope::Meso,

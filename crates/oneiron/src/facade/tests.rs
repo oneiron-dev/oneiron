@@ -2294,6 +2294,54 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
 }
 
+/// G1: enqueue_consolidation is a side-effecting verb and runs the same
+/// store-resolved actor check as every other write verb.
+#[test]
+fn enqueue_consolidation_requires_a_verified_actor() {
+    let (_dir, vault) = open_vault();
+    let enqueue = |facade: &MemoryFacade<'_>| {
+        facade.enqueue_consolidation(&ConsolidationJobInput {
+            scope: "micro".to_owned(),
+            input: serde_json::json!({"window": "w-g1"}),
+            run_id: None,
+            dedupe_key: None,
+            now: Some(2100),
+        })
+    };
+
+    // Ghost actor: refused.
+    let ghost = EntityId::from_bytes([0x60; 16]).unwrap();
+    let err = enqueue(&facade_for(&vault, ghost)).expect_err("ghost enqueue");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(err.message.contains("does not exist"), "{}", err.message);
+
+    // Type-mismatched actor (an EVENT bound as human): refused.
+    let owner = put_person(&vault, 0x61);
+    let owner_facade = facade_for(&vault, owner);
+    let event = owner_facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".to_owned(),
+            body: serde_json::json!({"name": "g1"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 2101,
+            learned_at: None,
+        })
+        .expect("event");
+    let event_id = EntityId::from_hex(&event.id_hex).unwrap();
+    let err = enqueue(&facade_for(&vault, event_id)).expect_err("mismatch enqueue");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        err.message.contains("cannot act as class"),
+        "{}",
+        err.message
+    );
+
+    // A verified actor enqueues normally.
+    enqueue(&owner_facade).expect("verified enqueue");
+}
+
 #[test]
 fn seed_claims_force_proposed_with_per_element_receipts() {
     let (_dir, vault) = open_vault();
