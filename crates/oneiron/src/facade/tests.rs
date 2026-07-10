@@ -2009,3 +2009,103 @@ fn recall_short_ids_hydrate_and_formats_render() {
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
     assert!(err.suggestions.iter().any(|s| s.contains("toon")));
 }
+
+/// Builds a distinct, non-reserved entity id from a counter for bulk index
+/// seeding (avoids the crate-root test helper, which is module-private).
+fn seeded_bulk_id(tag: u8, counter: usize) -> EntityId {
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&(counter as u64 + 1).to_le_bytes());
+    bytes[15] = tag;
+    EntityId::from_bytes(bytes).expect("seeded id is never reserved")
+}
+
+/// #482a regression: world-scoped recall enumerates out-of-scope worlds with
+/// the bounded page primitive, so a CLAIM index larger than the
+/// materialization ceiling does not hard-fail. The old
+/// `entities_by_type().take(cap)` path errored with IndexOverflow before the
+/// take could run.
+#[test]
+fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
+    use crate::registry::ENTITY_TYPE_CLAIM;
+    use crate::store::Store;
+
+    // One past MAX_TYPE_QUERY_RESULTS (module-private const, mirrored here).
+    const OVER_MATERIALIZATION_CAP: usize = 100_000 + 1;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x5C);
+    let facade = facade_for(&vault, actor);
+
+    vault
+        .with_write_txn(|wtxn| {
+            for i in 0..OVER_MATERIALIZATION_CAP {
+                let id = seeded_bulk_id(0xC1, i);
+                let key = Store::encode_type_key(ENTITY_TYPE_CLAIM, &id);
+                vault.store.type_index.put(wtxn, &key, &[])?;
+            }
+            Ok(())
+        })
+        .expect("seed claim type index");
+
+    let world = EntityId::from_bytes([0x5D; 16]).unwrap();
+    let pack = facade
+        .recall(
+            "anything",
+            Effort::Standard,
+            &RecallScope {
+                world_ref: Some(world.to_hex()),
+                facet: None,
+            },
+            5,
+            None,
+            None,
+        )
+        .expect("world-scoped recall must not hard-fail on a large claim index");
+    assert!(
+        pack.scope_honesty.out_of_scope_worlds.is_empty(),
+        "no surfaceable out-of-scope claims among the bounded scan window"
+    );
+}
+
+/// #482b regression: neighbors bounds the edge scan by `limit`, so a node with
+/// more edges than the full-materialization ceiling returns a bounded result
+/// instead of IndexOverflow. The old `edges_out()`/`edges_in()` path
+/// materialized every edge up front.
+#[test]
+fn neighbors_stays_bounded_on_a_high_degree_node() {
+    use crate::store::Store;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x5E);
+    let center = put_person(&vault, 0x5F);
+    let facade = facade_for(&vault, actor);
+
+    // One past the edge materialization ceiling on a single source node.
+    let edge_count = crate::vault::MAX_EDGE_QUERY_RESULTS + 1;
+    let mut value = [0u8; 12];
+    value[0..4].copy_from_slice(&0.9_f32.to_le_bytes());
+    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    vault
+        .with_write_txn(|wtxn| {
+            for i in 0..edge_count {
+                let target = seeded_bulk_id(0xE1, i);
+                let key = Store::encode_edge_key(&center, EdgeKind::BelongsTo, &target);
+                vault.store.edges_out.put(wtxn, &key, &value)?;
+            }
+            Ok(())
+        })
+        .expect("seed high-degree edges");
+
+    let hits = facade
+        .neighbors(
+            &center.to_hex(),
+            &NeighborOpts {
+                edge_kind: None,
+                min_weight: None,
+                limit: 5,
+            },
+        )
+        .expect("neighbors must not hard-fail on a high-degree node");
+    assert_eq!(hits.len(), 5, "bounded by limit, not the full edge set");
+    assert!(hits.iter().all(|hit| hit.direction == "out"));
+}

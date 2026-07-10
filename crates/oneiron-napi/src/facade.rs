@@ -67,12 +67,20 @@ fn decode_blob_base64(input: &str) -> BoundaryResult<Vec<u8>> {
         .map_err(|_| "bytes_base64 is not valid standard base64".to_owned())
 }
 
+/// Narrows an f64 to f32 at the N-API boundary, rejecting NaN and ±Inf
+/// (including a finite f64 that overflows f32 to ±Inf). A non-finite
+/// `min_weight` would otherwise silently disable the filter — NaN compares
+/// false against every edge weight — or reject every edge (+Inf).
 #[expect(
     clippy::cast_possible_truncation,
     reason = "f64→f32 narrowing at the N-API boundary is intentional"
 )]
-fn narrow_to_f32(value: f64) -> f32 {
-    value as f32
+fn narrow_to_f32(value: f64) -> BoundaryResult<f32> {
+    let narrowed = value as f32;
+    if !narrowed.is_finite() {
+        return Err(format!("min_weight must be a finite number, got {value}"));
+    }
+    Ok(narrowed)
 }
 
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
@@ -1157,7 +1165,11 @@ impl ActorScopedVault {
                 &entity_ref,
                 &NeighborOpts {
                     edge_kind: opts.edge_kind,
-                    min_weight: opts.min_weight.map(narrow_to_f32),
+                    min_weight: opts
+                        .min_weight
+                        .map(narrow_to_f32)
+                        .transpose()
+                        .map_err(boundary_error)?,
                     limit: opts.limit as usize,
                 },
             )
@@ -1361,6 +1373,19 @@ mod tests {
         };
         let err = reason(witness_turn_to_engine(&turn));
         assert!(err.contains("user, companion, system"), "got: {err}");
+    }
+
+    /// #482c: a non-finite `minWeight` is rejected at the boundary. NaN would
+    /// otherwise disable the engine filter silently (every `weight < NaN` is
+    /// false) and ±Inf would over-apply it.
+    #[test]
+    fn boundary_rejects_non_finite_min_weight() {
+        assert_eq!(narrow_to_f32(0.5).expect("finite narrows"), 0.5_f32);
+        assert!(narrow_to_f32(f64::NAN).is_err(), "NaN rejected");
+        assert!(narrow_to_f32(f64::INFINITY).is_err(), "+Inf rejected");
+        assert!(narrow_to_f32(f64::NEG_INFINITY).is_err(), "-Inf rejected");
+        // A finite f64 beyond f32's range overflows to +Inf and is rejected.
+        assert!(narrow_to_f32(f64::MAX).is_err(), "overflow-to-Inf rejected");
     }
 
     fn unique_vault_dir(tag: &str) -> std::path::PathBuf {

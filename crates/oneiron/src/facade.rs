@@ -2003,24 +2003,21 @@ impl MemoryFacade<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
-        let outbound = self.vault.edges_out(&id).map_err(FacadeError::from)?;
-        let inbound = self.vault.edges_in(&id).map_err(FacadeError::from)?;
         let mut hits = Vec::new();
-        for (direction, edges) in [("out", outbound), ("in", inbound)] {
+        // Push kind/min_weight/limit into the LMDB prefix walk per direction
+        // so a high-degree node stops after `limit` matches instead of
+        // materializing its full edge set (which errors with IndexOverflow
+        // past MAX_EDGE_QUERY_RESULTS).
+        for (direction, outbound) in [("out", true), ("in", false)] {
+            let remaining = opts.limit - hits.len();
+            if remaining == 0 {
+                break;
+            }
+            let edges = self
+                .vault
+                .neighbor_edges_bounded(&id, outbound, kind_filter, opts.min_weight, remaining)
+                .map_err(FacadeError::from)?;
             for edge in edges {
-                if hits.len() >= opts.limit {
-                    return Ok(hits);
-                }
-                if let Some(kind) = kind_filter
-                    && edge.kind != kind
-                {
-                    continue;
-                }
-                if let Some(min_weight) = opts.min_weight
-                    && edge.weight < min_weight
-                {
-                    continue;
-                }
                 let kind = self
                     .vault
                     .get_entity_type(&edge.target)
@@ -2302,12 +2299,16 @@ impl MemoryFacade<'_> {
             return Ok(Vec::new());
         };
         let scope_world = self.resolve_ref(world_ref)?;
+        // Bounded page primitive, not `entities_by_type().take(cap)`: the
+        // latter materializes the whole CLAIM index and errors with
+        // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
+        // a large vault would hard-fail world-scoped recall.
         let ids = self
             .vault
-            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)
             .map_err(FacadeError::from)?;
         let mut worlds = BTreeSet::new();
-        for id in ids.into_iter().take(SCOPE_HONESTY_SCAN_CAP) {
+        for id in ids {
             let Some(body) = self.vault.get_claim(&id).map_err(FacadeError::from)? else {
                 continue;
             };
