@@ -34,6 +34,7 @@ pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
+pub mod dreamer_wake;
 pub mod edge;
 pub mod edit_roundtrip;
 pub mod edit_settle;
@@ -371,6 +372,12 @@ pub use crate::dreamer_tournament::{
     DreamerTournamentSynthesisVerdict, DreamerTournamentWeaveArtifact, DreamerTournamentWinner,
     run_dreamer_claim_tournament,
 };
+#[cfg(feature = "sync")]
+pub use crate::dreamer_wake::WakeProgressLane;
+pub use crate::dreamer_wake::{
+    DreamerJobExecution, DreamerJobExecutor, DreamerWakeDriver, RunWakePass, WakeJobContext,
+    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, request_wake,
+};
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
     EdgeProvenanceFlags, EdgeValueLayout,
@@ -547,6 +554,7 @@ pub use crate::llm::{
     RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, StepOutcome,
     StepProgression, TierPrecedence, TrapRef, UnsupportedCapability, call_as_step,
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
+    trap_park_owner,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::off_record::{
