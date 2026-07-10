@@ -479,8 +479,12 @@ enum DeadlineRace<T> {
 /// injected test clocks advance while the timer sleeps real time.
 const DEADLINE_RACE_RECHECK_MS: u64 = 50;
 
-/// Races a future against the wake-pass deadline: polls the future first,
-/// then checks expiry, re-arming a bounded timer until one side wins.
+/// Races a future against the wake-pass deadline: checks expiry FIRST, then
+/// polls the future, re-arming a bounded timer until one side wins.
+///
+/// The expiry-before-poll order is load-bearing: a call whose deadline
+/// passed while the racer slept loses even if its response arrived in the
+/// meantime — a hard-cut pass must never record a new `Finished` step.
 async fn race_deadline<F: Future>(
     future: F,
     deadline: &WakePassDeadline,
@@ -488,11 +492,11 @@ async fn race_deadline<F: Future>(
     let mut future = std::pin::pin!(future);
     let mut timer: Option<Pin<Box<SleepFuture>>> = None;
     std::future::poll_fn(move |cx| {
-        if let Poll::Ready(output) = future.as_mut().poll(cx) {
-            return Poll::Ready(DeadlineRace::Completed(output));
-        }
         if deadline.expired() {
             return Poll::Ready(DeadlineRace::DeadlineExpired);
+        }
+        if let Poll::Ready(output) = future.as_mut().poll(cx) {
+            return Poll::Ready(DeadlineRace::Completed(output));
         }
         loop {
             let armed = timer.get_or_insert_with(|| {

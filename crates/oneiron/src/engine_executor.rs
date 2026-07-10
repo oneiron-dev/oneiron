@@ -139,13 +139,28 @@ pub const GUEST_BUDGET_RESPONSE_KEY: &str = "budget";
 
 /// Guest-visible response for one dispatched `self.*` bridge call: the
 /// typed outcome plus the wake-pass budget legibility envelope (Some inside
-/// wake passes). The runtime serializing outcomes for the guest MUST attach
-/// the envelope under [`GUEST_BUDGET_RESPONSE_KEY`] —
-/// [`guest_response_with_budget`] is the composition helper.
+/// wake passes). EVERY response returned by the dispatch chokepoint carries
+/// the envelope — success, durable wait, AND the typed `Denied`/`Failed`
+/// error outcomes (the run still fails after the step with the original
+/// error; the guest-visible response for the failing call is this struct).
+/// The runtime serializing for the guest MUST attach the envelope under
+/// [`GUEST_BUDGET_RESPONSE_KEY`] — [`Self::guest_json`] is the one blessed
+/// composition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelfDispatchResponse {
     pub outcome: SelfDispatchOutcome,
     pub budget: Option<BudgetLegibilityEnvelope>,
+}
+
+impl SelfDispatchResponse {
+    /// Serializes a guest-facing response body with THIS response's budget
+    /// envelope attached under [`GUEST_BUDGET_RESPONSE_KEY`]. Runtimes use
+    /// this instead of composing the envelope by hand, so the AC "every
+    /// host-call response carries budget" holds at one point.
+    #[must_use]
+    pub fn guest_json(&self, body: serde_json::Value) -> serde_json::Value {
+        guest_response_with_budget(body, self.budget.as_ref())
+    }
 }
 
 /// Inserts the budget envelope into a guest response JSON object under the
@@ -191,7 +206,11 @@ impl ExecutorLegibility<'_> {
 pub trait JsCodeModeHost {
     /// Dispatches one typed `self.*` call through the host-owned traps.
     /// Every response carries the budget legibility envelope inside a wake
-    /// pass (design D5: attached to EVERY host-call response).
+    /// pass (design D5: attached to EVERY host-call response) — including
+    /// the typed `Denied`/`Failed` error outcomes, which return as `Ok`
+    /// responses here while the executor fails the step afterwards. `Err`
+    /// is reserved for infrastructure failures with no guest-visible
+    /// response at all.
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse>;
 }
 
@@ -434,6 +453,32 @@ impl<'a> EngineNativeExecutor<'a> {
                     return Err(err.into());
                 }
             };
+            if let Some(failure) = host.hard_failure.take() {
+                // The guest saw a typed Denied/Failed response (budget
+                // attached) at the chokepoint; the STEP still fails with
+                // the original error after persisting the bridge rows.
+                let durable_wait = host.durable_wait;
+                let bridge_calls = host.bridge_calls;
+                if let Some(status) = self.persist_failed_step_after_bridge_calls(
+                    &mut record,
+                    expected_generation,
+                    completed_steps,
+                    &request_hash,
+                    &script,
+                    bridge_start,
+                    bridge_calls,
+                    durable_wait,
+                    format!("Host bridge call failed: {failure}"),
+                    config,
+                )? {
+                    return Ok(EngineExecutorOutcome {
+                        status,
+                        steps_run: steps_run + 1,
+                        replay_record: record,
+                    });
+                }
+                return Err(failure.into());
+            }
             let runtime_output_paths =
                 match validate_runtime_outputs(&record, completed_steps, &step_outcome) {
                     Ok(paths) => paths,
@@ -697,6 +742,11 @@ struct RecordingJsHost<'a> {
     legibility: Option<ExecutorLegibility<'a>>,
     bridge_calls: Vec<CodeRunBridgeCall>,
     durable_wait: Option<SelfDurableWait>,
+    /// First hard bridge failure (gate rejection or failed audited write).
+    /// The guest received a typed `Denied`/`Failed` RESPONSE for it (budget
+    /// attached); the executor fails the step with this error AFTER the
+    /// step returns, and later calls in the step are refused fail-closed.
+    hard_failure: Option<Error>,
 }
 
 impl<'a> RecordingJsHost<'a> {
@@ -713,11 +763,22 @@ impl<'a> RecordingJsHost<'a> {
             legibility,
             bridge_calls: Vec::new(),
             durable_wait: None,
+            hard_failure: None,
         }
     }
 
     fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
         self.legibility.as_ref().map(ExecutorLegibility::envelope)
+    }
+
+    /// The ONE response chokepoint: every guest-visible bridge-call
+    /// response — success, wait, or typed error outcome — leaves through
+    /// here so the budget envelope can never be skipped.
+    fn respond(&self, outcome: SelfDispatchOutcome) -> SelfDispatchResponse {
+        SelfDispatchResponse {
+            outcome,
+            budget: self.budget(),
+        }
     }
 }
 
@@ -731,25 +792,39 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(SelfDispatchResponse {
-                outcome,
-                budget: self.budget(),
+            return Ok(self.respond(outcome));
+        }
+        if self.hard_failure.is_some() {
+            // Fail-closed after the first hard failure: no further gate
+            // dispatches; the guest sees a typed Failed response (budget
+            // attached) and the replay row records exactly that.
+            let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect(),
+                error: "host bridge halted after failed call".to_owned(),
             });
+            let row =
+                CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            self.bridge_calls.push(row);
+            return Ok(self.respond(outcome));
         }
         let outcome = match self.gated_write.dispatch(call.clone()) {
             Ok(outcome) => outcome,
             Err(err) => {
-                if let Some(error_outcome) = dispatch_error_outcome(&call, &err) {
-                    let row = CodeRunBridgeCall::record(
-                        seq,
-                        &call,
-                        &error_outcome,
-                        started_at_ms,
-                        started_at_ms,
-                    )?;
-                    self.bridge_calls.push(row);
-                }
-                return Err(err);
+                let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {
+                    // Infrastructure failure: no guest-visible response
+                    // exists for this call at all.
+                    return Err(err);
+                };
+                let row = CodeRunBridgeCall::record(
+                    seq,
+                    &call,
+                    &error_outcome,
+                    started_at_ms,
+                    started_at_ms,
+                )?;
+                self.bridge_calls.push(row);
+                self.hard_failure = Some(err);
+                return Ok(self.respond(error_outcome));
             }
         };
         let finished_at_ms = started_at_ms;
@@ -760,10 +835,7 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.durable_wait = Some(wait.clone());
         }
         self.bridge_calls.push(row);
-        Ok(SelfDispatchResponse {
-            outcome,
-            budget: self.budget(),
-        })
+        Ok(self.respond(outcome))
     }
 }
 

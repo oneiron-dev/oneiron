@@ -1002,6 +1002,76 @@ fn deadline_race_aborts_hung_generate() -> Result<()> {
     Ok(())
 }
 
+/// Backend whose generate future lets the injected deadline pass while the
+/// call is in flight, then completes on the very next poll — modeling a
+/// provider response that arrives after the ceiling.
+struct ExpireThenCompleteBackend {
+    clock: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl LlmBackend for ExpireThenCompleteBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let clock = Arc::clone(&self.clock);
+        let mut polled = false;
+        Box::pin(std::future::poll_fn(move |cx| {
+            if polled {
+                return Poll::Ready(Ok(response_fixture("arrived after the deadline")));
+            }
+            polled = true;
+            clock.store(180_001, Ordering::SeqCst);
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }))
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::Unsupported(
+            UnsupportedCapability {
+                capability: LlmCapability::Streaming,
+                model: None,
+                reason: None,
+            },
+        )))
+    }
+}
+
+#[test]
+fn expired_deadline_never_records_finished() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let (elapsed, deadline) = injected_deadline(1_000, 180_000);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.deadline = Some(&deadline);
+    let guard = guard_with_limit(10_000);
+    let backend = ExpireThenCompleteBackend {
+        clock: Arc::clone(&elapsed),
+    };
+
+    // The response ARRIVES, but only after the ceiling passed. Expiry is
+    // checked before the completion poll, so the call loses the race — it
+    // must never be recorded as a finished step.
+    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("expired call must never finish");
+    assert!(matches!(error, DurableStepError::DeadlineHardCut));
+
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    assert!(
+        step_index_lookup(&vault, fixture.job_id, &step_hash)?.is_none(),
+        "no terminal step claim for an expired call"
+    );
+    let read = guard.read();
+    assert_eq!(read.reserved_units, 0, "lease aborted");
+    assert_eq!(read.used_units, 0, "no spend recorded");
+    let runner = DreamerRunnerStore::new(&vault);
+    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
+    Ok(())
+}
+
 #[test]
 fn finalize_window_refuses_new_steps_serves_memoized() -> Result<()> {
     let (_dir, vault) = open_vault();

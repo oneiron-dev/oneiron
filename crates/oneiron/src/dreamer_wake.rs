@@ -374,6 +374,13 @@ impl<'a> DreamerWakeDriver<'a> {
         input: RunWakePass,
         exec: &mut E,
     ) -> Result<WakePassReport> {
+        // Per-pass driver state (ONE-1305): a reused driver must fire its
+        // wrap/finalize notices anew each pass, and steering signals belong
+        // to the pass that raised them — the host drains them after run.
+        self.wrap_notice_fired = false;
+        self.finalize_entered = false;
+        self.steering.clear();
+
         let mut report = WakePassReport {
             admitted: 0,
             completed: 0,
@@ -454,14 +461,35 @@ impl<'a> DreamerWakeDriver<'a> {
             let job_id = admitted.status.job.id;
             self.publish(job_id, ProgressKind::Running, None, input.now)?;
 
-            let execution = {
+            let executed = {
                 let mut ctx = WakeJobContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
                 };
-                exec.execute(&admitted, &mut ctx).await?
+                exec.execute(&admitted, &mut ctx).await
+            };
+            let execution = match executed {
+                Ok(execution) => execution,
+                Err(error) => {
+                    // A mid-step deadline loss may surface as an executor
+                    // ERROR (a host propagating the step layer's
+                    // DeadlineHardCut instead of mapping it to Park). The
+                    // budget refund, the park bookkeeping, and the
+                    // checkpoint milestone must still run — treat it as the
+                    // hard-cut park it is instead of bailing out.
+                    let step_layer_parked = self
+                        .store
+                        .parked_job(job_id)?
+                        .is_some_and(|row| row.reason == DREAMER_HARD_CUT_PARK_REASON);
+                    if !step_layer_parked && !self.deadline.expired() {
+                        return Err(error);
+                    }
+                    DreamerJobExecution::Park {
+                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                    }
+                }
             };
 
             match execution {

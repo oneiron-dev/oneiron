@@ -652,9 +652,12 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     assert!(envelope.wrap_up);
     assert_eq!(envelope.finalize_by_ms, Some(10_000));
 
-    // Segment 2 — hard cut: the step layer parks the running job at the
-    // ceiling; the driver honors the park, writes the CheckpointReached
-    // milestone, and stops DeadlineHardCut.
+    // Segment 2 — hard cut through the ERROR path: the step layer parks the
+    // running job at the ceiling and its DeadlineHardCut error is propagated
+    // by the executor (a host that does not map it to Park). The driver must
+    // still run the whole release sequence — budget-reservation refund,
+    // park/publish bookkeeping, and the CheckpointReached milestone — and
+    // stop DeadlineHardCut instead of bailing with the error.
     let (clock, deadline) = injected_clock(100_000);
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_milestone_author(author);
     struct HardCutExecutor {
@@ -666,8 +669,9 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
             job: &DreamerAdmittedJob,
             ctx: &mut WakeJobContext<'_>,
         ) -> Result<DreamerJobExecution> {
-            // Simulates the ONE-1305 step-layer deadline race: the step
-            // layer parks at the ceiling and surfaces Park.
+            // Simulates the ONE-1305 step-layer deadline race exactly: the
+            // step layer parks at the ceiling under its hard-cut owner, then
+            // the error (not Park) escapes the executor.
             self.clock.store(180_001, Ordering::SeqCst);
             DreamerRunnerStore::new(ctx.vault).park_job(ParkDreamerJob {
                 job_id: job.status.job.id,
@@ -675,9 +679,9 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
                 park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
                 now: ctx.now_ms / 1_000,
             })?;
-            Ok(DreamerJobExecution::Park {
-                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-            })
+            Err(crate::Error::InvariantViolation(
+                "durable step hard cut at the wake-pass deadline",
+            ))
         }
     }
     let mut exec = HardCutExecutor {
@@ -686,16 +690,90 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     let report = block_on_ready(driver.run_wake_pass(
         run_input(DreamerConsolidationScope::Micro, node_id, 30),
         &mut exec,
-    ))?;
+    ))
+    .expect("hard-cut pass reports instead of erroring");
     assert_eq!(report.admitted, 1);
     assert_eq!(report.parked, 1);
     assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
     let parked = store.parked_job(queued.job.id)?.expect("parked row");
     assert_eq!(parked.reason, DREAMER_HARD_CUT_PARK_REASON);
+    assert_eq!(parked.park_owner, DREAMER_HARD_CUT_PARK_OWNER);
+
+    // Budget refund: the admission reservation was aborted, not leaked.
+    assert!(
+        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        "hard cut must refund the runner budget reservation"
+    );
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000);
+
+    // Checkpoint: the deadline-cut park left a durable resume point.
     let milestone = store
         .latest_durable_milestone(queued.job.id)?
         .expect("durable milestone");
     assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
+
+    // Queue-lease cleanup: the cut job's stale lease is reclaimable through
+    // the normal path, so the job re-queues for the next pass.
+    let queue = JobQueue::new(&vault);
+    let cleaned = queue.cleanup_leases(CleanupJobLeases {
+        now: 200,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
+    let status = store.status(queued.job.id)?.expect("job status");
+    assert_eq!(status.job.state, JobState::Queued);
+    Ok(())
+}
+
+#[test]
+fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // Pass 1 at 83% elapsed: the clock-side wrap notice fires.
+    let (clock, deadline) = injected_clock(150_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+    assert_eq!(
+        driver.steering_signals().len(),
+        1,
+        "pass 1 fires its wrap notice"
+    );
+
+    // Pass 2 on the SAME driver, below the notice threshold: the buffer is
+    // per-pass — pass 1's signal must not linger, and nothing new fires.
+    clock.store(10_000, Ordering::SeqCst);
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 30),
+        &mut exec,
+    ))?;
+    assert!(
+        driver.steering_signals().is_empty(),
+        "pass 2 below threshold carries no stale pass-1 signal"
+    );
+
+    // Pass 3 back over the threshold: the notice fires AGAIN — per-pass
+    // state, not per-driver state.
+    clock.store(150_000, Ordering::SeqCst);
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 40),
+        &mut exec,
+    ))?;
+    let plans: Vec<_> = driver
+        .steering_signals()
+        .iter()
+        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .collect();
+    assert_eq!(plans.len(), 1, "pass 3 fires its own wrap notice");
     Ok(())
 }
 

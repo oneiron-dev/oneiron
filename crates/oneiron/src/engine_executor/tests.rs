@@ -1273,10 +1273,7 @@ impl JsCodeModeRuntime for BudgetCapturingRuntime {
     ) -> Result<JsCodeModeStepOutcome> {
         for call in self.calls.drain(..) {
             let response = host.dispatch_self(call)?;
-            let guest_json = guest_response_with_budget(
-                serde_json::json!({"ok": true}),
-                response.budget.as_ref(),
-            );
+            let guest_json = response.guest_json(serde_json::json!({"ok": true}));
             self.captured
                 .lock()
                 .expect("captured lock")
@@ -1344,4 +1341,100 @@ fn every_host_call_response_carries_budget() {
         assert_eq!(object["wrap_up"], serde_json::json!(false));
         assert_eq!(object["finalize_by_ms"], serde_json::Value::Null);
     }
+}
+
+/// ONE-1305 hardening: typed `Denied`/`Failed` ERROR outcomes return
+/// through the same chokepoint as successes, so their guest responses carry
+/// the budget envelope too — while the run still fails afterwards with the
+/// original error.
+struct DeniedCaptureRuntime {
+    calls: Vec<SelfCall>,
+    captured: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl JsCodeModeRuntime for DeniedCaptureRuntime {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        for call in self.calls.drain(..) {
+            let response = host.dispatch_self(call)?;
+            self.captured
+                .lock()
+                .expect("captured lock")
+                .push(response.guest_json(serde_json::json!({"ok": true})));
+        }
+        Ok(JsCodeModeStepOutcome::complete("done"))
+    }
+}
+
+#[test]
+fn denied_and_halted_error_responses_carry_budget() {
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["await self.memory.put_edge(src, 'mentions', tgt);"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let src = seed_person(&vault, 0xC1);
+    let tgt = seed_person(&vault, 0xC2);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        10_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = crate::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 30_000));
+    let captured = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let mut runtime = DeniedCaptureRuntime {
+        calls: vec![
+            // The pending gate DENIES this write: a typed Denied RESPONSE.
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                src,
+                EdgeKind::Mentions,
+                tgt,
+                0.7,
+            )),
+            // After the hard failure the bridge halts fail-closed: a typed
+            // Failed RESPONSE, no further gate dispatch.
+            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("status", 3)),
+        ],
+        captured: std::sync::Arc::clone(&captured),
+    };
+    let gated_write = gated_actor_write(&vault, "run-denied-budget");
+    let config = executor_config(entity(0x8F), EngineExecutorLimits::default());
+    let before = gate_decision_count(&vault);
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write)
+            .with_legibility(ExecutorLegibility {
+                guard: &guard,
+                deadline: &deadline,
+            });
+    let err = block_on_ready(executor.run(&config)).expect_err("denied write still fails the run");
+    assert!(matches!(
+        err,
+        EngineExecutorError::Engine(Error::GateWriteRejected { .. })
+    ));
+    assert_eq!(
+        gate_decision_count(&vault),
+        before + 1,
+        "the halted call after the failure never dispatches"
+    );
+
+    let captured = captured.lock().expect("captured lock");
+    assert_eq!(captured.len(), 2, "denied AND halted responses returned");
+    for response in captured.iter() {
+        let budget = response
+            .get(GUEST_BUDGET_RESPONSE_KEY)
+            .unwrap_or_else(|| panic!("error response missing budget key: {response}"));
+        assert!(budget.is_object(), "budget must be a JSON object");
+    }
+
+    let stored = vault
+        .get_code_run_replay_record(&config.run_id)
+        .expect("load replay")
+        .expect("stored replay");
+    assert_eq!(stored.bridge_calls.len(), 2);
+    assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
+    assert_eq!(bridge_outcome_kind(&stored.bridge_calls[1]), "failed");
+    assert_eq!(stored.step_checkpoints.len(), 1);
 }
