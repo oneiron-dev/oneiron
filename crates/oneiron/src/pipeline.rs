@@ -1180,7 +1180,7 @@ impl<'a> PipelineBuilder<'a> {
                     *limit,
                     codebase_scope_active,
                 )?;
-                let vector_results = crate::hnsw::hnsw_search(
+                let mut vector_results = crate::hnsw::hnsw_search(
                     &self.vault.store,
                     &self.vault.config,
                     &rtxn,
@@ -1188,6 +1188,43 @@ impl<'a> PipelineBuilder<'a> {
                     channel_limit,
                     self.skip_vector_rescore,
                 )?;
+                // OFRC-2iii: preserve the fence-free channel path; widen
+                // only when a returned row would otherwise consume a slot.
+                if contains_off_record_fence(&vector_results, &self.vault.store, &rtxn)? {
+                    if channel_limit > *limit {
+                        truncate_widened_channel_results_to_scope(
+                            &mut vector_results,
+                            &self.vault.store,
+                            &rtxn,
+                            *limit,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )?;
+                    } else {
+                        let widened_limit =
+                            crate::hnsw::hnsw_entity_count(&self.vault.store, &rtxn)?;
+                        if widened_limit > channel_limit {
+                            vector_results = crate::hnsw::hnsw_search(
+                                &self.vault.store,
+                                &self.vault.config,
+                                &rtxn,
+                                query_vector,
+                                widened_limit,
+                                self.skip_vector_rescore,
+                            )?;
+                        }
+                        truncate_widened_channel_results_to_scope(
+                            &mut vector_results,
+                            &self.vault.store,
+                            &rtxn,
+                            *limit,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut claim_gate,
+                        )?;
+                    }
+                }
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -1215,16 +1252,16 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let scoped_text_channel_limit = scoped_text_channel_limit(
+                let scoped_text_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     &rtxn,
                     *limit,
                     text_scope_widening_active,
                 )?;
                 let text_channel_limit = if recency.is_some() {
-                    scoped_text_channel_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+                    scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
                 } else {
-                    scoped_text_channel_limit
+                    scoped_text_limit
                 };
                 let mut prefix_probe_claim_gate = claim_gate_widening_probe;
                 let mut exact_posting_matches_scope = |id: &EntityId| {
@@ -1249,8 +1286,11 @@ impl<'a> PipelineBuilder<'a> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
+                // OFRC-2iii: the D19 widening path below already fences
+                // before truncation. For an otherwise exact text limit,
+                // widen only after a fenced hit is observed.
                 if text_channel_limit > *limit && text_scope_widening_active {
-                    truncate_widened_text_results_to_scope(
+                    truncate_widened_channel_results_to_scope(
                         &mut text_results,
                         &self.vault.store,
                         &rtxn,
@@ -1259,6 +1299,39 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         &mut prefix_probe_claim_gate,
                     )?;
+                } else if contains_off_record_fence(&text_results, &self.vault.store, &rtxn)? {
+                    let restore_text_limit = text_channel_limit == *limit;
+                    if text_channel_limit == *limit {
+                        let widened_limit =
+                            scoped_text_channel_limit(&self.vault.store, &rtxn, *limit, true)?;
+                        if widened_limit > text_channel_limit {
+                            text_results = crate::bm25::search_text_scoped_with_recency(
+                                &self.vault.store,
+                                &rtxn,
+                                &self.vault.analyzer,
+                                &bm25_config,
+                                query,
+                                widened_limit,
+                                crate::bm25::Bm25SearchOptions {
+                                    recency: None,
+                                    exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                                },
+                            )?;
+                        }
+                    }
+                    if restore_text_limit {
+                        truncate_widened_channel_results_to_scope(
+                            &mut text_results,
+                            &self.vault.store,
+                            &rtxn,
+                            *limit,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut prefix_probe_claim_gate,
+                        )?;
+                    } else {
+                        apply_off_record_fence(&mut text_results, &self.vault.store, &rtxn)?;
+                    }
                 }
                 import_claim_gate_decisions_for_scores(
                     &mut claim_gate,
@@ -2498,7 +2571,7 @@ fn scoped_text_channel_limit(
     Ok(requested.max(indexed_docs))
 }
 
-fn truncate_widened_text_results_to_scope(
+fn truncate_widened_channel_results_to_scope(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -2558,6 +2631,19 @@ fn filter_retrieval_trace_scores(
         }
     }
     Ok(filtered)
+}
+
+fn contains_off_record_fence(
+    scores: &[ScoredEntity],
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<bool> {
+    for scored in scores {
+        if crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn scoped_vector_channel_limit(
@@ -3100,6 +3186,12 @@ fn execute_temporal(
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
     for id in candidates {
+        // OF-326 THE FENCE: temporal candidate collection deliberately
+        // overfetches before this per-channel limit is applied. Drop fenced
+        // entities first so they cannot consume the channel's result slots.
+        if crate::off_record::off_record_fence_active(store, rtxn, &id)? {
+            continue;
+        }
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
