@@ -775,6 +775,10 @@ impl<'a> BatchBuilder<'a> {
 
     /// Commits all queued operations atomically in a single LMDB write transaction.
     ///
+    /// Gate decisions for local claim writes are appended by the same
+    /// transaction, so a later validation failure cannot leave an orphan
+    /// receipt behind.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
@@ -790,8 +794,16 @@ impl<'a> BatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        preflight_standalone_gate_decisions(&self.vault.store, &self.ops)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
+        if let Err(err) =
+            preflight_standalone_gate_decisions(&self.vault.store, &self.ops, &mut wtxn)
+        {
+            // A gate rejection is itself an intentional ledger event. Keep
+            // that denial receipt, matching the historical gate semantics;
+            // later phase-2 failures drop this transaction and its receipt.
+            wtxn.commit()?;
+            return Err(err);
+        }
 
         apply_ops(
             &self.vault.store,
@@ -808,13 +820,16 @@ impl<'a> BatchBuilder<'a> {
     }
 }
 
-fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result<()> {
+fn preflight_standalone_gate_decisions(
+    store: &Store,
+    ops: &[BatchOp],
+    wtxn: &mut RwTxn<'_>,
+) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
     }
 
-    let mut wtxn = store.env.write_txn()?;
-    let policy = crate::gate::resolve_policy_manifest(store, &wtxn)?;
+    let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     let mut first_error = None;
 
     for op in ops {
@@ -831,7 +846,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                 crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
                     crate::gate::check_claim_policy_for_write(
                         store,
-                        &mut wtxn,
+                        wtxn,
                         id,
                         &body,
                         None,
@@ -856,7 +871,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                 let body = (**candidate).clone().into_claim_body(envelope);
                 crate::gate::check_claim_policy_for_write(
                     store,
-                    &mut wtxn,
+                    wtxn,
                     id,
                     &body,
                     Some(envelope),
@@ -879,7 +894,6 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
         }
     }
 
-    wtxn.commit()?;
     if let Some(err) = first_error {
         return Err(err);
     }
