@@ -120,6 +120,14 @@ pub struct BudgetLadderEvent {
     pub threshold: BudgetThreshold,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steering: Option<BudgetSteeringSignal>,
+    /// Which budget row fired this event, for meters with multiple rows
+    /// (the effector meter's key/compiled-cap row index — GOV-02, ONE-1418).
+    /// A dispatch matching several rows can cross the same threshold on more
+    /// than one; the row identity keeps those events distinguishable so a
+    /// steering consumer can dedupe or present per-dimension. `None` for the
+    /// single-row LLM meter. Wire-compatible: absent when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_index: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -425,6 +433,7 @@ impl BudgetState {
             Some(BudgetLadderEvent {
                 threshold,
                 steering: steering_signal(threshold),
+                row_index: None,
             })
         })
         .collect()

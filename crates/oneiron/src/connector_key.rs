@@ -1658,9 +1658,14 @@ pub(crate) fn charge_effector_budgets(
                     && !state.usage.fired.iter().any(|fired| fired == name)
                 {
                     state.usage.fired.push(name.to_owned());
+                    // Each event carries the row that fired it: a dispatch
+                    // matching several rows can cross the same threshold on
+                    // more than one, and the consumer must be able to tell
+                    // "sends at 80%" from "rate at 80%".
                     ladder_events.push(BudgetLadderEvent {
                         threshold,
                         steering: effector_steering_signal(threshold),
+                        row_index: Some(state.row_index),
                     });
                 }
             }

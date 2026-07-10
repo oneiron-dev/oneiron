@@ -5142,3 +5142,67 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
     assert!(charge.is_none());
     Ok(())
 }
+
+#[test]
+fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    vault.register_connector_key(
+        &test_id(0x81),
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![
+                crate::EffectorBudget::sends(
+                    10,
+                    day_window(),
+                    crate::EffectorBudgetOnExhaust::Refuse,
+                ),
+                crate::EffectorBudget::rate(10, 3_600),
+            ],
+            1_000,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    let fired_rows = |events: &[crate::BudgetLadderEvent]| {
+        let mut rows: Vec<_> = events.iter().map(|event| event.row_index).collect();
+        rows.sort_unstable();
+        rows
+    };
+
+    // Both rows debit every send; the 5th crosses 50% on both. Two events,
+    // one per firing row, with DISTINCT row ids — not two indistinguishable
+    // duplicates a steering consumer could neither dedupe nor attribute.
+    for _ in 0..4 {
+        let (_, charge) = check_effect(&vault, &effect, &policy)?;
+        assert!(charge.expect("charged").ladder_events.is_empty());
+    }
+    let (_, charge) = check_effect(&vault, &effect, &policy)?;
+    let events = charge.expect("charged").ladder_events;
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.threshold == crate::BudgetThreshold::Silent50)
+    );
+    assert_eq!(fired_rows(&events), vec![Some(0), Some(1)]);
+
+    // The 8th crosses 80% on both rows — again uniquely attributable.
+    for _ in 0..2 {
+        let (_, charge) = check_effect(&vault, &effect, &policy)?;
+        assert!(charge.expect("charged").ladder_events.is_empty());
+    }
+    let (_, charge) = check_effect(&vault, &effect, &policy)?;
+    let events = charge.expect("charged").ladder_events;
+    assert_eq!(events.len(), 2);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.threshold == crate::BudgetThreshold::Plan80)
+    );
+    assert_eq!(fired_rows(&events), vec![Some(0), Some(1)]);
+    Ok(())
+}

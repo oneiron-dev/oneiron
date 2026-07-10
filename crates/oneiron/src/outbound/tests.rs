@@ -3041,10 +3041,12 @@ fn ladder_fires_once_per_threshold_across_separate_dispatches()
         let send = index + 1;
         match send {
             5 => {
-                // Crossing 50% fires the silent tick (no steering).
+                // Crossing 50% fires the silent tick (no steering); a
+                // single-row cross emits ONE event tagged with its row.
                 assert_eq!(events.len(), 1, "send 5 fires Silent50");
                 assert_eq!(events[0].threshold, BudgetThreshold::Silent50);
                 assert!(events[0].steering.is_none());
+                assert_eq!(events[0].row_index, Some(0));
             }
             8 => {
                 // Crossing 80% fires the wrap-up notice.
@@ -3060,6 +3062,7 @@ fn ladder_fires_once_per_threshold_across_separate_dispatches()
                     steering.message,
                     crate::EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE
                 );
+                assert_eq!(events[0].row_index, Some(0));
             }
             // Single-fire is persisted in the usage row: re-crossings on
             // separate dispatch calls (9th send, 90%) fire nothing new.
