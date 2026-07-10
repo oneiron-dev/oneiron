@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::{AGENT_DISPATCH_JOB_TYPE, decode_agent_dispatch_input};
 use crate::dreamer_runner::{DREAMER_RUNNER_JOB_KIND, decode_dreamer_job_payload};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
@@ -29,6 +30,12 @@ pub struct RunTreeNode {
     pub run_id: Option<String>,
     pub parent_id: Option<String>,
     pub worker_kind: String,
+    /// The dispatched agent's label for `agent.dispatch` jobs (decoded from
+    /// the payload snapshot; tolerant — a malformed inner input renders as
+    /// `None`). Additive and elided when absent, so serialized trees stay
+    /// wire-compatible in both directions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     pub status: RunTreeStatus,
     pub timestamps: RunTreeTimestamps,
     pub failure: Option<RunTreeFailure>,
@@ -217,6 +224,7 @@ fn flat_node(mut record: JobRecord) -> Result<FlatRunTreeNode> {
         run_id: record.run_id,
         parent_id: metadata.parent_id,
         worker_kind: metadata.worker_kind,
+        agent_id: metadata.agent_id,
         status: RunTreeStatus::from(state),
         timestamps: RunTreeTimestamps {
             created_at: record.created_at,
@@ -297,22 +305,35 @@ fn next_remaining_node(
 struct JobMetadata {
     parent_id: Option<String>,
     worker_kind: String,
+    agent_id: Option<String>,
 }
 
 fn job_metadata(record: &JobRecord) -> Result<JobMetadata> {
     if record.kind == DREAMER_RUNNER_JOB_KIND {
         let payload = decode_dreamer_job_payload(&record.payload)?;
+        // Tolerant read: the payload envelope already decoded, so a malformed
+        // inner agent-dispatch input must not kill the whole tree render —
+        // the node degrades to `agent_id: None`.
+        let agent_id = if payload.job_type == AGENT_DISPATCH_JOB_TYPE {
+            decode_agent_dispatch_input(&payload.input)
+                .ok()
+                .map(|input| input.definition.agent_id)
+        } else {
+            None
+        };
         return Ok(JobMetadata {
             parent_id: payload
                 .parent_job
                 .map(|parent| bytes_to_hex_lower(parent.as_bytes())),
             worker_kind: payload.job_type,
+            agent_id,
         });
     }
 
     Ok(JobMetadata {
         parent_id: None,
         worker_kind: record.kind.clone(),
+        agent_id: None,
     })
 }
 

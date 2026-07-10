@@ -3352,6 +3352,12 @@
       },
       "CoreRunTreeNode": {
         "properties": {
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "children": {
             "items": {
               "$ref": "#/components/schemas/CoreRunTreeNode"

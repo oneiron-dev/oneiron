@@ -2973,6 +2973,86 @@ async fn v1_core_run_tree_reads_job_queue_rows() {
 }
 
 #[tokio::test]
+async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let plain = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-agent-api");
+
+    let def_id = oneiron::EntityId::now();
+    let def = oneiron::AgentDefinition::new(
+        "eiri.agent.api",
+        "Run-tree API dispatch fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        oneiron::AgentScope::All,
+        oneiron::AgentCeiling::Proposed,
+        None,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+        oneiron::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("definedVia"),
+            rmpv::Value::from("test"),
+        )]),
+    );
+    server
+        .vault
+        .put_agent_definition(&def_id, &def, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .expect("persist agent definition");
+
+    let dispatcher = oneiron::AgentDispatcher::new(server.vault.as_ref());
+    let oneiron::AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
+        .dispatch(oneiron::DispatchAgent {
+            target: oneiron::AgentDispatchTarget::Custom(def_id),
+            parent_job: None,
+            dedupe_key: None,
+            run_id: Some("run-agent-api".to_owned()),
+            now: 20,
+        })
+        .expect("dispatch agent")
+    else {
+        panic!("expected fresh dispatch");
+    };
+
+    let (status, body) = core_json(
+        server,
+        "GET",
+        "/v1/core/run-tree?run_id=run-agent-api",
+        "core:read",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let roots = body["roots"].as_array().expect("run tree roots");
+    assert_eq!(roots.len(), 2);
+    assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(plain.id)));
+    assert!(
+        roots[0].get("agent_id").is_none(),
+        "non-agent nodes must elide agent_id entirely"
+    );
+    assert_eq!(
+        roots[1]["job_id"],
+        Value::from(job_id_hex(dispatched.job.id))
+    );
+    assert_eq!(roots[1]["worker_kind"], Value::from("agent.dispatch"));
+    assert_eq!(
+        roots[1]["agent_id"],
+        Value::from("eiri.agent.api"),
+        "agent.dispatch nodes must carry the dispatched agent's label"
+    );
+}
+
+#[tokio::test]
 async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
@@ -7667,6 +7747,29 @@ fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
             .contains("provenance must be a non-empty MessagePack map"),
         "message should expose the specific SKILL validation detail"
     );
+}
+
+#[test]
+fn core_engine_error_maps_agent_dispatch_failures_to_bad_request() {
+    for error in [
+        oneiron::Error::AgentNotDispatchable("agent definition not found"),
+        oneiron::Error::InvalidAgentDispatchInput("input must decode as an agent dispatch map"),
+        oneiron::Error::SystemAgentDisabled("preset is toggled off on this vault"),
+    ] {
+        let detail = error.to_string();
+        let mapped = core_engine_error("core dispatch failed", error);
+
+        assert_eq!(
+            mapped.status(),
+            StatusCode::BAD_REQUEST,
+            "{detail}: dispatch validation/precondition failures are client-correctable"
+        );
+        assert_eq!(mapped.code(), ErrorCode::BadRequest, "{detail}");
+        assert!(
+            mapped.message().contains(&detail),
+            "message should expose the dispatch failure detail: {detail}"
+        );
+    }
 }
 
 #[test]
