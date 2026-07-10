@@ -89,6 +89,8 @@ pub struct DispatchAgent {
     pub dedupe_key: Option<String>,
     /// Pass-through run id; dispatch never mints one (host concern).
     pub run_id: Option<String>,
+    /// Current wall-clock unix SECONDS chosen by the caller. Queue readiness
+    /// timestamps (`ready_at`) are seconds, never milliseconds (E5).
     pub now: u64,
 }
 
