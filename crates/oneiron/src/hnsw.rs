@@ -454,6 +454,7 @@ fn hnsw_insert_inner(
             ef: config.hnsw.ef_construction,
             lenient_neighbors: false,
             check_existence: false,
+            score_dims: score_dims_for(config),
         },
         ops,
     )?;
@@ -507,6 +508,7 @@ fn attach_backlinks_legacy(
                 neighbor_id,
                 &neighbors,
                 config.hnsw.m_max_0,
+                score_dims_for(config),
                 ops,
             )?;
         }
@@ -544,6 +546,7 @@ fn attach_backlinks_symmetric(
                 neighbor_id,
                 &neighbors,
                 config.hnsw.m_max_0,
+                score_dims_for(config),
                 ops,
             )?;
             let removed: Vec<EntityId> = neighbors
@@ -672,6 +675,7 @@ fn hnsw_refresh_localized(
             ef: config.hnsw.ef_construction,
             lenient_neighbors: false,
             check_existence: false,
+            score_dims: score_dims_for(config),
         },
         ops,
     )?;
@@ -712,6 +716,7 @@ fn hnsw_refresh_localized(
                 ef: config.hnsw.ef_construction,
                 lenient_neighbors: false,
                 check_existence: false,
+                score_dims: score_dims_for(config),
             },
             ops,
         )?;
@@ -779,6 +784,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
             id,
             graph_entry_point,
             config.hnsw.ef_construction,
+            score_dims_for(config),
         )?;
 
         nearest.retain(|entry| entry.id != *id);
@@ -800,6 +806,7 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
                     neighbor_id,
                     &neighbor_neighbors,
                     config.hnsw.m_max_0,
+                    score_dims_for(config),
                     &mut 0,
                 )?;
                 if discipline == LinkDiscipline::Symmetric {
@@ -905,13 +912,34 @@ pub(crate) fn increment_vector_version(store: &Store, wtxn: &mut RwTxn<'_>) -> R
         .put(wtxn, VECTOR_VERSION_KEY, &next.to_le_bytes())?;
     Ok(next)
 }
+/// Vector search over the NSW graph.
+///
+/// EMB-2 MRL funnel: with `fast_dims` configured, traversal scores on the
+/// vector prefix and `query_vector` may be either full-length or
+/// `fast_dims`-length. Full-length queries get an exact full-dim rescore of
+/// the whole beam result set (the funnel's rescore breadth — no extra
+/// constant) unless `skip_rescore` opts into the prefix-only hot lane. A
+/// `fast_dims`-length query can never be rescored — no full query exists —
+/// so the flag is implicit there. With `fast_dims: None` the behavior is
+/// identical to the pre-funnel path and `skip_rescore` is inert.
 pub(crate) fn hnsw_search(
     store: &Store,
     config: &VaultConfig,
     rtxn: &RoTxn<'_>,
     query_vector: &[f32],
     limit: usize,
+    skip_rescore: bool,
 ) -> Result<Vec<ScoredEntity>> {
+    // Defense-in-depth: callers (pipeline vector channel, vault search)
+    // validate too.
+    if query_vector.len() != config.dimensions
+        && config.fast_dims.map(usize::from) != Some(query_vector.len())
+    {
+        return Err(Error::DimensionMismatch {
+            expected: config.dimensions,
+            got: query_vector.len(),
+        });
+    }
     if limit == 0 {
         return Ok(Vec::new());
     }
@@ -936,9 +964,28 @@ pub(crate) fn hnsw_search(
             ef: config.hnsw.ef_search.max(limit),
             lenient_neighbors: true,
             check_existence: true,
+            score_dims: score_dims_for(config),
         },
         &mut 0,
     )?;
+
+    let rescore_active = config.fast_dims.is_some()
+        && query_vector.len() == config.dimensions
+        && !skip_rescore;
+    if rescore_active {
+        let mut vector_buffer = Vec::with_capacity(query_vector.len());
+        for entry in &mut nearest {
+            let Some(row) = load_vector_into(store, rtxn, &entry.id, &mut vector_buffer)? else {
+                // Beam results were existence-checked within this same read
+                // snapshot; keep the prefix distance defensively.
+                continue;
+            };
+            entry.distance = cosine_distance(query_vector, row);
+        }
+        // HeapEntry orders by (distance asc, id bytes asc) — the pinned
+        // rescore tiebreak.
+        nearest.sort_unstable();
+    }
 
     nearest.truncate(limit);
     Ok(nearest
@@ -1038,6 +1085,26 @@ struct BeamOptions {
     ef: usize,
     lenient_neighbors: bool,
     check_existence: bool,
+    /// EMB-2 MRL funnel: number of leading vector components every distance
+    /// computation scores over. Equal to `config.dimensions` when the
+    /// funnel is off.
+    score_dims: usize,
+}
+
+/// The scoring prefix length for one vault: `fast_dims` when the MRL funnel
+/// is configured, full `dimensions` otherwise.
+fn score_dims_for(config: &VaultConfig) -> usize {
+    config
+        .fast_dims
+        .map(usize::from)
+        .unwrap_or(config.dimensions)
+}
+
+/// Prefix-slices one operand for a funnel distance computation. Prefix
+/// cosine is exact for the prefix space — `cosine_distance` computes norms
+/// per call, so no renormalization step is needed.
+fn score_prefix(vector: &[f32], score_dims: usize) -> &[f32] {
+    &vector[..score_dims.min(vector.len())]
 }
 
 fn beam_search(
@@ -1052,6 +1119,7 @@ fn beam_search(
         ef,
         lenient_neighbors,
         check_existence,
+        score_dims,
     } = options;
     let ef = ef.max(1);
     let mut vector_buffer = Vec::with_capacity(query_vector.len());
@@ -1063,7 +1131,10 @@ fn beam_search(
 
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(query_vector, entry_vector),
+        distance: cosine_distance(
+            score_prefix(query_vector, score_dims),
+            score_prefix(entry_vector, score_dims),
+        ),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
@@ -1113,7 +1184,10 @@ fn beam_search(
                 continue;
             };
 
-            let distance = cosine_distance(query_vector, neighbor_vector);
+            let distance = cosine_distance(
+                score_prefix(query_vector, score_dims),
+                score_prefix(neighbor_vector, score_dims),
+            );
             let should_add = results.len() < ef
                 || distance
                     < results
@@ -1148,6 +1222,7 @@ fn beam_search_snapshot(
     query_id: &EntityId,
     entry_point: EntityId,
     ef: usize,
+    score_dims: usize,
 ) -> Result<Vec<HeapEntry>> {
     let ef = ef.max(1);
     let query_vector = load_required_vector(store, rtxn, query_id)?;
@@ -1156,7 +1231,10 @@ fn beam_search_snapshot(
 
     let entry = HeapEntry {
         id: entry_point,
-        distance: cosine_distance(&query_vector, &entry_vector),
+        distance: cosine_distance(
+            score_prefix(&query_vector, score_dims),
+            score_prefix(&entry_vector, score_dims),
+        ),
     };
 
     let mut candidates: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
@@ -1193,7 +1271,10 @@ fn beam_search_snapshot(
                 continue;
             };
 
-            let distance = cosine_distance(&query_vector, neighbor_vector);
+            let distance = cosine_distance(
+                score_prefix(&query_vector, score_dims),
+                score_prefix(neighbor_vector, score_dims),
+            );
             let should_add = results.len() < ef
                 || distance
                     < results
@@ -1698,6 +1779,7 @@ fn prune_neighbors_for_node(
     node_id: &EntityId,
     neighbors: &[EntityId],
     max_neighbors: usize,
+    score_dims: usize,
     ops: &mut u64,
 ) -> Result<Vec<EntityId>> {
     let mut node_buffer = Vec::new();
@@ -1724,7 +1806,10 @@ fn prune_neighbors_for_node(
 
         scored.push(HeapEntry {
             id: *neighbor_id,
-            distance: cosine_distance(node_vector, neighbor_vector),
+            distance: cosine_distance(
+                score_prefix(node_vector, score_dims),
+                score_prefix(neighbor_vector, score_dims),
+            ),
         });
     }
 

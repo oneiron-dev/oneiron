@@ -995,3 +995,123 @@ fn retrieval_blend_weight_table_load_normalizes_persisted_weights() -> Result<()
     assert_eq!(loaded.tuned_at, 123);
     Ok(())
 }
+
+// ===== EMB-2 (ONE-1334) HNSW compatibility record v3 =====
+
+fn funnel_compat_config(fast_dims: Option<u16>) -> VaultConfig {
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.fast_dims = fast_dims;
+    config.embedding_model = Some("test-model-v1".to_owned());
+    config.map_size = 32 * 1024 * 1024;
+    config
+}
+
+#[test]
+fn v2_hnsw_compat_record_opens_as_current_with_no_fast_dims() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), funnel_compat_config(None))?;
+        // Populate vector data: a Legacy classification would hard-error a
+        // populated vault, which is exactly what the v2->Current rule must
+        // prevent.
+        let id = entity_id(0x71);
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
+
+        // Overwrite the fresh v3 record with a hand-rolled v2 (27-byte)
+        // record, simulating a vault written by a pre-EMB-2 binary.
+        let hnsw = funnel_compat_config(None).hnsw;
+        let mut encoded = [0_u8; HNSW_COMPATIBILITY_V2_LEN];
+        encoded[0] = HNSW_COMPATIBILITY_V2_VERSION;
+        encoded[1..9].copy_from_slice(&4_u64.to_le_bytes());
+        encoded[9..17].copy_from_slice(&(hnsw.m_max_0 as u64).to_le_bytes());
+        encoded[17..25].copy_from_slice(&(hnsw.ef_construction as u64).to_le_bytes());
+        encoded[25] = HNSW_DISTANCE_METRIC_COSINE;
+        encoded[26] = HNSW_INDEX_STRUCTURE_FLAT_NSW;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .hnsw_meta
+            .put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
+        wtxn.commit()?;
+    }
+
+    {
+        let vault = Vault::open(dir.path(), funnel_compat_config(None))?;
+        let results = vault.search_vector(&[1.0, 0.0, 0.0, 0.0], 4)?;
+        assert_eq!(results.len(), 1, "populated v2 vault must stay searchable");
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, HNSW_CONFIG_KEY)?
+            .expect("compat record");
+        assert_eq!(
+            raw.len(),
+            HNSW_COMPATIBILITY_V2_LEN,
+            "v2 records are never rewritten in place"
+        );
+    }
+
+    let Err(err) = Vault::open(dir.path(), funnel_compat_config(Some(2))) else {
+        panic!("enabling fast_dims on a v2 vault must fail HnswConfigChanged");
+    };
+    match err {
+        Error::HnswConfigChanged { stored, requested } => {
+            assert!(stored.contains("fast_dims=none"), "stored: {stored}");
+            assert!(requested.contains("fast_dims=2"), "requested: {requested}");
+        }
+        other => panic!("expected HnswConfigChanged, got {other:?}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn v3_hnsw_compat_record_round_trips_fast_dims() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), funnel_compat_config(Some(2)))?;
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, HNSW_CONFIG_KEY)?
+            .expect("compat record");
+        assert_eq!(raw.len(), HNSW_COMPATIBILITY_LEN, "29-byte v3 record");
+        assert_eq!(raw[0], HNSW_COMPATIBILITY_VERSION);
+        assert_eq!(
+            u16::from_le_bytes(raw[27..29].try_into().expect("fast_dims tail")),
+            2
+        );
+    }
+
+    drop(Vault::open(dir.path(), funnel_compat_config(Some(2)))?);
+
+    let Err(err) = Vault::open(dir.path(), funnel_compat_config(Some(3))) else {
+        panic!("changed fast_dims must fail");
+    };
+    assert!(matches!(err, Error::HnswConfigChanged { .. }));
+
+    let Err(err) = Vault::open(dir.path(), funnel_compat_config(None)) else {
+        panic!("removing fast_dims must fail");
+    };
+    assert!(matches!(err, Error::HnswConfigChanged { .. }));
+    Ok(())
+}
+
+#[test]
+fn invalid_fast_dims_fails_closed_at_open() -> Result<()> {
+    for fd in [0_u16, 4, 5] {
+        let dir = tempfile::tempdir()?;
+        let Err(err) = Vault::open(dir.path(), funnel_compat_config(Some(fd))) else {
+            panic!("fast_dims {fd} must be rejected at open (dimensions = 4)");
+        };
+        assert!(
+            matches!(err, Error::InvalidConfig(ref msg)
+                if msg == "fast_dims must be greater than zero and less than dimensions"),
+            "fast_dims {fd}: got {err:?}"
+        );
+    }
+    Ok(())
+}

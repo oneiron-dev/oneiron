@@ -11,6 +11,7 @@ fn test_config() -> VaultConfig {
     VaultConfig {
         map_size: 16 * 1024 * 1024,
         dimensions: 4,
+        fast_dims: None,
         embedding_model: Some("test-model-v1".to_owned()),
         max_readers: 16,
         hnsw: HnswConfig {
@@ -5010,6 +5011,47 @@ fn rerank_claim_candidates_carry_decoded_bodies() -> Result<()> {
         seen.iter()
             .any(|(id, has_claim)| *id == plain_id && !*has_claim),
         "non-claim candidates must carry None"
+    );
+    Ok(())
+}
+
+// ===== EMB-2 (ONE-1334) funnel fork-hash segments =====
+
+#[test]
+fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
+    let mut funnel_config = test_config();
+    funnel_config.fast_dims = Some(2);
+    let (_dir, vault) = crate::test_util::open_test_vault_with(funnel_config);
+    let id = entity_id(0xEA);
+    put_text_and_vector(&vault, id, "funnel forkhash fixture", [1.0, 0.0, 0.0, 0.0])?;
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+
+    let rescored = captured_retrieval_trace(
+        &vault,
+        vault.query().search_vector(&query, 10).limit(10),
+    )?;
+    let hot_lane = captured_retrieval_trace(
+        &vault,
+        vault
+            .query()
+            .search_vector(&query, 10)
+            .skip_vector_rescore(true)
+            .limit(10),
+    )?;
+    assert_ne!(
+        rescored.fork_hash, hot_lane.fork_hash,
+        "skip_vector_rescore must fork the replay key"
+    );
+
+    let (_dir_plain, plain_vault) = open_test_vault();
+    put_text_and_vector(&plain_vault, id, "funnel forkhash fixture", [1.0, 0.0, 0.0, 0.0])?;
+    let plain = captured_retrieval_trace(
+        &plain_vault,
+        plain_vault.query().search_vector(&query, 10).limit(10),
+    )?;
+    assert_ne!(
+        plain.fork_hash, rescored.fork_hash,
+        "fast_dims None vs Some must fork the replay key"
     );
     Ok(())
 }
