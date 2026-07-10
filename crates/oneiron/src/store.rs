@@ -127,6 +127,10 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v11 (ONE-1576): off-record fence state became a supported vault contract.
+/// v10 readers do not know the fence semantics, so v10 vaults fail closed at
+/// the ABI gate — there is no silent downgrade that could expose fenced rows.
+///
 /// v10 (ONE-1443): AGENT_DEF was registered as a persistent CORE entity type
 /// byte 17. v9 readers do not know this persistent entity kind, so v9 vaults
 /// fail closed at the ABI gate — there is no silent migration; rebuild the
@@ -158,7 +162,7 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 10;
+pub const STORAGE_ABI_VERSION: u16 = 11;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";

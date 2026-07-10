@@ -3520,8 +3520,8 @@ fn open_rejects_abi_v2_vault_after_short_id_swap() -> Result<()> {
 #[test]
 fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3555,8 +3555,8 @@ fn open_rejects_abi_v4_vault_after_maintenance_band_reallocation() -> Result<()>
 #[test]
 fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3590,8 +3590,8 @@ fn open_rejects_abi_v5_vault_after_psych_profile_type_registration() -> Result<(
 #[test]
 fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3625,8 +3625,8 @@ fn open_rejects_abi_v6_vault_after_job_queue_manifest_addition() -> Result<()> {
 #[test]
 fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3660,8 +3660,8 @@ fn open_rejects_abi_v7_vault_after_job_queue_terminal_states() -> Result<()> {
 #[test]
 fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3691,12 +3691,12 @@ fn open_rejects_abi_v8_vault_after_outbound_grant_type_registration() -> Result<
 
 /// ONE-1443 fail-closed gate over registering persistent CORE type AGENT_DEF at
 /// byte 17: v9 code does not know this persistent entity kind, so v9 vaults must
-/// not open under ABI v10 without rebuild.
+/// not open under the current ABI without rebuild.
 #[test]
 fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     assert_eq!(
-        STORAGE_ABI_VERSION, 10,
-        "ONE-1443 pins the current storage ABI at 10",
+        STORAGE_ABI_VERSION, 11,
+        "ONE-1576 pins the current storage ABI at 11 for fence-aware readers",
     );
 
     let temp_dir = tempfile::tempdir()?;
@@ -3721,6 +3721,48 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
         ),
         "expected StorageAbiVersionChanged {{ stored: Some(9), current: {STORAGE_ABI_VERSION} }}, got {err:?}"
     );
+    Ok(())
+}
+
+/// A fence-bearing vault must not be serviceable by the pre-fence ABI. This
+/// simulates a v10 reader by downgrading the persisted handshake row before
+/// reopening: the fence-aware reader rejects the state instead of allowing a
+/// fence-unaware implementation to serve fenced content.
+#[test]
+fn open_rejects_legacy_abi_for_fence_bearing_vault() -> Result<()> {
+    assert_eq!(
+        STORAGE_ABI_VERSION, 11,
+        "fence-aware readers must advertise ABI 11",
+    );
+
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    let phantom_turn = EntityId::now();
+    {
+        let vault = Vault::open(path, test_config())?;
+        vault.enter_off_record_session(
+            "sess-abi-fence",
+            crate::off_record::OffRecordBackendClass::Local,
+        )?;
+        vault.tag_turn_off_record("sess-abi-fence", &phantom_turn)?;
+        assert!(vault.is_turn_off_record_fenced(&phantom_turn)?);
+    }
+
+    // ABI v10 predates the fence contract. A reader at that version must
+    // refuse rather than open the vault and treat `offrecord_fence:*` rows as
+    // unknown metadata.
+    set_raw_storage_abi_version(path, Some(10))?;
+    let err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("legacy ABI must fail closed"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        Error::StorageAbiVersionChanged {
+            stored: Some(10),
+            current: STORAGE_ABI_VERSION,
+        }
+    ));
     Ok(())
 }
 
