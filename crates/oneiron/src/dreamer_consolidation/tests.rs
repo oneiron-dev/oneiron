@@ -520,13 +520,21 @@ fn sibling_evidence_collapses() -> Result<()> {
         trust_class: ClaimSource::UserStated,
     };
 
+    let child = |refs: Vec<SwarmEvidenceRef>| SwarmChildReturn {
+        evidence: refs.into_iter().collect(),
+        candidates: Vec::new(),
+        read_pin: 7,
+    };
+
     // Two children citing the SAME source hash: one independent signal.
-    let collapsed = collapse_sibling_evidence(&[vec![shared], vec![shared]])?;
-    assert_eq!(collapsed.independent_signals(), 1);
+    let collapsed = collapse_sibling_evidence(&[child(vec![shared]), child(vec![shared])])?;
+    assert_eq!(collapsed.independent.len(), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 1);
 
     // A genuinely distinct source adds a second signal.
-    let collapsed = collapse_sibling_evidence(&[vec![shared], vec![shared, distinct]])?;
-    assert_eq!(collapsed.independent_signals(), 2);
+    let collapsed =
+        collapse_sibling_evidence(&[child(vec![shared]), child(vec![shared, distinct])])?;
+    assert_eq!(collapsed.independent.len(), 2);
     Ok(())
 }
 
@@ -1042,6 +1050,267 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     assert_eq!(delta.refreshed, 1, "escalation created the gap row");
     assert_eq!(delta.created, 0);
     Ok(())
+}
+
+#[test]
+fn child_returns_hash_only() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x2C, 1);
+    let secret_text = "SECRET-SOURCE-CONTENT-the-user-is-afraid-of-clowns".repeat(50);
+    let turn = seed_turn(&vault, &conversation, "user", &secret_text, 10);
+
+    // The child that "read" this large source returns hashes only.
+    let raw = vault.get_raw(&turn)?.expect("turn raw");
+    let content_hash =
+        swarm_evidence_content_hash(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
+    let child = SwarmChildReturn {
+        evidence: [SwarmEvidenceRef {
+            source_id: turn,
+            content_hash,
+            trust_class: ClaimSource::UserStated,
+        }]
+        .into_iter()
+        .collect(),
+        candidates: Vec::new(),
+        read_pin: 10,
+    };
+
+    // Type-level: no field can carry source bytes; and the serialized
+    // return of a child that read a large source contains none of it.
+    let serialized = format!("{child:?}");
+    assert!(
+        !serialized.contains("SECRET-SOURCE-CONTENT"),
+        "no source body bytes may appear in a child return"
+    );
+    assert!(
+        !serialized.contains("clowns"),
+        "no source body bytes may appear in a child return"
+    );
+    Ok(())
+}
+
+#[test]
+fn sibling_collapse_on_shared_hash() -> Result<()> {
+    let source = EntityId::from_bytes([0x3A; 16]).expect("source");
+    let make = |trust_class| SwarmEvidenceRef {
+        source_id: source,
+        content_hash: [0x61; 32],
+        trust_class,
+    };
+    let child = |entry: SwarmEvidenceRef| SwarmChildReturn {
+        evidence: [entry].into_iter().collect(),
+        candidates: Vec::new(),
+        read_pin: 1,
+    };
+
+    let collapsed = collapse_sibling_evidence(&[
+        child(make(ClaimSource::UserStated)),
+        child(make(ClaimSource::Imported)),
+    ])?;
+    assert_eq!(collapsed.independent.len(), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 1);
+    // Trust ties on one identity resolve to the MOST restrictive class.
+    assert_eq!(collapsed.independent[0].trust_class, ClaimSource::Imported);
+    Ok(())
+}
+
+#[test]
+fn intra_child_trust_tie_resolves_to_most_restrictive() {
+    // A SINGLE child listing the same (source_id, content_hash) at two
+    // different trust classes must not silently drop the stricter one: the
+    // evidence container is a Vec precisely so BOTH refs reach the collapse
+    // meet. A BTreeSet keyed on identity would keep only the first-inserted
+    // entry, letting a child inflate trust by listing the higher class first.
+    let source = EntityId::from_bytes([0x3C; 16]).expect("source");
+    let make = |trust_class| SwarmEvidenceRef {
+        source_id: source,
+        content_hash: [0x63; 32],
+        trust_class,
+    };
+    // Higher trust listed FIRST — the drop-the-stricter bug would keep it.
+    let child = SwarmChildReturn {
+        evidence: vec![make(ClaimSource::UserStated), make(ClaimSource::Imported)],
+        candidates: Vec::new(),
+        read_pin: 1,
+    };
+    let collapsed = collapse_sibling_evidence(&[child]).expect("collapse");
+    assert_eq!(collapsed.independent.len(), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 1);
+    assert_eq!(
+        collapsed.independent[0].trust_class,
+        ClaimSource::Imported,
+        "intra-child trust tie must resolve to the most restrictive class"
+    );
+}
+
+#[test]
+fn most_restrictive_trust() {
+    let entry = |trust_class| SwarmEvidenceRef {
+        source_id: EntityId::from_bytes([0x3B; 16]).expect("id"),
+        content_hash: [0x62; 32],
+        trust_class,
+    };
+
+    let set = [entry(ClaimSource::UserStated), entry(ClaimSource::Imported)];
+    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Imported);
+
+    let set = [entry(ClaimSource::Observed), entry(ClaimSource::Generated)];
+    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
+
+    // Empty iterator: the Dreamer's own floor.
+    assert_eq!(evidence_trust_meet([].iter()), ClaimSource::Generated);
+
+    // Inferred and Generated share one rank: their meet stays at that
+    // rank (the fold seeds at the Generated floor, so equal-rank inputs
+    // resolve to Generated).
+    let set = [entry(ClaimSource::Inferred), entry(ClaimSource::Generated)];
+    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
+
+    // A strictly higher class alone still cannot rise above the floor.
+    let set = [entry(ClaimSource::UserStated)];
+    assert_eq!(evidence_trust_meet(set.iter()), ClaimSource::Generated);
+}
+
+#[test]
+fn ledger_revision_pin() {
+    let child = SwarmChildReturn {
+        evidence: Vec::new(),
+        candidates: Vec::new(),
+        read_pin: 41,
+    };
+    assert!(validate_child_read_pin(42, &child).is_err());
+    let child = SwarmChildReturn {
+        read_pin: 42,
+        ..child
+    };
+    assert!(validate_child_read_pin(42, &child).is_ok());
+}
+
+#[test]
+fn evidence_hash_conformance() -> Result<()> {
+    // Pinned known-answer vector for the domain-separated hash.
+    assert_eq!(DREAMER_EVIDENCE_HASH_DOMAIN, b"oneiron:dreamer-evidence:v1");
+    assert_eq!(
+        bytes_to_hex_lower(&swarm_evidence_content_hash(b"known-answer-input")),
+        "88faa590a017dbc83e70a38f05245f0234342b191c904b4cabbdfc7882279e27",
+        "evidence hash known-answer vector"
+    );
+
+    // The hash input is the header-stripped stored body: hashing the bytes
+    // we wrote equals hashing raw[ENTITY_METADATA_HEADER_LEN..].
+    let (_dir, vault) = open_vault();
+    let conversation = seed_session(&vault, 0x2D, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "hash me", 10);
+    let raw = vault.get_raw(&turn)?.expect("turn raw");
+    let body = turn_body("user", "hash me", None);
+    assert_eq!(
+        swarm_evidence_content_hash(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]),
+        swarm_evidence_content_hash(&body),
+        "stored body bytes after the header are byte-identical to the put"
+    );
+    Ok(())
+}
+
+#[test]
+fn tainted_claim_not_consolidatable_until_approved() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x3C; 16]).expect("id"));
+    let body = |appr: ClaimApprovalStatus, taint: Option<&str>| {
+        let mut body = ClaimBody::new(
+            "profile.tone",
+            subject,
+            Value::from("v"),
+            0.5,
+            appr,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::Inferred);
+        if let Some(taint) = taint {
+            body.scope = Some(Value::Map(vec![(
+                Value::from("evidence_taint"),
+                Value::from(taint),
+            )]));
+        }
+        body
+    };
+
+    use crate::claim::{claim_consolidatable, claim_surfaceable};
+    use ClaimApprovalStatus as A;
+
+    // Auto + tool_output taint: surfaceable, NOT consolidatable.
+    let tainted_auto = body(A::Auto, Some("tool_output"));
+    assert!(claim_surfaceable(&tainted_auto));
+    assert!(!claim_consolidatable(&tainted_auto));
+
+    // Human re-stamp (Approved) clears admission; surfaceability unchanged.
+    let tainted_approved = body(A::Approved, Some("tool_output"));
+    assert!(claim_surfaceable(&tainted_approved));
+    assert!(claim_consolidatable(&tainted_approved));
+
+    // imported taint blocks the same way.
+    assert!(!claim_consolidatable(&body(A::Auto, Some("imported"))));
+
+    // A taint ABOVE tool_output does not block.
+    assert!(claim_consolidatable(&body(A::Auto, Some("user_stated"))));
+
+    // Unparseable taint marker fails closed (treated as lattice bottom).
+    assert!(!claim_consolidatable(&body(A::Auto, Some("garbage-class"))));
+
+    // Untainted control.
+    assert!(claim_consolidatable(&body(A::Auto, None)));
+}
+
+#[test]
+fn turn_trust_class_meet_space() {
+    // Pinned table (DESIGN-PIN B1).
+    assert_eq!(
+        turn_trust_class(DreamerTurnRole::User, false),
+        Some(ClaimSource::UserStated)
+    );
+    assert_eq!(
+        turn_trust_class(DreamerTurnRole::Assistant, false),
+        Some(ClaimSource::Generated),
+        "assistant turns classify Generated, never Observed"
+    );
+    assert_eq!(
+        turn_trust_class(DreamerTurnRole::User, true),
+        Some(ClaimSource::Imported)
+    );
+    assert_eq!(
+        turn_trust_class(DreamerTurnRole::Assistant, true),
+        Some(ClaimSource::Imported)
+    );
+    for role in [
+        DreamerTurnRole::System,
+        DreamerTurnRole::Tool,
+        DreamerTurnRole::Injected,
+        DreamerTurnRole::Unknown,
+    ] {
+        assert_eq!(turn_trust_class(role, false), None);
+        assert_eq!(turn_trust_class(role, true), None);
+    }
+
+    // The reachable working-set meet space is {UserStated, Generated,
+    // Imported} — every classified turn maps into it, so every fold of
+    // source_meet over it stays inside it.
+    let reachable = [
+        ClaimSource::UserStated,
+        ClaimSource::Generated,
+        ClaimSource::Imported,
+    ];
+    for left in reachable {
+        for right in reachable {
+            let entry = |trust_class| SwarmEvidenceRef {
+                source_id: EntityId::from_bytes([0x3D; 16]).expect("id"),
+                content_hash: [0x63; 32],
+                trust_class,
+            };
+            let meet = evidence_trust_meet([entry(left), entry(right)].iter());
+            assert!(
+                reachable.contains(&meet),
+                "{left:?} meet {right:?} = {meet:?}"
+            );
+        }
+    }
 }
 
 #[test]
