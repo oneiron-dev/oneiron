@@ -255,7 +255,12 @@ pub(crate) fn charter_stamped_aggregate(
 /// and compares it to the stamp. Any mismatch degrades enforcement to
 /// proposed-only (`gate.pending.charter_drift`) until a human re-stamps.
 pub(crate) fn charter_block_drifted(block: &ConnectorCharterBlock) -> Result<bool> {
-    let text_hash = sha256_bytes(&[block.text.as_bytes()]);
+    // Hash the SAME canonical form the compiler stamps over: it hashes the
+    // CRLF-normalized text (`compile_connector_charter`), so an imported block
+    // that carries raw `\r\n` while its stamp was computed over the `\n` form
+    // must normalize here too, or it would false-drift into proposed-only.
+    let normalized = block.text.replace("\r\n", "\n");
+    let text_hash = sha256_bytes(&[normalized.as_bytes()]);
     let compiled_hash = compiled_policy_hash(&block.compiled)?;
     Ok(charter_stamped_aggregate(&text_hash, &compiled_hash) != block.stamped_aggregate)
 }

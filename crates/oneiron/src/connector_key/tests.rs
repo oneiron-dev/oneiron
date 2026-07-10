@@ -1323,3 +1323,37 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
             .is_ok()
     );
 }
+
+#[test]
+fn crlf_imported_charter_block_does_not_false_drift() -> Result<()> {
+    // The compiler stamps over the CRLF-normalized (LF) text. An imported block
+    // that carries raw CRLF in `text` but whose stamp was computed over the LF
+    // form must NOT read as drifted (which would degrade it to proposed-only).
+    let crlf_text = "never delete on slack\r\nnever call\r\n";
+    let compiled = compile_connector_charter(crlf_text).expect("compiles");
+    let text_hash = compiled.text_hash;
+    let compiled_hash = compiled.compiled_hash;
+    let stamped_aggregate = charter_stamped_aggregate(&text_hash, &compiled_hash);
+    let block = ConnectorCharterBlock {
+        text: crlf_text.to_owned(),
+        text_hash,
+        compiled: compiled.compiled,
+        compiled_hash,
+        stamped_aggregate,
+        stamped_by: "owner".to_owned(),
+        stamped_at: 1,
+    };
+    assert!(
+        !charter_block_drifted(&block)?,
+        "CRLF block stamped over LF must not false-drift"
+    );
+
+    // Sanity: genuine text tampering with a stale stamp still drifts.
+    let mut tampered = block.clone();
+    tampered.text = "never delete on slack\r\nnever send\r\n".to_owned();
+    assert!(
+        charter_block_drifted(&tampered)?,
+        "mutated text must still drift"
+    );
+    Ok(())
+}
