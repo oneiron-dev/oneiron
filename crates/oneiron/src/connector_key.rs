@@ -1362,7 +1362,10 @@ pub struct EffectorBudgetRowRead {
     pub on_exhaust: EffectorBudgetOnExhaust,
     /// Calendar bucket start; 0 for rolling.
     pub window_start: u64,
-    /// Thresholds fired this window, ascending.
+    /// Thresholds the current window's usage has crossed, ascending — the
+    /// TRUE ladder state, computed from live usage rather than parsed from
+    /// the stored event-emission memory (which lags when usage advances
+    /// without incremental firing: spend settlements, pre-ladder rows).
     pub fired_thresholds: Vec<BudgetThreshold>,
 }
 
@@ -1429,14 +1432,16 @@ fn parse_fired_threshold(name: &str) -> Option<BudgetThreshold> {
     }
 }
 
-fn parse_fired_thresholds(fired: &[String]) -> Vec<BudgetThreshold> {
-    let mut thresholds: Vec<BudgetThreshold> = fired
-        .iter()
-        .filter_map(|name| parse_fired_threshold(name))
-        .collect();
-    thresholds.sort_unstable();
-    thresholds.dedup();
-    thresholds
+/// Thresholds the given usage percentage has crossed, ascending.
+fn crossed_thresholds(percent: u64) -> Vec<BudgetThreshold> {
+    [
+        BudgetThreshold::Silent50,
+        BudgetThreshold::Plan80,
+        BudgetThreshold::Land95,
+    ]
+    .into_iter()
+    .filter(|threshold| percent >= threshold.percent())
+    .collect()
 }
 
 fn budget_row_read(
@@ -1445,6 +1450,7 @@ fn budget_row_read(
     usage: &ConnectorKeyUsage,
 ) -> EffectorBudgetRowRead {
     let used = usage.used();
+    let percent = percent_used(used, budget.limit);
     EffectorBudgetRowRead {
         row_index,
         dimension: budget.dimension,
@@ -1453,10 +1459,20 @@ fn budget_row_read(
         unit: budget.unit.clone(),
         used,
         remaining: budget.limit.saturating_sub(used),
-        percent_used: percent_used(used, budget.limit),
+        percent_used: percent,
         on_exhaust: budget.on_exhaust,
         window_start: usage.window_start,
-        fired_thresholds: parse_fired_thresholds(&usage.fired),
+        // The read reports the TRUE ladder state — every threshold the live
+        // usage has crossed — not the event-emission memory. Usage can
+        // advance without incremental firing (spend settlements never emit
+        // per M3b; pre-ladder upgrade rows carry entries with an empty
+        // `fired`), and the Exhausted path deliberately emits nothing (M5b
+        // carry-read-only), so a denial's history must be computed from the
+        // usage itself or a jump-to-exhausted row would read as
+        // signal-silent. Post-touch, the stored `fired` (the single-fire
+        // memory) is always a subset of this per the M5a re-arm rule, so for
+        // incrementally-fired rows the two coincide exactly.
+        fired_thresholds: crossed_thresholds(percent),
     }
 }
 

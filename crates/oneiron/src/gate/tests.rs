@@ -5206,3 +5206,68 @@ fn ladder_events_carry_the_firing_row_identity() -> Result<()> {
     assert_eq!(fired_rows(&events), vec![Some(0), Some(1)]);
     Ok(())
 }
+
+#[test]
+fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x82);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::spend(
+                100,
+                "USD",
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Refuse,
+            )],
+            1_000,
+        ),
+    )?;
+    // A single settlement jumps the row 0 -> limit WITHOUT any incremental
+    // event firing (spend-ladder signals are the M3b v1 non-goal), so the
+    // stored `fired` memory is empty when exhaustion is reached.
+    vault.settle_connector_spend(&key_id, 0, 100, 1_100, "settle:jump")?;
+
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // The very first charge is Exhausted — and its denial read still
+    // carries the crossed thresholds (not empty), with NO new events
+    // (M5b carry-read-only). A retry is identical.
+    for _ in 0..2 {
+        let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+        assert_eq!(
+            gate_reason_strs(&decision),
+            vec!["gate.deny.effector_budget_exhausted"]
+        );
+        let charge = charge.expect("exhaustion charge");
+        assert!(charge.ladder_events.is_empty(), "no events on the denial");
+        assert_eq!(
+            charge.read.rows[0].fired_thresholds,
+            vec![
+                crate::BudgetThreshold::Silent50,
+                crate::BudgetThreshold::Plan80,
+                crate::BudgetThreshold::Land95,
+            ],
+            "jump-to-exhausted history is never signal-silent"
+        );
+    }
+
+    // The self.* meter read reports the same true ladder state.
+    let read = vault
+        .effector_budget_read("line", None)?
+        .expect("governing key");
+    assert_eq!(
+        read.rows[0].fired_thresholds,
+        vec![
+            crate::BudgetThreshold::Silent50,
+            crate::BudgetThreshold::Plan80,
+            crate::BudgetThreshold::Land95,
+        ]
+    );
+    Ok(())
+}
