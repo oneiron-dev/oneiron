@@ -7,6 +7,8 @@
 //! entry with anything but `AuthenticatedSession` evidence, so supervised
 //! disclosure keys to the session — never to a voice claim or message text.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -419,7 +421,7 @@ impl Vault {
         input: &InterlocutorResolutionInput,
     ) -> Result<InterlocutorSet> {
         let mut non_owner: Vec<Interlocutor> = Vec::with_capacity(input.parties.len());
-        let mut seen_contact_refs: Vec<String> = Vec::new();
+        let mut seen_contact_refs: HashSet<String> = HashSet::new();
 
         for party in &input.parties {
             let entry = match party {
@@ -457,11 +459,10 @@ impl Vault {
                 } => Interlocutor::unknown(label.clone(), *claimed_owner),
             };
 
-            if let Some(contact_ref) = entry.contact_ref.as_ref() {
-                if seen_contact_refs.iter().any(|seen| seen == contact_ref) {
-                    continue;
-                }
-                seen_contact_refs.push(contact_ref.clone());
+            if let Some(contact_ref) = entry.contact_ref.as_ref()
+                && !seen_contact_refs.insert(contact_ref.clone())
+            {
+                continue;
             }
             non_owner.push(entry);
         }

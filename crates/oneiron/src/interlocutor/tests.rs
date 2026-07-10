@@ -365,3 +365,40 @@ fn owner_session_flag_is_the_only_supervision_path() -> Result<()> {
     assert_eq!(set.non_owner().count(), 1);
     Ok(())
 }
+
+#[test]
+fn duplicate_heavy_inputs_resolve_in_one_pass_to_one_entry() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let identity = test_id(0xA4);
+    let contact_id = test_id(0xB5);
+    let record = CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?;
+    vault.create_counterparty_contact(&contact_id, &record)?;
+
+    // 200 duplicate references to the same contact (mixed input shapes) plus
+    // interleaved unknowns: one KnownContact entry survives, unknowns keep
+    // their set order, and the set-based dedup does no quadratic rescan.
+    let mut parties = Vec::new();
+    for index in 0..200 {
+        parties.push(if index % 2 == 0 {
+            InterlocutorPartyInput::ContactRef(contact_id)
+        } else {
+            InterlocutorPartyInput::ChannelCounterparty {
+                identity_ref: identity,
+                counterparty: "kenji@example.com".to_owned(),
+            }
+        });
+    }
+    parties.push(InterlocutorPartyInput::UnknownLabel {
+        label: "guest".to_owned(),
+        claimed_owner: false,
+    });
+
+    let set = vault.resolve_interlocutors(&resolution_input(parties))?;
+    assert_eq!(set.entries().len(), 2);
+    assert_eq!(
+        set.entries()[0].contact_ref(),
+        Some(contact_id.to_hex().as_str())
+    );
+    assert_eq!(set.entries()[1].label(), "guest");
+    Ok(())
+}

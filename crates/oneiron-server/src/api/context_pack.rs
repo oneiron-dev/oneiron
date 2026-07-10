@@ -42,6 +42,17 @@ pub(crate) const EIRI_SESSION_RAG_LAST_RESULT_IDS_MAX: usize = 256;
 pub(crate) const SHARED_EIRI_SESSION_SCOPE_IDS: &[&str] =
     &["bearer", "dev-bearer", "default", "legacy-shared-secret"];
 
+/// Maximum `interlocutors.third_parties` entries per context-pack request.
+/// Each party can trigger vault reads during resolution, so the block is
+/// capped like the crate's other request-controlled collections.
+pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
+
+/// Engine invariant for counterparty keys (`counterparty_contact`'s private
+/// `MAX_COUNTERPARTY_BYTES`): stored keys are trimmed and at most 512 bytes.
+/// Enforced at the DTO boundary so caller input surfaces as a typed 400
+/// instead of an engine error.
+pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
+
 pub(crate) static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
 
 #[derive(Default)]
@@ -950,6 +961,14 @@ pub(crate) fn resolve_core_interlocutor_set(
         if controls.owner_present == Some(true) && !auth.is_owner_session() {
             return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
         }
+        if controls.third_parties.len() > MAX_INTERLOCUTOR_THIRD_PARTIES {
+            return Err(ApiError::bad_request(
+                format!(
+                    "third_parties must contain at most {MAX_INTERLOCUTOR_THIRD_PARTIES} entries"
+                ),
+                Some("interlocutors.third_parties"),
+            ));
+        }
         owner_present = controls.owner_present;
         for (index, party) in controls.third_parties.iter().enumerate() {
             parties.push(core_interlocutor_party_input(party, index)?);
@@ -1044,6 +1063,20 @@ pub(crate) fn core_interlocutor_party_input(
             if counterparty.trim().is_empty() {
                 return Err(ApiError::bad_request(
                     "counterparty must be non-empty",
+                    Some(&field_path("counterparty")),
+                ));
+            }
+            // Engine invariant enforced at the boundary: an untrimmed or
+            // over-long key would otherwise surface from the contact lookup
+            // as an engine error instead of a client error.
+            if counterparty.trim() != counterparty
+                || counterparty.len() > MAX_INTERLOCUTOR_COUNTERPARTY_BYTES
+            {
+                return Err(ApiError::bad_request(
+                    format!(
+                        "counterparty must be trimmed and at most \
+                         {MAX_INTERLOCUTOR_COUNTERPARTY_BYTES} bytes"
+                    ),
                     Some(&field_path("counterparty")),
                 ));
             }

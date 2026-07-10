@@ -8023,6 +8023,14 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
             "interlocutors.third_parties[0].counterparty",
         ),
         (
+            json!({ "channel_identity_ref": contact_hex, "counterparty": " kenji@example.com " }),
+            "interlocutors.third_parties[0].counterparty",
+        ),
+        (
+            json!({ "channel_identity_ref": contact_hex, "counterparty": "k".repeat(513) }),
+            "interlocutors.third_parties[0].counterparty",
+        ),
+        (
             json!({ "label": "   " }),
             "interlocutors.third_parties[0].label",
         ),
@@ -8052,6 +8060,53 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
             "party {party:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn core_context_pack_caps_the_third_parties_block() {
+    let (_dir, server) = interlocutor_test_server();
+
+    let party = |index: usize| json!({ "label": format!("guest {index}") });
+    let at_cap: Vec<Value> = (0..MAX_INTERLOCUTOR_THIRD_PARTIES).map(party).collect();
+    let over_cap: Vec<Value> = (0..=MAX_INTERLOCUTOR_THIRD_PARTIES).map(party).collect();
+
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": { "third_parties": at_cap }
+    });
+    let (status, body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "at-cap block accepted: {body:?}");
+    assert_eq!(
+        body["interlocutors"].as_array().map(Vec::len),
+        Some(MAX_INTERLOCUTOR_THIRD_PARTIES + 1),
+        "owner stamp plus every supplied party"
+    );
+
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": { "third_parties": over_cap }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        body["error"]["details"]["field"],
+        Value::from("interlocutors.third_parties")
+    );
 }
 
 #[tokio::test]
