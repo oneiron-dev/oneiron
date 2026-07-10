@@ -3707,3 +3707,52 @@ fn owner_alone_and_absent_context_stay_identical() -> Result<()> {
     assert_eq!(bare.results.len(), with_ctx.results.len());
     Ok(())
 }
+
+#[test]
+fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
+    let (_tmp, vault) = open_test_vault();
+    let contact_id = disclosure_id(0xC9);
+    seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
+    let party = disclosure_id(0xE4);
+    let diary = disclosure_id(0xE5);
+    put_disclosure_turn(&vault, &party, "party trace needle25");
+    put_disclosure_turn(&vault, &diary, "private trace needle25");
+    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+
+    // Control: an owner-alone assembly with capture on records a stage trace.
+    let run = vault
+        .context_pack()
+        .search_text("needle25", 10)
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let run_id = run.run_id.expect("telemetry run id");
+    let record = vault.retrieval_run(run_id)?.expect("run record");
+    assert!(
+        record.trace.is_some(),
+        "owner-alone trace capture stays unchanged"
+    );
+
+    // Clamped assembly: NO stage trace exists at all, so per_channel, fused,
+    // blended, and reranked can never retain ids the clamp removed.
+    let ctx = absence_ctx_for_contact(&vault, contact_id);
+    let run = vault
+        .context_pack()
+        .search_text("needle25", 10)
+        .capture_retrieval_trace(true)
+        .disclosure_context(ctx)
+        .run_with_telemetry()?;
+    let run_id = run.run_id.expect("telemetry run id");
+    let record = vault.retrieval_run(run_id)?.expect("run record");
+    assert!(
+        record.trace.is_none(),
+        "a clamped assembly persists no retrieval stage trace"
+    );
+    // The finalized telemetry record itself carries only post-clamp ids.
+    assert!(record.result_ids.contains(party.as_bytes()));
+    assert!(
+        !record.result_ids.contains(diary.as_bytes()),
+        "clamped id absent from finalized telemetry result ids"
+    );
+    Ok(())
+}

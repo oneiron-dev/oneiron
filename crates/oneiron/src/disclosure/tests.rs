@@ -752,3 +752,78 @@ fn assembly_and_receipt_stamp_are_mode_keyed() -> Result<()> {
     assert!(owner.assembly(0).notice.is_none());
     Ok(())
 }
+
+// ─── F2 (codex, keystone review): mirror-write door containment ─────────────
+//
+// The door skips the write gate (`allow_reserved_predicate: true`). Its
+// safety must be STRUCTURAL, not a call-site convention: no body carrying a
+// caller-chosen predicate may ride it.
+
+#[test]
+fn mirror_write_door_refuses_predicates_outside_the_disclosure_family() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x21);
+    put_turn(&vault, &subject);
+    let claim_id = disclosure_tier_claim_id(&subject)?;
+
+    for predicate in ["profile.hobby", "event.headcount", "voice_print.status"] {
+        let body = ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(subject),
+            Value::from("smuggled"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        let mut wtxn = vault.store.env.write_txn()?;
+        let err = vault
+            .put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)
+            .expect_err("gate-exempt door refuses non-disclosure predicates");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidClaimBody);
+        drop(wtxn);
+    }
+
+    // The family's own predicates still ride it (the door stays usable).
+    let body = ClaimBody::new(
+        PREDICATE_DISCLOSURE_TIER,
+        ClaimSubject::Entity(subject),
+        Value::from(DISCLOSURE_TIER_VALUE_TIER_A),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &body, 100)?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+#[test]
+fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let marked = test_id(0x22);
+    put_turn(&vault, &marked);
+
+    // The mirror id is a public sha256 derivation: any caller can compute it
+    // and write a foreign claim there through the NORMAL gated put_claim
+    // door. clear_disclosure_tier_a must never forward that body into the
+    // gate-exempt door.
+    let claim_id = disclosure_tier_claim_id(&marked)?;
+    let squatter = ClaimBody::new(
+        "profile.hobby",
+        ClaimSubject::Entity(marked),
+        Value::from("smuggled through the mirror id"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(&claim_id, &squatter, TimeRange { start: 1, end: 1 }, 1)?;
+
+    vault.clear_disclosure_tier_a(&marked, 200)?;
+
+    let stored = vault.get_claim(&claim_id)?.expect("squatter survives");
+    assert_eq!(stored, squatter, "foreign claim is left exactly as written");
+    assert_eq!(stored.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(stored.valid_to, None);
+    Ok(())
+}

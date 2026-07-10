@@ -655,8 +655,22 @@ impl<'a> ContextPackBuilder<'a> {
             )
         });
         let selected_edge_budget = retrieval_budget.selected_edges;
-        let pipeline_output = self
-            .pipeline
+        // OF-365: a clamped assembly persists NO retrieval stage trace. The
+        // pipeline records per_channel/fused/blended/reranked stages BEFORE
+        // the clamp's candidate sweep runs, so a captured trace would retain
+        // exactly the ids the clamp removes — absence is the boundary, and
+        // suppressing capture is the fail-closed form of scrubbing every
+        // stage. OwnerAlone (and no-context) assemblies keep the caller's
+        // trace setting unchanged.
+        let mut pipeline = self.pipeline;
+        if self
+            .disclosure
+            .as_ref()
+            .is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
+        {
+            pipeline = pipeline.capture_retrieval_trace(false);
+        }
+        let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
         let telemetry_run_id = pipeline_output.telemetry_run_id;

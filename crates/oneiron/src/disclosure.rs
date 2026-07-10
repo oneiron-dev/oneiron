@@ -732,6 +732,13 @@ impl Vault {
 
     /// Clears an owner Tier-A mark: deletes the meta row and supersedes the
     /// `disclosure.tier` claim.
+    ///
+    /// The stored body at the derived mirror id is only superseded when it
+    /// actually IS this family's `disclosure.tier` mirror. A foreign claim
+    /// squatting that id (the id is a public sha256 derivation, so any
+    /// caller can compute it and write there through the normal gated
+    /// `put_claim` door) is left untouched rather than re-written through
+    /// the engine-internal door below.
     pub fn clear_disclosure_tier_a(&self, id: &EntityId, cleared_at: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.entities.get(&wtxn, id.as_bytes())?.is_none() {
@@ -747,6 +754,7 @@ impl Vault {
             if header.entity_type == ENTITY_TYPE_CLAIM
                 && let Some(payload) = raw.get(ENTITY_METADATA_HEADER_LEN..)
                 && let Ok(mut body) = decode_claim_body(payload, true)
+                && body.predicate == PREDICATE_DISCLOSURE_TIER
                 && body.lifecycle == ClaimLifecycleStatus::Active
             {
                 body.lifecycle = ClaimLifecycleStatus::Superseded;
@@ -772,10 +780,16 @@ impl Vault {
     /// uses): these mirrors are deterministic engine records of an action
     /// the owner just took through a dedicated owner-session Vault method
     /// (I6 — no HTTP path, no message-content path), so the first-party
-    /// consent gate's criticality floor does not re-ask the owner. The
-    /// strict pre-validation below (`allow_reserved = false`) still rejects
-    /// any reserved `edge.*` predicate at this door, and the body passes the
-    /// full disclosure-family structural validation either way.
+    /// consent gate's criticality floor does not re-ask the owner.
+    ///
+    /// PREDICATE CONTAINMENT (load-bearing): the door refuses any predicate
+    /// outside [`DISCLOSURE_CLAIM_PREDICATES`] before it writes. That makes
+    /// the safety argument for skipping the write gate STRUCTURAL rather
+    /// than a call-site convention — no body reaching this door can carry a
+    /// caller-chosen predicate through the gate-exempt path. The strict
+    /// pre-validation (`allow_reserved = false`) additionally rejects any
+    /// reserved `edge.*` predicate, and the body passes the full
+    /// disclosure-family structural validation either way.
     fn put_disclosure_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -783,6 +797,12 @@ impl Vault {
         body: &ClaimBody,
         learned_at: u64,
     ) -> Result<()> {
+        if !is_disclosure_claim_predicate(&body.predicate) {
+            return Err(Error::InvalidClaimBody(
+                "disclosure claim door refuses predicates outside the disclosure family",
+            ));
+        }
+        validate_disclosure_claim_structure(body)?;
         let data = encode_claim_body(body)?;
         validate_claim_body_bytes(&data, false)?;
         let mut ops = vec![BatchOp::Put {
