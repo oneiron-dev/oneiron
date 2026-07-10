@@ -1061,12 +1061,8 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     let backend = ScriptedBackend::new(Vec::new());
     // reserve 100 > cap 50 → the extraction step is budget-exhausted, so the
     // step layer opens a budget trap, parks the job, and returns Trapped.
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        50,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
+    let guard =
+        crate::BudgetGuard::with_reserve_units("wake", 50, 100, BudgetExhaustionPolicy::Suspend);
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
@@ -1090,7 +1086,10 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         matches!(execution, DreamerJobExecution::Park { .. }),
         "trapped extraction must park, got {execution:?}"
     );
-    assert!(sink.accepted.is_empty(), "no candidates sink on a trapped job");
+    assert!(
+        sink.accepted.is_empty(),
+        "no candidates sink on a trapped job"
+    );
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
         0,
@@ -1123,14 +1122,11 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     // denied. reserve 100, limit 100: extraction admits (projected 100 ≤ 100)
     // and settles 50 used, so the merge admit projects 50 + 100 > 100 →
     // Exhausted → the step layer traps and parks mid-merge.
-    let backend =
-        ScriptedBackend::new(vec![Ok(two_candidate_extraction(&subject, &turns[0], &turns[1]))]);
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        100,
-        100,
-        BudgetExhaustionPolicy::Suspend,
-    );
+    let backend = ScriptedBackend::new(vec![Ok(two_candidate_extraction(
+        &subject, &turns[0], &turns[1],
+    ))]);
+    let guard =
+        crate::BudgetGuard::with_reserve_units("wake", 100, 100, BudgetExhaustionPolicy::Suspend);
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
@@ -1221,7 +1217,11 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             now_ms,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
-        Ok(sink.accepted.iter().map(|candidate| candidate.claim_id).collect())
+        Ok(sink
+            .accepted
+            .iter()
+            .map(|candidate| candidate.claim_id)
+            .collect())
     };
 
     let ids_first = run(21_000)?;
@@ -1288,7 +1288,11 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             now_ms,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
-        Ok(sink.accepted.iter().map(|candidate| candidate.claim_id).collect())
+        Ok(sink
+            .accepted
+            .iter()
+            .map(|candidate| candidate.claim_id)
+            .collect())
     };
 
     let ids_first = run(21_000)?;
