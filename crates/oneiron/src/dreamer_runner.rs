@@ -2562,7 +2562,7 @@ fn apply_milestone_claim_in_txn(
     job_id: JobId,
     milestone: DreamerMilestoneClaim,
 ) -> Result<()> {
-    let value = encode_milestone_value(job_id, milestone.kind, milestone.occurred.start);
+    let value = dreamer_milestone_value(job_id, milestone.kind, milestone.occurred.start);
     let candidate = ClaimCandidate::new(
         DREAMER_MILESTONE_PREDICATE,
         ClaimSubject::Entity(milestone.subject),
@@ -2800,7 +2800,11 @@ fn decode_dreamer_milestone_candidate_key(key: &[u8]) -> Result<(JobId, u64, u64
     Ok((job_id, at, learned_at, claim_id))
 }
 
-fn encode_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) -> Value {
+/// The ONE home of the pinned `dreamer.job_milestone` claim-value shape
+/// (`["schema_version","job_id","milestone","at"]`). Public so the agent
+/// dispatch layer (and the DREAM execution loop) build milestone values here
+/// instead of re-encoding the shape.
+pub fn dreamer_milestone_value(job_id: JobId, kind: DreamerMilestoneKind, at: u64) -> Value {
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),

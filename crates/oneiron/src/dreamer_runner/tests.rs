@@ -1155,7 +1155,7 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
     write_milestone_value_claim(
         &vault,
         EntityId::now(),
-        encode_milestone_value(queued.job.id, DreamerMilestoneKind::Failed, 50),
+        dreamer_milestone_value(queued.job.id, DreamerMilestoneKind::Failed, 50),
         50,
         true,
     )?;

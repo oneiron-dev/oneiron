@@ -202,6 +202,8 @@ pub enum ErrorKind {
     InvalidSkillBody,
     InvalidAgentDefBody,
     SystemAgentDisabled,
+    AgentNotDispatchable,
+    InvalidAgentDispatchInput,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
@@ -848,6 +850,13 @@ pub enum Error {
     /// on this vault. Nothing was written.
     #[error("system agent preset disabled: {0}")]
     SystemAgentDisabled(&'static str),
+    /// A dispatch target failed the dispatchability predicate. Nothing was
+    /// enqueued.
+    #[error("agent not dispatchable: {0}")]
+    AgentNotDispatchable(&'static str),
+    /// An agent dispatch payload input failed pinned structural validation.
+    #[error("invalid agent dispatch input: {0}")]
+    InvalidAgentDispatchInput(&'static str),
     /// An AccessGrant control-plane record failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
@@ -1468,6 +1477,8 @@ impl Error {
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
             Self::SystemAgentDisabled(_) => ErrorKind::SystemAgentDisabled,
+            Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
+            Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
