@@ -916,7 +916,7 @@ fn local_failure_does_not_strand_remote_work() -> Result<()> {
 /// re-lease and re-embed the same rows. Rejected at attach time alongside
 /// the other rung validations.
 #[test]
-fn zero_remote_lease_duration_is_rejected() -> Result<()> {
+fn zero_remote_lease_duration_is_rejected() {
     let (_dir, vault) = test_vault();
     let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
     let remote = Arc::new(RemoteFixtureEmbedder::new(
@@ -940,7 +940,6 @@ fn zero_remote_lease_duration_is_rejected() -> Result<()> {
     assert!(
         matches!(err, Error::InvalidConfig(ref msg) if msg == "remote rung lease duration must be greater than zero")
     );
-    Ok(())
 }
 
 /// Qodo #466-F1: when the remote batch completed but the local batch then
