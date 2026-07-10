@@ -2939,6 +2939,7 @@ fn validate_op(op: &AuthorityOp) -> Result<()> {
 fn validate_federation_lifecycle_action(action: &FederationLifecycleAction) -> Result<()> {
     if action.pact_id.iter().all(|byte| *byte == 0)
         || action.pact_nonce.iter().all(|byte| *byte == 0)
+        || action.peer_vault_id.iter().all(|byte| *byte == 0)
         || action.pact_epoch == 0
     {
         return Err(invalid_authority());

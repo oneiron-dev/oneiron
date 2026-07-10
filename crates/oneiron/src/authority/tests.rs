@@ -4769,3 +4769,44 @@ proptest! {
         prop_assert_eq!(folded, baseline);
     }
 }
+
+#[test]
+fn federation_lifecycle_rejects_all_zero_peer_vault_id() {
+    let fixture = pact_fixture(164);
+    let mut action = connect_action(&fixture);
+    action.peer_vault_id = [0; 32];
+    // Unsigned entry (zeroed signature): the all-zero peer vault id must fail
+    // closed in validate_op on Connect, before any signature work.
+    let entry = unsigned_entry(
+        Some(fixture.vault_id),
+        1,
+        vec![authority_entry_hash(&fixture.genesis).unwrap()],
+        AuthorityOp::FederationLifecycle(action),
+        authority_key_from_ed(&fixture.owner),
+        101,
+    );
+    let err = encode_authority_log_entry_body(&entry)
+        .expect_err("all-zero peer vault id must fail closed");
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+
+    // Same rejection on the gesture-free kinds sharing the common key set.
+    let mut disconnect = unilateral_action_with(
+        &fixture,
+        fixture.pact_id,
+        fixture.grant_ref,
+        FederationLifecycleKind::Disconnect,
+        1,
+    );
+    disconnect.peer_vault_id = [0; 32];
+    let entry = unsigned_entry(
+        Some(fixture.vault_id),
+        2,
+        vec![authority_entry_hash(&fixture.genesis).unwrap()],
+        AuthorityOp::FederationLifecycle(disconnect),
+        authority_key_from_ed(&fixture.owner),
+        102,
+    );
+    let err = encode_authority_log_entry_body(&entry)
+        .expect_err("all-zero peer vault id must fail closed for unilateral kinds");
+    assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAuthorityLogBody);
+}
