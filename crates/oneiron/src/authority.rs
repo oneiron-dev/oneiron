@@ -538,6 +538,9 @@ impl DeviceAuthority {
 }
 
 /// Pinned operation vocabulary for type-122.
+// The FederationLifecycle payload (scope pair + gesture) dominates the enum
+// size; its unboxed shape is pinned by ONE-1408, so the skew is accepted.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityOp {
     /// Vault genesis. `vault_id` is `None` on the containing entry and is
