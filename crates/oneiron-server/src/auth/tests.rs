@@ -221,3 +221,26 @@ fn implicit_all_idempotency_principal_does_not_collide_with_explicit_core_scopes
         "core:bearer:scopes=core:read,core:write,core:auth"
     );
 }
+
+#[test]
+fn owner_session_is_keyed_to_absent_principal_ref() {
+    let mut legacy_headers = HeaderMap::new();
+    legacy_headers.insert(LEGACY_SECRET_HEADER, "secret".parse().unwrap());
+    let legacy_auth = CoreAuth::from_headers(&legacy_headers, &config()).unwrap();
+    assert!(legacy_auth.is_owner_session());
+
+    let mut bearer_headers = HeaderMap::new();
+    bearer_headers.insert(AUTHORIZATION, "Bearer secret".parse().unwrap());
+    let bearer_auth = CoreAuth::from_headers(&bearer_headers, &config()).unwrap();
+    assert!(bearer_auth.is_owner_session());
+
+    let mut scoped_headers = HeaderMap::new();
+    scoped_headers.insert(
+        AUTHORIZATION,
+        "Bearer secret;scope=core:read;principal_ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .parse()
+            .unwrap(),
+    );
+    let scoped_auth = CoreAuth::from_headers(&scoped_headers, &config()).unwrap();
+    assert!(!scoped_auth.is_owner_session());
+}

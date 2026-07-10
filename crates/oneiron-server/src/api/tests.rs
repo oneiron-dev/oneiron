@@ -84,6 +84,9 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreEiriMemoryBoardSlot",
     "CoreEiriMemoryBoardSource",
     "CoreEiriSessionRagState",
+    "CoreInterlocutorControls",
+    "CoreInterlocutorParty",
+    "CoreInterlocutorStamp",
     "CoreCreateEntityRequest",
     "CoreCreateTurnRequest",
     "CoreEntityWriteResponse",
@@ -3530,6 +3533,9 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "CoreEiriMemoryBoardBudget",
         "CoreEiriMemoryBoardRow",
         "CoreEiriSessionRagState",
+        "CoreInterlocutorControls",
+        "CoreInterlocutorParty",
+        "CoreInterlocutorStamp",
         "CoreListQuery",
         "CoreCreateEntityRequest",
         "CoreCreateTurnRequest",
@@ -7746,6 +7752,331 @@ async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
         body["evidence"]["retrieval_run_id"]
     );
     assert_eq!(runs[0].action, oneiron::RetrievalAction::ContextPack);
+}
+
+fn interlocutor_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
+    test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    })
+}
+
+fn seed_counterparty_contact(
+    server: &SyncServer,
+    contact_id: oneiron::EntityId,
+    identity_ref: oneiron::EntityId,
+    counterparty: &str,
+) {
+    let record =
+        oneiron::CounterpartyContactRecord::user_introduction(identity_ref, counterparty, 100)
+            .expect("contact record");
+    server
+        .vault
+        .create_counterparty_contact(&contact_id, &record)
+        .expect("create counterparty contact");
+}
+
+#[tokio::test]
+async fn core_context_pack_owner_present_true_on_scoped_bearer_is_forbidden() {
+    let (_dir, server) = interlocutor_test_server();
+    let principal_ref = seeded_test_entity_id(0x1516_0001).to_hex();
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": { "owner_present": true }
+    });
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_error_envelope(&body, "FORBIDDEN");
+    assert_eq!(
+        body["error"]["details"]["requiredScope"],
+        Value::from("interlocutors.owner_present")
+    );
+    assert!(
+        body.get("results").is_none(),
+        "nothing is assembled on the forbidden path"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_owner_session_without_block_carries_no_interlocutors_field() {
+    let (_dir, server) = interlocutor_test_server();
+    seed_turn(&server, "owner alone regression needle");
+    let request = json!({ "query": "regression needle", "limit": 3 });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("interlocutors").is_none(),
+        "owner-grade auth with no block must stay byte-identical: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_echoes_stamps_for_supplied_block_on_owner_session() {
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1516_0011);
+    let contact_id = seeded_test_entity_id(0x1516_0012);
+    seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
+
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": {
+            "third_parties": [
+                { "contact_ref": contact_id.to_hex() },
+                {
+                    "channel_identity_ref": identity_ref.to_hex(),
+                    "counterparty": "stranger@example.com"
+                },
+                { "label": "unknown speaker 2", "claimed_owner": true }
+            ]
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stamps = body["interlocutors"].as_array().expect("stamps echoed");
+    assert_eq!(stamps.len(), 4);
+    assert_eq!(stamps[0]["speaker"], Value::from("owner"));
+    assert_eq!(stamps[0]["class"], Value::from("owner"));
+    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(false));
+    assert_eq!(stamps[1]["speaker"], Value::from(contact_id.to_hex()));
+    assert_eq!(stamps[1]["class"], Value::from("known_contact"));
+    assert_eq!(stamps[1]["claims_not_instructions"], Value::from(true));
+    assert_eq!(stamps[2]["speaker"], Value::from("stranger@example.com"));
+    assert_eq!(stamps[2]["class"], Value::from("unknown"));
+    assert_eq!(stamps[3]["speaker"], Value::from("unknown speaker 2"));
+    assert_eq!(stamps[3]["class"], Value::from("unknown"));
+    assert_eq!(stamps[3]["claims_not_instructions"], Value::from(true));
+}
+
+#[tokio::test]
+async fn core_context_pack_owner_present_false_narrows_owner_session() {
+    let (_dir, server) = interlocutor_test_server();
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": {
+            "owner_present": false,
+            "third_parties": [{ "label": "guest", "claimed_owner": true }]
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stamps = body["interlocutors"].as_array().expect("stamps echoed");
+    assert_eq!(stamps.len(), 1, "narrowing removes the owner entry");
+    assert_eq!(stamps[0]["speaker"], Value::from("guest"));
+    assert_eq!(stamps[0]["class"], Value::from("unknown"));
+    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
+}
+
+#[tokio::test]
+async fn core_context_pack_scoped_bearer_gets_implicit_interlocutor_echo() {
+    let (_dir, server) = interlocutor_test_server();
+
+    // Companion-style principal with no contact row -> one Unknown stamp
+    // labeled with the principal hex.
+    let unknown_principal = seeded_test_entity_id(0x1516_0021).to_hex();
+    let request = json!({ "query": "hallway" });
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &unknown_principal,
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stamps = body["interlocutors"].as_array().expect("implicit echo");
+    assert_eq!(stamps.len(), 1);
+    assert_eq!(stamps[0]["speaker"], Value::from(unknown_principal.clone()));
+    assert_eq!(stamps[0]["class"], Value::from("unknown"));
+    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
+
+    // A principal whose entity id IS a contact row -> KnownContact stamp.
+    let identity_ref = seeded_test_entity_id(0x1516_0022);
+    let contact_principal = seeded_test_entity_id(0x1516_0023);
+    seed_counterparty_contact(
+        &server,
+        contact_principal,
+        identity_ref,
+        "kenji@example.com",
+    );
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &contact_principal.to_hex(),
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stamps = body["interlocutors"].as_array().expect("implicit echo");
+    assert_eq!(stamps.len(), 1);
+    assert_eq!(
+        stamps[0]["speaker"],
+        Value::from(contact_principal.to_hex())
+    );
+    assert_eq!(stamps[0]["class"], Value::from("known_contact"));
+    assert_eq!(stamps[0]["claims_not_instructions"], Value::from(true));
+}
+
+#[tokio::test]
+async fn core_context_pack_scoped_bearer_merges_principal_with_supplied_block() {
+    // N14 (shape level, RATIFY-20260710 R8 merge-always): a scoped token
+    // naming a wider-scoped contact gets BOTH operands into the resolved
+    // set — the supplied block can never displace the principal party.
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1516_0031);
+    let wider_contact = seeded_test_entity_id(0x1516_0032);
+    seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
+    let principal_ref = seeded_test_entity_id(0x1516_0033).to_hex();
+
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": {
+            "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
+        }
+    });
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let stamps = body["interlocutors"].as_array().expect("merged echo");
+    assert_eq!(
+        stamps.len(),
+        2,
+        "both the supplied contact and the implicit principal party resolve"
+    );
+    assert_eq!(stamps[0]["speaker"], Value::from(wider_contact.to_hex()));
+    assert_eq!(stamps[0]["class"], Value::from("known_contact"));
+    assert_eq!(stamps[1]["speaker"], Value::from(principal_ref));
+    assert_eq!(stamps[1]["class"], Value::from("unknown"));
+    assert!(
+        stamps
+            .iter()
+            .all(|stamp| stamp["class"] != Value::from("owner")),
+        "no owner entry on a scoped token"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_rejects_malformed_interlocutor_parties() {
+    let (_dir, server) = interlocutor_test_server();
+    let contact_hex = seeded_test_entity_id(0x1516_0041).to_hex();
+
+    let cases = [
+        (
+            json!({ "contact_ref": contact_hex, "label": "guest" }),
+            "interlocutors.third_parties[0]",
+        ),
+        (json!({}), "interlocutors.third_parties[0]"),
+        (
+            json!({ "contact_ref": "not-hex" }),
+            "interlocutors.third_parties[0].contact_ref",
+        ),
+        (
+            json!({ "channel_identity_ref": contact_hex }),
+            "interlocutors.third_parties[0]",
+        ),
+        (
+            json!({ "channel_identity_ref": contact_hex, "counterparty": "  " }),
+            "interlocutors.third_parties[0].counterparty",
+        ),
+        (
+            json!({ "label": "   " }),
+            "interlocutors.third_parties[0].label",
+        ),
+        (
+            json!({ "contact_ref": contact_hex, "claimed_owner": true }),
+            "interlocutors.third_parties[0].claimed_owner",
+        ),
+    ];
+    for (party, expected_field) in cases {
+        let request = json!({
+            "query": "hallway",
+            "interlocutors": { "third_parties": [party.clone()] }
+        });
+        let (status, body) = core_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "party {party:?}");
+        assert_error_envelope(&body, "BAD_REQUEST");
+        assert_eq!(
+            body["error"]["details"]["field"],
+            Value::from(expected_field),
+            "party {party:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn core_context_pack_dangling_contact_ref_fails_loudly() {
+    let (_dir, server) = interlocutor_test_server();
+    let request = json!({
+        "query": "hallway",
+        "interlocutors": {
+            "third_parties": [
+                { "contact_ref": seeded_test_entity_id(0x1516_0051).to_hex() }
+            ]
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_error_envelope(&body, "NOT_FOUND");
 }
 
 #[tokio::test]

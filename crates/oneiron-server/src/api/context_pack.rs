@@ -309,6 +309,69 @@ pub(crate) struct EiriCompanionControls {
     expression: Option<String>,
 }
 
+/// Interlocutor presence controls for context-pack assembly (OF-365 ILD-1).
+///
+/// The wire shape deliberately cannot express interlocutor class or presence
+/// evidence: owner presence keys to the authenticated session, and every
+/// supplied party resolves to a non-owner entry.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub(crate) struct CoreInterlocutorControls {
+    /// Physical owner presence asserted by the embedder. May only be `true`
+    /// on an owner-grade session (403 otherwise); `false` always narrows.
+    #[serde(default, rename = "owner_present", alias = "ownerPresent")]
+    #[schema(example = true)]
+    owner_present: Option<bool>,
+    /// Third-party conversation participants.
+    #[serde(default, rename = "third_parties", alias = "thirdParties")]
+    third_parties: Vec<CoreInterlocutorParty>,
+    /// Voice session roster reference. Accepted now; the roster merge lands
+    /// with ILD-3 (ONE-1518).
+    #[serde(default, rename = "voice_session_ref", alias = "voiceSessionRef")]
+    #[schema(example = "call-123")]
+    voice_session_ref: Option<String>,
+}
+
+/// One third-party interlocutor. Exactly one of `contact_ref`,
+/// `channel_identity_ref`+`counterparty`, or `label` must be supplied.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub(crate) struct CoreInterlocutorParty {
+    /// Hex CounterpartyContact entity id.
+    #[serde(default, rename = "contact_ref", alias = "contactRef")]
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    contact_ref: Option<String>,
+    /// Hex ChannelIdentity entity id; requires `counterparty`.
+    #[serde(default, rename = "channel_identity_ref", alias = "channelIdentityRef")]
+    #[schema(example = "fedcba9876543210fedcba9876543210")]
+    channel_identity_ref: Option<String>,
+    /// Provider-native counterparty key; requires `channel_identity_ref`.
+    #[serde(default)]
+    #[schema(example = "kenji@example.com")]
+    counterparty: Option<String>,
+    /// Display label for an untyped party.
+    #[serde(default)]
+    #[schema(example = "unknown speaker 2")]
+    label: Option<String>,
+    /// Label-only owner claim carried on the stamp; never authority.
+    #[serde(default, rename = "claimed_owner", alias = "claimedOwner")]
+    #[schema(example = false)]
+    claimed_owner: Option<bool>,
+}
+
+/// Per-speaker interlocutor stamp echoed with a context pack (OF-365 ILD-1).
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreInterlocutorStamp {
+    /// Contact entity hex id when known, else the display label or "owner".
+    #[schema(example = "0123456789abcdef0123456789abcdef")]
+    speaker: String,
+    /// Interlocutor class: owner, known_contact, or unknown.
+    #[schema(example = "known_contact")]
+    class: String,
+    /// Non-owner speech is claims, not executable owner instructions.
+    #[serde(rename = "claims_not_instructions")]
+    #[schema(example = true)]
+    claims_not_instructions: bool,
+}
+
 pub(crate) struct EiriContextV4Request {
     memory_board_budget: Option<oneiron::EiriMemoryBoardBudget>,
     session_scope_id: String,
@@ -396,6 +459,9 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional companion scope for Eiri Context v4 assembly.
     #[serde(default)]
     companion: Option<EiriCompanionControls>,
+    /// Optional interlocutor presence controls (OF-365 ILD-1).
+    #[serde(default)]
+    interlocutors: Option<CoreInterlocutorControls>,
 }
 
 /// Hydrated context edge.
@@ -735,6 +801,11 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<CoreEiriSessionRagState>)]
     session_rag: Option<oneiron::EiriSessionRagState>,
+    /// Resolved per-speaker interlocutor stamps when an interlocutors block
+    /// was supplied or the auth is principal_ref-scoped (OF-365 ILD-1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Vec<CoreInterlocutorStamp>>)]
+    interlocutors: Option<Vec<oneiron::InterlocutorStamp>>,
     /// Empty-result context when no entities surface.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
@@ -761,6 +832,8 @@ pub(crate) async fn core_context_pack(
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
+    let interlocutors =
+        resolve_core_interlocutor_set(&server.vault, &auth, req.interlocutors.as_ref())?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
@@ -836,22 +909,167 @@ pub(crate) async fn core_context_pack(
         max_neighbors,
     )?;
 
-    Ok(Json(
-        run_context_pack_builder(
-            &server.vault,
-            &scoped_read,
-            builder,
-            projection,
-            ContextPackResponseLimits {
-                results: req.limit,
-                neighbors: max_neighbors,
-                retrieval: retrieval_budget,
-            },
-            "core context-pack failed",
-            eiri_context,
-        )
-        .await?,
-    ))
+    let mut response = run_context_pack_builder(
+        &server.vault,
+        &scoped_read,
+        builder,
+        projection,
+        ContextPackResponseLimits {
+            results: req.limit,
+            neighbors: max_neighbors,
+            retrieval: retrieval_budget,
+        },
+        "core context-pack failed",
+        eiri_context,
+    )
+    .await?;
+    response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
+    Ok(Json(response))
+}
+
+/// Resolves the effective interlocutor set for a core context-pack request
+/// (OF-365 ILD-1, design §11).
+///
+/// Returns `None` exactly when no interlocutors block was supplied on an
+/// owner-grade session: that request/response pair stays byte-identical to
+/// pre-ILD behavior. In every other case the resolved set is echoed as
+/// stamps on the response.
+pub(crate) fn resolve_core_interlocutor_set(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    controls: Option<&CoreInterlocutorControls>,
+) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
+    if controls.is_none() && auth.is_owner_session() {
+        return Ok(None);
+    }
+
+    let mut owner_present = None;
+    let mut parties = Vec::new();
+    let mut voice_session_ref = None;
+    if let Some(controls) = controls {
+        if controls.owner_present == Some(true) && !auth.is_owner_session() {
+            return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
+        }
+        owner_present = controls.owner_present;
+        for (index, party) in controls.third_parties.iter().enumerate() {
+            parties.push(core_interlocutor_party_input(party, index)?);
+        }
+        voice_session_ref = controls.voice_session_ref.clone();
+    }
+
+    // Merge-always (RATIFY-20260710 R8): on principal_ref auth the implicit
+    // principal-derived party ALWAYS enters the resolved set, regardless of
+    // block presence, so DEC-0005 scope intersection can only narrow.
+    if let Some(principal_ref) = auth.principal_ref() {
+        let principal_id = parse_entity_id_param(principal_ref, "principal_ref")?;
+        let party = match vault.get_counterparty_contact(&principal_id) {
+            Ok(Some(_)) => oneiron::InterlocutorPartyInput::ContactRef(principal_id),
+            // Companion principals are person/persona ids, not contact rows.
+            Ok(None) | Err(oneiron::Error::InvalidEntityType(_)) => {
+                oneiron::InterlocutorPartyInput::UnknownLabel {
+                    label: principal_id.to_hex(),
+                    claimed_owner: false,
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    "core context-pack interlocutor principal lookup failed"
+                );
+                return Err(core_engine_error(
+                    "core context-pack interlocutor principal lookup failed",
+                    error,
+                ));
+            }
+        };
+        parties.push(party);
+    }
+
+    let owner_session = owner_present.unwrap_or(auth.is_owner_session()) && auth.is_owner_session();
+    let input = oneiron::InterlocutorResolutionInput {
+        owner_session,
+        parties,
+        voice_session_ref,
+    };
+    vault
+        .resolve_interlocutors(&input)
+        .map(Some)
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
+            core_engine_error("core context-pack interlocutor resolution failed", error)
+        })
+}
+
+pub(crate) fn core_interlocutor_party_input(
+    party: &CoreInterlocutorParty,
+    index: usize,
+) -> Result<oneiron::InterlocutorPartyInput, ApiError> {
+    let field_path = |field: &str| format!("interlocutors.third_parties[{index}].{field}");
+    let reject_claimed_owner = |party: &CoreInterlocutorParty| {
+        if party.claimed_owner.is_some() {
+            Err(ApiError::bad_request(
+                "claimed_owner is only valid alongside label",
+                Some(&field_path("claimed_owner")),
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    match (
+        party.contact_ref.as_deref(),
+        party.channel_identity_ref.as_deref(),
+        party.counterparty.as_deref(),
+        party.label.as_deref(),
+    ) {
+        (Some(contact_ref), None, None, None) => {
+            reject_claimed_owner(party)?;
+            let field = field_path("contact_ref");
+            let id = oneiron::EntityId::from_hex(contact_ref).map_err(|_| {
+                ApiError::bad_request(
+                    "contact_ref must be a 32-character hex entity id",
+                    Some(&field),
+                )
+            })?;
+            Ok(oneiron::InterlocutorPartyInput::ContactRef(id))
+        }
+        (None, Some(channel_identity_ref), Some(counterparty), None) => {
+            reject_claimed_owner(party)?;
+            let field = field_path("channel_identity_ref");
+            let identity_ref = oneiron::EntityId::from_hex(channel_identity_ref).map_err(|_| {
+                ApiError::bad_request(
+                    "channel_identity_ref must be a 32-character hex entity id",
+                    Some(&field),
+                )
+            })?;
+            if counterparty.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "counterparty must be non-empty",
+                    Some(&field_path("counterparty")),
+                ));
+            }
+            Ok(oneiron::InterlocutorPartyInput::ChannelCounterparty {
+                identity_ref,
+                counterparty: counterparty.to_owned(),
+            })
+        }
+        (None, None, None, Some(label)) => {
+            if label.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "label must be non-empty",
+                    Some(&field_path("label")),
+                ));
+            }
+            Ok(oneiron::InterlocutorPartyInput::UnknownLabel {
+                label: label.to_owned(),
+                claimed_owner: party.claimed_owner.unwrap_or(false),
+            })
+        }
+        _ => Err(ApiError::bad_request(
+            "each third party must supply exactly one of contact_ref, \
+             channel_identity_ref+counterparty, or label",
+            Some(&format!("interlocutors.third_parties[{index}]")),
+        )),
+    }
 }
 
 pub(crate) fn default_true() -> bool {
@@ -1608,6 +1826,7 @@ pub(crate) fn core_context_pack_response(
         evidence,
         memory_board,
         session_rag,
+        interlocutors: None,
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
