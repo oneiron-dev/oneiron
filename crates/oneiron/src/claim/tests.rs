@@ -927,6 +927,133 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
     );
 }
 
+/// GATE-11 (ONE-1391): generated origin is evidence-inadmissible regardless
+/// of approval status; every non-generated source stays admissible.
+#[test]
+fn generated_not_evidence() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x14; 16]).expect("valid id"));
+    let body = |source: Option<ClaimSource>, appr: ClaimApprovalStatus| {
+        let mut body = ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            appr,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = source;
+        body
+    };
+
+    use ClaimApprovalStatus as A;
+
+    // Declared Generated fails for EVERY approval status, including Approved.
+    for appr in [A::Auto, A::Proposed, A::Approved, A::Rejected] {
+        assert!(
+            !claim_evidence_admissible(&body(Some(ClaimSource::Generated), appr)),
+            "Generated claim with approval {appr:?} must not be evidence"
+        );
+    }
+
+    // Imported restamp preserving a generated pre-restamp origin fails too.
+    let mut restamped = body(Some(ClaimSource::Imported), A::Approved);
+    restamped.scope = Some(Value::Map(vec![(
+        Value::from(CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+        Value::from(ClaimSource::Generated.as_str()),
+    )]));
+    assert!(
+        !claim_evidence_admissible(&restamped),
+        "federated Generated origin stays evidence-inadmissible after import restamp"
+    );
+
+    // Every non-generated source passes (Imported here = non-restamped).
+    for source in [
+        ClaimSource::UserStated,
+        ClaimSource::Observed,
+        ClaimSource::Inferred,
+        ClaimSource::ToolOutput,
+        ClaimSource::Imported,
+    ] {
+        assert!(
+            claim_evidence_admissible(&body(Some(source), A::Auto)),
+            "{source:?} claim must remain evidence-admissible"
+        );
+    }
+}
+
+/// GATE-11 (ONE-1391): corroboration counting over a mixed evidence set —
+/// a Generated claim contributes ZERO boost even when Approved. Models the
+/// ONE-1290 consumption contract: turn refs count; claim refs count iff
+/// `claim_evidence_admissible`.
+#[test]
+fn no_self_corroboration() {
+    enum EvidenceRef {
+        Turn,
+        Claim(Box<ClaimBody>),
+    }
+    let corroboration = |refs: &[EvidenceRef]| {
+        refs.iter()
+            .filter(|entry| match entry {
+                EvidenceRef::Turn => true,
+                EvidenceRef::Claim(body) => claim_evidence_admissible(body),
+            })
+            .count()
+    };
+
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x15; 16]).expect("valid id"));
+    let mut generated = ClaimBody::new(
+        "test.pred",
+        subject,
+        Value::from("v"),
+        0.5,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    generated.source = Some(ClaimSource::Generated);
+    assert!(
+        claim_consolidatable(&generated),
+        "fixture claim must be the Approved-Generated divergence case"
+    );
+
+    let without_generated = [EvidenceRef::Turn, EvidenceRef::Turn];
+    let with_generated = [
+        EvidenceRef::Turn,
+        EvidenceRef::Turn,
+        EvidenceRef::Claim(Box::new(generated)),
+    ];
+    assert_eq!(
+        corroboration(&with_generated),
+        corroboration(&without_generated),
+        "an Approved Generated claim must add zero corroboration"
+    );
+}
+
+/// GATE-11 (ONE-1391) distinctness pin: an `Approved` Generated claim IS
+/// consolidatable (merge-eligible) but NOT evidence-admissible — the two
+/// predicates diverge exactly there.
+#[test]
+fn approved_generated_consolidatable_but_not_evidence() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x16; 16]).expect("valid id"));
+    let mut body = ClaimBody::new(
+        "test.pred",
+        subject,
+        Value::from("v"),
+        0.5,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(ClaimSource::Generated);
+
+    assert!(
+        claim_consolidatable(&body),
+        "Approved Generated claims are merge-eligible"
+    );
+    assert!(
+        !claim_evidence_admissible(&body),
+        "Approved Generated claims still are not evidence"
+    );
+}
+
 /// ONE-1159 fix-wave — the WRITE door's surfaceability guard reuses the
 /// `claim_surfaceable` approval set: `Approved` is accepted (not only
 /// `Auto`), and `Proposed` is a typed reject. Pins the {auto, approved}
