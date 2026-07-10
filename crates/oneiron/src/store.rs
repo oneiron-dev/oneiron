@@ -2872,9 +2872,17 @@ fn valid_gate_notice_token(value: &str, max_len: usize) -> bool {
 }
 
 fn valid_gate_receipt_reason(reason: &str) -> bool {
+    // Accepted receipt-reason prefix FAMILIES (everything else is rejected):
+    // counterparty_* (OF-347 contact/consent), connector_key_* and
+    // effector_budget_* (OF-277 GOV-01 status wall / budget exhaustion),
+    // charter_* (GOV-10 drift / never-list). The charset and length rules
+    // below apply to every family.
     !reason.is_empty()
         && reason.len() <= GATE_RECEIPT_REASON_MAX_LEN
-        && reason.starts_with("counterparty_")
+        && (reason.starts_with("counterparty_")
+            || reason.starts_with("connector_key_")
+            || reason.starts_with("effector_budget_")
+            || reason.starts_with("charter_"))
         && reason
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
