@@ -116,9 +116,9 @@ pub use crate::agent_def::{
 };
 pub use crate::agent_dispatch::{
     AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_JOB_TYPE,
-    AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
-    AgentDispatcher, DispatchAgent, agent_dispatch_actor, decode_agent_dispatch_input,
-    encode_agent_dispatch_input,
+    AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput, AgentDispatchOutcome,
+    AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher, DispatchAgent, agent_dispatch_actor,
+    agent_dispatch_payload_agent_id, decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,

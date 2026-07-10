@@ -614,3 +614,168 @@ fn dispatched_agent_runs_under_clamped_ceiling() -> Result<()> {
     );
     Ok(())
 }
+
+// Security hardening F4: milestone attribution is BOUND to the dispatched
+// job — the admission door stamps subject + agent attribution from the job's
+// own payload (caller-supplied values are overridden), and the durable index
+// refuses checkpoint claims whose stamped attribution names another agent.
+#[test]
+fn milestone_attribution_cannot_be_forged() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest(&vault, 0x0F, vec![actor_ceiling_row("system", "auto")])?;
+
+    let def_id = test_id(0x4B);
+    let def = custom_agent("1.0.0");
+    vault.put_agent_definition(&def_id, &def, t(1), 1)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let AgentDispatchOutcome::Dispatched(status) = dispatch_custom(&dispatcher, def_id, None, 10)?
+    else {
+        panic!("expected fresh dispatch");
+    };
+    let job_id = status.job.id;
+
+    let dreamer_actor = test_id(0x2B);
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"agent job anchor")?;
+    // A decoy subject the forging caller supplies instead of the job id.
+    let decoy_subject = test_id(0x2C);
+    vault.put_entity(&decoy_subject, ENTITY_TYPE_PERSON, t(1), 1, b"decoy")?;
+
+    let forged_envelope = WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(dreamer_actor, EdgeActorClass::System),
+        crate::claim::ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("runner"), Value::from("dreamer")),
+            (Value::from("agent"), Value::from("mallory.other.agent")),
+        ]))?,
+        crate::claim::ClaimApprovalStatus::Approved,
+    );
+
+    // Admission door: the started milestone arrives with FORGED attribution
+    // and a decoy subject — both are overridden by the stamp.
+    let started_claim_id = EntityId::now();
+    let runner = DreamerRunnerStore::new(&vault);
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+        lease_owner: "agent-worker".to_owned(),
+        now: 20,
+        budget_id: "wake".to_owned(),
+        budget_total_units: 10,
+        reserve_units: 2,
+        started_milestone: Some(DreamerMilestoneClaim {
+            claim_id: started_claim_id,
+            subject: decoy_subject,
+            kind: DreamerMilestoneKind::Started,
+            envelope: forged_envelope.clone(),
+            occurred: t(20),
+            learned_at: 20,
+        }),
+    })?
+    else {
+        panic!("expected admission");
+    };
+    assert_eq!(admitted.status.job.id, job_id);
+
+    let stored = vault.get_claim(&started_claim_id)?.expect("started claim");
+    assert_eq!(
+        stored.subject,
+        ClaimSubject::Entity(subject),
+        "milestone subject is stamped to the job id, not the caller's decoy"
+    );
+    let Some(Value::Map(evidence)) = stored.evidence else {
+        panic!("started claim carries envelope evidence");
+    };
+    let provenance = evidence
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("provenance"))
+        .map(|(_, value)| value)
+        .expect("envelope provenance in evidence");
+    let Value::Map(provenance) = provenance else {
+        panic!("envelope provenance is a map");
+    };
+    assert!(
+        provenance.iter().any(|(key, value)| {
+            key.as_str() == Some(AGENT_DISPATCH_MILESTONE_AGENT_KEY)
+                && value.as_str() == Some(status.input.definition.agent_id.as_str())
+        }),
+        "attribution is stamped from the dispatched payload, not the caller"
+    );
+    assert!(
+        !provenance
+            .iter()
+            .any(|(_, value)| value.as_str() == Some("mallory.other.agent")),
+        "the forged attribution value is gone"
+    );
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("started milestone indexed")
+            .kind,
+        DreamerMilestoneKind::Started
+    );
+
+    // Ordinary-claim door: a forged checkpoint commits as a claim but never
+    // enters the durable index.
+    let forged_checkpoint_id = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &forged_checkpoint_id,
+            ClaimCandidate::new(
+                DREAMER_MILESTONE_PREDICATE,
+                ClaimSubject::Entity(subject),
+                dreamer_milestone_value(job_id, DreamerMilestoneKind::CheckpointReached, 30),
+                1.0,
+            ),
+            &forged_envelope,
+            t(30),
+            30,
+        )
+        .commit()?;
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone unchanged")
+            .kind,
+        DreamerMilestoneKind::Started,
+        "a forged checkpoint must not become durable-index visible"
+    );
+
+    // A correctly-attributed checkpoint indexes normally.
+    let bound_envelope = WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(dreamer_actor, EdgeActorClass::System),
+        crate::claim::ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("runner"), Value::from("dreamer")),
+            (
+                Value::from(AGENT_DISPATCH_MILESTONE_AGENT_KEY),
+                Value::from(status.input.definition.agent_id.as_str()),
+            ),
+        ]))?,
+        crate::claim::ClaimApprovalStatus::Approved,
+    );
+    let checkpoint_id = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &checkpoint_id,
+            ClaimCandidate::new(
+                DREAMER_MILESTONE_PREDICATE,
+                ClaimSubject::Entity(subject),
+                dreamer_milestone_value(job_id, DreamerMilestoneKind::CheckpointReached, 40),
+                1.0,
+            ),
+            &bound_envelope,
+            t(40),
+            40,
+        )
+        .commit()?;
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("bound checkpoint indexed")
+            .kind,
+        DreamerMilestoneKind::CheckpointReached
+    );
+    Ok(())
+}

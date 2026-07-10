@@ -170,8 +170,11 @@ fn write_milestone_for_job(
 ) -> Result<()> {
     let mut milestone = milestone_fixture(vault, claim_id, at)?;
     milestone.kind = kind;
+    let job = JobQueue::new(vault)
+        .get(job_id)?
+        .ok_or(Error::EntityNotFound)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    apply_milestone_claim_in_txn(vault, &mut wtxn, job_id, milestone)?;
+    apply_milestone_claim_in_txn(vault, &mut wtxn, &job, milestone)?;
     wtxn.commit()?;
     Ok(())
 }
