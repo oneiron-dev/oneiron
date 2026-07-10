@@ -4627,7 +4627,9 @@ fn connector_key_unset_is_noop_and_empty_budget_key_is_equivalent() -> Result<()
     assert_eq!(no_key_decision.outcome(), GateOutcome::Allow);
     assert!(no_key_charge.is_none());
     let keyed_charge = keyed_charge.expect("budget stage ran under a governing key");
-    assert!(keyed_charge.rows.is_empty());
+    assert!(keyed_charge.read.rows.is_empty());
+    assert!(keyed_charge.matched_rows.is_empty());
+    assert!(keyed_charge.ladder_events.is_empty());
     assert_eq!(keyed_charge.sends_debit, 0);
 
     assert_eq!(no_key_record.outcome, keyed_record.outcome);
@@ -4670,8 +4672,8 @@ fn connector_key_rate_refuse_denies_third_call_and_keeps_key_active() -> Result<
             .contains(&"effector_budget_exhausted")
     );
     let charge = charge.expect("exhaustion still returns the charge");
-    assert_eq!(charge.rows[0].used, 2);
-    assert_eq!(charge.rows[0].remaining, 0);
+    assert_eq!(charge.read.rows[0].used, 2);
+    assert_eq!(charge.read.rows[0].remaining, 0);
     assert_eq!(charge.sends_debit, 0);
     // on_exhaust: refuse leaves the key Active.
     assert_eq!(
@@ -4714,8 +4716,8 @@ fn connector_key_lifecycle_effect_debits_rate_not_sends() -> Result<()> {
         charge.sends_debit, 0,
         "lifecycle ops never eat a sends budget"
     );
-    assert_eq!(charge.rows[0].used, 0, "sends row undebited");
-    assert_eq!(charge.rows[1].used, 1, "rate row debited");
+    assert_eq!(charge.read.rows[0].used, 0, "sends row undebited");
+    assert_eq!(charge.read.rows[1].used, 1, "rate row debited");
 
     // The rate row (limit 1) is now exhausted for the next lifecycle op —
     // the sends row (limit 1) is not.
@@ -4758,9 +4760,9 @@ fn connector_key_exact_at_limit_admits_then_refuses() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("charged");
     assert_eq!(charge.sends_debit, 1);
-    assert_eq!(charge.rows[0].used, 1);
-    assert_eq!(charge.rows[0].remaining, 0);
-    assert_eq!(charge.rows[0].percent_used, 100);
+    assert_eq!(charge.read.rows[0].used, 1);
+    assert_eq!(charge.read.rows[0].remaining, 0);
+    assert_eq!(charge.read.rows[0].percent_used, 100);
 
     let (decision, _charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(
@@ -4860,8 +4862,8 @@ fn connector_key_revoked_tuple_resolution_after_reregister() -> Result<()> {
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("key B charged");
     assert_eq!(charge.key_ref, key_b);
-    assert_eq!(charge.rows[0].used, 1);
-    assert_eq!(charge.rows[0].limit, 2);
+    assert_eq!(charge.read.rows[0].used, 1);
+    assert_eq!(charge.read.rows[0].limit, 2);
 
     // A revoked-only tuple still resolves to the status wall.
     vault.revoke_connector_key(&key_b, 1_020)?;
@@ -4914,7 +4916,126 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     let charge = charge.expect("normalized connector governs the effect");
-    assert_eq!(charge.rows[0].used, 1);
+    assert_eq!(charge.read.rows[0].used, 1);
+    Ok(())
+}
+
+// --- GOV-02 budget legibility (ONE-1418) --------------------------------------
+
+#[test]
+fn exhaustion_charge_carries_history_read_only() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    vault.register_connector_key(
+        &test_id(0x79),
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::sends(
+                1,
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Refuse,
+            )],
+            1_000,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // Limit 1: the single admitted send crosses 50/80/95 at once.
+    let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    let charge = charge.expect("charged");
+    let fired: Vec<_> = charge
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(
+        fired,
+        vec![
+            crate::BudgetThreshold::Silent50,
+            crate::BudgetThreshold::Plan80,
+            crate::BudgetThreshold::Land95,
+        ]
+    );
+
+    // The refused retries fire NOTHING new (carry-read-only, M5b): the
+    // signal history rides the read's fired_thresholds, so the hard cut is
+    // never signal-silent — and never signal-spammy.
+    for _ in 0..2 {
+        let (decision, charge) = check_effect(&vault, &effect, &policy)?;
+        assert_eq!(decision.outcome(), GateOutcome::Deny);
+        let charge = charge.expect("exhaustion charge");
+        assert!(charge.ladder_events.is_empty());
+        assert_eq!(
+            charge.read.rows[0].fired_thresholds,
+            vec![
+                crate::BudgetThreshold::Silent50,
+                crate::BudgetThreshold::Plan80,
+                crate::BudgetThreshold::Land95,
+            ]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn effector_budget_read_is_pure_and_charges_see_unchanged_state() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    vault.register_connector_key(
+        &test_id(0x7A),
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::sends(
+                2,
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Refuse,
+            )],
+            1_000,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // First send debits to 50% and fires Silent50 (persisted).
+    let (_, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(charge.expect("charged").ladder_events.len(), 1);
+
+    // Two consecutive reads agree and write nothing.
+    let first = vault
+        .effector_budget_read("line", None)?
+        .expect("governing key");
+    let second = vault
+        .effector_budget_read("line", None)?
+        .expect("governing key");
+    assert_eq!(first, second);
+    assert_eq!(first.rows[0].used, 1);
+    assert_eq!(
+        first.rows[0].fired_thresholds,
+        vec![crate::BudgetThreshold::Silent50]
+    );
+
+    // A subsequent charge sees the fired state unchanged by the reads:
+    // Silent50 does NOT re-fire; the 100% crossing fires Plan80 + Land95.
+    let (_, charge) = check_effect(&vault, &effect, &policy)?;
+    let fired: Vec<_> = charge
+        .expect("charged")
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(
+        fired,
+        vec![
+            crate::BudgetThreshold::Plan80,
+            crate::BudgetThreshold::Land95
+        ]
+    );
     Ok(())
 }
 
@@ -5006,7 +5127,7 @@ fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
         check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
-    assert_eq!(charge.expect("charged").rows[0].used, 1);
+    assert_eq!(charge.expect("charged").read.rows[0].used, 1);
 
     // The status wall is governance, not accounting: it still converts a
     // non-admitted dispatch once the key is suspended.
