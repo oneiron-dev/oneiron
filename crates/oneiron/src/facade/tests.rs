@@ -2506,9 +2506,7 @@ fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
         .list()
         .expect("list jobs")
         .into_iter()
-        .filter(|job| {
-            job.kind == BRIDGE_OUTBOUND_JOB_KIND && job.state != JobState::Cancelled
-        })
+        .filter(|job| job.kind == BRIDGE_OUTBOUND_JOB_KIND && job.state != JobState::Cancelled)
         .collect();
     assert!(
         live.is_empty(),

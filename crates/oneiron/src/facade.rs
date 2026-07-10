@@ -2435,9 +2435,7 @@ impl MemoryFacade<'_> {
                     outcome: "already_scheduled".to_owned(),
                     gate_outcome: binding.as_ref().map(|b| b.gate_outcome.clone()),
                     gate_decision_ref: binding.as_ref().and_then(|b| b.gate_decision_ref.clone()),
-                    gate_reason_codes: binding
-                        .map(|b| b.gate_reason_codes)
-                        .unwrap_or_default(),
+                    gate_reason_codes: binding.map(|b| b.gate_reason_codes).unwrap_or_default(),
                     deduped: true,
                 });
             }
