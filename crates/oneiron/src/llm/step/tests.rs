@@ -451,11 +451,16 @@ fn signal_before_wait_ordering() -> Result<()> {
         DreamerTrapState::Sent
     );
 
-    // Consume validates and commits the consumed transition.
+    // Consume validates, then commits the consumed transition AND the
+    // un-park in one wtxn.
     let job_id = consume_trap_signal(&vault, &runner, &trap, 10_004)?;
     assert_eq!(job_id, fixture.job_id);
     let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
     assert_eq!(head.state, DreamerTrapState::Consumed);
+    assert!(
+        runner.parked_job(fixture.job_id)?.is_none(),
+        "consume+resume must clear the parked row atomically"
+    );
     Ok(())
 }
 

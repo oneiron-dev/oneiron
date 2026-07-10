@@ -1243,8 +1243,9 @@ pub fn send_trap_signal(
 /// the head must be `sent`; its `step_hash` must equal the trap's suspended
 /// step hash (forged → typed reject); its supersession lineage must chain
 /// back to this trap's `created` anchor through legal transitions (stale →
-/// typed reject). On success the `consumed` transition commits and the
-/// suspended job id is returned for the caller's un-park.
+/// typed reject). On success the `consumed` transition and the
+/// `resume_parked` un-park commit in ONE wtxn (atomic consume+resume,
+/// design D4); the resumed job id is returned.
 pub fn consume_trap_signal(
     vault: &Vault,
     store: &crate::dreamer_runner::DreamerRunnerStore<'_>,
@@ -1267,15 +1268,21 @@ pub fn consume_trap_signal(
     }
     require_lineage_chains_to_anchor(vault, &head_id, &trap.trap_claim_id)?;
 
-    append_trap_transition(
-        vault,
-        &head_id,
-        &head,
-        DreamerTrapState::Consumed,
-        now,
-        None,
-    )?;
-    let _ = store;
+    vault.with_write_txn(|wtxn| {
+        append_trap_transition_in_txn(
+            vault,
+            wtxn,
+            &head_id,
+            &head,
+            DreamerTrapState::Consumed,
+            now,
+            None,
+        )?;
+        // Idempotent when no parked row exists (a consent trap raised before
+        // any park, or a resume raced by the runner).
+        store.resume_parked_in_txn(wtxn, head.job_id, now)?;
+        Ok(())
+    })?;
     Ok(head.job_id)
 }
 
@@ -1465,6 +1472,22 @@ fn append_trap_transition(
     now: u64,
     note_override: Option<&str>,
 ) -> Result<EntityId> {
+    vault.with_write_txn(|wtxn| {
+        append_trap_transition_in_txn(vault, wtxn, head_id, head, next, now, note_override)
+    })
+}
+
+/// Transaction-composable body of [`append_trap_transition`], so the consume
+/// path can co-commit the transition with the `resume_parked` un-park.
+fn append_trap_transition_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    head_id: &EntityId,
+    head: &DecodedTrapClaim,
+    next: DreamerTrapState,
+    now: u64,
+    note_override: Option<&str>,
+) -> Result<EntityId> {
     if !head.state.may_transition_to(next) {
         return Err(invalid_trap("illegal dreamer trap state transition"));
     }
@@ -1498,13 +1521,11 @@ fn append_trap_transition(
         start: now,
         end: now,
     };
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
-            .apply(wtxn)?;
-        vault.supersede_claim_in_txn(wtxn, &claim_id, head_id, now)
-    })?;
+    vault
+        .batch_in()
+        .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
+        .apply(wtxn)?;
+    vault.supersede_claim_in_txn(wtxn, &claim_id, head_id, now)?;
     Ok(claim_id)
 }
 
