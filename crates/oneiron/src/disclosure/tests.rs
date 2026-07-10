@@ -827,3 +827,141 @@ fn clear_tier_a_leaves_a_foreign_claim_squatting_the_mirror_id_untouched() -> Re
     assert_eq!(stored.valid_to, None);
     Ok(())
 }
+
+// ─── Qodo keystone round 2: corrupt-row fail-closed + stamp injection ───────
+
+#[test]
+fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let contact_id = test_id(0x25);
+    seed_contact(&vault, contact_id, "kenji@example.com");
+    let party = test_id(0x26);
+    vault
+        .batch()
+        .put(
+            &party,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "txt": "party corrupt needle" }))
+                .expect("body"),
+        )
+        .text(&party, &[("body", "party corrupt needle")])
+        .commit()?;
+    // A valid scope allowlists the party...
+    let scope = DisclosureScope::task_scoped("party", vec![party], 100)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    // ...then the enforcement row is corrupted in place (adversarial or
+    // bit-rotted vault_meta bytes).
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            &disclosure_scope_meta_key(&contact_id),
+            b"not a msgpack scope body",
+        )?;
+        wtxn.commit()?;
+    }
+
+    // The owner-facing read stays LOUD so corruption is visible.
+    assert_eq!(
+        vault
+            .counterparty_disclosure_scope(&contact_id)
+            .expect_err("owner read surfaces the corruption")
+            .kind(),
+        crate::error::ErrorKind::InvalidDisclosureScope
+    );
+
+    // Resolution fails CLOSED: no error, deny-all scope for that contact.
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::without_owner(vec![known(contact_id, "kenji@example.com")]),
+    )?;
+    assert_eq!(ctx.mode(), DisclosureMode::AbsenceClamp);
+    assert!(
+        ctx.scope
+            .as_ref()
+            .expect("deny-all scope")
+            .entities
+            .is_empty(),
+        "corrupt row narrows to the empty scope"
+    );
+
+    // Full assembly: empty pack, not an error and not a wider pack — the
+    // previously-allowlisted party is no longer admitted.
+    let pack = vault
+        .context_pack()
+        .search_text("corrupt needle", 10)
+        .disclosure_context(ctx)
+        .run()?;
+    assert!(pack.results.is_empty() && pack.neighbors.is_empty());
+    assert!(
+        pack.empty.is_some(),
+        "empty-context envelope: {:?}",
+        pack.empty
+    );
+    Ok(())
+}
+
+#[test]
+fn receipt_stamp_escapes_delimiters_and_round_trips_the_exact_labels() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let hostile = "gu,est:x=y;z%";
+    let control = "line\nbreak";
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::without_owner(vec![
+            Interlocutor::unknown(hostile, false),
+            Interlocutor::unknown(control, true),
+        ]),
+    )?;
+
+    let stamp = ctx.receipt_stamp();
+    assert_eq!(
+        stamp,
+        "mode=absence_clamp;interlocutors=\
+         unknown:gu%2Cest%3Ax%3Dy%3Bz%25,unknown:line%0Abreak"
+    );
+    assert!(
+        !stamp.chars().any(char::is_control),
+        "no raw control bytes reach the audit record"
+    );
+
+    // A delimiter-grammar parse recovers the EXACT interlocutor set.
+    fn percent_decode(encoded: &str) -> String {
+        let bytes = encoded.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'%' {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).expect("hex pair");
+                out.push(u8::from_str_radix(hex, 16).expect("hex byte"));
+                index += 3;
+            } else {
+                out.push(bytes[index]);
+                index += 1;
+            }
+        }
+        String::from_utf8(out).expect("decoded label utf8")
+    }
+
+    let (mode_part, interlocutors_part) = stamp.split_once(';').expect("one mode separator");
+    assert_eq!(mode_part, "mode=absence_clamp");
+    let entries: Vec<(&str, String)> = interlocutors_part
+        .strip_prefix("interlocutors=")
+        .expect("interlocutors key")
+        .split(',')
+        .map(|entry| {
+            let (class, label) = entry.split_once(':').expect("class separator");
+            (class, percent_decode(label))
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        vec![
+            ("unknown", hostile.to_owned()),
+            ("unknown", control.to_owned()),
+        ]
+    );
+    Ok(())
+}

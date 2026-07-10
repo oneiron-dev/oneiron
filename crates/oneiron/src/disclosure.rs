@@ -27,7 +27,7 @@ use crate::claim::{
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
@@ -855,8 +855,14 @@ pub struct DisclosureContext {
 impl DisclosureContext {
     /// Derives the mode and, under `AbsenceClamp`, loads and intersects every
     /// non-owner interlocutor's scope. Fail-closed: an unknown party, a
-    /// revoked scope, or a missing row contributes the EMPTY scope, so the
-    /// intersection denies everything.
+    /// revoked scope, a missing row, or a row that FAILS TO DECODE
+    /// contributes the EMPTY scope, so the intersection denies everything.
+    /// Corruption never propagates as an error from this path (§14.5: the
+    /// clamp only ever narrows — an abort here could surface partial state
+    /// or be swallowed by a caller into a wider-than-intended pack); only
+    /// storage I/O failures stay loud. The owner-facing read
+    /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
+    /// corruption stays visible on the consent surface.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
         let mode = DisclosureMode::from_set(&set);
         let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
@@ -866,9 +872,15 @@ impl DisclosureContext {
                 let entry_scope = match entry.contact_ref() {
                     Some(hex) => {
                         let contact_id = EntityId::from_hex(hex)?;
-                        match vault.counterparty_disclosure_scope(&contact_id)? {
-                            Some(scope) if scope.status == DisclosureScopeStatus::Active => scope,
-                            _ => DisclosureScope::deny_all(now),
+                        match vault.counterparty_disclosure_scope(&contact_id) {
+                            Ok(Some(scope)) if scope.status == DisclosureScopeStatus::Active => {
+                                scope
+                            }
+                            Ok(_) => DisclosureScope::deny_all(now),
+                            Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => {
+                                DisclosureScope::deny_all(now)
+                            }
+                            Err(error) => return Err(error),
                         }
                     }
                     None => DisclosureScope::deny_all(now),
@@ -961,17 +973,55 @@ impl DisclosureContext {
 
     /// The OF-369 receipt stamp for this clamp (design §10):
     /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`.
+    ///
+    /// AUDIT INTEGRITY: labels are caller-supplied display data, and J3
+    /// pinned this stamp as the security-relevant record of the assembly.
+    /// Every structural character (`%`, `=`, `;`, `,`, `:`) and every
+    /// control byte in a label is percent-encoded before it enters the
+    /// stamp, so no label can ambiguate the delimiter grammar or forge an
+    /// entry; a parser recovers the exact label by percent-decoding. Mode
+    /// and class strings are engine-fixed vocabulary and never escaped.
     #[must_use]
     pub fn receipt_stamp(&self) -> String {
         let interlocutors = self
             .interlocutors
             .entries()
             .iter()
-            .map(|entry| format!("{}:{}", entry.class().as_str(), entry.label()))
+            .map(|entry| {
+                format!(
+                    "{}:{}",
+                    entry.class().as_str(),
+                    escape_receipt_stamp_label(entry.label())
+                )
+            })
             .collect::<Vec<_>>()
             .join(",");
         format!("mode={};interlocutors={interlocutors}", self.mode.as_str())
     }
+}
+
+/// Percent-encodes the stamp's structural characters plus `%` itself and
+/// control bytes, leaving every other byte verbatim. Total and reversible:
+/// every label encodes safely, so stamping can never fail on a hostile
+/// label — the label is display data and must not block resolution.
+fn escape_receipt_stamp_label(label: &str) -> String {
+    let mut escaped = String::with_capacity(label.len());
+    for ch in label.chars() {
+        match ch {
+            '%' | '=' | ';' | ',' | ':' => {
+                escaped.push('%');
+                escaped.push_str(&format!("{:02X}", ch as u32));
+            }
+            ch if ch.is_control() => {
+                for byte in ch.to_string().as_bytes() {
+                    escaped.push('%');
+                    escaped.push_str(&format!("{byte:02X}"));
+                }
+            }
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Agent-visible disclosure block riding the context-pack response and the
