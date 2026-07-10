@@ -280,6 +280,16 @@ pub struct DurableStepContext<'a> {
     pub now_ms: u64,
 }
 
+impl DurableStepContext<'_> {
+    /// The step clock in Unix SECONDS. Park rows store `parked_at` in seconds
+    /// (`park_job_with_progress` multiplies it by 1_000 for `updated_at_ms`),
+    /// so the millisecond `now_ms` must be divided down before it reaches
+    /// `park_job` — otherwise `parked_at` lands ~1000x too large (#480-1).
+    const fn now_s(&self) -> u64 {
+        self.now_ms / 1_000
+    }
+}
+
 /// Handle to a suspended step's trap record chain. `trap_claim_id` is the
 /// `created` anchor claim; state transitions supersede forward from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,7 +393,7 @@ pub async fn call_as_step(
                 job_id: ctx.job_id,
                 reason: "durable step budget exhausted".to_owned(),
                 park_owner: trap_park_owner(&trap.trap_claim_id),
-                now: ctx.now_ms,
+                now: ctx.now_s(),
             })?;
             step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
             return Ok(StepOutcome::Trapped(trap));
@@ -410,7 +420,7 @@ pub async fn call_as_step(
                         job_id: ctx.job_id,
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                         park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
-                        now: ctx.now_ms,
+                        now: ctx.now_s(),
                     })?;
                     step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
                     return Err(DurableStepError::DeadlineHardCut);

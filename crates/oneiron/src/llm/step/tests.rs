@@ -431,6 +431,13 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     let runner = DreamerRunnerStore::new(&vault);
     let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
     assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
+    // parked_at is stored in Unix SECONDS (park_job_with_progress rescales it
+    // *1_000 for updated_at_ms); the millisecond now_ms=10_000 must land as 10,
+    // not 10_000 (#480-1).
+    assert_eq!(
+        parked.parked_at, 10,
+        "budget-exhaustion park must store parked_at in seconds, not milliseconds"
+    );
     assert!(step_state_read(&vault, fixture.job_id, &trap.step_hash)?.is_none());
     Ok(())
 }
@@ -1069,6 +1076,12 @@ fn expired_deadline_never_records_finished() -> Result<()> {
     let runner = DreamerRunnerStore::new(&vault);
     let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
     assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
+    // The deadline hard-cut park must also store parked_at in Unix SECONDS:
+    // now_ms=10_000 lands as 10, not 10_000 (#480-1).
+    assert_eq!(
+        parked.parked_at, 10,
+        "deadline hard-cut park must store parked_at in seconds, not milliseconds"
+    );
     Ok(())
 }
 
