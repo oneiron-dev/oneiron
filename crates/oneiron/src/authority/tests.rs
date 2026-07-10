@@ -4466,20 +4466,24 @@ struct LifecycleDag {
     pact_three: [u8; 32],
     pact_four: [u8; 32],
     pact_five: [u8; 32],
+    pact_six: [u8; 32],
     grant_four_a: EntityId,
     grant_four_b: EntityId,
+    grant_six: [EntityId; 3],
     low_scope: FederationPactScope,
     low_digest: [u8; 32],
     scope_three: FederationPactScope,
     digest_three: [u8; 32],
 }
 
-/// Fourteen-entry lifecycle+device DAG exercising the merge shapes:
+/// Seventeen-entry lifecycle+device DAG exercising the merge shapes:
 /// concurrent narrows (intersection incl. band ⊥), concurrent divergent
 /// repacts (Suspended), Disconnect vs higher-epoch repact (terminal wins),
 /// concurrent Connects binding one pact id to two grants (Suspended, both
-/// grants denied), and one grant bound to TWO pacts (activation folds over
-/// every binding — an Active second pact must not mask a suspended one).
+/// grants denied), one grant bound to TWO pacts (activation folds over
+/// every binding — an Active second pact must not mask a suspended one),
+/// and a THREE-way binding divergence (heal target = global lex-min under
+/// every merge tree).
 fn lifecycle_dag() -> LifecycleDag {
     let facet = scope_entity;
     let fixture = pact_fixture_with_scope(
@@ -4662,6 +4666,31 @@ fn lifecycle_dag() -> LifecycleDag {
         connect_action_with(&fixture, pact_five, grant_four_b, &scope_four, [0x77; 16]),
     );
 
+    // THREE-way binding divergence on one pact: the merge must fold to the
+    // GLOBAL lex-min grant (the heal target) under every merge tree, not to
+    // whichever pair happened to suspend first.
+    let pact_six = [0xB6; 32];
+    let grant_six = [scope_entity(0x36), scope_entity(0x37), scope_entity(0x38)];
+    let nonce_six = [0x79; 16];
+    let connect_six_a = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        14,
+        connect_action_with(&fixture, pact_six, grant_six[0], &scope_four, nonce_six),
+    );
+    let connect_six_b = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        15,
+        connect_action_with(&fixture, pact_six, grant_six[1], &scope_four, nonce_six),
+    );
+    let connect_six_c = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        16,
+        connect_action_with(&fixture, pact_six, grant_six[2], &scope_four, nonce_six),
+    );
+
     let digest_three = scope_digest_for(&scope_three, &nonce_three);
     let entries = vec![
         fixture.genesis.clone(),
@@ -4678,6 +4707,9 @@ fn lifecycle_dag() -> LifecycleDag {
         connect_four_a,
         connect_four_b,
         connect_five,
+        connect_six_a,
+        connect_six_b,
+        connect_six_c,
     ];
     LifecycleDag {
         fixture,
@@ -4686,8 +4718,10 @@ fn lifecycle_dag() -> LifecycleDag {
         pact_three,
         pact_four,
         pact_five,
+        pact_six,
         grant_four_a,
         grant_four_b,
+        grant_six,
         low_scope,
         low_digest,
         scope_three,
@@ -4763,6 +4797,23 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
             FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
         );
     }
+
+    // P6: three-way binding divergence folds to the GLOBAL lex-min grant —
+    // the heal target must not depend on which pair suspended first.
+    let p6 = &fold.federation_pacts[&dag.pact_six];
+    assert_eq!(p6.status, FederationPactStatus::Suspended);
+    assert_eq!(p6.pact_epoch, 1);
+    assert_eq!(
+        p6.grant_ref,
+        dag.grant_six.iter().copied().min().unwrap(),
+        "heal target must be the global tie-break winner"
+    );
+    for grant in dag.grant_six {
+        assert_eq!(
+            federation_grant_activation(&fold, &grant),
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        );
+    }
 }
 
 #[test]
@@ -4818,7 +4869,7 @@ fn lifecycle_entries_use_existing_type_122_doors() {
 proptest! {
     #[test]
     fn federation_lifecycle_fold_is_permutation_invariant(
-        perm in prop::collection::vec(0_usize..14, 14),
+        perm in prop::collection::vec(0_usize..17, 17),
     ) {
         let dag = lifecycle_dag();
         let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
@@ -4837,6 +4888,18 @@ proptest! {
         }
 
         let folded = fold_authority_log_without_seen_time_delay(&permuted);
+        // The HEAL TARGET (the grant_ref an epoch+1 repact must name) is
+        // anchored to the GLOBAL tie-break winner under every permutation —
+        // an absolute check, not just baseline equality, so a consistently
+        // order-biased merge cannot pass.
+        prop_assert_eq!(
+            folded.federation_pacts[&dag.pact_four].grant_ref,
+            dag.grant_four_a.min(dag.grant_four_b)
+        );
+        prop_assert_eq!(
+            folded.federation_pacts[&dag.pact_six].grant_ref,
+            dag.grant_six.iter().copied().min().unwrap()
+        );
         prop_assert_eq!(folded, baseline);
     }
 }
@@ -5157,4 +5220,106 @@ fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
         FederationGrantActivation::Inactive(FederationPactStatus::Disconnected),
         "G must not survive P's revocation through Q"
     );
+}
+
+#[test]
+fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
+    // Three concurrent Connects binding one pact to three grants with equal
+    // digests: the tie-break is purely the grant_ref, and the merged carried
+    // binding — the only grant an epoch+1 heal may name — must be the GLOBAL
+    // minimum regardless of which pair the fold happened to merge first.
+    let fixture = pact_fixture(184);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let grants = [scope_entity(0x49), scope_entity(0x4A), scope_entity(0x4B)];
+    let winner = grants.iter().copied().min().unwrap();
+    let connects: Vec<AuthorityLogEntry> = grants
+        .iter()
+        .enumerate()
+        .map(|(index, grant)| {
+            lifecycle_entry(
+                &fixture,
+                vec![genesis_hash],
+                1 + index as u64,
+                connect_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    *grant,
+                    &fixture.scope,
+                    fixture.pact_nonce,
+                ),
+            )
+        })
+        .collect();
+    let connect_hashes: Vec<AuthorityEntryHash> = connects
+        .iter()
+        .map(|entry| authority_entry_hash(entry).unwrap())
+        .collect();
+
+    let mut entries = vec![fixture.genesis.clone()];
+    entries.extend(connects.iter().cloned());
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Suspended);
+    assert_eq!(pact.grant_ref, winner, "heal target = global lex-min grant");
+    for grant in grants {
+        assert_eq!(
+            federation_grant_activation(&fold, &grant),
+            FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+        );
+    }
+
+    // A heal naming a non-winner rejects; the winner heal restores exactly
+    // the winner.
+    let heal_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    let loser = grants.iter().copied().max().unwrap();
+    let bad_heal = lifecycle_entry(
+        &fixture,
+        connect_hashes.clone(),
+        4,
+        repact_action_with(&fixture, fixture.pact_id, loser, 2, &heal_scope, [0x7B; 16]),
+    );
+    let bad_heal_hash = authority_entry_hash(&bad_heal).unwrap();
+    let mut with_bad_heal = entries.clone();
+    with_bad_heal.push(bad_heal);
+    let fold = fold_authority_log_without_seen_time_delay(&with_bad_heal);
+    assert_eq!(
+        lifecycle_rejection(&fold, bad_heal_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+
+    let heal = lifecycle_entry(
+        &fixture,
+        connect_hashes,
+        5,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            winner,
+            2,
+            &heal_scope,
+            [0x7C; 16],
+        ),
+    );
+    entries.push(heal);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 2);
+    assert_eq!(pact.grant_ref, winner);
+    assert_eq!(
+        federation_grant_activation(&fold, &winner),
+        FederationGrantActivation::Active
+    );
+    for grant in grants {
+        if grant == winner {
+            continue;
+        }
+        assert_eq!(
+            federation_grant_activation(&fold, &grant),
+            FederationGrantActivation::Inactive(FederationPactStatus::Active)
+        );
+    }
 }
