@@ -53,6 +53,8 @@ fn full_agent(version: &str) -> AgentDefinition {
         ],
         Some(ModelTierRef("fast".to_owned())),
         AgentScope::World(world_id()),
+        AgentCeiling::Proposed,
+        None,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
         ClaimSource::UserStated,
@@ -75,6 +77,8 @@ fn minimal_agent(version: &str) -> AgentDefinition {
         Vec::new(),
         None,
         AgentScope::All,
+        AgentCeiling::Proposed,
+        None,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
         ClaimSource::UserStated,
@@ -97,6 +101,8 @@ fn generated_agent(version: &str) -> AgentDefinition {
         Vec::new(),
         None,
         AgentScope::Base,
+        AgentCeiling::Proposed,
+        None,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
         ClaimSource::Generated,
@@ -586,6 +592,8 @@ fn pinned_key_contract_is_stable() {
             "modelTier",
             "scope",
             "world",
+            "ceiling",
+            "forkedFrom",
             "approvalStatus",
             "lifecycleStatus",
             "source",
@@ -654,6 +662,354 @@ fn retire_path_round_trips() -> Result<()> {
     Ok(())
 }
 
+// ─── AGENT-2 (ONE-1444): system presets, fork-to-custom, ceiling clamp ───────
+
+// AGENT-2 pin A7: the five-preset table is pinned — ids, ceilings, actor ids
+// (all five construct), templates validate and encode.
+#[test]
+fn system_preset_table_is_pinned() -> Result<()> {
+    assert_eq!(
+        SystemAgentPreset::all().map(SystemAgentPreset::preset_id),
+        [
+            "sys.scout",
+            "sys.keeper",
+            "sys.creative",
+            "sys.herald",
+            "sys.guide",
+        ]
+    );
+    assert_eq!(SYSTEM_AGENT_PRESET_VERSION, "1");
+    for preset in SystemAgentPreset::all() {
+        assert_eq!(SystemAgentPreset::parse(preset.preset_id()), Some(preset));
+        let actor_id = preset.actor_entity_id();
+        assert_eq!(
+            SystemAgentPreset::from_actor_entity_id(&actor_id),
+            Some(preset)
+        );
+
+        let template = preset.template();
+        assert_eq!(template.agent_id, preset.preset_id());
+        assert_eq!(template.version, SYSTEM_AGENT_PRESET_VERSION);
+        assert_eq!(template.ceiling, preset.ceiling());
+        assert_eq!(template.forked_from, None);
+        assert_eq!(template.scope, AgentScope::All);
+        assert_eq!(template.approval_status, ClaimApprovalStatus::Approved);
+        assert_eq!(template.lifecycle_status, ClaimLifecycleStatus::Active);
+        assert_eq!(template.source, ClaimSource::Imported);
+        assert!(template.human_authored && !template.generated);
+        // Templates are valid, encodable definitions (dispatch snapshots).
+        encode_agent_definition(&template)?;
+    }
+    assert_eq!(SystemAgentPreset::parse("sys.unknown"), None);
+
+    assert_eq!(SystemAgentPreset::Scout.ceiling(), AgentCeiling::Auto);
+    assert_eq!(SystemAgentPreset::Keeper.ceiling(), AgentCeiling::Auto);
+    assert_eq!(SystemAgentPreset::Creative.ceiling(), AgentCeiling::Auto);
+    assert_eq!(SystemAgentPreset::Herald.ceiling(), AgentCeiling::Proposed);
+    assert_eq!(SystemAgentPreset::Guide.ceiling(), AgentCeiling::Proposed);
+
+    assert_eq!(
+        SystemAgentPreset::Scout.template().connectors,
+        vec!["web.search"]
+    );
+    assert_eq!(
+        SystemAgentPreset::Herald.template().code_mode_mcps,
+        vec![McpRef::new("email")]
+    );
+    Ok(())
+}
+
+// AGENT-2 AC test 1: toggle round-trip — default enabled for all five;
+// disable → false (others unaffected); re-enable → true.
+#[test]
+fn system_agent_toggle_round_trip() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    for preset in SystemAgentPreset::all() {
+        assert!(vault.system_agent_enabled(preset)?, "presets ship enabled");
+    }
+    vault.set_system_agent_enabled(SystemAgentPreset::Scout, false)?;
+    assert!(!vault.system_agent_enabled(SystemAgentPreset::Scout)?);
+    for preset in [
+        SystemAgentPreset::Keeper,
+        SystemAgentPreset::Creative,
+        SystemAgentPreset::Herald,
+        SystemAgentPreset::Guide,
+    ] {
+        assert!(vault.system_agent_enabled(preset)?, "toggle is per-preset");
+    }
+    vault.set_system_agent_enabled(SystemAgentPreset::Scout, true)?;
+    assert!(vault.system_agent_enabled(SystemAgentPreset::Scout)?);
+    Ok(())
+}
+
+// AGENT-2 AC test 2: fork Herald → custom entity CRUD round-trips with the
+// pinned fork stamps.
+#[test]
+fn fork_system_agent_creates_custom() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let id = EntityId::now();
+    let fork = vault.fork_system_agent(
+        &id,
+        SystemAgentPreset::Herald,
+        "eiri.herald.custom",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+
+    let read = vault
+        .get_agent_definition(&id)?
+        .ok_or(Error::EntityNotFound)?;
+    assert_eq!(read, fork);
+    assert_eq!(read.agent_id, "eiri.herald.custom");
+    assert_eq!(read.forked_from, Some(SystemAgentPreset::Herald));
+    assert_eq!(read.ceiling, AgentCeiling::Proposed);
+    assert_eq!(read.source, ClaimSource::UserStated);
+    assert_eq!(read.approval_status, ClaimApprovalStatus::Approved);
+    assert!(read.human_authored && !read.generated);
+    // Composition is inherited from the preset template.
+    assert_eq!(read.desc, SystemAgentPreset::Herald.template().desc);
+    assert_eq!(read.code_mode_mcps, vec![McpRef::new("email")]);
+    // Provenance carries the fork lineage record.
+    let Value::Map(entries) = &read.provenance else {
+        panic!("fork provenance must be a map");
+    };
+    assert!(entries.iter().any(|(key, value)| {
+        key.as_str() == Some("forkOf") && value.as_str() == Some("sys.herald")
+    }));
+    assert!(entries.iter().any(|(key, value)| {
+        key.as_str() == Some("presetVersion") && value.as_str() == Some("1")
+    }));
+    Ok(())
+}
+
+// AGENT-2 AC test 3: forking a disabled preset is rejected and writes nothing.
+#[test]
+fn fork_disabled_preset_rejected() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    vault.set_system_agent_enabled(SystemAgentPreset::Scout, false)?;
+    let id = EntityId::now();
+    let err = vault
+        .fork_system_agent(
+            &id,
+            SystemAgentPreset::Scout,
+            "eiri.scout.custom",
+            TimeRange { start: 10, end: 10 },
+            11,
+        )
+        .expect_err("disabled preset must not fork");
+    assert!(matches!(err, Error::SystemAgentDisabled(_)));
+    assert_eq!(vault.get_agent_definition(&id)?, None);
+    Ok(())
+}
+
+// AGENT-2 AC test 4: the no-widen rule at the update gate — a Herald fork can
+// never re-widen to Auto; a Scout fork may narrow and re-widen up to its
+// preset bound.
+#[test]
+fn fork_ceiling_no_widen_on_update() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let herald_id = EntityId::now();
+    let herald_fork = vault.fork_system_agent(
+        &herald_id,
+        SystemAgentPreset::Herald,
+        "eiri.herald.custom",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+
+    let mut widened = herald_fork.clone();
+    widened.version = "2".to_owned();
+    widened.ceiling = AgentCeiling::Auto;
+    assert_eq!(
+        vault
+            .update_agent_definition(&herald_id, &widened, TimeRange { start: 12, end: 12 }, 13)
+            .expect_err("Herald fork must never widen to auto")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(herald_fork));
+
+    let scout_id = EntityId::now();
+    let scout_fork = vault.fork_system_agent(
+        &scout_id,
+        SystemAgentPreset::Scout,
+        "eiri.scout.custom",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    assert_eq!(scout_fork.ceiling, AgentCeiling::Auto);
+
+    let mut narrowed = scout_fork;
+    narrowed.version = "2".to_owned();
+    narrowed.ceiling = AgentCeiling::Proposed;
+    vault.update_agent_definition(&scout_id, &narrowed, TimeRange { start: 12, end: 12 }, 13)?;
+
+    let mut rewidened = narrowed;
+    rewidened.version = "3".to_owned();
+    rewidened.ceiling = AgentCeiling::Auto;
+    vault.update_agent_definition(&scout_id, &rewidened, TimeRange { start: 14, end: 14 }, 15)?;
+    assert_eq!(vault.get_agent_definition(&scout_id)?, Some(rewidened));
+    Ok(())
+}
+
+// AGENT-2 AC test 5: a widened body cannot be smuggled through the raw entity
+// door — encode is structure-only (M1 split), the write door runs no-widen.
+#[test]
+fn no_widen_rejected_at_raw_put() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let mut widened = SystemAgentPreset::Herald.template();
+    widened.agent_id = "eiri.herald.widened".to_owned();
+    widened.forked_from = Some(SystemAgentPreset::Herald);
+    widened.ceiling = AgentCeiling::Auto;
+    // Structure-only encode succeeds (reads/snapshots must keep decoding
+    // stored forks after a preset-table narrowing) …
+    let bytes = encode_agent_definition(&widened)?;
+    // … but the raw-put write door rejects the widened body.
+    let id = EntityId::now();
+    let err = vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_AGENT_DEF,
+            TimeRange { start: 10, end: 10 },
+            11,
+            &bytes,
+        )
+        .expect_err("widened fork body must be rejected at the raw put door");
+    assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody);
+    assert_eq!(vault.get_agent_definition(&id)?, None);
+    Ok(())
+}
+
+// AGENT-2 AC test 6: the two new keys round-trip; absent keys decode to
+// defaults; unknown/malformed values and duplicates are rejected.
+#[test]
+fn ceiling_forked_from_codec() -> Result<()> {
+    // Round-trip both keys (Scout bound is Auto, so this is not widened).
+    let mut def = full_agent("1.0.0");
+    def.ceiling = AgentCeiling::Auto;
+    def.forked_from = Some(SystemAgentPreset::Scout);
+    let decoded = decode_agent_definition(&encode_agent_definition(&def)?)?;
+    assert_eq!(decoded, def);
+    let keys = encoded_body_keys(&def);
+    assert!(keys.iter().any(|k| k == "ceiling"));
+    assert!(keys.iter().any(|k| k == "forkedFrom"));
+
+    // Absent keys decode to the defaults.
+    let decoded = decode_agent_definition(&body_from(valid_scope_all_entries()))?;
+    assert_eq!(decoded.ceiling, AgentCeiling::Proposed);
+    assert_eq!(decoded.forked_from, None);
+
+    let reject = |entries: Vec<(&'static str, Value)>, case: &str| {
+        let err = decode_agent_definition(&body_from(entries)).expect_err(case);
+        assert_eq!(err.kind(), ErrorKind::InvalidAgentDefBody, "{case}");
+    };
+
+    // Unknown forkedFrom preset id is rejected (typed pinned vocabulary).
+    let mut entries = valid_scope_all_entries();
+    entries.push(("forkedFrom", Value::from("sys.unknown")));
+    reject(entries, "unknown forkedFrom preset id");
+
+    // Non-string forkedFrom is rejected.
+    let mut entries = valid_scope_all_entries();
+    entries.push(("forkedFrom", Value::from(1_u64)));
+    reject(entries, "non-string forkedFrom");
+
+    // Unparsable / non-string ceiling values are rejected.
+    let mut entries = valid_scope_all_entries();
+    entries.push(("ceiling", Value::from("sometimes")));
+    reject(entries, "unknown ceiling vocabulary");
+    let mut entries = valid_scope_all_entries();
+    entries.push(("ceiling", Value::from(1_u64)));
+    reject(entries, "non-string ceiling");
+
+    // Duplicate new keys are still rejected.
+    let mut entries = valid_scope_all_entries();
+    entries.push(("ceiling", Value::from("auto")));
+    entries.push(("ceiling", Value::from("auto")));
+    reject(entries, "duplicate ceiling key");
+
+    // Unknown keys are still rejected (the pinned set merely grew).
+    let mut entries = valid_scope_all_entries();
+    entries.push(("ceilingNote", Value::from("host field")));
+    reject(entries, "unknown key");
+    Ok(())
+}
+
+// AGENT-2 AC test 7: elide-the-default byte compat — a default-valued body
+// encodes with neither new key (17-key map) and a pre-change 17-key body
+// decodes with the defaults.
+#[test]
+fn default_body_byte_compat() -> Result<()> {
+    let def = full_agent("1.0.0");
+    assert_eq!(def.ceiling, AgentCeiling::Proposed);
+    assert_eq!(def.forked_from, None);
+    let keys = encoded_body_keys(&def);
+    assert!(!keys.iter().any(|k| k == "ceiling"));
+    assert!(!keys.iter().any(|k| k == "forkedFrom"));
+
+    // A pre-AGENT-2 17-key body (all optional keys present except the new
+    // pair) decodes to the defaults.
+    let decoded = decode_agent_definition(&body_from(valid_scope_all_entries()))?;
+    assert_eq!(decoded.ceiling, AgentCeiling::Proposed);
+    assert_eq!(decoded.forked_from, None);
+    Ok(())
+}
+
+// AGENT-2 AC test 8: the landed update-immutability gates still hold and
+// forkedFrom joins them.
+#[test]
+fn update_immutability_preserved() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+
+    // forkedFrom cannot be dropped on update …
+    let fork_id = EntityId::now();
+    let fork = vault.fork_system_agent(
+        &fork_id,
+        SystemAgentPreset::Scout,
+        "eiri.scout.custom",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let mut unforked = fork;
+    unforked.version = "2".to_owned();
+    unforked.forked_from = None;
+    assert_eq!(
+        vault
+            .update_agent_definition(&fork_id, &unforked, TimeRange { start: 12, end: 12 }, 13)
+            .expect_err("forkedFrom cannot be dropped on update")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+
+    // … and cannot be grafted onto a from-scratch definition.
+    let scratch_id = EntityId::now();
+    let scratch = full_agent("1.0.0");
+    vault.put_agent_definition(&scratch_id, &scratch, TimeRange { start: 10, end: 10 }, 11)?;
+    let mut grafted = full_agent("1.1.0");
+    grafted.forked_from = Some(SystemAgentPreset::Scout);
+    assert_eq!(
+        vault
+            .update_agent_definition(&scratch_id, &grafted, TimeRange { start: 12, end: 12 }, 13)
+            .expect_err("forkedFrom cannot be grafted on update")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+
+    // From-scratch definitions are unbounded by any preset: either ceiling
+    // authors fine (their only bound is the owner's manifest).
+    let auto_id = EntityId::now();
+    let mut auto_scratch = full_agent("1.0.0");
+    auto_scratch.ceiling = AgentCeiling::Auto;
+    vault.put_agent_definition(
+        &auto_id,
+        &auto_scratch,
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    assert_eq!(vault.get_agent_definition(&auto_id)?, Some(auto_scratch));
+    Ok(())
+}
+
 // Edge test 13: the D5 tool-layer defaults produce a record that validates.
 #[test]
 fn tool_layer_defaults_validate() -> Result<()> {
@@ -669,6 +1025,8 @@ fn tool_layer_defaults_validate() -> Result<()> {
         vec![McpRef::new("code.fs")],
         Some(ModelTierRef("fast".to_owned())),
         AgentScope::All,
+        AgentCeiling::Proposed,
+        None,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
         ClaimSource::UserStated,

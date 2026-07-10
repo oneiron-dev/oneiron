@@ -111,7 +111,18 @@ fn request(
 #[test]
 fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA1);
+    // 0x91: [0xA1; 16] is a write-door-reserved system-agent actor id
+    // (ONE-1444). The actor entity is stored because the live ceiling
+    // resolver fails absent agent-class actors closed to Proposed — an
+    // Auto-granted effect actor must be entity-backed.
+    let agent = entity(0x91);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"lifecycle actor",
+    )?;
     let actor = ChannelIdentityLifecycleActor::agent(agent);
     put_policy_manifest(
         &vault,
@@ -152,7 +163,7 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
     );
 
     let bind_id = entity(0xB2);
-    vault.create_channel_identity(&bind_id, &requested_identity(entity(0xA2), 1_020))?;
+    vault.create_channel_identity(&bind_id, &requested_identity(entity(0x92), 1_020))?;
     let bound = vault.apply_channel_identity_lifecycle_intent(request(
         actor.clone(),
         1_030,
@@ -340,7 +351,17 @@ fn denied_external_effect_receipts_denied_without_mutating_identity() {
 #[test]
 fn route_inbound_against_tombstone_reports_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    // The actor entity is stored because the live ceiling resolver fails
+    // absent agent-class actors closed to Proposed (ONE-1444 B3) — an
+    // Auto-granted effect actor must be entity-backed.
     let agent = entity(0xE1);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"route actor",
+    )?;
     let actor = ChannelIdentityLifecycleActor::agent(agent);
     put_policy_manifest(
         &vault,

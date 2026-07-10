@@ -156,7 +156,7 @@ use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::ENTITY_TYPE_MODEL;
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
@@ -653,12 +653,16 @@ pub fn derive_confirmation_status(status: SupersessionStatus) -> EdgeConfirmatio
 /// Validates a CALLER-SUPPLIED `actor_class` against the actor entity's
 /// kind (D13): PERSON (4) admits `{human=0, agent=1}` — users and AI agents
 /// share one table (ARCH-0002), so PERSON alone cannot distinguish them;
-/// MACHINE (82) admits `{system=2}`; every other kind is rejected with
+/// MACHINE (82) admits `{system=2}`; AGENT_DEF (17) admits `{agent=1}` — a
+/// dispatched agent's substantive writes carry its definition's entity id as
+/// the envelope actor (N1 resolution 2026-07-10; milestone bookkeeping rides
+/// the system/Dreamer envelope instead); every other kind is rejected with
 /// [`Error::ActorClassMismatch`]. NEVER defaults.
 pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) -> Result<()> {
     let allowed = match actor_entity_type {
         ENTITY_TYPE_PERSON => matches!(actor_class, EdgeActorClass::Human | EdgeActorClass::Agent),
         ENTITY_TYPE_MACHINE => matches!(actor_class, EdgeActorClass::System),
+        ENTITY_TYPE_AGENT_DEF => matches!(actor_class, EdgeActorClass::Agent),
         _ => false,
     };
     if allowed {
@@ -1244,6 +1248,8 @@ impl Vault {
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
+            &self.store,
+            &wtxn,
             &retracted_claim_body,
             &retracted,
             claim.actor_class,
@@ -1516,6 +1522,8 @@ impl Vault {
 
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         crate::gate::check_edge_provenance_claim_policy(
+            &self.store,
+            &wtxn,
             &claim_body,
             &record,
             actor_class,
@@ -1594,6 +1602,8 @@ impl Vault {
                     ClaimLifecycleStatus::Superseded,
                 )?;
             crate::gate::check_edge_provenance_claim_policy(
+                &self.store,
+                &wtxn,
                 &closed_claim_body,
                 &closed_record,
                 closure.actor_class,

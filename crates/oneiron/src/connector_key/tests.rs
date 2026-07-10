@@ -578,9 +578,9 @@ fn receipted_ops_project_into_gate_receipts() -> Result<()> {
 #[test]
 fn connector_key_for_resolves_exact_actor_over_agnostic() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let actor = test_id(0xA1);
-    let bound_id = test_id(0xA2);
-    let agnostic_id = test_id(0xA3);
+    let actor = test_id(0xB1);
+    let bound_id = test_id(0xB2);
+    let agnostic_id = test_id(0xB3);
     vault.register_connector_key(
         &bound_id,
         ConnectorKeyRecord::active("line", Some(actor), Vec::new(), 1_000),
@@ -602,7 +602,7 @@ fn connector_key_for_resolves_exact_actor_over_agnostic() -> Result<()> {
 
     // An actor with no exact tuple falls back to the connector-wide key.
     let (resolved, _) = vault
-        .connector_key_for("line", Some(&test_id(0xA4)))?
+        .connector_key_for("line", Some(&test_id(0xB4)))?
         .expect("agnostic fallback");
     assert_eq!(resolved, agnostic_id);
 

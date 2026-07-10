@@ -911,15 +911,15 @@ fn counterparty_projection_joins_contact_records() -> Result<()> {
 #[test]
 fn counterparty_projection_combines_multi_identity_contacts_conservatively() -> Result<()> {
     let (_tmp, vault) = temp_vault()?;
-    let identity_a = entity(0xA1);
-    let identity_b = entity(0xA2);
+    let identity_a = entity(0x71);
+    let identity_b = entity(0x72);
     let opted_out = CounterpartyContactRecord::inbound_first(identity_a, "kenji@example.com", 5)?
         .opted_out(CounterpartyOptOutReason::Stop, 8)?;
     let consented =
         CounterpartyContactRecord::user_introduction(identity_b, "kenji@example.com", 10)?
             .with_promo_consent(true, 11)?;
-    vault.create_counterparty_contact(&entity(0xA3), &opted_out)?;
-    vault.create_counterparty_contact(&entity(0xA4), &consented)?;
+    vault.create_counterparty_contact(&entity(0x73), &opted_out)?;
+    vault.create_counterparty_contact(&entity(0x74), &consented)?;
     let identity_a_hex = identity_a.to_hex();
     let identity_b_hex = identity_b.to_hex();
     let receipts = vec![

@@ -109,8 +109,9 @@ pub use crate::affect::{
 pub use crate::agent_def::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
-    AGENT_VERSION_MAX_BYTES, AgentDefinition, AgentScope, MCP_REF_KEYS, McpRef,
-    decode_agent_definition, encode_agent_definition,
+    AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, MCP_REF_KEYS, McpRef,
+    SYSTEM_AGENT_PRESET_VERSION, SystemAgentPreset, decode_agent_definition,
+    encode_agent_definition,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,

@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
@@ -36,11 +37,11 @@ use crate::outbound_grant::{
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -131,7 +132,16 @@ impl PolicyApprovalCeiling {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Gate-side conversion from the persisted AGENT_DEF descriptor mirror.
+    /// Lives here so the dependency direction stays `gate.rs` → `agent_def.rs`
+    /// and `PolicyApprovalCeiling` stays `pub(crate)`.
+    pub(crate) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
+        match ceiling {
+            AgentCeiling::Auto => Self::Auto,
+            AgentCeiling::Proposed => Self::Proposed,
+        }
+    }
+
     fn restrict(self, other: Self) -> Self {
         if matches!(self, Self::Proposed) || matches!(other, Self::Proposed) {
             Self::Proposed
@@ -148,6 +158,18 @@ pub(crate) fn foreign_agent_effective_ceiling(
     introducer_ceiling: PolicyApprovalCeiling,
 ) -> PolicyApprovalCeiling {
     confirmed_scope.restrict(introducer_ceiling)
+}
+
+/// OF-074 symmetry helper mirroring [`foreign_agent_effective_ceiling`]: a
+/// dispatched agent's effective ceiling is its definition-authored bound
+/// restricted by the owner's `actor_ceilings` manifest projection.
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn dispatched_agent_effective_ceiling(
+    definition: PolicyApprovalCeiling,
+    policy_projection: PolicyApprovalCeiling,
+) -> PolicyApprovalCeiling {
+    definition.restrict(policy_projection)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +330,11 @@ pub(crate) struct GateEvaluatorInput {
     pub(crate) policy_manifest_version: String,
     pub(crate) provenance: GateProvenanceHandles,
     pub(crate) external_effect: Option<ExternalEffectGateContext>,
+    /// The AGENT_DEF-authored ceiling bound resolved live for definition-bound
+    /// actors ([`agent_definition_ceiling_for_actor`]); `None` = no definition
+    /// bound (owner writes, connectors, non-definition agent actors) —
+    /// preserves pre-AGENT-2 behavior at every existing construction site.
+    pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -369,7 +396,10 @@ pub(crate) struct ExternalEffectGateInput {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl ExternalEffectGateInput {
-    fn gate_input(&self) -> GateEvaluatorInput {
+    fn gate_input(
+        &self,
+        agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    ) -> GateEvaluatorInput {
         GateEvaluatorInput {
             actor: self.actor.clone(),
             source: None,
@@ -378,6 +408,7 @@ impl ExternalEffectGateInput {
             criticality: PolicyCriticality::Normal,
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: self.provenance.clone(),
+            agent_definition_ceiling,
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),
                 channel: self.channel.clone(),
@@ -959,6 +990,15 @@ impl PolicyManifestResolution {
     }
 
     fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
+        // A Proposed definition ceiling is an explicit authored bound that no
+        // manifest grant can widen past (OF-074 restrict / OF-043 live
+        // re-clamp) — the write is held to proposal regardless of rows.
+        if matches!(
+            input.agent_definition_ceiling,
+            Some(PolicyApprovalCeiling::Proposed)
+        ) {
+            return false;
+        }
         let actor_class = input.actor.actor_class.trim();
         if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
             == PolicyApprovalCeiling::Auto
@@ -966,9 +1006,15 @@ impl PolicyManifestResolution {
             return true;
         }
 
+        // The edge-provenance no-matching-row auto exception is suppressed
+        // for ANY definition-bound actor (B2 resolution 2026-07-10): an Auto
+        // definition ceiling means "does not self-limit", not "inherits the
+        // no-row exception" — no row → Proposed holds as written for
+        // definition-bound actors.
         input.content_kind == GateContentKind::EdgeProvenanceClaim
             && matches!(actor_class, "agent" | "system")
             && !self.has_matching_actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+            && input.agent_definition_ceiling.is_none()
     }
 
     fn dreamer_auto_grant_requires_manifest_signature(&self, input: &GateEvaluatorInput) -> bool {
@@ -1188,6 +1234,17 @@ impl PolicyManifestResolution {
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
+        // A Proposed-ceiling definition-bound actor (e.g. any Herald fork)
+        // can never auto-fire an external effect regardless of grants; it is
+        // held to PendingExternalEffectAuthority. The counterparty opt-out
+        // early-deny is unaffected: it returns from `evaluate_gate` before
+        // this function is ever consulted.
+        if matches!(
+            input.agent_definition_ceiling,
+            Some(PolicyApprovalCeiling::Proposed)
+        ) {
+            return false;
+        }
         let Some(effect) = input.external_effect.as_ref() else {
             return false;
         };
@@ -1757,6 +1814,249 @@ pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
     bytes_to_hex_lower(&FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
 }
 
+/// Resolves the AGENT_DEF-authored ceiling bound for a write actor, live at
+/// evaluation time (D11: authority is never read from dispatch snapshots).
+///
+/// * non-`Agent` actor class → `None` (no definition bound);
+/// * pinned system-preset actor id → the preset's compiled ceiling (presets
+///   have no stored entity);
+/// * entity ABSENT → `Some(Proposed)` — deletion fails closed (B3 resolution
+///   2026-07-10: a deleted Herald fork's definition can no longer drop its
+///   Proposed self-limit);
+/// * present but not type-17 → `None` (live person-backed agent actors keep
+///   today's semantics);
+/// * decoded definition → its ceiling restricted by the fork parent's preset
+///   bound;
+/// * unreadable/undecodable body → `Some(Proposed)` with a `tracing::warn!`
+///   naming the actor entity id — the fail-closed re-clamp of a believed-Auto
+///   agent must not be silent.
+pub(crate) fn agent_definition_ceiling_for_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+) -> Option<PolicyApprovalCeiling> {
+    if actor.actor_class() != EdgeActorClass::Agent {
+        return None;
+    }
+    match agent_bearing_for_entity(store, txn, actor.entity_ref()) {
+        AgentBearing::Bound(ceiling) => Some(ceiling),
+        // B3: a deleted definition can no longer drop its self-limit.
+        AgentBearing::Absent => Some(PolicyApprovalCeiling::Proposed),
+        // Live person-backed agent actors keep today's semantics.
+        AgentBearing::NonAgent => None,
+    }
+}
+
+/// How a governing entity id relates to the AGENT_DEF authority lattice.
+/// Derived from the STORED ENTITY, never from a caller-asserted actor class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentBearing {
+    /// The id is a system-preset actor id or a stored type-17 AGENT_DEF (or
+    /// a fail-closed variant of either): it carries a definition ceiling.
+    Bound(PolicyApprovalCeiling),
+    /// No entity is stored at the id.
+    Absent,
+    /// An entity is stored, but it is not agent-bearing (non-type-17).
+    NonAgent,
+}
+
+/// Classifies a governing entity id from stored state. READ-ONLY: the durable
+/// occupancy census is written solely by `apply_put`
+/// ([`crate::agent_def::scan_reserved_actor_ids_once`]); this resolver only
+/// consults it. Read failures resolve fail-closed to `Bound(Proposed)`.
+fn agent_bearing_for_entity(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_ref: EntityId,
+) -> AgentBearing {
+    let occupied = match store.entities.get(txn, entity_ref.as_bytes()) {
+        Ok(raw) => raw.is_some(),
+        Err(error) => {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                %error,
+                "agent definition ceiling read failed; failing closed to proposed",
+            );
+            return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
+        }
+    };
+
+    if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
+        // A pinned preset id confers preset authority only when the occupancy
+        // census has DURABLY completed AND recorded this id as never occupied
+        // AND it is not occupied right now. If the census has not completed —
+        // because its single atomic write never committed (R1) — its value is
+        // absent and Auto is WITHHELD: "could not record occupancy" fails
+        // closed to Proposed rather than resurrecting compiled Auto.
+        // `apply_put` runs the census (open writes the default manifest
+        // through it, observing any on-disk legacy occupant before any caller
+        // holds the vault), so a deleted occupant stays recorded in the census
+        // (delete-to-widen closed).
+        let census_recorded_occupied = match crate::agent_def::reserved_actor_census(store, txn) {
+            Some(census) => crate::agent_def::reserved_actor_id_was_occupied(census, preset),
+            // Census not durably completed (or unreadable) → fail closed.
+            None => true,
+        };
+        if occupied || census_recorded_occupied {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                preset = preset.preset_id(),
+                occupied,
+                census_recorded_occupied,
+                "reserved system agent actor id is occupied, was recorded \
+                 occupied, or its occupancy census has not completed; refusing \
+                 preset authority and failing closed to proposed",
+            );
+            return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
+        }
+        return AgentBearing::Bound(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
+    }
+
+    let Ok(Some(raw)) = store.entities.get(txn, entity_ref.as_bytes()) else {
+        return AgentBearing::Absent;
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        tracing::warn!(
+            actor_entity_id = %entity_ref.to_hex(),
+            "agent definition entity header failed to parse; failing closed to proposed",
+        );
+        return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
+    };
+    if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+        return AgentBearing::NonAgent;
+    }
+    match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+        Ok(def) => {
+            let mut ceiling = PolicyApprovalCeiling::from_agent_ceiling(def.ceiling);
+            if let Some(preset) = def.forked_from {
+                ceiling =
+                    ceiling.restrict(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
+            }
+            AgentBearing::Bound(ceiling)
+        }
+        Err(error) => {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                %error,
+                "agent definition body failed to decode; failing closed to proposed",
+            );
+            AgentBearing::Bound(PolicyApprovalCeiling::Proposed)
+        }
+    }
+}
+
+/// The actor classes the gate recognizes as NON-agent effect principals.
+/// Anything outside this set (and outside `"agent"`) is an unrecognized
+/// assertion and resolves fail-closed.
+const NON_AGENT_EFFECT_ACTOR_CLASSES: [&str; 3] = ["human", "system", "first_party"];
+
+/// Resolves the definition ceiling for an EXTERNAL-EFFECT actor.
+///
+/// Effect inputs are the one gate door whose actor identity is fully
+/// caller-asserted — `actor_class` (a free string), `actor_ref` (what the
+/// manifest rows and scoped grants key on) and `provenance.actor_entity_ref`
+/// (the audited identity) are three independent fields. Three hardenings:
+///
+/// * IDENTITY BINDING (F1/F2): `actor_ref` and `actor_entity_ref` must name
+///   ONE governing identity before any authority is derived — otherwise a
+///   Proposed-ceiling agent could pair its own provenance with an Auto
+///   identity's ref. Mismatched or unparsable pairs fail closed to Proposed.
+/// * ENTITY-TYPE-WINS (class-spoof): the ceiling is derived from what the
+///   governing entity IS, not from the class the caller asserts. A stored
+///   AGENT_DEF (or a preset actor id) is clamped under ANY class string.
+/// * CLASS FAIL-CLOSED (class-spoof): a class that is neither `"agent"` nor a
+///   recognized non-agent principal — unknown, empty, or absent — resolves to
+///   Proposed rather than skipping the clamp. Comparison is case-normalized,
+///   so `"Agent"`/`"AGENT"` cannot dodge the agent path.
+///
+/// (The claim and edge-provenance doors derive both identity fields from a
+/// single `WriteActor`/record and validate the class against the actor
+/// entity's kind, so they are bound by construction.)
+fn agent_definition_ceiling_for_effect_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor_class: &str,
+    actor_ref: Option<&str>,
+    actor_entity_ref: Option<EntityId>,
+) -> Option<PolicyApprovalCeiling> {
+    let normalized_class = actor_class.trim().to_ascii_lowercase();
+    let recognized_non_agent = NON_AGENT_EFFECT_ACTOR_CLASSES.contains(&normalized_class.as_str());
+    let asserts_agent = normalized_class == "agent";
+
+    // Without an audited identity the gate denies the effect outright
+    // (DenyMissingActorProvenance). Resolve fail-closed anyway unless the
+    // caller asserts a recognized non-agent principal, so no path derives
+    // authority from an unaudited ref.
+    let Some(governing) = actor_entity_ref else {
+        return if recognized_non_agent {
+            None
+        } else {
+            Some(PolicyApprovalCeiling::Proposed)
+        };
+    };
+    if let Some(actor_ref) = actor_ref {
+        match EntityId::from_hex(actor_ref) {
+            // An entity-shaped ref MUST name the audited identity, whatever
+            // class is asserted: the manifest keys Auto on `actor_ref` while
+            // the clamp keys on the audited entity, so an unbound pair lets a
+            // Proposed agent borrow an Auto identity's grant.
+            Ok(ref_id) if ref_id != governing => {
+                tracing::warn!(
+                    actor_ref,
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor_ref does not match actor_entity_ref; \
+                     failing closed to proposed",
+                );
+                return Some(PolicyApprovalCeiling::Proposed);
+            }
+            Ok(_) => {}
+            // An opaque principal name. Only recognized non-agent principals
+            // key manifest rows by name; an agent's actor_ref is always the
+            // hex entity id, so a non-hex ref under an agent (or unrecognized)
+            // class is an unbindable assertion.
+            Err(_) if !recognized_non_agent => {
+                tracing::warn!(
+                    actor_ref,
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor_ref is not an entity id under a non-principal class; \
+                     failing closed to proposed",
+                );
+                return Some(PolicyApprovalCeiling::Proposed);
+            }
+            Err(_) => {}
+        }
+    }
+
+    match agent_bearing_for_entity(store, txn, governing) {
+        // Entity-type-wins: an agent-bearing identity is clamped regardless of
+        // the class the caller asserted.
+        AgentBearing::Bound(ceiling) => Some(ceiling),
+        AgentBearing::Absent => {
+            if recognized_non_agent {
+                // A connector/human/system principal whose entity is not
+                // stored keeps today's semantics.
+                None
+            } else {
+                // B3 for asserted agents; fail-closed for unrecognized classes.
+                Some(PolicyApprovalCeiling::Proposed)
+            }
+        }
+        AgentBearing::NonAgent => {
+            if asserts_agent || recognized_non_agent {
+                None
+            } else {
+                tracing::warn!(
+                    actor_class,
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor asserts an unrecognized class; \
+                     failing closed to proposed",
+                );
+                Some(PolicyApprovalCeiling::Proposed)
+            }
+        }
+    }
+}
+
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
@@ -2080,9 +2380,10 @@ pub(crate) fn check_claim_policy_for_write(
     }
 
     if policy.enforces_write_gate() {
-        let (actor, provenance) = if let Some(envelope) = envelope {
+        let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
             let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
+            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
@@ -2093,6 +2394,7 @@ pub(crate) fn check_claim_policy_for_write(
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
+                agent_definition_ceiling,
             )
         } else {
             (
@@ -2104,6 +2406,7 @@ pub(crate) fn check_claim_policy_for_write(
                     actor_entity_ref: Some(local_write_actor_entity_ref()),
                     ..GateProvenanceHandles::default()
                 },
+                None,
             )
         };
         let input = claim_gate_input(
@@ -2113,6 +2416,7 @@ pub(crate) fn check_claim_policy_for_write(
             GateContentKind::Claim,
             provenance,
             mode.include_source_in_gate_input,
+            agent_definition_ceiling,
         );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
@@ -2215,7 +2519,18 @@ pub(crate) fn check_external_effect_policy(
     if let Some((grant_id, _grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
     }
-    let input = hydrated_effect.gate_input();
+    // The effect door NEVER gates ceiling resolution on the caller-asserted
+    // class alone: the resolver binds the identity pair, derives authority
+    // from the governing entity's own type, and fails closed on unrecognized
+    // class assertions.
+    let agent_definition_ceiling = agent_definition_ceiling_for_effect_actor(
+        store,
+        &*wtxn,
+        &hydrated_effect.actor.actor_class,
+        hydrated_effect.actor.actor_ref.as_deref(),
+        hydrated_effect.provenance.actor_entity_ref,
+    );
+    let input = hydrated_effect.gate_input(agent_definition_ceiling);
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
@@ -2648,12 +2963,19 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
     record: &crate::provenance::EdgeProvenanceClaimBody,
     actor_class: EdgeActorClass,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     if policy.enforces_write_gate() {
+        let agent_definition_ceiling = agent_definition_ceiling_for_actor(
+            store,
+            txn,
+            WriteActor::new(record.actor_entity_ref, actor_class),
+        );
         let input = claim_gate_input(
             body,
             policy,
@@ -2670,6 +2992,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 ..GateProvenanceHandles::default()
             },
             false,
+            agent_definition_ceiling,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -2695,6 +3018,7 @@ fn claim_gate_input(
     content_kind: GateContentKind,
     provenance: GateProvenanceHandles,
     include_source: bool,
+    agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 ) -> GateEvaluatorInput {
     let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
     {
@@ -2712,6 +3036,7 @@ fn claim_gate_input(
         policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
         provenance,
         external_effect: None,
+        agent_definition_ceiling,
     }
 }
 

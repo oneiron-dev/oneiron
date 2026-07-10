@@ -1379,10 +1379,10 @@ fn companion_relationship_end_scrubs_private_memory_preserves_data_and_enqueues_
 -> Result<()> {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let relationship_id = entity(0xA1);
-    let general_id = entity(0xA2);
-    let person_ref = entity(0xA3);
-    let persona_ref = entity(0xA4);
+    let relationship_id = entity(0x91);
+    let general_id = entity(0x92);
+    let person_ref = entity(0x93);
+    let persona_ref = entity(0x94);
     let scope = CompanionScope::personal(person_ref);
     let private_note = "private-relationship-note-one1488";
     let record = CompanionRecord::relationship(

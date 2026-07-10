@@ -1231,9 +1231,9 @@ fn max_neighbors_caps_neighbor_count() -> Result<()> {
 fn retrieval_budget_balances_claim_turn_and_facet_before_global_truncation() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
-    let claim_top = EntityId::from_bytes_unchecked([0xA1; 16]);
-    let claim_crowder_a = EntityId::from_bytes_unchecked([0xA2; 16]);
-    let claim_crowder_b = EntityId::from_bytes_unchecked([0xA3; 16]);
+    let claim_top = EntityId::from_bytes_unchecked([0x85; 16]);
+    let claim_crowder_a = EntityId::from_bytes_unchecked([0x86; 16]);
+    let claim_crowder_b = EntityId::from_bytes_unchecked([0x87; 16]);
     let turn = EntityId::from_bytes_unchecked([0xB1; 16]);
     let facet = EntityId::from_bytes_unchecked([0xC1; 16]);
 
