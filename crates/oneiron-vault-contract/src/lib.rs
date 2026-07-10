@@ -65,9 +65,8 @@ pub struct WakeEntry {
 }
 
 impl WakeEntry {
-    /// Concrete fire time. Window jitter: start + blake3-free stable hash of the
-    /// vault name modulo width (pinned algorithm lives supervisor-side; this
-    /// helper is only used by tests). Zero-width window = Exact(start).
+    /// Bounds checks only (id length, reason_tag length, window ordering).
+    /// Concrete fire-time selection and window jitter live supervisor-side.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.id.is_empty() && self.id.len() <= 128, "bad entry id");
         anyhow::ensure!(self.reason_tag.len() <= MAX_REASON_TAG, "reason_tag too long");
@@ -164,7 +163,11 @@ impl Drop for Credentials {
 /// opened. `read_exact` loops internally; a trailing byte is fatal.
 pub fn read_credentials(mut r: impl Read) -> anyhow::Result<Credentials> {
     let mut buf = [0u8; CREDENTIALS_LEN];
-    r.read_exact(&mut buf).map_err(|e| anyhow::anyhow!("credentials short read: {e}"))?;
+    if let Err(e) = r.read_exact(&mut buf) {
+        // A short read may still have written partial secret bytes.
+        buf.zeroize();
+        anyhow::bail!("credentials short read: {e}");
+    }
     let mut trailing = [0u8; 1];
     match r.read(&mut trailing) {
         Ok(0) => {}
@@ -196,7 +199,15 @@ pub fn write_credentials(mut w: impl Write, dek: &[u8; DEK_LEN], token: &[u8; TO
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    // Single allocation, no per-byte format! temporaries (secret material may
+    // pass through here via TokenHex::from_token).
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
 }
 
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
@@ -233,6 +244,30 @@ mod tests {
         let t = TokenHex::new("deadbeef".into());
         assert_eq!(format!("{t:?}"), "TokenHex(<redacted>)");
         assert_eq!(t.expose(), "deadbeef");
+    }
+
+    #[test]
+    fn hex_roundtrip() {
+        let bytes = [0x00u8, 0x0f, 0xa5, 0xff];
+        assert_eq!(hex(&bytes), "000fa5ff");
+        assert_eq!(from_hex("000fa5ff").unwrap(), bytes.to_vec());
+    }
+
+    /// TokenHex is #[serde(transparent)]: the wire shape must stay byte-identical
+    /// to the plain String field it replaced (contract version 1 unchanged).
+    #[test]
+    fn ledger_update_wire_shape() {
+        let u = LedgerUpdate {
+            op: "ledger_update".into(),
+            vault: "v".into(),
+            token: TokenHex::new("aa".into()),
+            rev: 1,
+            entries: vec![],
+        };
+        let j = serde_json::to_value(&u).unwrap();
+        assert_eq!(j["token"], "aa");
+        let back: LedgerUpdate = serde_json::from_str(r#"{"op":"ledger_update","vault":"v","token":"aa","rev":1,"entries":[]}"#).unwrap();
+        assert_eq!(back.token.expose(), "aa");
     }
 
     #[test]
