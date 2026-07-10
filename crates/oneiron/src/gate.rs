@@ -111,7 +111,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 12;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 13;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -475,6 +475,7 @@ pub(crate) enum GateMetricReasonClass {
     ExternalEffectAuthority,
     CounterpartyOptOut,
     EffectorBudget,
+    CharterPolicy,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -494,6 +495,7 @@ impl GateMetricReasonClass {
             Self::ExternalEffectAuthority => "external_effect_authority",
             Self::CounterpartyOptOut => "counterparty_opt_out",
             Self::EffectorBudget => "effector_budget",
+            Self::CharterPolicy => "charter_policy",
         }
     }
 
@@ -511,6 +513,7 @@ impl GateMetricReasonClass {
             Self::ExternalEffectAuthority => 9,
             Self::CounterpartyOptOut => 10,
             Self::EffectorBudget => 11,
+            Self::CharterPolicy => 12,
         }
     }
 
@@ -528,6 +531,7 @@ impl GateMetricReasonClass {
             Self::ExternalEffectAuthority,
             Self::CounterpartyOptOut,
             Self::EffectorBudget,
+            Self::CharterPolicy,
         ]
     }
 }
@@ -548,6 +552,8 @@ pub(crate) enum GateReasonCode {
     DenyCounterpartyOptOut,
     DenyEffectorBudgetExhausted,
     DenyConnectorKeySuspended,
+    DenyCharterNeverList,
+    PendingCharterDrift,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -568,6 +574,8 @@ impl GateReasonCode {
             Self::DenyCounterpartyOptOut => "gate.deny.counterparty_opt_out",
             Self::DenyEffectorBudgetExhausted => "gate.deny.effector_budget_exhausted",
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
+            Self::DenyCharterNeverList => "gate.deny.charter_never_list",
+            Self::PendingCharterDrift => "gate.pending.charter_drift",
         }
     }
 
@@ -588,6 +596,9 @@ impl GateReasonCode {
             Self::DenyCounterpartyOptOut => GateMetricReasonClass::CounterpartyOptOut,
             Self::DenyEffectorBudgetExhausted | Self::DenyConnectorKeySuspended => {
                 GateMetricReasonClass::EffectorBudget
+            }
+            Self::DenyCharterNeverList | Self::PendingCharterDrift => {
+                GateMetricReasonClass::CharterPolicy
             }
         }
     }
@@ -2557,6 +2568,31 @@ pub(crate) fn check_external_effect_policy(
     if let Some((key_id, mut key)) = governing
         && decision.outcome() == GateOutcome::Allow
     {
+        // GOV-10 charter stage (ONE-1417), between the status wall and the
+        // budget stage: enforcement reads ONLY the compiled policy, never the
+        // charter text. Drift degrades to proposed-only (Pending) until a
+        // human re-stamps; a never-list match denies. Neither debits.
+        let mut charter_wall = None;
+        if key.status == ConnectorKeyStatus::Active
+            && let Some(block) = key.charter.as_ref()
+        {
+            if connector_key::charter_block_drifted(block)? {
+                charter_wall = Some(
+                    GateDecision::pending(vec![GateReasonCode::PendingCharterDrift])
+                        .with_receipt_reasons(["charter_drift"]),
+                );
+            } else if connector_key::charter_never_list_matches(
+                block,
+                &normalized_channel,
+                &hydrated_effect.verb,
+            ) {
+                charter_wall = Some(
+                    GateDecision::deny(GateReasonCode::DenyCharterNeverList)
+                        .with_receipt_reasons(["charter_never_list"]),
+                );
+            }
+        }
+
         if key.status != ConnectorKeyStatus::Active {
             let status_reason = match key.status {
                 ConnectorKeyStatus::Suspended => "connector_key_suspended",
@@ -2572,6 +2608,16 @@ pub(crate) fn check_external_effect_policy(
                         .as_ref()
                         .expect("external effect input"),
                 ));
+        } else if let Some(wall) = charter_wall {
+            // Charter drift / never-list are governance walls, not
+            // accounting: they convert the decision whether or not the
+            // pipeline will execute this dispatch.
+            decision = wall.with_receipt_reasons(external_effect_receipt_reasons(
+                input
+                    .external_effect
+                    .as_ref()
+                    .expect("external effect input"),
+            ));
         } else if admit_for_execution {
             let outcome = connector_key::charge_effector_budgets(
                 store,
@@ -2598,7 +2644,7 @@ pub(crate) fn check_external_effect_policy(
                             wtxn,
                             &key_id,
                             &key,
-                            format!("budget_exhausted:row:{row_index}"),
+                            connector_key::budget_exhausted_reason(row_index),
                             created_at,
                         )?;
                         // Keep the charge's meter echo honest about the flip

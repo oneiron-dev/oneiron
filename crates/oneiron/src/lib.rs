@@ -271,13 +271,15 @@ pub use crate::config::{
     Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
 };
 pub use crate::connector_key::{
-    CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, ConnectorKeyRecord,
-    ConnectorKeyStatus, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
+    CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, CompiledCharter,
+    CompiledConnectorPolicy, ConnectorCharterBlock, ConnectorCharterCompileIssue,
+    ConnectorKeyRecord, ConnectorKeyStatus, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
     EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudget, EffectorBudgetCharge,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetRead,
     EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
-    decode_connector_key_body, encode_connector_key_body,
+    PendingConnectorCharter, compile_connector_charter, decode_connector_key_body,
+    encode_connector_key_body,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,

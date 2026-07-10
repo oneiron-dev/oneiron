@@ -168,6 +168,336 @@ const fn budget_threshold_fired_name(threshold: BudgetThreshold) -> &'static str
     }
 }
 
+/// Suspension reason for an exhausted budget row: key rows report the row
+/// index; compiled-charter rows report the charter-local index.
+pub(crate) fn budget_exhausted_reason(row_index: u16) -> String {
+    if row_index & CONNECTOR_KEY_CHARTER_ROW_BASE == 0 {
+        format!("budget_exhausted:row:{row_index}")
+    } else {
+        format!(
+            "budget_exhausted:charter_row:{}",
+            row_index & !CONNECTOR_KEY_CHARTER_ROW_BASE
+        )
+    }
+}
+
+// --- Charter compiler (GOV-10, ONE-1417) --------------------------------------
+
+/// Domain tag for the compiled-policy hash.
+const CONNECTOR_CHARTER_COMPILED_DOMAIN: &[u8] = b"oneiron.connector_charter.compiled.v1";
+/// Domain tag for the human-stamped aggregate binding text + compiled policy.
+pub(crate) const CONNECTOR_CHARTER_STAMP_DOMAIN: &[u8] = b"oneiron.connector_charter.stamp.v1";
+
+/// ISO-4217 currencies with exponent 0 (major unit == minor unit); every
+/// other currency compiles major → minor with the default exponent 2.
+/// Pinned by the M8 / R7 resolution (2026-07-10).
+const ISO_4217_ZERO_EXPONENT_CURRENCIES: [&str; 3] = ["JPY", "KRW", "VND"];
+
+/// Output of one deterministic charter compile: same text ⇒ same struct ⇒
+/// same hashes. The compiler is a mechanical parser — no model in the loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledCharter {
+    pub text_hash: [u8; 32],
+    pub compiled: CompiledConnectorPolicy,
+    pub compiled_hash: [u8; 32],
+}
+
+/// A fail-closed charter compile error: 1-based line number over the
+/// CRLF-normalized text. Maps into [`Error::ConnectorCharterCompile`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectorCharterCompileIssue {
+    pub line_number: u32,
+    pub message: String,
+}
+
+impl From<ConnectorCharterCompileIssue> for Error {
+    fn from(issue: ConnectorCharterCompileIssue) -> Self {
+        Error::ConnectorCharterCompile {
+            line_number: issue.line_number,
+            message: issue.message,
+        }
+    }
+}
+
+fn sha256_bytes(chunks: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for chunk in chunks {
+        hasher.update(chunk);
+    }
+    hasher.finalize().into()
+}
+
+/// Canonical msgpack bytes for a compiled policy (the hash input).
+fn encode_compiled_policy_bytes(compiled: &CompiledConnectorPolicy) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &encode_compiled_policy(compiled)).map_err(|_| {
+        Error::InvariantViolation("compiled connector policy MessagePack encode failed")
+    })?;
+    Ok(out)
+}
+
+pub(crate) fn compiled_policy_hash(compiled: &CompiledConnectorPolicy) -> Result<[u8; 32]> {
+    Ok(sha256_bytes(&[
+        CONNECTOR_CHARTER_COMPILED_DOMAIN,
+        &encode_compiled_policy_bytes(compiled)?,
+    ]))
+}
+
+/// The human stamp binds text and compiled policy as ONE aggregate.
+pub(crate) fn charter_stamped_aggregate(
+    text_hash: &[u8; 32],
+    compiled_hash: &[u8; 32],
+) -> [u8; 32] {
+    sha256_bytes(&[CONNECTOR_CHARTER_STAMP_DOMAIN, text_hash, compiled_hash])
+}
+
+/// Recomputes the stamped aggregate from the STORED text and compiled policy
+/// and compares it to the stamp. Any mismatch degrades enforcement to
+/// proposed-only (`gate.pending.charter_drift`) until a human re-stamps.
+pub(crate) fn charter_block_drifted(block: &ConnectorCharterBlock) -> Result<bool> {
+    let text_hash = sha256_bytes(&[block.text.as_bytes()]);
+    let compiled_hash = compiled_policy_hash(&block.compiled)?;
+    Ok(charter_stamped_aggregate(&text_hash, &compiled_hash) != block.stamped_aggregate)
+}
+
+/// Never-list matching: an entry `"{c}:{v}"` matches iff (`c == "*"` or
+/// `c ==` the normalized effect channel) and (`v == "*"` or `v ==` the
+/// trimmed, lowercased effect verb).
+pub(crate) fn charter_never_list_matches(
+    block: &ConnectorCharterBlock,
+    normalized_channel: &str,
+    verb: &str,
+) -> bool {
+    let verb = verb.trim().to_ascii_lowercase();
+    block.compiled.never_list.iter().any(|entry| {
+        let Some((channel_part, verb_part)) = entry.split_once(':') else {
+            return false;
+        };
+        (channel_part == "*" || channel_part == normalized_channel)
+            && (verb_part == "*" || verb_part == verb)
+    })
+}
+
+/// Compiles a natural-language charter (the pinned 6-form constrained-English
+/// grammar) into a deterministic policy. Fail-closed: any unrecognized or
+/// malformed non-empty line aborts the whole compile with its 1-based line
+/// number — no partial output.
+pub fn compile_connector_charter(
+    text: &str,
+) -> std::result::Result<CompiledCharter, ConnectorCharterCompileIssue> {
+    let normalized = text.replace("\r\n", "\n");
+    let text_hash = sha256_bytes(&[normalized.as_bytes()]);
+
+    let mut never_list: Vec<String> = Vec::new();
+    let mut channel_caps: Vec<EffectorBudget> = Vec::new();
+    for (index, line) in normalized.lines().enumerate() {
+        let line_number = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
+        let issue = |message: &str| ConnectorCharterCompileIssue {
+            line_number,
+            message: message.to_owned(),
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        match parse_charter_directive(trimmed).map_err(|message| issue(&message))? {
+            CharterDirective::Never(entry) => never_list.push(entry),
+            CharterDirective::Cap(budget) => {
+                if channel_caps.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
+                    return Err(issue("too many charter channel caps"));
+                }
+                validate_budget_row(&budget).map_err(|error| match error {
+                    Error::InvalidConnectorKeyBody(reason) => issue(reason),
+                    _ => issue("invalid charter cap"),
+                })?;
+                channel_caps.push(budget);
+            }
+        }
+    }
+
+    never_list.sort();
+    never_list.dedup();
+    let compiled = CompiledConnectorPolicy {
+        never_list,
+        channel_caps,
+    };
+    let compiled_hash =
+        compiled_policy_hash(&compiled).map_err(|_| ConnectorCharterCompileIssue {
+            line_number: 0,
+            message: "compiled policy encode failed".to_owned(),
+        })?;
+    Ok(CompiledCharter {
+        text_hash,
+        compiled,
+        compiled_hash,
+    })
+}
+
+enum CharterDirective {
+    Never(String),
+    Cap(EffectorBudget),
+}
+
+fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, String> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    let keyword = tokens[0].to_ascii_lowercase();
+    match keyword.as_str() {
+        // `never <verb>` | `never <verb> on <channel>`
+        "never" => match tokens.len() {
+            2 => Ok(CharterDirective::Never(format!(
+                "*:{}",
+                parse_charter_verb(tokens[1])?
+            ))),
+            4 if tokens[2].eq_ignore_ascii_case("on") => {
+                let verb = parse_charter_verb(tokens[1])?;
+                let channel = parse_charter_channel(tokens[3])?;
+                Ok(CharterDirective::Never(format!("{channel}:{verb}")))
+            }
+            _ => Err("unrecognized charter directive".to_owned()),
+        },
+        // `cap <n> sends per <day|week|month|<m>s> on <channel>`
+        // `cap spend <n> <unit> per <day|week|month> on <channel>`
+        "cap" => {
+            if tokens.len() == 8 && tokens[1].eq_ignore_ascii_case("spend") {
+                if !tokens[4].eq_ignore_ascii_case("per") || !tokens[6].eq_ignore_ascii_case("on") {
+                    return Err("unrecognized charter directive".to_owned());
+                }
+                let major_units = parse_charter_number(tokens[2], "invalid spend cap amount")?;
+                let unit = tokens[3];
+                let limit = charter_spend_limit(major_units, unit)?;
+                let period = parse_calendar_period(tokens[5])
+                    .ok_or_else(|| "invalid calendar period".to_owned())?;
+                let channel = parse_charter_channel(tokens[7])?;
+                Ok(CharterDirective::Cap(EffectorBudget {
+                    dimension: EffectorBudgetDimension::Spend,
+                    channel_class: Some(channel),
+                    limit,
+                    unit: Some(unit.to_owned()),
+                    window: EffectorBudgetWindow::Calendar { period, tz: None },
+                    on_exhaust: EffectorBudgetOnExhaust::Suspend,
+                    reserve_policy: None,
+                }))
+            } else if tokens.len() == 7 && tokens[2].eq_ignore_ascii_case("sends") {
+                if !tokens[3].eq_ignore_ascii_case("per") || !tokens[5].eq_ignore_ascii_case("on") {
+                    return Err("unrecognized charter directive".to_owned());
+                }
+                let limit = parse_charter_number(tokens[1], "invalid sends cap limit")?;
+                let window = parse_charter_window(tokens[4])?;
+                let channel = parse_charter_channel(tokens[6])?;
+                Ok(CharterDirective::Cap(EffectorBudget {
+                    dimension: EffectorBudgetDimension::Sends,
+                    channel_class: Some(channel),
+                    limit,
+                    unit: None,
+                    window,
+                    on_exhaust: EffectorBudgetOnExhaust::Suspend,
+                    reserve_policy: None,
+                }))
+            } else {
+                Err("unrecognized charter directive".to_owned())
+            }
+        }
+        // `rate <n> per <m>s on <channel>`
+        "rate" => {
+            if tokens.len() != 6
+                || !tokens[2].eq_ignore_ascii_case("per")
+                || !tokens[4].eq_ignore_ascii_case("on")
+            {
+                return Err("unrecognized charter directive".to_owned());
+            }
+            let limit = parse_charter_number(tokens[1], "invalid rate limit")?;
+            let duration_s = parse_rolling_duration(tokens[3])?;
+            let channel = parse_charter_channel(tokens[5])?;
+            Ok(CharterDirective::Cap(EffectorBudget {
+                dimension: EffectorBudgetDimension::Rate,
+                channel_class: Some(channel),
+                limit,
+                unit: None,
+                window: EffectorBudgetWindow::Rolling { duration_s },
+                on_exhaust: EffectorBudgetOnExhaust::Refuse,
+                reserve_policy: None,
+            }))
+        }
+        _ => Err("unrecognized charter directive".to_owned()),
+    }
+}
+
+fn parse_charter_verb(token: &str) -> std::result::Result<String, String> {
+    if token == "*" {
+        return Ok("*".to_owned());
+    }
+    let verb = token.to_ascii_lowercase();
+    if !verb.is_empty()
+        && verb
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        Ok(verb)
+    } else {
+        Err("invalid verb".to_owned())
+    }
+}
+
+fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {
+    let channel = normalize_connector_key(token);
+    if channel.is_empty() {
+        return Err("invalid channel".to_owned());
+    }
+    Ok(channel)
+}
+
+fn parse_charter_number(token: &str, message: &str) -> std::result::Result<u64, String> {
+    match token.parse::<u64>() {
+        Ok(value) if value >= 1 => Ok(value),
+        _ => Err(message.to_owned()),
+    }
+}
+
+fn parse_calendar_period(token: &str) -> Option<CalendarPeriod> {
+    CalendarPeriod::parse(token.to_ascii_lowercase().as_str())
+}
+
+fn parse_rolling_duration(token: &str) -> std::result::Result<u64, String> {
+    token
+        .strip_suffix(['s', 'S'])
+        .ok_or_else(|| "invalid window duration".to_owned())
+        .and_then(|digits| parse_charter_number(digits, "invalid window duration"))
+}
+
+fn parse_charter_window(token: &str) -> std::result::Result<EffectorBudgetWindow, String> {
+    if let Some(period) = parse_calendar_period(token) {
+        return Ok(EffectorBudgetWindow::Calendar { period, tz: None });
+    }
+    Ok(EffectorBudgetWindow::Rolling {
+        duration_s: parse_rolling_duration(token)?,
+    })
+}
+
+/// M8 / R7 (2026-07-10): the cap unit MUST equal the connector's declared
+/// denomination — no conversion in the gate, ever. ISO-4217 currencies
+/// compile MAJOR → minor units via the pinned exponent table (default 2;
+/// explicit exponent-0 list JPY/KRW/VND); provider units pass through as
+/// opaque integers.
+fn charter_spend_limit(major_units: u64, unit: &str) -> std::result::Result<u64, String> {
+    validate_spend_unit(unit).map_err(|error| match error {
+        Error::InvalidConnectorKeyBody(reason) => reason.to_owned(),
+        _ => "invalid spend unit".to_owned(),
+    })?;
+    let bytes = unit.as_bytes();
+    let is_iso_currency = bytes.len() == 3 && bytes.iter().all(u8::is_ascii_uppercase);
+    if !is_iso_currency {
+        return Ok(major_units);
+    }
+    let exponent: u32 = if ISO_4217_ZERO_EXPONENT_CURRENCIES.contains(&unit) {
+        0
+    } else {
+        2
+    };
+    major_units
+        .checked_mul(10_u64.pow(exponent))
+        .ok_or_else(|| "spend cap overflows minor units".to_owned())
+}
+
 /// ConnectorKeyRecord lifecycle status.
 ///
 /// v1 reachable states: `Active ⇄ Suspended`, `→ Revoked` (terminal).
@@ -1333,6 +1663,34 @@ pub(crate) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> 
     key
 }
 
+/// Deletes every compiled-cap usage row (`0x8000 | *`) for one key. Called
+/// by charter approve so a re-stamped charter never inherits positional
+/// usage from the previous charter's caps.
+fn delete_charter_usage_rows_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut prefix = Vec::with_capacity(CONNECTOR_KEY_USAGE_PREFIX.len() + ENTITY_ID_LEN);
+    prefix.extend_from_slice(CONNECTOR_KEY_USAGE_PREFIX);
+    prefix.extend_from_slice(id.as_bytes());
+    let mut doomed = Vec::new();
+    for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
+        let (key, _) = entry?;
+        if key.len() != prefix.len() + size_of::<u16>() {
+            return Err(Error::CorruptedIndex("connector key usage row key"));
+        }
+        let row_index = u16::from_be_bytes([key[prefix.len()], key[prefix.len() + 1]]);
+        if row_index & CONNECTOR_KEY_CHARTER_ROW_BASE != 0 {
+            doomed.push(key.to_vec());
+        }
+    }
+    for key in doomed {
+        store.vault_meta.delete(wtxn, &key)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn connector_key_usage_row_key(id: &EntityId, row_index: u16) -> Vec<u8> {
     let mut key =
         Vec::with_capacity(CONNECTOR_KEY_USAGE_PREFIX.len() + ENTITY_ID_LEN + size_of::<u16>());
@@ -2163,14 +2521,7 @@ impl Vault {
             && budget.on_exhaust == EffectorBudgetOnExhaust::Suspend
             && settled_record.status == ConnectorKeyStatus::Active
         {
-            let reason = if row_index & CONNECTOR_KEY_CHARTER_ROW_BASE == 0 {
-                format!("budget_exhausted:row:{row_index}")
-            } else {
-                format!(
-                    "budget_exhausted:charter_row:{}",
-                    row_index & !CONNECTOR_KEY_CHARTER_ROW_BASE
-                )
-            };
+            let reason = budget_exhausted_reason(row_index);
             settled_record = suspend_connector_key_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -2194,6 +2545,139 @@ impl Vault {
         )?;
         wtxn.commit()?;
         Ok(row_read)
+    }
+
+    /// Compiles and STAGES a charter proposal (GOV-10). Never changes
+    /// enforcement — that is the human gate. Overwrites a previous pending
+    /// proposal; the receipt trail records both.
+    pub fn propose_connector_charter(
+        &self,
+        id: &EntityId,
+        text: &str,
+        proposed_at: u64,
+    ) -> Result<PendingConnectorCharter> {
+        let compiled = compile_connector_charter(text).map_err(Error::from)?;
+        let normalized = text.replace("\r\n", "\n");
+        let mut wtxn = self.store.env.write_txn()?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("charter op on revoked key"));
+        }
+        let pending = PendingConnectorCharter {
+            text: normalized,
+            text_hash: compiled.text_hash,
+            compiled: compiled.compiled,
+            compiled_hash: compiled.compiled_hash,
+            proposed_at,
+        };
+        let proposed = ConnectorKeyRecord {
+            pending_charter: Some(pending.clone()),
+            ..record
+        };
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &proposed)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.charter_propose",
+            &proposed,
+            policy.read_frontier_hash()?,
+            proposed_at,
+        )?;
+        wtxn.commit()?;
+        Ok(pending)
+    }
+
+    /// The human gate (GOV-10): applies the staged compile iff the caller
+    /// re-presents its compiled hash out-of-band, and stamps the aggregate
+    /// binding text + compiled policy. Clears every compiled-cap usage row
+    /// (`0x8000 | *`) in the same txn — compiled-cap usage is keyed
+    /// positionally, so a re-stamped charter must never inherit the old
+    /// charter's usage at the same indices or leave orphaned rows.
+    ///
+    /// There is deliberately NO single-call compile-and-activate API; which
+    /// callers may invoke `approve` is host-surface policy (the same trust
+    /// boundary as every owner Vault op) — in-engine the gate is the
+    /// propose/approve split plus the receipt trail.
+    pub fn approve_connector_charter(
+        &self,
+        id: &EntityId,
+        expected_compiled_hash: [u8; 32],
+        stamped_by: &str,
+        stamped_at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        if stamped_by.trim().is_empty() {
+            return Err(invalid_body("stamped_by must not be blank"));
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        let Some(pending) = record.pending_charter.clone() else {
+            return Err(Error::ConnectorCharterMissing);
+        };
+        if pending.compiled_hash != expected_compiled_hash {
+            return Err(Error::ConnectorCharterApprovalMismatch);
+        }
+        let stamped = ConnectorKeyRecord {
+            charter: Some(ConnectorCharterBlock {
+                stamped_aggregate: charter_stamped_aggregate(
+                    &pending.text_hash,
+                    &pending.compiled_hash,
+                ),
+                text: pending.text,
+                text_hash: pending.text_hash,
+                compiled: pending.compiled,
+                compiled_hash: pending.compiled_hash,
+                stamped_by: stamped_by.to_owned(),
+                stamped_at,
+            }),
+            pending_charter: None,
+            ..record
+        };
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &stamped)?;
+        delete_charter_usage_rows_in_txn(&self.store, &mut wtxn, id)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.charter_approve",
+            &stamped,
+            policy.read_frontier_hash()?,
+            stamped_at,
+        )?;
+        wtxn.commit()?;
+        Ok(stamped)
+    }
+
+    /// Owner rejection of a staged charter compile (GOV-10): clears the
+    /// pending proposal, receipted. Enforcement was never changed by it.
+    pub fn discard_connector_charter(&self, id: &EntityId, at: u64) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.pending_charter.is_none() {
+            return Err(Error::ConnectorCharterMissing);
+        }
+        let discarded = ConnectorKeyRecord {
+            pending_charter: None,
+            ..record
+        };
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &discarded)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.charter_discard",
+            &discarded,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        wtxn.commit()?;
+        Ok(discarded)
     }
 
     fn apply_connector_key_body(

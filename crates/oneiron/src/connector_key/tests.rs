@@ -946,3 +946,245 @@ fn effector_budget_read_resolves_actor_and_reflects_suspension() -> Result<()> {
     assert_eq!(read.status, ConnectorKeyStatus::Suspended);
     Ok(())
 }
+
+// --- GOV-10 charter -> compiled policy (ONE-1417) -----------------------------
+
+const CHARTER_FIXTURE_LF: &str = "\
+# Herald charter
+never delete on slack
+
+never call
+cap 5 sends per day on slack
+cap 3 sends per 3600s on line
+cap spend 100 USD per month on slack
+cap spend 5000 JPY per day on line
+rate 10 per 60s on email
+";
+
+#[test]
+fn charter_compile_is_deterministic_and_normalizes_crlf() {
+    let crlf = CHARTER_FIXTURE_LF.replace('\n', "\r\n");
+    let first = compile_connector_charter(&crlf).expect("compiles");
+    let second = compile_connector_charter(&crlf).expect("compiles");
+    assert_eq!(first, second);
+    assert_eq!(first.text_hash, second.text_hash);
+    assert_eq!(first.compiled_hash, second.compiled_hash);
+
+    // CRLF normalization: the LF variant hashes identically.
+    let lf = compile_connector_charter(CHARTER_FIXTURE_LF).expect("compiles");
+    assert_eq!(lf.text_hash, first.text_hash);
+    assert_eq!(lf.compiled_hash, first.compiled_hash);
+    assert_eq!(lf.compiled, first.compiled);
+
+    // never_list is sorted + deduped; caps keep charter order.
+    assert_eq!(
+        first.compiled.never_list,
+        vec!["*:call".to_owned(), "slack:delete".to_owned()]
+    );
+    assert_eq!(first.compiled.channel_caps.len(), 5);
+    let caps = &first.compiled.channel_caps;
+    assert_eq!(caps[0].dimension, EffectorBudgetDimension::Sends);
+    assert_eq!(caps[0].channel_class.as_deref(), Some("slack"));
+    assert_eq!(caps[0].limit, 5);
+    assert_eq!(
+        caps[0].window,
+        EffectorBudgetWindow::Calendar {
+            period: CalendarPeriod::Day,
+            tz: None,
+        }
+    );
+    assert_eq!(caps[0].on_exhaust, EffectorBudgetOnExhaust::Suspend);
+    assert_eq!(
+        caps[1].window,
+        EffectorBudgetWindow::Rolling { duration_s: 3_600 }
+    );
+    // ISO-4217 major -> minor via the pinned exponent table: USD exponent 2.
+    assert_eq!(caps[2].dimension, EffectorBudgetDimension::Spend);
+    assert_eq!(caps[2].limit, 10_000);
+    assert_eq!(caps[2].unit.as_deref(), Some("USD"));
+    // JPY is on the explicit exponent-0 list.
+    assert_eq!(caps[3].limit, 5_000);
+    assert_eq!(caps[3].unit.as_deref(), Some("JPY"));
+    assert_eq!(caps[4].dimension, EffectorBudgetDimension::Rate);
+    assert_eq!(caps[4].on_exhaust, EffectorBudgetOnExhaust::Refuse);
+    assert_eq!(
+        caps[4].window,
+        EffectorBudgetWindow::Rolling { duration_s: 60 }
+    );
+
+    // Keyword case variants compile to the SAME struct and compiled_hash
+    // (text_hash may differ — the stamp binds both).
+    let shouty = "\
+# Herald charter
+NEVER delete ON slack
+
+Never call
+Cap 5 SENDS Per Day On slack
+CAP 3 sends per 3600s on line
+cap SPEND 100 USD PER month on slack
+cap spend 5000 JPY per DAY on line
+RATE 10 per 60s ON email
+";
+    let shouty = compile_connector_charter(shouty).expect("compiles");
+    assert_eq!(shouty.compiled, first.compiled);
+    assert_eq!(shouty.compiled_hash, first.compiled_hash);
+    assert_ne!(shouty.text_hash, first.text_hash);
+}
+
+#[test]
+fn charter_compile_fails_closed_with_line_numbers() {
+    let unrecognized = "never delete on slack\n\nnever\n";
+    let issue = compile_connector_charter(unrecognized).expect_err("fail closed");
+    assert_eq!(issue.line_number, 3);
+    assert_eq!(issue.message, "unrecognized charter directive");
+
+    let zero_limit = "cap 0 sends per day on slack";
+    let issue = compile_connector_charter(zero_limit).expect_err("fail closed");
+    assert_eq!(issue.line_number, 1);
+    assert_eq!(issue.message, "invalid sends cap limit");
+
+    let lowercase_currency = "# ok\ncap spend 5 usd per day on slack";
+    let issue = compile_connector_charter(lowercase_currency).expect_err("fail closed");
+    assert_eq!(issue.line_number, 2);
+    assert_eq!(issue.message, "spend unit currency code must be uppercase");
+
+    let zero_window = "rate 5 per 0s on slack";
+    let issue = compile_connector_charter(zero_window).expect_err("fail closed");
+    assert_eq!(issue.line_number, 1);
+    assert_eq!(issue.message, "invalid window duration");
+
+    // Provider-unit spend caps pass through opaque (M8).
+    let provider = compile_connector_charter("cap spend 500 credits per day on slack")
+        .expect("provider units compile");
+    assert_eq!(provider.compiled.channel_caps[0].limit, 500);
+    assert_eq!(
+        provider.compiled.channel_caps[0].unit.as_deref(),
+        Some("credits")
+    );
+}
+
+#[test]
+fn charter_never_list_matching_forms() {
+    let block = |entries: &[&str]| ConnectorCharterBlock {
+        text: "fixture".to_owned(),
+        text_hash: [0; 32],
+        compiled: CompiledConnectorPolicy {
+            never_list: entries.iter().map(|entry| (*entry).to_owned()).collect(),
+            channel_caps: Vec::new(),
+        },
+        compiled_hash: [0; 32],
+        stamped_aggregate: [0; 32],
+        stamped_by: "owner".to_owned(),
+        stamped_at: 1,
+    };
+    // "*:{verb}" matches the verb on any channel.
+    let any_channel = block(&["*:delete"]);
+    assert!(charter_never_list_matches(&any_channel, "slack", "delete"));
+    assert!(charter_never_list_matches(&any_channel, "line", " Delete "));
+    assert!(!charter_never_list_matches(&any_channel, "slack", "send"));
+    // "{channel}:*" matches every verb on the channel.
+    let any_verb = block(&["slack:*"]);
+    assert!(charter_never_list_matches(&any_verb, "slack", "send"));
+    assert!(!charter_never_list_matches(&any_verb, "line", "send"));
+    // Exact pair.
+    let exact = block(&["slack:call"]);
+    assert!(charter_never_list_matches(&exact, "slack", "call"));
+    assert!(!charter_never_list_matches(&exact, "slack", "send"));
+    assert!(!charter_never_list_matches(&exact, "line", "call"));
+}
+
+#[test]
+fn charter_propose_approve_discard_lifecycle() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xC5);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000),
+    )?;
+
+    // Approve/discard without a staged proposal fail closed.
+    assert!(matches!(
+        vault.approve_connector_charter(&id, [0; 32], "owner", 1_001),
+        Err(Error::ConnectorCharterMissing)
+    ));
+    assert!(matches!(
+        vault.discard_connector_charter(&id, 1_001),
+        Err(Error::ConnectorCharterMissing)
+    ));
+
+    // Propose stages the compile and NEVER changes enforcement state.
+    let pending = vault.propose_connector_charter(&id, "never delete on slack", 1_002)?;
+    let record = vault.get_connector_key(&id)?.expect("record");
+    assert!(record.charter.is_none());
+    assert_eq!(record.pending_charter.as_ref(), Some(&pending));
+
+    // A malformed charter is rejected fail-closed and does not clobber the
+    // staged proposal.
+    assert!(matches!(
+        vault.propose_connector_charter(&id, "cap 0 sends per day on slack", 1_003),
+        Err(Error::ConnectorCharterCompile { line_number: 1, .. })
+    ));
+    assert_eq!(
+        vault
+            .get_connector_key(&id)?
+            .expect("record")
+            .pending_charter
+            .as_ref(),
+        Some(&pending)
+    );
+
+    // The human gate demands the out-of-band re-presented hash.
+    assert!(matches!(
+        vault.approve_connector_charter(&id, [0xAB; 32], "owner", 1_004),
+        Err(Error::ConnectorCharterApprovalMismatch)
+    ));
+    assert!(matches!(
+        vault.approve_connector_charter(&id, pending.compiled_hash, "  ", 1_004),
+        Err(Error::InvalidConnectorKeyBody(
+            "stamped_by must not be blank"
+        ))
+    ));
+    let stamped =
+        vault.approve_connector_charter(&id, pending.compiled_hash, "owner:olety", 1_005)?;
+    let block = stamped.charter.as_ref().expect("stamped charter");
+    assert!(stamped.pending_charter.is_none());
+    assert_eq!(block.stamped_by, "owner:olety");
+    assert_eq!(block.stamped_at, 1_005);
+    assert_eq!(
+        block.stamped_aggregate,
+        charter_stamped_aggregate(&block.text_hash, &block.compiled_hash)
+    );
+    assert!(!charter_block_drifted(block)?);
+
+    // Discard clears a re-staged proposal without touching the stamped block.
+    vault.propose_connector_charter(&id, "never call", 1_006)?;
+    let discarded = vault.discard_connector_charter(&id, 1_007)?;
+    assert!(discarded.pending_charter.is_none());
+    assert_eq!(discarded.charter, stamped.charter);
+
+    // Every charter op is receipted with the ckey grant ref.
+    let receipts = vault.receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Gate))?;
+    let grant_ref = format!("ckey:{}", id.to_hex());
+    for op in [
+        "gate.connector_key.charter_propose",
+        "gate.connector_key.charter_approve",
+        "gate.connector_key.charter_discard",
+    ] {
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.policy_trace.iter().any(|reason| reason == op))
+            .unwrap_or_else(|| panic!("missing {op} receipt"));
+        assert_eq!(
+            receipt.fields.get("grant_ref").map(String::as_str),
+            Some(grant_ref.as_str())
+        );
+    }
+
+    // Charter ops on a revoked key fail closed.
+    vault.revoke_connector_key(&id, 1_010)?;
+    assert!(matches!(
+        vault.propose_connector_charter(&id, "never call", 1_011),
+        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+    ));
+    Ok(())
+}
