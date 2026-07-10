@@ -1294,6 +1294,23 @@ pub struct ConsolidationExecutor<'a> {
     pub sink: &'a mut dyn ConsolidationSink,
 }
 
+/// Outcome of the (possibly multi-step) LLM work inside one consolidation
+/// partition job.
+///
+/// `Trapped` means a durable `call_as_step` suspended the job — the step layer
+/// has ALREADY parked it for resume. A trapped job must therefore Park, never
+/// Complete: no candidates are accepted (the work is not silently dropped-as-
+/// done) and no `ContradictionLeftStanding` gap is written from a merge that
+/// never decided. On resume the memoized steps replay and the job re-runs to a
+/// real decision (#485-1, #485-2).
+enum PartitionRun {
+    Completed {
+        candidates: Vec<PromotionCandidate>,
+        spent: u64,
+    },
+    Trapped,
+}
+
 impl ConsolidationExecutor<'_> {
     fn extraction_request(
         &self,
@@ -1425,7 +1442,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeJobContext<'_>,
         job_id: crate::job_queue::JobId,
         run_id: Option<String>,
-    ) -> DurableStepResult<(Vec<PromotionCandidate>, u64)> {
+    ) -> DurableStepResult<PartitionRun> {
         let run_id_ref = run_id.as_ref();
         let (partition, turn_ids, _watermark) = decode_partition_payload(payload_input)?;
 
@@ -1462,13 +1479,25 @@ impl ConsolidationExecutor<'_> {
                     .saturating_add(response.usage.output.total);
                 (response, spent)
             }
-            StepOutcome::Trapped(_) => return Ok((Vec::new(), 0)),
+            // The extraction step suspended: the job is parked. Surface the
+            // trap so `execute` parks it for resume instead of completing an
+            // empty extraction (#485-1).
+            StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
         let candidates = self.decode_candidates(&partition, &response, ctx.now_ms)?;
-        let (candidates, merge_spent) = self
+        match self
             .resolve_conflicts(candidates, ctx, job_id_for_steps(job_id, run_id_ref))
-            .await?;
-        Ok((candidates, spent.saturating_add(merge_spent)))
+            .await?
+        {
+            PartitionRun::Completed {
+                candidates,
+                spent: merge_spent,
+            } => Ok(PartitionRun::Completed {
+                candidates,
+                spent: spent.saturating_add(merge_spent),
+            }),
+            PartitionRun::Trapped => Ok(PartitionRun::Trapped),
+        }
     }
 
     /// Scoped LLM merge over conflicting sets — ONLY conflicting sets. One
@@ -1482,10 +1511,13 @@ impl ConsolidationExecutor<'_> {
         candidates: Vec<PromotionCandidate>,
         ctx: &WakeJobContext<'_>,
         step_identity: (crate::job_queue::JobId, Option<String>),
-    ) -> DurableStepResult<(Vec<PromotionCandidate>, u64)> {
+    ) -> DurableStepResult<PartitionRun> {
         let conflicts = detect_conflicts(&candidates, &[])?;
         if conflicts.is_empty() {
-            return Ok((candidates, 0));
+            return Ok(PartitionRun::Completed {
+                candidates,
+                spent: 0,
+            });
         }
 
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
@@ -1522,11 +1554,13 @@ impl ConsolidationExecutor<'_> {
                     response
                 }
                 StepOutcome::Trapped(_) => {
-                    // Suspended mid-merge: leave the set unresolved by
-                    // escalating; the resumed job re-runs the memoized step.
-                    dropped.extend(conflict.candidate_indexes.iter().copied());
-                    escalated.push(contradiction_gap(conflict, &members, ctx.now_ms));
-                    continue;
+                    // Suspended mid-merge: the job is parked. STOP and surface
+                    // the trap. Writing a contradiction gap here would fabricate
+                    // a `ContradictionLeftStanding` for a merge that never
+                    // decided (#485-2); accepting partial survivors would drop
+                    // the rest as done. On resume the memoized steps replay and
+                    // this merge re-runs to a real resolution.
+                    return Ok(PartitionRun::Trapped);
                 }
             };
 
@@ -1553,7 +1587,10 @@ impl ConsolidationExecutor<'_> {
             .filter_map(|(index, candidate)| (!dropped.contains(&index)).then_some(candidate))
             .collect();
         surviving.extend(merged);
-        Ok((surviving, spent))
+        Ok(PartitionRun::Completed {
+            candidates: surviving,
+            spent,
+        })
     }
 
     fn merge_request(
@@ -1797,12 +1834,17 @@ impl DreamerJobExecutor for ConsolidationExecutor<'_> {
             .run_partition_job(&job.status.payload.input, ctx, job.status.job.id, run_id)
             .await
         {
-            Ok((candidates, spent)) => {
+            Ok(PartitionRun::Completed { candidates, spent }) => {
                 self.sink.accept(candidates)?;
                 Ok(DreamerJobExecution::Completed {
                     completed_units: spent,
                 })
             }
+            // The step layer already parked the trapped job; Park it for resume
+            // WITHOUT accepting candidates or completing it (#485-1, #485-2).
+            Ok(PartitionRun::Trapped) => Ok(DreamerJobExecution::Park {
+                reason: "durable step trapped for resume".to_owned(),
+            }),
             Err(crate::llm::DurableStepError::DeadlineHardCut) => Ok(DreamerJobExecution::Park {
                 reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
             }),

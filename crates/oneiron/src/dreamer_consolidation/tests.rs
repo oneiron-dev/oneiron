@@ -975,3 +975,145 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     assert_eq!(delta.created, 0);
     Ok(())
 }
+
+#[test]
+fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, _turns, _) = admitted_job_fixture(
+        &vault,
+        &store,
+        0x2C,
+        &[("user", "call me Oleksii"), ("user", "or Alex")],
+    )?;
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+
+    // No script: admission is denied up-front, so generate is never called.
+    let backend = ScriptedBackend::new(Vec::new());
+    // reserve 100 > cap 50 → the extraction step is budget-exhausted, so the
+    // step layer opens a budget trap, parks the job, and returns Trapped.
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        50,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+    };
+    let mut ctx = WakeJobContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+
+    let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+    // A trapped job PARKS for resume; it must NOT complete-as-done (#485-1).
+    assert!(
+        matches!(execution, DreamerJobExecution::Park { .. }),
+        "trapped extraction must park, got {execution:?}"
+    );
+    assert!(sink.accepted.is_empty(), "no candidates sink on a trapped job");
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        0,
+        "admission denied before any generate"
+    );
+    // The step layer parked the job (resumable).
+    assert!(
+        store.parked_job(admitted.status.job.id)?.is_some(),
+        "trapped job is parked for resume"
+    );
+    Ok(())
+}
+
+#[test]
+fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) = admitted_job_fixture(
+        &vault,
+        &store,
+        0x2D,
+        &[("user", "i live in Tokyo"), ("user", "i live in Osaka")],
+    )?;
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+    let subject = EntityId::from_bytes([0x3B; 16]).expect("subject");
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+
+    // Extraction succeeds with two conflicting values; the merge step is then
+    // denied. reserve 100, limit 100: extraction admits (projected 100 ≤ 100)
+    // and settles 50 used, so the merge admit projects 50 + 100 > 100 →
+    // Exhausted → the step layer traps and parks mid-merge.
+    let backend =
+        ScriptedBackend::new(vec![Ok(two_candidate_extraction(&subject, &turns[0], &turns[1]))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        100,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+    };
+    let mut ctx = WakeJobContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+
+    let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
+    // Park, not Complete: the merge never decided (#485-1, #485-2).
+    assert!(
+        matches!(execution, DreamerJobExecution::Park { .. }),
+        "merge-trapped job must park, got {execution:?}"
+    );
+    assert!(
+        sink.accepted.is_empty(),
+        "no partial survivors sink on a trapped merge"
+    );
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        1,
+        "only the extraction step ran; the merge was denied at admission"
+    );
+    assert!(
+        store.parked_job(admitted.status.job.id)?.is_some(),
+        "trapped job is parked for resume"
+    );
+
+    // No FALSE ContradictionLeftStanding gap was written: a fresh upsert of the
+    // contradiction identity CREATES the row. A pre-existing false gap would
+    // make this a refresh instead (#485-2).
+    let probe = ReflectionGap {
+        kind: ReflectionGapKind::ContradictionLeftStanding,
+        subject,
+        evidence_turn_refs: turns,
+        first_seen: 0,
+        last_seen: 0,
+        escalations: 0,
+        decayed: false,
+    };
+    let delta = upsert_gap_queue(&vault, vec![probe], 22_000)?;
+    assert_eq!(delta.created, 1, "no false contradiction gap pre-existed");
+    assert_eq!(delta.refreshed, 0);
+    Ok(())
+}
