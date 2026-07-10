@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::connector_key::EffectorBudgetRead;
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -25,6 +26,7 @@ use crate::gate::{
     GateProvenanceHandles,
 };
 use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatSandboxPolicy};
+use crate::llm::BudgetLadderEvent;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord, outbound_intent_receipt};
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
@@ -585,6 +587,14 @@ pub struct OutboundDispatchResult {
     pub gate_outcome: String,
     pub gate_reason_codes: Vec<String>,
     pub receipt: ReceiptRecord,
+    /// Echo of the post-debit effector meter when a connector key governed
+    /// this dispatch (GOV-02, ONE-1418; A3: a host-call response may ECHO
+    /// `self.budget()` — this is an echo of the meter read, not a second
+    /// delivery lane).
+    pub effector_budget: Option<EffectorBudgetRead>,
+    /// Effector-meter ladder events fired by this dispatch, for the host's
+    /// one steering queue (same contract as `BudgetAdmission.ladder_events`).
+    pub budget_ladder_events: Vec<BudgetLadderEvent>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -888,7 +898,7 @@ impl OutboundDispatchPipeline {
 
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let (gate_decision_id, gate_decision, _effector_charge) =
+        let (gate_decision_id, gate_decision, effector_charge) =
             gate::check_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
@@ -982,6 +992,33 @@ impl OutboundDispatchPipeline {
                 gate_receipt_reasons.join(","),
             );
         }
+        // GOV-02 (ONE-1418) budget legibility: stamped only when a governing
+        // connector key's budget stage ran. `budget_debit`/`budget` are the
+        // exact fields the RS4 receipt projections already sum. A refused
+        // send stamps `budget_debit: "0"` next to the deny reason — the
+        // honest record. `budget` = min remaining over the rows MATCHED by
+        // this dispatch (the binding constraint — M4 resolution 2026-07-10).
+        if let Some(charge) = effector_charge.as_ref() {
+            receipt.fields.insert(
+                "connector_key_ref".to_owned(),
+                format!("ckey:{}", charge.key_ref.to_hex()),
+            );
+            receipt
+                .fields
+                .insert("budget_debit".to_owned(), charge.sends_debit.to_string());
+            let binding_remaining = charge
+                .read
+                .rows
+                .iter()
+                .filter(|row| charge.matched_rows.contains(&row.row_index))
+                .map(|row| row.remaining)
+                .min();
+            if let Some(binding_remaining) = binding_remaining {
+                receipt
+                    .fields
+                    .insert("budget".to_owned(), binding_remaining.to_string());
+            }
+        }
         receipt.fields.insert(
             "channel_call".to_owned(),
             verb_contract.channel_call.clone(),
@@ -1064,12 +1101,18 @@ impl OutboundDispatchPipeline {
             context.append_to_fields(&mut receipt.fields);
         }
 
+        let (effector_budget, budget_ladder_events) = match effector_charge {
+            Some(charge) => (Some(charge.read), charge.ladder_events),
+            None => (None, Vec::new()),
+        };
         Ok(OutboundDispatchResult {
             outcome,
             gate_decision_id: Some(gate_decision_ref),
             gate_outcome,
             gate_reason_codes,
             receipt,
+            effector_budget,
+            budget_ladder_events,
         })
     }
 }

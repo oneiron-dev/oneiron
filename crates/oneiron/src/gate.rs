@@ -2275,7 +2275,7 @@ pub(crate) fn check_external_effect_policy(
                 EffectorBudgetChargeOutcome::Exhausted {
                     row_index,
                     on_exhaust,
-                    charge,
+                    mut charge,
                 } => {
                     if on_exhaust == EffectorBudgetOnExhaust::Suspend {
                         connector_key::suspend_connector_key_in_txn(
@@ -2286,6 +2286,9 @@ pub(crate) fn check_external_effect_policy(
                             format!("budget_exhausted:row:{row_index}"),
                             created_at,
                         )?;
+                        // Keep the charge's meter echo honest about the flip
+                        // that just committed in this txn.
+                        charge.read.status = ConnectorKeyStatus::Suspended;
                     }
                     decision = GateDecision::deny(GateReasonCode::DenyEffectorBudgetExhausted)
                         .with_receipt_reasons(["effector_budget_exhausted"])

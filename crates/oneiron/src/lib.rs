@@ -264,9 +264,12 @@ pub use crate::config::{
 };
 pub use crate::connector_key::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, ConnectorKeyRecord,
-    ConnectorKeyStatus, EffectorBudget, EffectorBudgetCharge, EffectorBudgetDimension,
-    EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetRowRead,
-    EffectorBudgetWindow, decode_connector_key_body, encode_connector_key_body,
+    ConnectorKeyStatus, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
+    EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
+    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudget, EffectorBudgetCharge,
+    EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetRead,
+    EffectorBudgetReservePolicy, EffectorBudgetRowRead, EffectorBudgetWindow,
+    decode_connector_key_body, encode_connector_key_body,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,

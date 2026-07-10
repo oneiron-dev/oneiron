@@ -392,10 +392,10 @@ fn rolling_window_liveness_boundary() {
         fired: Vec::new(),
     };
     // Live at ts + duration_s - 1.
-    usage.touch(&window, 1_059);
+    usage.touch(&window, 5, 1_059);
     assert_eq!(usage.used(), 1);
     // Dead at ts + duration_s.
-    usage.touch(&window, 1_060);
+    usage.touch(&window, 5, 1_060);
     assert_eq!(usage.used(), 0);
 }
 
@@ -411,11 +411,11 @@ fn calendar_rollover_resets_entries_and_fired() {
         fired: vec!["silent50".to_owned()],
     };
     // Same bucket: state survives.
-    usage.touch(&window, 2_000);
+    usage.touch(&window, 5, 2_000);
     assert_eq!(usage.used(), 3);
     assert_eq!(usage.fired, vec!["silent50".to_owned()]);
     // Next day: fresh window, fresh ladder.
-    usage.touch(&window, 86_400 + 1);
+    usage.touch(&window, 5, 86_400 + 1);
     assert_eq!(usage.window_start, 86_400);
     assert_eq!(usage.used(), 0);
     assert!(usage.fired.is_empty());
@@ -785,5 +785,164 @@ fn stored_form_must_be_canonical() -> Result<()> {
         vault.connector_key_for("slack-chat", None)?.is_some(),
         "stored form == index form: the canonical lookup resolves the key"
     );
+    Ok(())
+}
+
+// --- GOV-02 budget legibility + graceful wrap (ONE-1418) ---------------------
+
+#[test]
+fn effector_steering_templates_are_pinned_to_the_one_channel() {
+    assert_eq!(
+        EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID,
+        "effector_budget.plan.80"
+    );
+    assert_eq!(
+        EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
+        "effector_budget.land.95"
+    );
+    assert!(effector_steering_signal(BudgetThreshold::Silent50).is_none());
+    let plan = effector_steering_signal(BudgetThreshold::Plan80).expect("plan steering");
+    assert_eq!(
+        plan.channel,
+        BudgetSignalDeliveryChannel::SteeringQueueNextTurn
+    );
+    assert_eq!(plan.template_id, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID);
+    assert_eq!(plan.message, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE);
+    let land = effector_steering_signal(BudgetThreshold::Land95).expect("land steering");
+    assert_eq!(
+        land.channel,
+        BudgetSignalDeliveryChannel::SteeringQueueNextTurn
+    );
+    assert_eq!(land.template_id, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID);
+    assert_eq!(land.message, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE);
+}
+
+#[test]
+fn rolling_partial_expiry_rearms_only_unsatisfied_thresholds() {
+    let window = EffectorBudgetWindow::Rolling { duration_s: 100 };
+    let mut usage = ConnectorKeyUsage {
+        window_start: 0,
+        entries: vec![(50, 4), (150, 6)],
+        fired: vec![
+            "silent50".to_owned(),
+            "plan80".to_owned(),
+            "land95".to_owned(),
+        ],
+    };
+    // now = 200: the (50, 4) entry is dead; used falls 10 -> 6 of limit 10
+    // (100% -> 60%), re-arming Land95 + Plan80 but NOT Silent50 (M5a).
+    usage.touch(&window, 10, 200);
+    assert_eq!(usage.used(), 6);
+    assert_eq!(usage.fired, vec!["silent50".to_owned()]);
+
+    // Full expiry re-arms everything.
+    usage.touch(&window, 10, 400);
+    assert_eq!(usage.used(), 0);
+    assert!(usage.fired.is_empty());
+}
+
+#[test]
+fn rolling_full_expiry_lets_the_ladder_refire_on_the_next_charge() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let key_id = test_id(0xE5);
+    let mut record = vault.register_connector_key(
+        &key_id,
+        ConnectorKeyRecord::active("line", None, vec![EffectorBudget::rate(2, 60)], 1_000),
+    )?;
+
+    // Seed an exhausted usage row whose entries have expired by `now`
+    // (sleep-free liveness expiry).
+    let seeded = ConnectorKeyUsage {
+        window_start: 0,
+        entries: vec![(1_000, 2)],
+        fired: vec![
+            "silent50".to_owned(),
+            "plan80".to_owned(),
+            "land95".to_owned(),
+        ],
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(
+            wtxn,
+            &connector_key_usage_row_key(&key_id, 0),
+            &seeded.encode()?,
+        )?;
+        Ok(())
+    })?;
+
+    // The next charge sees a fresh window and the ladder re-fires from the
+    // bottom: 1 of 2 = 50% -> Silent50 again.
+    let outcome = vault.with_write_txn(|wtxn| {
+        charge_effector_budgets(
+            &vault.store,
+            wtxn,
+            &key_id,
+            &mut record,
+            "line",
+            false,
+            2_000,
+        )
+    })?;
+    let EffectorBudgetChargeOutcome::Charged(charge) = outcome else {
+        panic!("expected a charged outcome");
+    };
+    let fired: Vec<_> = charge
+        .ladder_events
+        .iter()
+        .map(|event| event.threshold)
+        .collect();
+    assert_eq!(fired, vec![BudgetThreshold::Silent50]);
+    assert_eq!(
+        charge.read.rows[0].fired_thresholds,
+        vec![BudgetThreshold::Silent50]
+    );
+    assert_eq!(charge.matched_rows, vec![0]);
+    Ok(())
+}
+
+#[test]
+fn effector_budget_read_resolves_actor_and_reflects_suspension() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB2);
+    let bound_id = test_id(0xB3);
+    let wide_id = test_id(0xB4);
+    vault.register_connector_key(
+        &bound_id,
+        ConnectorKeyRecord::active(
+            "line",
+            Some(actor),
+            vec![EffectorBudget::rate(5, 60)],
+            1_000,
+        ),
+    )?;
+    vault.register_connector_key(
+        &wide_id,
+        ConnectorKeyRecord::active("line", None, vec![EffectorBudget::rate(9, 60)], 1_001),
+    )?;
+
+    // Exact-actor key wins over the connector-wide key.
+    let read = vault
+        .effector_budget_read("line", Some(&actor))?
+        .expect("exact-actor key");
+    assert_eq!(read.key_ref, bound_id);
+    assert_eq!(read.rows.len(), 1);
+    assert_eq!(read.rows[0].limit, 5);
+    assert_eq!(read.rows[0].used, 0);
+    assert_eq!(read.rows[0].remaining, 5);
+
+    let read = vault
+        .effector_budget_read("line", None)?
+        .expect("connector-wide key");
+    assert_eq!(read.key_ref, wide_id);
+
+    // Unknown connector: no meter.
+    assert!(vault.effector_budget_read("unknown", None)?.is_none());
+
+    // The read reflects suspension status.
+    vault.suspend_connector_key(&bound_id, "owner", 1_010)?;
+    let read = vault
+        .effector_budget_read("line", Some(&actor))?
+        .expect("suspended key still reads");
+    assert_eq!(read.status, ConnectorKeyStatus::Suspended);
     Ok(())
 }
