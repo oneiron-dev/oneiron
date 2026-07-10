@@ -34,6 +34,7 @@ pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
+pub mod dreamer_wake;
 pub mod edge;
 pub mod edit_roundtrip;
 pub mod edit_settle;
@@ -370,6 +371,12 @@ pub use crate::dreamer_tournament::{
     DreamerTournamentRunResult, DreamerTournamentStopReason, DreamerTournamentSynthesisArtifact,
     DreamerTournamentSynthesisVerdict, DreamerTournamentWeaveArtifact, DreamerTournamentWinner,
     run_dreamer_claim_tournament,
+};
+#[cfg(feature = "sync")]
+pub use crate::dreamer_wake::WakeProgressLane;
+pub use crate::dreamer_wake::{
+    DreamerJobExecution, DreamerJobExecutor, DreamerWakeDriver, RunWakePass, WakeJobContext,
+    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, request_wake,
 };
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,

@@ -1994,6 +1994,40 @@ impl<'a> DreamerRunnerStore<'a> {
         })
     }
 
+    /// Clears a parked-job row so the job becomes admissible again through
+    /// the normal admission path (ONE-1288).
+    ///
+    /// Returns the job status when a parked row was cleared. A job with NO
+    /// parked row is an idempotent no-op: `Ok(None)`, nothing mutated
+    /// (pinned). `now` is accepted for symmetry with the other transition
+    /// inputs; the queue row is not touched — re-admission re-leases it.
+    pub fn resume_parked(&self, job_id: JobId, now: u64) -> Result<Option<DreamerJobStatus>> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let resumed = self.resume_parked_in_txn(&mut wtxn, job_id, now)?;
+        wtxn.commit()?;
+        Ok(resumed)
+    }
+
+    /// Transaction-composable body of [`Self::resume_parked`], so the trap
+    /// consume path (ONE-1343) can commit the `consumed` transition and this
+    /// un-park in ONE wtxn.
+    pub(crate) fn resume_parked_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        job_id: JobId,
+        _now: u64,
+    ) -> Result<Option<DreamerJobStatus>> {
+        let key = parked_key(job_id);
+        if self.vault.store.vault_meta.get(wtxn, &key)?.is_none() {
+            return Ok(None);
+        }
+        let status = self
+            .status(job_id)?
+            .ok_or(invalid_dreamer_runner("dreamer resumed job must exist"))?;
+        self.vault.store.vault_meta.delete(wtxn, &key)?;
+        Ok(Some(status))
+    }
+
     /// Reads a private parked-job row.
     pub fn parked_job(&self, job_id: JobId) -> Result<Option<DreamerParkedJobRecord>> {
         let rtxn = self.vault.store.env.read_txn()?;
