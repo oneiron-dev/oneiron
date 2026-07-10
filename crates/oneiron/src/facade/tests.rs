@@ -2468,3 +2468,102 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
     let err = facade.schedule_outbound(&bad).expect_err("unknown trigger");
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
 }
+
+/// #484a regression: an unsupported channel is rejected BEFORE the durable
+/// enqueue, so it leaves no orphan job/dedupe entry and a retry (on a
+/// supported channel, same idempotency key) is not wedged as an existing
+/// dedupe hit.
+#[test]
+fn schedule_outbound_unsupported_channel_leaves_no_orphan_and_allows_retry() {
+    use crate::job_queue::{JobQueue, JobState};
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x60);
+    let facade = facade_for(&vault, actor);
+
+    let mut draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "carrier_pigeon".to_owned(),
+        target: "roost@example.com".to_owned(),
+        on_behalf_of: None,
+        content_ref: None,
+        idempotency_key: Some("idem-orphan-1".to_owned()),
+        dedupe_key: Some("dedupe-orphan-1".to_owned()),
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:pigeon".to_owned(),
+        job_ref: None,
+        occurred_at: Some(4000),
+    };
+
+    let err = facade
+        .schedule_outbound(&draft)
+        .expect_err("unsupported channel fails closed");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+
+    // No live (non-cancelled) schedule row orphaned by the failed dispatch.
+    let queue = JobQueue::new(&vault);
+    let live: Vec<_> = queue
+        .list()
+        .expect("list jobs")
+        .into_iter()
+        .filter(|job| {
+            job.kind == BRIDGE_OUTBOUND_JOB_KIND && job.state != JobState::Cancelled
+        })
+        .collect();
+    assert!(
+        live.is_empty(),
+        "unsupported channel must not leave a live outbound job"
+    );
+
+    // A retry on a supported channel with the SAME idempotency key proceeds
+    // (no lingering dedupe entry to coalesce onto).
+    draft.channel = "email".to_owned();
+    let receipt = facade.schedule_outbound(&draft).expect("retry proceeds");
+    assert!(
+        !receipt.deduped,
+        "retry re-enqueues instead of deduping onto an orphan"
+    );
+    assert!(receipt.intent_ref.starts_with("intent:"));
+}
+
+/// #484b regression: an idempotent retry recovers the ORIGINAL gate decision
+/// ref instead of an empty gate result. The first schedule persists its gate
+/// surface keyed by job id; the dedupe branch reads it back.
+#[test]
+fn schedule_outbound_dedupe_recovers_original_gate_decision_ref() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let facade = facade_for(&vault, actor);
+
+    let draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "kenji@example.com".to_owned(),
+        on_behalf_of: None,
+        content_ref: None,
+        idempotency_key: Some("idem-recover-1".to_owned()),
+        dedupe_key: Some("dedupe-recover-1".to_owned()),
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:recover".to_owned(),
+        job_ref: None,
+        occurred_at: Some(5000),
+    };
+
+    let first = facade.schedule_outbound(&draft).expect("first schedule");
+    assert!(!first.deduped);
+    let gate_ref = first
+        .gate_decision_ref
+        .clone()
+        .expect("first schedule persists a gate decision");
+
+    let replay = facade.schedule_outbound(&draft).expect("replay");
+    assert!(replay.deduped);
+    assert_eq!(replay.outcome, "already_scheduled");
+    assert_eq!(
+        replay.gate_decision_ref,
+        Some(gate_ref),
+        "retry recovers the original gate decision ref"
+    );
+    assert_eq!(replay.gate_outcome, first.gate_outcome);
+    assert_eq!(replay.gate_reason_codes, first.gate_reason_codes);
+}

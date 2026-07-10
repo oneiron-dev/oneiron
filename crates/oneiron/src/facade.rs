@@ -49,13 +49,16 @@ use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
-use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId, JobQueue, JobRecord, JobState};
+use crate::job_queue::{
+    EnqueueJob, EnqueueOutcome, InterveneJob, JobId, JobInterventionKind, JobQueue, JobRecord,
+    JobState,
+};
 use crate::llm::BudgetLease;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
-    OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundIntentDraft, OutboundIntentTrigger, outbound_verb_contract,
 };
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{
@@ -900,15 +903,29 @@ pub struct OutboundIntentReceipt {
     /// Dispatch outcome (`held` expected on this schedule-only surface;
     /// `suppressed` on gate denial; `already_scheduled` on dedupe).
     pub outcome: String,
-    /// Gate outcome (`allow`/`pending`/`deny`), absent on dedupe.
+    /// Gate outcome (`allow`/`pending`/`deny`). On dedupe this re-surfaces
+    /// the first schedule's outcome (absent only if its binding is missing).
     pub gate_outcome: Option<String>,
     /// Persisted gate decision ref (`gate:<hex>`), queryable via
-    /// [`MemoryFacade::receipts`]; absent on dedupe.
+    /// [`MemoryFacade::receipts`]. On dedupe this re-surfaces the first
+    /// schedule's decision (absent only if its binding is missing).
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.
     pub gate_reason_codes: Vec<String>,
     /// True when the idempotency key coalesced onto an existing schedule.
     pub deduped: bool,
+}
+
+/// Internal side-index record: the gate surface a scheduled outbound job's
+/// first dispatch produced, persisted by job id so an idempotent replay
+/// (`EnqueueOutcome::Existing`) can re-surface the original decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OutboundGateBinding {
+    gate_outcome: String,
+    #[serde(default)]
+    gate_decision_ref: Option<String>,
+    #[serde(default)]
+    gate_reason_codes: Vec<String>,
 }
 
 /// Parses the pinned actor-key grammar `"<actor_class>:<entity_ref>"`
@@ -2380,6 +2397,18 @@ impl MemoryFacade<'_> {
         };
         let now = draft.occurred_at.unwrap_or_else(crate::unix_seconds_now);
 
+        // Pre-validate the channel/verb capability BEFORE the durable enqueue.
+        // dispatch_outbound_intent resolves the verb contract only AFTER we
+        // have committed the job row + kind-scoped dedupe index, so an
+        // unsupported pair would otherwise leave an orphan job that wedges
+        // every idempotent retry on EnqueueOutcome::Existing (#484a).
+        outbound_verb_contract(&draft.channel, &draft.verb).map_err(|capability| {
+            FacadeError::bad_request_with(
+                format!("unsupported outbound capability: {capability}"),
+                &["Use a registered channel/verb pair from the connector manifest."],
+            )
+        })?;
+
         // Durable idempotency: the dispatch chokepoint performs no dedupe,
         // so the schedule rides the job queue's kind-scoped dedupe index.
         let queue = JobQueue::new(self.vault);
@@ -2397,12 +2426,18 @@ impl MemoryFacade<'_> {
         let job = match outcome {
             EnqueueOutcome::Enqueued(job) => job,
             EnqueueOutcome::Existing(job) => {
+                // Re-surface the ORIGINAL gate decision the first dispatch
+                // persisted, keyed by job id, so an idempotent retry recovers
+                // gate_decision_ref instead of an empty gate result (#484b).
+                let binding = self.outbound_gate_binding(job.id);
                 return Ok(OutboundIntentReceipt {
                     intent_ref: outbound_intent_ref(job.id),
                     outcome: "already_scheduled".to_owned(),
-                    gate_outcome: None,
-                    gate_decision_ref: None,
-                    gate_reason_codes: Vec::new(),
+                    gate_outcome: binding.as_ref().map(|b| b.gate_outcome.clone()),
+                    gate_decision_ref: binding.as_ref().and_then(|b| b.gate_decision_ref.clone()),
+                    gate_reason_codes: binding
+                        .map(|b| b.gate_reason_codes)
+                        .unwrap_or_default(),
                     deduped: true,
                 });
             }
@@ -2446,18 +2481,40 @@ impl MemoryFacade<'_> {
             },
         );
         let mut sink = ScheduleOnlySink;
-        let result = self
-            .vault
-            .dispatch_outbound_intent(request, &mut sink)
-            .map_err(|err| match err {
-                OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
-                OutboundDispatchError::UnsupportedCapability(capability) => {
-                    FacadeError::bad_request_with(
-                        format!("unsupported outbound capability: {capability}"),
-                        &["Use a registered channel/verb pair from the connector manifest."],
-                    )
-                }
-            })?;
+        let result = match self.vault.dispatch_outbound_intent(request, &mut sink) {
+            Ok(result) => result,
+            Err(err) => {
+                // Dispatch failed AFTER the durable enqueue. Best-effort cancel
+                // clears the ready + dedupe entries so a clean retry can
+                // re-enqueue instead of wedging on EnqueueOutcome::Existing
+                // with no gate decision, forever (#484a).
+                let _ = queue.intervene(InterveneJob {
+                    id: job.id,
+                    kind: JobInterventionKind::Cancel,
+                    actor: self.actor.to_hex(),
+                    note: Some("outbound dispatch failed before gate decision".to_owned()),
+                    now,
+                });
+                return Err(match err {
+                    OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
+                    OutboundDispatchError::UnsupportedCapability(capability) => {
+                        FacadeError::bad_request_with(
+                            format!("unsupported outbound capability: {capability}"),
+                            &["Use a registered channel/verb pair from the connector manifest."],
+                        )
+                    }
+                });
+            }
+        };
+        // Persist the gate surface keyed by job id so an idempotent replay
+        // recovers this decision (best-effort; a missing binding degrades a
+        // replay to no gate fields, never a wrong decision) (#484b).
+        self.persist_outbound_gate_binding(
+            job.id,
+            &result.gate_outcome,
+            result.gate_decision_id.as_deref(),
+            &result.gate_reason_codes,
+        );
         Ok(OutboundIntentReceipt {
             intent_ref,
             outcome: dispatch_outcome_str(&result.outcome).to_owned(),
@@ -2466,6 +2523,37 @@ impl MemoryFacade<'_> {
             gate_reason_codes: result.gate_reason_codes,
             deduped: false,
         })
+    }
+
+    /// Persists the gate surface of a scheduled outbound job (best-effort).
+    fn persist_outbound_gate_binding(
+        &self,
+        job_id: JobId,
+        gate_outcome: &str,
+        gate_decision_ref: Option<&str>,
+        gate_reason_codes: &[String],
+    ) {
+        let binding = OutboundGateBinding {
+            gate_outcome: gate_outcome.to_owned(),
+            gate_decision_ref: gate_decision_ref.map(ToOwned::to_owned),
+            gate_reason_codes: gate_reason_codes.to_vec(),
+        };
+        if let Ok(encoded) = serde_json::to_vec(&binding) {
+            let _ = self
+                .vault
+                .store
+                .put_outbound_gate_binding(job_id.as_bytes(), &encoded);
+        }
+    }
+
+    /// Reads the persisted gate surface of a scheduled outbound job, if any.
+    fn outbound_gate_binding(&self, job_id: JobId) -> Option<OutboundGateBinding> {
+        self.vault
+            .store
+            .outbound_gate_binding(job_id.as_bytes())
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
     }
 
     // ── internals ───────────────────────────────────────────────────────
