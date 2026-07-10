@@ -45,6 +45,11 @@ fn ts_from_engine(value: u64, field: &str) -> BoundaryResult<i64> {
     i64::try_from(value).map_err(|_| format!("{field} does not fit a signed 64-bit integer"))
 }
 
+/// Page size for `forget`'s active-claim drain. `forget` re-lists `active`
+/// after each page, so this bounds only per-iteration work, never the total
+/// number of claims retracted.
+const FORGET_PAGE_SIZE: usize = 64;
+
 /// Blob content ceiling for the N-API boundary: 32 MiB raw (double the
 /// B8-validated 16 MiB probe). The base64 length is bounded BEFORE any
 /// decode allocation, so oversized inputs cannot exhaust process memory.
@@ -471,6 +476,34 @@ fn commit_receipt_from_engine(receipt: oneiron::CommitReceipt) -> NapiCommitRece
     }
 }
 
+/// Retracts EVERY active claim matching `subject_ref` + `predicate`, not just
+/// the first page. Each retract moves its claim out of the `active`
+/// lifecycle, so re-listing `active` excludes the already-retracted claims and
+/// the loop drains to an empty page with no offset bookkeeping. Engine-typed
+/// so it is unit-testable without the N-API runtime.
+fn forget_active_matches(
+    facade: &MemoryFacade<'_>,
+    subject_ref: &str,
+    predicate: &str,
+) -> std::result::Result<Vec<oneiron::CommitReceipt>, FacadeError> {
+    let mut receipts = Vec::new();
+    loop {
+        let matches = facade.claim_list(&ClaimListFilter {
+            subject_ref: Some(subject_ref.to_owned()),
+            predicate: Some(predicate.to_owned()),
+            lifecycle: Some("active".to_owned()),
+            limit: FORGET_PAGE_SIZE,
+        })?;
+        if matches.is_empty() {
+            break;
+        }
+        for claim in matches {
+            receipts.push(facade.claim_retract(&claim.claim_ref)?);
+        }
+    }
+    Ok(receipts)
+}
+
 fn entity_view_from_engine(view: oneiron::EntityView) -> BoundaryResult<NapiEntityView> {
     Ok(NapiEntityView {
         id_hex: view.id_hex,
@@ -695,22 +728,9 @@ impl ActorScopedVault {
                 "forget selector needs shortRef, or subjectRef + predicate".to_owned(),
             ));
         };
-        let matches = facade
-            .claim_list(&ClaimListFilter {
-                subject_ref: Some(subject_ref.clone()),
-                predicate: Some(predicate.clone()),
-                lifecycle: Some("active".to_owned()),
-                limit: 64,
-            })
+        let receipts = forget_active_matches(&facade, subject_ref, predicate)
             .map_err(|e| facade_error(&e))?;
-        let mut receipts = Vec::with_capacity(matches.len());
-        for claim in matches {
-            let receipt = facade
-                .claim_retract(&claim.claim_ref)
-                .map_err(|e| facade_error(&e))?;
-            receipts.push(commit_receipt_from_engine(receipt));
-        }
-        Ok(receipts)
+        Ok(receipts.into_iter().map(commit_receipt_from_engine).collect())
     }
 
     /// Lists claims by subject/predicate/lifecycle, bounded by `limit`.
@@ -1073,5 +1093,98 @@ mod tests {
         };
         let err = reason(witness_turn_to_engine(&turn));
         assert!(err.contains("user, companion, system"), "got: {err}");
+    }
+
+    fn unique_vault_dir(tag: &str) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "oneiron-napi-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp vault dir");
+        dir
+    }
+
+    /// #471 regression: `forget({subjectRef, predicate})` drains EVERY active
+    /// match, not just the first page. Seeds 70 co-active claims (distinct
+    /// `scope` keeps supersession from collapsing them) and asserts the paging
+    /// loop retracts all of them. Exercises the engine-typed helper directly so
+    /// the test never links the N-API runtime (cdylib unit tests dead-strip
+    /// napi::Error only while it stays unreferenced).
+    #[test]
+    fn forget_drains_all_active_matches_beyond_one_page() {
+        use oneiron::registry::ENTITY_TYPE_PERSON;
+
+        // More than one page so the single-page bug leaves a remainder.
+        const ACTIVE_CLAIMS: usize = FORGET_PAGE_SIZE + 6;
+
+        let dir = unique_vault_dir("forget");
+        let path = dir.to_str().expect("utf8 path").to_owned();
+        let actor = EntityId::from_bytes([0x41; 16]).expect("actor id");
+        let subject = EntityId::from_bytes([0x42; 16]).expect("subject id");
+
+        // Scope the vault so its LMDB env closes before the temp dir removal.
+        {
+            let vault = Vault::open(&path, VaultConfig::device()).expect("open vault");
+            let time = oneiron::TimeRange { start: 1, end: 1 };
+            vault
+                .put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"actor")
+                .expect("put actor");
+            vault
+                .put_entity(&subject, ENTITY_TYPE_PERSON, time, 1, b"subject")
+                .expect("put subject");
+            let facade = vault.memory_facade(actor, oneiron::EdgeActorClass::Human);
+            for i in 0..ACTIVE_CLAIMS {
+                facade
+                    .claim_upsert(&ClaimInput {
+                        id: None,
+                        predicate: "profile.city".to_owned(),
+                        subject_ref: subject.to_hex(),
+                        value: serde_json::json!(format!("city-{i}")),
+                        confidence: 1.0,
+                        source: "user_stated".to_owned(),
+                        world_ref: None,
+                        scope: Some(serde_json::json!({ "idx": i })),
+                        valid_from: None,
+                        valid_to: None,
+                        occurred_at: Some(100),
+                        learned_at: Some(100),
+                        salience: None,
+                    })
+                    .expect("seed claim");
+            }
+
+            let count_active = || {
+                facade
+                    .claim_list(&ClaimListFilter {
+                        subject_ref: Some(subject.to_hex()),
+                        predicate: Some("profile.city".to_owned()),
+                        lifecycle: Some("active".to_owned()),
+                        limit: 500,
+                    })
+                    .expect("claim_list")
+                    .len()
+            };
+            assert_eq!(
+                count_active(),
+                ACTIVE_CLAIMS,
+                "seeded claims are all active before forget"
+            );
+
+            let receipts =
+                forget_active_matches(&facade, &subject.to_hex(), "profile.city").expect("forget");
+            assert_eq!(
+                receipts.len(),
+                ACTIVE_CLAIMS,
+                "forget retracts every active match across pages"
+            );
+            assert_eq!(count_active(), 0, "subject+predicate is fully forgotten");
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
