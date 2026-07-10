@@ -1012,6 +1012,21 @@ impl ClaimBody {
     }
 }
 
+/// Grouping unit of a dotted predicate: every segment EXCEPT the last
+/// ("drop the leaf" — DESIGN-PIN A0). The grammar guarantees ≥2 segments
+/// ([`validate_predicate`]), so the root is always non-empty on valid
+/// predicates. Total on arbitrary namespaces (the wild has `oneiron.*`,
+/// `user.*`, …); never panics; no registry or layer-list lookup — an
+/// explicit per-predicate family field supersedes this formula when the
+/// ONE-252 registry lands.
+#[must_use]
+pub fn predicate_root(predicate: &str) -> &str {
+    match predicate.rfind('.') {
+        Some(index) if index > 0 => &predicate[..index],
+        _ => predicate,
+    }
+}
+
 /// Validates a predicate against the pinned D17 grammar: ≥2 segments, each
 /// matching `[a-z][a-z0-9_]*`, joined by `.`, total ≤128 bytes.
 ///

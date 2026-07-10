@@ -32,6 +32,7 @@ pub mod deletion;
 pub mod delivery_window;
 pub mod disclosure;
 pub(crate) mod distance;
+pub mod dreamer_consolidation;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;
@@ -207,7 +208,7 @@ pub use crate::channel_identity_provider::{
 pub use crate::claim::{
     CLAIM_BODY_KEYS, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject, MAX_PREDICATE_BYTES, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
-    RESERVED_PREDICATE_NAMESPACE,
+    RESERVED_PREDICATE_NAMESPACE, predicate_root,
 };
 pub use crate::code_artifact::{
     CODE_ARTIFACT_BODY_KEYS, CODE_ARTIFACT_REPO_REF_MAX_BYTES, CODE_ARTIFACT_SUMMARY_HASH_LEN,
@@ -328,6 +329,18 @@ pub use crate::disclosure::{
     DisclosureAssembly, DisclosureContext, DisclosureMode, DisclosureScope, DisclosureScopeStatus,
     DisclosureTier, decode_disclosure_scope_body, encode_disclosure_scope_body,
     is_disclosure_claim_predicate, presence_discretion_notice,
+};
+pub use crate::dreamer_consolidation::{
+    CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey,
+    ConsolidationBucketPlan, ConsolidationCursor, ConsolidationExecutor, ConsolidationPartitionKey,
+    ConsolidationPartitionPlan, ConsolidationSink, ConsolidationWatermark,
+    DREAMER_BUCKET_HASH_DOMAIN, DREAMER_GAP_DECAY_MS, DREAMER_GAP_HASH_DOMAIN,
+    DREAMER_GAP_SCAN_JOB_TYPE, GapQueueDelta, PriorHead, PromotionCandidate, ReflectionGap,
+    ReflectionGapKind, SwarmEvidenceRef, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
+    WorkingSetTurn, advance_watermark, collapse_sibling_evidence, corroboration_count,
+    decode_partition_payload, detect_conflicts, enqueue_partition_jobs, entity_ref_from_value,
+    gap_hash, plan_candidate_buckets, plan_partitions, read_cursor, read_watermark,
+    scan_dirty_turns, scan_reflection_gaps, upsert_gap_queue, write_cursor,
 };
 pub use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,

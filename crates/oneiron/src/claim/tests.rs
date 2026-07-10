@@ -1135,3 +1135,40 @@ fn claim_source_explicit_auto_permit_set_includes_generated() {
         );
     }
 }
+
+/// DESIGN-PIN A0 table (ONE-1289): drop-the-leaf grouping across the docs
+/// pack, crate-layer, chain, and arbitrary wild namespaces — total, never
+/// panics, no registry lookup.
+#[test]
+fn predicate_root_table() {
+    let table = [
+        // docs pack (ARCH-0003) — families stay together
+        ("profile.name", "profile"),
+        ("profile.lives_in", "profile"),
+        ("companion.nickname", "companion"),
+        ("companion.inside_joke", "companion"),
+        // crate layer
+        ("core.conflict.open", "core.conflict"),
+        ("core.conflict.resolved", "core.conflict"),
+        ("core.lexical.query_hint", "core.lexical"),
+        ("companion.expression", "companion"),
+        // this chain (D13)
+        ("dreamer.step", "dreamer"),
+        // affect module
+        ("affect.mood", "affect"),
+        // reserved
+        ("edge.provenance", "edge"),
+        // arbitrary namespaces already in the wild
+        ("oneiron.custom_thing", "oneiron"),
+        ("user.some.deep.namespace.leaf", "user.some.deep.namespace"),
+    ];
+    for (predicate, expected_root) in table {
+        assert_eq!(predicate_root(predicate), expected_root, "{predicate}");
+    }
+
+    // Totality: never panics on inputs outside the grammar.
+    assert_eq!(predicate_root("single_segment"), "single_segment");
+    assert_eq!(predicate_root(""), "");
+    assert_eq!(predicate_root(".leading_dot"), ".leading_dot");
+    assert_eq!(predicate_root("trailing_dot."), "trailing_dot");
+}
