@@ -2816,3 +2816,100 @@ fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
     assert_eq!(executor.calls.len(), 2);
     Ok(())
 }
+
+#[test]
+fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let sends_budget = || {
+        vec![crate::EffectorBudget::sends(
+            5,
+            crate::EffectorBudgetWindow::Calendar {
+                period: crate::CalendarPeriod::Day,
+                tz: None,
+            },
+            crate::EffectorBudgetOnExhaust::Suspend,
+        )]
+    };
+    let usage_row_absent = |vault: &Vault, key_id: &EntityId| -> crate::Result<bool> {
+        let usage_key = crate::connector_key::connector_key_usage_row_key(key_id, 0);
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(vault.store.vault_meta.get(&rtxn, &usage_key)?.is_none())
+    };
+
+    // A window-Held dispatch passes the gate but never becomes an effect —
+    // it must not consume or exhaust the key's budget.
+    let (_tmp, vault) = temp_vault();
+    let actor = OutboundDispatchActor::agent(entity(0xA1));
+    put_policy_manifest(
+        &vault,
+        0xD0,
+        &policy_manifest(
+            actor.actor_ref.as_deref().expect("actor ref"),
+            "email",
+            &["send"],
+        ),
+    )?;
+    let key_id = entity(0xB8);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active("email", None, sends_budget(), 1_000),
+    )?;
+
+    let held_request = OutboundDispatchRequest::new(
+        "outbound:intent:held",
+        "intent:held",
+        dispatch_intent(OutboundIntentTrigger::agent_immediate("session:held")),
+        actor.clone(),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_000,
+        OutboundDeliveryWindowDecision::Hold {
+            reason: "quiet_hours".to_owned(),
+            retry_at: None,
+        },
+    );
+    let mut executor = RecordingExecutor::default();
+    let result = vault.dispatch_outbound_intent(held_request, &mut executor)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(result.gate_outcome, "allow");
+    assert!(
+        usage_row_absent(&vault, &key_id)?,
+        "held dispatch left usage unchanged"
+    );
+    assert!(executor.calls.is_empty());
+
+    // The same intent debits when it re-enters and actually delivers.
+    let result =
+        vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 1), &mut executor)?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert!(
+        !usage_row_absent(&vault, &key_id)?,
+        "delivered dispatch debits"
+    );
+
+    // A seat-policy-suppressed dispatch (kill switch engaged) also passes
+    // the gate but never becomes an effect: no debit.
+    let (_tmp, vault) = temp_vault();
+    let actor = OutboundDispatchActor::agent(entity(0xB1));
+    allow_linkedin_send(&vault, &actor)?;
+    let key_id = entity(0xB9);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(LINKEDIN_CHANNEL, None, sends_budget(), 1_000),
+    )?;
+    let killed = active_linkedin_policy()?.mark_killed(1_050, "command:kill-switch")?;
+    let result = vault.dispatch_outbound_intent(
+        linkedin_send_request(actor, "outbound:intent:killed", "intent:killed")
+            .linkedin_sandbox_policy(killed),
+        &mut executor,
+    )?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
+    assert_eq!(
+        result.gate_outcome, "allow",
+        "the seat policy suppressed, not the gate"
+    );
+    assert!(
+        usage_row_absent(&vault, &key_id)?,
+        "seat-suppressed dispatch left usage unchanged"
+    );
+    Ok(())
+}

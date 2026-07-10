@@ -465,7 +465,7 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
         ),
     )?;
 
-    let read = vault.settle_connector_spend(&id, 1, 400, 1_100)?;
+    let read = vault.settle_connector_spend(&id, 1, 400, 1_100, "settle:one")?;
     assert_eq!(read.used, 400);
     assert_eq!(read.remaining, 600);
     assert_eq!(read.percent_used, 40);
@@ -476,7 +476,7 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
 
     // Crossing the limit flips the key Suspended in the same txn; the row
     // reports zero remaining.
-    let read = vault.settle_connector_spend(&id, 1, 700, 1_200)?;
+    let read = vault.settle_connector_spend(&id, 1, 700, 1_200, "settle:two")?;
     assert_eq!(read.used, 1_100);
     assert_eq!(read.remaining, 0);
     let record = vault.get_connector_key(&id)?.expect("record");
@@ -488,13 +488,13 @@ fn spend_settle_accumulates_and_suspends_on_crossing() -> Result<()> {
 
     // Settling a non-spend row / a missing row fails closed.
     assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 1, 1_300),
+        vault.settle_connector_spend(&id, 0, 1, 1_300, "settle:three"),
         Err(Error::InvalidConnectorKeyBody(
             "spend settle on non-spend row"
         ))
     ));
     assert!(matches!(
-        vault.settle_connector_spend(&id, 7, 1, 1_300),
+        vault.settle_connector_spend(&id, 7, 1, 1_300, "settle:four"),
         Err(Error::InvalidConnectorKeyBody(
             "spend settle on missing row"
         ))
@@ -616,5 +616,91 @@ fn connector_key_for_resolves_exact_actor_over_agnostic() -> Result<()> {
 
     assert!(vault.connector_key_for("unknown", None)?.is_none());
     assert!(vault.connector_key_for("  ", None)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn spend_settle_validates_timestamps_and_event_identity() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xF9);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active(
+            "slack",
+            None,
+            vec![
+                EffectorBudget::spend(
+                    1_000,
+                    "USD",
+                    EffectorBudgetWindow::Calendar {
+                        period: CalendarPeriod::Month,
+                        tz: None,
+                    },
+                    EffectorBudgetOnExhaust::Suspend,
+                ),
+                EffectorBudget::spend(
+                    2_000,
+                    "USD",
+                    EffectorBudgetWindow::Calendar {
+                        period: CalendarPeriod::Month,
+                        tz: None,
+                    },
+                    EffectorBudgetOnExhaust::Suspend,
+                ),
+            ],
+            1_000,
+        ),
+    )?;
+
+    // Event identity is required and shape-checked.
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 0, 10, 2_000, "  "),
+        Err(Error::InvalidConnectorKeyBody(
+            "settle event_ref must not be blank"
+        ))
+    ));
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 0, 10, 2_000, "x".repeat(129).as_str()),
+        Err(Error::InvalidConnectorKeyBody("settle event_ref too long"))
+    ));
+
+    // A caller-picked future timestamp cannot roll a budget window open.
+    let far_future = crate::unix_seconds_now() + 10_000;
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 0, 10, far_future, "settle:future"),
+        Err(Error::InvalidConnectorKeyBody(
+            "settle timestamp too far in the future"
+        ))
+    ));
+
+    // Honest settle, then a REPLAY of the same event id: idempotent — no
+    // double debit, no op record side effects, current state echoed back.
+    let first = vault.settle_connector_spend(&id, 0, 400, 2_000, "settle:evt-1")?;
+    assert_eq!(first.used, 400);
+    let replay = vault.settle_connector_spend(&id, 0, 400, 2_000, "settle:evt-1")?;
+    assert_eq!(replay.used, 400, "replay settles nothing");
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("record").status,
+        ConnectorKeyStatus::Active
+    );
+    // Replaying the same event id against a different row is a caller bug.
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 1, 400, 2_000, "settle:evt-1"),
+        Err(Error::InvalidConnectorKeyBody(
+            "settle event replay with different row"
+        ))
+    ));
+
+    // Monotonic per row: usage cannot be re-shaped by choosing a timestamp
+    // before the row's last touch.
+    assert!(matches!(
+        vault.settle_connector_spend(&id, 0, 10, 1_500, "settle:evt-2"),
+        Err(Error::InvalidConnectorKeyBody(
+            "settle timestamp before last usage touch"
+        ))
+    ));
+    // A later timestamp still settles normally.
+    let second = vault.settle_connector_spend(&id, 0, 100, 2_500, "settle:evt-3")?;
+    assert_eq!(second.used, 500);
     Ok(())
 }

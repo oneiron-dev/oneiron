@@ -275,8 +275,10 @@ impl Vault {
             has_permission: request.gate.has_permission,
             policy_risk: request.gate.policy_risk.to_gate(),
         };
+        // An allowed lifecycle intent is applied immediately in this same
+        // txn, so it is always admitted for execution.
         let (gate_decision_id, decision, _effector_charge) =
-            gate::check_external_effect_policy(&self.store, &mut wtxn, &effect, &policy)?;
+            gate::check_external_effect_policy(&self.store, &mut wtxn, &effect, &policy, true)?;
         let reason_codes = decision
             .reason_codes()
             .iter()

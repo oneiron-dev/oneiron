@@ -101,6 +101,18 @@ pub(crate) const CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX: &[u8] = b"connector_key/c
 /// canonical msgpack `{window_start, entries, fired}`.
 pub(crate) const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0";
 
+/// vault_meta spend-settlement idempotency rows: prefix ++ key id (16 bytes)
+/// ++ event_ref bytes -> row_index u16 BE. One row per settlement event id;
+/// a replayed event id settles nothing.
+pub(crate) const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
+
+/// Maximum accepted forward clock skew for a settlement timestamp: `at` may
+/// not exceed the engine clock by more than this, so a caller-picked future
+/// timestamp cannot roll a budget window open.
+const CONNECTOR_KEY_SETTLE_MAX_CLOCK_SKEW_S: u64 = 300;
+
+const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
+
 const CONNECTOR_KEY_OP_DIFF_DOMAIN: &[u8] = b"oneiron.connector_key.op.v0";
 
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -1217,6 +1229,16 @@ pub(crate) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Resu
         .map_err(|_| Error::CorruptedIndex("connector key connector index key"))
 }
 
+pub(crate) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(
+        CONNECTOR_KEY_SETTLE_EVENT_PREFIX.len() + ENTITY_ID_LEN + event_ref.len(),
+    );
+    key.extend_from_slice(CONNECTOR_KEY_SETTLE_EVENT_PREFIX);
+    key.extend_from_slice(id.as_bytes());
+    key.extend_from_slice(event_ref.as_bytes());
+    key
+}
+
 pub(crate) fn connector_key_usage_row_key(id: &EntityId, row_index: u16) -> Vec<u8> {
     let mut key =
         Vec::with_capacity(CONNECTOR_KEY_USAGE_PREFIX.len() + ENTITY_ID_LEN + size_of::<u16>());
@@ -1770,7 +1792,25 @@ impl Vault {
         row_index: u16,
         minor_units: u64,
         at: u64,
+        event_ref: &str,
     ) -> Result<EffectorBudgetRowRead> {
+        if event_ref.trim().is_empty() {
+            return Err(invalid_body("settle event_ref must not be blank"));
+        }
+        if event_ref.len() > CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN {
+            return Err(invalid_body("settle event_ref too long"));
+        }
+        if event_ref.as_bytes().contains(&0) {
+            return Err(invalid_body("settle event_ref must not contain NUL"));
+        }
+        // Budget accounting never trusts caller time unchecked: `at` may lag
+        // the engine clock (costs settle post-hoc) but may not lead it, so a
+        // caller cannot pick a timestamp that opens a fresh window.
+        let now = crate::unix_seconds_now();
+        if at > now.saturating_add(CONNECTOR_KEY_SETTLE_MAX_CLOCK_SKEW_S) {
+            return Err(invalid_body("settle timestamp too far in the future"));
+        }
+
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
@@ -1796,8 +1836,39 @@ impl Vault {
             Some(bytes) => ConnectorKeyUsage::decode(bytes)?,
             None => ConnectorKeyUsage::default(),
         };
+
+        // Idempotency: a replayed event id settles nothing (a retry after a
+        // timeout must not double-debit or falsely suspend) and answers with
+        // the row's current state.
+        let event_key = connector_key_settle_event_key(id, event_ref);
+        if let Some(stored) = self.store.vault_meta.get(&wtxn, &event_key)? {
+            if stored != row_index.to_be_bytes() {
+                return Err(invalid_body("settle event replay with different row"));
+            }
+            // Read-only echo of the row in the caller's (validated) time
+            // frame; nothing is written.
+            usage.touch(&budget.window, at);
+            return Ok(budget_row_read(row_index, &budget, &usage));
+        }
+
+        // Monotonic per row: a timestamp before the row's last touch could
+        // re-shape a window that already accounted later debits.
+        let last_touch = usage
+            .entries
+            .iter()
+            .map(|(ts, _)| *ts)
+            .max()
+            .unwrap_or(0)
+            .max(usage.window_start);
+        if at < last_touch {
+            return Err(invalid_body("settle timestamp before last usage touch"));
+        }
+
         usage.touch(&budget.window, at);
         usage.entries.push((at, minor_units));
+        self.store
+            .vault_meta
+            .put(&mut wtxn, &event_key, &row_index.to_be_bytes())?;
         self.store
             .vault_meta
             .put(&mut wtxn, &usage_key, &usage.encode()?)?;

@@ -2193,12 +2193,21 @@ pub(crate) fn check_claim_policy_for_write(
     check_claim_source_trust(body, policy)
 }
 
+/// `admit_for_execution` tells the connector-key budget stage whether an
+/// Allow decision will actually hand the effect to a connector in this
+/// dispatch. Callers whose pipeline can still park the effect after an Allow
+/// (delivery-window Hold/Degrade/LetGo, seat-policy Suppress) pass `false`
+/// on those paths so a dispatch that never becomes an effect cannot consume
+/// or exhaust budget; the effect debits when it re-enters and executes. The
+/// status wall and charter stages are governance, not accounting, and run
+/// regardless.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn check_external_effect_policy(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
+    admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
     let mut hydrated_effect = hydrate_external_effect_contact(store, wtxn, effect)?;
     hydrated_effect.standing_grant_ref = None;
@@ -2248,7 +2257,7 @@ pub(crate) fn check_external_effect_policy(
                         .as_ref()
                         .expect("external effect input"),
                 ));
-        } else {
+        } else if admit_for_execution {
             let outcome = connector_key::charge_effector_budgets(
                 store,
                 wtxn,

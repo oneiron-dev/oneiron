@@ -2376,7 +2376,7 @@ fn external_effect_scoped_grant_allows_and_records_receipt() -> Result<()> {
     let effect = external_effect_gate_input("sender", "send", "line");
 
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2419,7 +2419,7 @@ fn standing_outbound_grant_allows_in_scope_external_effect_and_records_join() ->
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2478,7 +2478,7 @@ fn standing_outbound_grant_lookup_uses_principal_index_before_type_scan() -> Res
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Allow);
@@ -2495,7 +2495,7 @@ fn forged_standing_grant_ref_does_not_authorize_external_effect() -> Result<()> 
     effect.has_opted_in = false;
     effect.standing_grant_ref = Some(format!("grant:{}", test_id(0xD7).to_hex()));
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Pending);
@@ -2530,7 +2530,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     let mut out_of_scope = external_effect_gate_input("sender", "send", "email");
     out_of_scope.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &out_of_scope, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &out_of_scope, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
@@ -2541,7 +2541,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     let mut lifecycle_effect = external_effect_gate_input("sender", "provision", "line");
     lifecycle_effect.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &lifecycle_effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &lifecycle_effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
@@ -2554,7 +2554,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     let mut in_scope_stale = external_effect_gate_input("sender", "send", "line");
     in_scope_stale.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &in_scope_stale, &stale_policy)
+        check_external_effect_policy(&vault.store, wtxn, &in_scope_stale, &stale_policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
 
@@ -2562,7 +2562,7 @@ fn standing_outbound_grant_reasks_out_of_scope_stale_and_revoked_sends() -> Resu
     let mut in_scope_revoked = external_effect_gate_input("sender", "send", "line");
     in_scope_revoked.has_opted_in = false;
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &in_scope_revoked, &stale_policy)
+        check_external_effect_policy(&vault.store, wtxn, &in_scope_revoked, &stale_policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
 
@@ -2675,7 +2675,7 @@ fn external_effect_denies_opted_out_counterparty_regardless_of_grant() -> Result
     effect.counterparty = Some("kenji@example.com".to_owned());
 
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Deny);
@@ -2756,7 +2756,7 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
     normal_effect.channel_identity_ref = Some(identity);
     normal_effect.counterparty = Some("unknown@example.com".to_owned());
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &normal_effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &normal_effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
@@ -2770,7 +2770,7 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
     public_effect.channel_identity_ref = Some(identity);
     public_effect.counterparty = Some("public@example.com".to_owned());
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &public_effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &public_effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
@@ -2926,7 +2926,7 @@ fn external_effect_fail_closed_policy_holds_instead_of_denies() -> Result<()> {
     let effect = external_effect_gate_input("sender", "send", "line");
 
     let (_decision_id, decision, _effector_charge) = vault.with_write_txn(|wtxn| {
-        check_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
     })?;
 
     assert_eq!(decision.outcome(), GateOutcome::Pending);
@@ -4578,8 +4578,9 @@ fn check_effect(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
 ) -> Result<(GateDecision, Option<crate::EffectorBudgetCharge>)> {
-    let (_decision_id, decision, charge) = vault
-        .with_write_txn(|wtxn| check_external_effect_policy(&vault.store, wtxn, effect, policy))?;
+    let (_decision_id, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, effect, policy, true)
+    })?;
     Ok((decision, charge))
 }
 
@@ -4967,4 +4968,56 @@ fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
             "{rejected} must be rejected"
         );
     }
+}
+
+#[test]
+fn budget_stage_skips_dispatches_not_admitted_for_execution() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xD0, &connector_key_line_send_manifest())?;
+    let key_id = test_id(0x7F);
+    vault.register_connector_key(
+        &key_id,
+        crate::ConnectorKeyRecord::active(
+            "line",
+            None,
+            vec![crate::EffectorBudget::sends(
+                1,
+                day_window(),
+                crate::EffectorBudgetOnExhaust::Suspend,
+            )],
+            1_000,
+        ),
+    )?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.send_ref = Some("intent:one".to_owned());
+
+    // A dispatch the pipeline will park (window Hold / seat-policy stop)
+    // passes the gate but neither debits nor exhausts.
+    let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert!(charge.is_none(), "no budget stage without execution");
+
+    // The un-admitted pass left the budget untouched: the one allowed send
+    // still fits, and only after IT does the key exhaust.
+    let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert_eq!(charge.expect("charged").rows[0].used, 1);
+
+    // The status wall is governance, not accounting: it still converts a
+    // non-admitted dispatch once the key is suspended.
+    vault.suspend_connector_key(&key_id, "owner", 2_000)?;
+    let (_id, decision, charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, false)
+    })?;
+    assert_eq!(
+        gate_reason_strs(&decision),
+        vec!["gate.deny.connector_key_suspended"]
+    );
+    assert!(charge.is_none());
+    Ok(())
 }

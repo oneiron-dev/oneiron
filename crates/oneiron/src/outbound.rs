@@ -858,10 +858,44 @@ impl OutboundDispatchPipeline {
             policy_risk,
         };
 
+        // Budget debits must not outrun the pipeline: a dispatch the window
+        // parks (Hold/Degrade/LetGo) or the seat policy stops never becomes
+        // an effect, so it must not consume or exhaust a connector-key
+        // budget — it debits when it re-enters and actually executes. Both
+        // walls are decidable before the gate txn (the window decision is
+        // already resolved; the seat policy is a pure evaluation), so the
+        // debit stays atomic with the gate decision that releases execution.
+        let window_admits = matches!(
+            &window_decision,
+            OutboundDeliveryWindowDecision::DeliverNow
+                | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. }
+        );
+        let mut linkedin_decision = if window_admits {
+            request.linkedin_sandbox_policy.as_ref().map(|policy| {
+                policy.evaluate_outbound(
+                    &request.intent.channel,
+                    &verb_contract.kind,
+                    request.occurred_at,
+                )
+            })
+        } else {
+            None
+        };
+        let admit_for_execution = window_admits
+            && linkedin_decision
+                .as_ref()
+                .is_none_or(|decision| matches!(decision.action, LinkedInSeatPolicyAction::Allow));
+
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
         let (gate_decision_id, gate_decision, _effector_charge) =
-            gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
+            gate::check_external_effect_policy(
+                &vault.store,
+                &mut wtxn,
+                &effect,
+                &policy,
+                admit_for_execution,
+            )?;
         wtxn.commit().map_err(Error::from)?;
 
         let gate_outcome_kind = gate_decision.outcome();
@@ -883,12 +917,7 @@ impl OutboundDispatchPipeline {
             GateOutcome::Allow => match &window_decision {
                 OutboundDeliveryWindowDecision::DeliverNow
                 | OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { .. } => {
-                    if let Some(policy) = request.linkedin_sandbox_policy.as_ref() {
-                        let decision = policy.evaluate_outbound(
-                            &request.intent.channel,
-                            &verb_contract.kind,
-                            request.occurred_at,
-                        );
+                    if let Some(decision) = linkedin_decision.take() {
                         engine_receipt_fields.extend(decision.receipt_fields);
                         engine_policy_trace.extend(decision.policy_trace);
                         match decision.action {
