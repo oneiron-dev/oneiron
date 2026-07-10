@@ -1,0 +1,1490 @@
+//! BRIDGE-01 acceptance tests, engine side. TS-layer ACs (bun build/test,
+//! index.d.ts shape) are owner-deferred with the eiri repo this wave.
+//!
+//! The harness deliberately KEEPS the default policy manifest seeded by
+//! `Vault::open` (unlike the legacy `test_util` opener) so the write gate is
+//! live — production reality for the bridge.
+
+use super::*;
+use crate::config::VaultConfig;
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+
+fn open_vault() -> (tempfile::TempDir, crate::Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    (dir, vault)
+}
+
+fn test_time(at: u64) -> TimeRange {
+    TimeRange { start: at, end: at }
+}
+
+/// Puts a PERSON entity usable as a facade actor (the gated candidate path
+/// validates actor existence + class).
+fn put_person(vault: &crate::Vault, seed: u8) -> EntityId {
+    let id = EntityId::from_bytes([seed; 16]).expect("person id");
+    vault
+        .put_entity(&id, ENTITY_TYPE_PERSON, test_time(1), 1, b"facade person")
+        .expect("put person");
+    id
+}
+
+fn facade_for(vault: &crate::Vault, actor: EntityId) -> MemoryFacade<'_> {
+    vault.memory_facade(actor, EdgeActorClass::Human)
+}
+
+fn claim_input(
+    predicate: &str,
+    subject: &EntityId,
+    source: &str,
+    value: serde_json::Value,
+) -> ClaimInput {
+    ClaimInput {
+        id: None,
+        predicate: predicate.to_owned(),
+        subject_ref: subject.to_hex(),
+        value,
+        confidence: 1.0,
+        source: source.to_owned(),
+        world_ref: None,
+        scope: None,
+        valid_from: None,
+        valid_to: None,
+        occurred_at: Some(100),
+        learned_at: Some(100),
+        salience: None,
+    }
+}
+
+/// Short refs are `"<short_id>:<body-hash>"`; the hash suffix advances when
+/// a claim body is rewritten (supersede/retract), so entity identity is
+/// compared on the stable short-id part.
+fn short_id_part(reference: &str) -> &str {
+    reference.split(':').next().unwrap_or(reference)
+}
+
+fn witness_message(order: u32, author: WitnessAuthor, content: &str) -> WitnessMessage {
+    WitnessMessage {
+        id: None,
+        author,
+        message_type: "dialogue".to_owned(),
+        content: content.to_owned(),
+        metadata: None,
+        is_visible: true,
+        order,
+    }
+}
+
+// ── actor key grammar (design §4.3) ─────────────────────────────────────
+
+#[test]
+fn actor_key_grammar_parses_and_fails_closed() {
+    let (_dir, vault) = open_vault();
+    let person = put_person(&vault, 0x11);
+
+    let (actor, class) =
+        parse_actor_key(&vault, &format!("human:{}", person.to_hex())).expect("parse actor key");
+    assert_eq!(actor, person);
+    assert_eq!(class, EdgeActorClass::Human);
+
+    let (_, agent_class) =
+        parse_actor_key(&vault, &format!("agent:{}", person.to_hex())).expect("agent key");
+    assert_eq!(agent_class, EdgeActorClass::Agent);
+
+    for malformed in [
+        "human",
+        "wizard:0011001100110011001100110011aabb",
+        "human:not-a-ref",
+        "",
+    ] {
+        let err = parse_actor_key(&vault, malformed).expect_err("malformed key must fail");
+        assert_eq!(err.code, FACADE_CODE_BAD_REQUEST, "key {malformed:?}");
+        assert!(!err.suggestions.is_empty());
+    }
+}
+
+// ── witness (AC-3, B2 create-or-get) ────────────────────────────────────
+
+#[test]
+fn witness_writes_turn_messages_edges_and_text() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x21);
+    let facade = facade_for(&vault, actor);
+
+    let conversation_hex = EntityId::from_bytes([0x22; 16]).expect("conv id").to_hex();
+    let receipt = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: None,
+            messages: vec![
+                witness_message(0, WitnessAuthor::User, "quantum banana ledger"),
+                witness_message(1, WitnessAuthor::Companion, "reply about the ledger"),
+                witness_message(2, WitnessAuthor::User, "closing note"),
+            ],
+            occurred_at: 500,
+        })
+        .expect("witness turn");
+
+    assert_eq!(receipt.message_short_ids.len(), 3);
+    assert!(receipt.receipt_ref.starts_with("witness:"));
+
+    // One TURN + three MESSAGE entities + the CONVERSATION exist with the
+    // right kinds.
+    let turn = facade
+        .get_entity(&receipt.turn_short_id)
+        .expect("get turn")
+        .expect("turn exists");
+    assert_eq!(turn.kind, "TURN");
+    let conversation = facade
+        .get_entity(&conversation_hex)
+        .expect("get conversation")
+        .expect("conversation exists");
+    assert_eq!(conversation.kind, "CONVERSATION");
+
+    // Edges + typed read-back envelope per message.
+    for (index, short_id) in receipt.message_short_ids.iter().enumerate() {
+        let view = facade
+            .get_entity(short_id)
+            .expect("get message")
+            .expect("message exists");
+        assert_eq!(view.kind, "MESSAGE");
+        assert_eq!(view.occurred_start, 500);
+        assert_eq!(view.learned_at, 500);
+        let body = view.body.expect("message body decodes");
+        assert_eq!(body["order"], serde_json::json!(index as u64));
+        assert_eq!(body["is_visible"], serde_json::json!(true));
+        assert_eq!(body["type"], serde_json::json!("dialogue"));
+
+        let id = EntityId::from_hex(&view.id_hex).expect("hex id");
+        let edges = vault.edges_out(&id).expect("edges out");
+        let kinds: Vec<EdgeKind> = edges.iter().map(|edge| edge.kind).collect();
+        assert!(
+            kinds.contains(&EdgeKind::PartOf),
+            "PartOf edge on {short_id}"
+        );
+        assert!(
+            kinds.contains(&EdgeKind::BelongsTo),
+            "BelongsTo edge on {short_id}"
+        );
+        assert!(
+            kinds.contains(&EdgeKind::AuthoredBy),
+            "AuthoredBy edge on {short_id}"
+        );
+    }
+
+    // BM25 finds the content.
+    let hits = vault.search_text("banana", 10).expect("search");
+    let first_message = facade
+        .get_entity(&receipt.message_short_ids[0])
+        .unwrap()
+        .unwrap();
+    assert!(
+        hits.iter()
+            .any(|hit| hit.id.to_hex() == first_message.id_hex),
+        "witnessed content must be BM25-findable"
+    );
+}
+
+#[test]
+fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x31);
+    let facade = facade_for(&vault, actor);
+
+    let conversation_hex = EntityId::from_bytes([0x32; 16]).expect("conv").to_hex();
+    let turn_hex = EntityId::from_bytes([0x33; 16]).expect("turn").to_hex();
+
+    let first = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex.clone(),
+            turn_ref: Some(turn_hex.clone()),
+            messages: vec![witness_message(0, WitnessAuthor::User, "first half")],
+            occurred_at: 600,
+        })
+        .expect("first witness");
+    let turn_id = EntityId::from_hex(&turn_hex).unwrap();
+    let conversation_id = EntityId::from_hex(&conversation_hex).unwrap();
+    let turn_raw_before = vault.get_raw(&turn_id).unwrap().expect("turn raw");
+    let conversation_raw_before = vault
+        .get_raw(&conversation_id)
+        .unwrap()
+        .expect("conversation raw");
+    // Second call reuses BOTH containers (migration composes mixed-author
+    // turns as multiple witness calls sharing the same turn id).
+    let second = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn_hex.clone()),
+            messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
+            occurred_at: 601,
+        })
+        .expect("second witness");
+    assert_eq!(first.turn_short_id, second.turn_short_id);
+
+    let turns = vault.entities_by_type(ENTITY_TYPE_TURN).expect("turns");
+    assert_eq!(turns.len(), 1, "turn must not be duplicated");
+    let conversations = vault
+        .entities_by_type(ENTITY_TYPE_CONVERSATION)
+        .expect("conversations");
+    assert_eq!(
+        conversations.len(),
+        1,
+        "conversation must not be duplicated"
+    );
+
+    // Byte-identical container state across the second call: create-or-get
+    // never re-puts an existing container (idempotency-critical for the
+    // §3.5 hash checks — counts alone would not catch a body rewrite).
+    assert_eq!(
+        vault.get_raw(&turn_id).unwrap().expect("turn raw after"),
+        turn_raw_before,
+        "reused TURN must be byte-identical"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&conversation_id)
+            .unwrap()
+            .expect("conversation raw after"),
+        conversation_raw_before,
+        "reused CONVERSATION must be byte-identical"
+    );
+
+    // System-authored rows get no AuthoredBy edge (design §2.1).
+    let system_view = facade
+        .get_entity(&second.message_short_ids[0])
+        .unwrap()
+        .expect("system message");
+    let system_id = EntityId::from_hex(&system_view.id_hex).unwrap();
+    let kinds: Vec<EdgeKind> = vault
+        .edges_out(&system_id)
+        .expect("edges")
+        .iter()
+        .map(|edge| edge.kind)
+        .collect();
+    assert!(!kinds.contains(&EdgeKind::AuthoredBy));
+    assert!(kinds.contains(&EdgeKind::PartOf));
+
+    // Type mismatch on a container ref fails closed.
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: turn_hex,
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "x")],
+            occurred_at: 602,
+        })
+        .expect_err("turn id passed as conversation must fail");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}
+
+// ── commit / approval policy (AC-4) ─────────────────────────────────────
+
+#[test]
+fn commit_user_stated_band0_lands_auto_with_resolvable_receipt() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x41);
+    let subject = put_person(&vault, 0x42);
+    let facade = facade_for(&vault, actor);
+
+    let receipt = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("auto claim");
+    assert_eq!(receipt.approval, "auto");
+    assert!(receipt.receipt_ref.starts_with("gate:"));
+
+    // receipt_ref resolves via receipts().
+    let receipts = facade.receipts(50).expect("receipts");
+    let decision = receipts
+        .iter()
+        .find(|r| r.receipt_ref == receipt.receipt_ref)
+        .expect("decision resolvable via receipts()");
+    assert_eq!(decision.outcome, "allow");
+    assert_eq!(decision.actor_class, "human");
+
+    // Nothing parked for consent.
+    let pending = facade.pending_writes(50).expect("pending");
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn commit_imported_lands_proposed_and_appears_in_pending_writes() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x51);
+    let subject = put_person(&vault, 0x52);
+    let facade = facade_for(&vault, actor);
+
+    let receipt = facade
+        .claim_upsert(&claim_input(
+            "eiri.onboarding.answer",
+            &subject,
+            "imported",
+            serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),
+        ))
+        .expect("imported claim");
+    assert_eq!(receipt.approval, "proposed");
+    assert!(receipt.receipt_ref.starts_with("gate:"));
+
+    let pending = facade.pending_writes(50).expect("pending");
+    assert_eq!(pending.len(), 1);
+    let receipts = facade.receipts(50).expect("receipts");
+    assert!(
+        receipts
+            .iter()
+            .any(|r| r.receipt_ref == receipt.receipt_ref),
+        "receipt_ref must resolve via receipts()"
+    );
+    assert!(
+        receipts.iter().any(|r| r.outcome == "pending"),
+        "gate outcome for the parked write is pending"
+    );
+}
+
+#[test]
+fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x61);
+    let subject = put_person(&vault, 0x62);
+    let facade = facade_for(&vault, actor);
+
+    // Unknown predicates default to CRITICAL criticality under the default
+    // policy manifest, so the gate pends the auto request; the facade
+    // resubmits proposed instead of dropping the write.
+    let receipt = facade
+        .claim_upsert(&claim_input(
+            "eiri.preference.color",
+            &subject,
+            "user_stated",
+            serde_json::json!("teal"),
+        ))
+        .expect("downgraded claim");
+    assert_eq!(receipt.approval, "proposed");
+    let pending = facade.pending_writes(50).expect("pending");
+    assert_eq!(pending.len(), 1, "downgraded write parks for consent");
+}
+
+#[test]
+fn commit_sensitivity_scope_key_forces_proposed() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x63);
+    let subject = put_person(&vault, 0x64);
+    let facade = facade_for(&vault, actor);
+
+    let mut input = claim_input(
+        "profile.name",
+        &subject,
+        "user_stated",
+        serde_json::json!("Mira"),
+    );
+    input.scope = Some(serde_json::json!({"sensitivity": 0}));
+    let receipt = facade.claim_upsert(&input).expect("scoped claim");
+    assert_eq!(
+        receipt.approval, "proposed",
+        "explicit sensitivity key ⇒ proposed request"
+    );
+}
+
+// ── supersession (AC-2 engine side, B1c) ────────────────────────────────
+
+#[test]
+fn claim_upsert_supersedes_prior_single_cardinality() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x71);
+    let subject = put_person(&vault, 0x72);
+    let facade = facade_for(&vault, actor);
+
+    let first = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("first revision");
+    let mut second_input = claim_input(
+        "profile.name",
+        &subject,
+        "user_stated",
+        serde_json::json!("Ada Lovelace"),
+    );
+    second_input.learned_at = Some(200);
+    second_input.occurred_at = Some(200);
+    let second = facade.claim_upsert(&second_input).expect("second revision");
+
+    assert_eq!(
+        second.superseded_short_id.as_deref().map(short_id_part),
+        Some(short_id_part(&first.claim_short_id)),
+        "second revision supersedes the first"
+    );
+
+    // Prior claim stays readable with lifecycle superseded.
+    let history = facade
+        .claim_history(&second.claim_short_id)
+        .expect("history");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].lifecycle, "superseded");
+    assert_eq!(history[0].value, serde_json::json!("Ada"));
+    assert_eq!(history[1].lifecycle, "active");
+
+    // Supersedes edge new → old.
+    let new_id = EntityId::from_hex(&history[1].claim_ref).unwrap();
+    let old_id = EntityId::from_hex(&history[0].claim_ref).unwrap();
+    let edges = vault.edges_out(&new_id).expect("edges");
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old_id),
+        "Supersedes edge must link new → old"
+    );
+}
+
+#[test]
+fn multi_cardinality_supersede_matches_on_question_id() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x81);
+    let subject = put_person(&vault, 0x82);
+    let facade = facade_for(&vault, actor);
+
+    let answer = |question: &str, option: &str, at: u64| {
+        let mut input = claim_input(
+            "eiri.onboarding.answer",
+            &subject,
+            "imported",
+            serde_json::json!({"question_id": question, "selected_option_id": option}),
+        );
+        input.occurred_at = Some(at);
+        input.learned_at = Some(at);
+        input
+    };
+
+    let answer_a = facade
+        .claim_upsert(&answer("q-a", "1", 100))
+        .expect("answer a");
+    let answer_b = facade
+        .claim_upsert(&answer("q-b", "2", 101))
+        .expect("answer b");
+    assert!(answer_a.superseded_short_id.is_none());
+    assert!(
+        answer_b.superseded_short_id.is_none(),
+        "answering question B must never supersede the answer to question A (B1c)"
+    );
+
+    let re_answer_a = facade
+        .claim_upsert(&answer("q-a", "3", 102))
+        .expect("re-answer a");
+    assert_eq!(
+        re_answer_a
+            .superseded_short_id
+            .as_deref()
+            .map(short_id_part),
+        Some(short_id_part(&answer_a.claim_short_id)),
+        "re-answer supersedes the same question's prior claim"
+    );
+
+    // B's claim is untouched.
+    let claims = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: Some("eiri.onboarding.answer".to_owned()),
+            lifecycle: Some("active".to_owned()),
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(claims.len(), 2, "one active claim per question id");
+}
+
+// ── per-element gating (AC-5) ───────────────────────────────────────────
+
+#[test]
+fn commit_batch_gating_is_per_element() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x91);
+    let subject = put_person(&vault, 0x92);
+    let facade = facade_for(&vault, actor);
+
+    let receipts = facade
+        .commit(&[
+            claim_input(
+                "profile.name",
+                &subject,
+                "user_stated",
+                serde_json::json!("Ada"),
+            ),
+            // Violates the predicate ceiling (uppercase, no dot segments).
+            claim_input(
+                "BadPredicate",
+                &subject,
+                "user_stated",
+                serde_json::json!("x"),
+            ),
+            claim_input(
+                "profile.age",
+                &subject,
+                "user_stated",
+                serde_json::json!(37),
+            ),
+        ])
+        .expect("commit batch");
+
+    assert_eq!(receipts.len(), 3);
+    assert_eq!(receipts[0].approval, "auto");
+    assert_eq!(receipts[1].approval, "rejected");
+    assert!(receipts[1].receipt_ref.starts_with("rejected:"));
+    assert_eq!(
+        receipts[2].approval, "auto",
+        "elements after a rejection still land"
+    );
+
+    // Per-element gate decisions exist for both written claims.
+    let receipts_list = facade.receipts(50).expect("receipts");
+    assert!(
+        receipts_list
+            .iter()
+            .any(|r| r.receipt_ref == receipts[0].receipt_ref)
+    );
+    assert!(
+        receipts_list
+            .iter()
+            .any(|r| r.receipt_ref == receipts[2].receipt_ref)
+    );
+    assert_ne!(receipts[0].receipt_ref, receipts[2].receipt_ref);
+
+    // The rejected element persisted nothing.
+    let claims = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(claims.len(), 2);
+}
+
+// ── safe delete (AC-6) ──────────────────────────────────────────────────
+
+#[test]
+fn safe_delete_requires_named_reason_and_returns_receipt() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xB5);
+    let facade = facade_for(&vault, actor);
+
+    let soft_target = put_person(&vault, 0xB6);
+    let receipt = facade
+        .safe_delete(&soft_target.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("user delete");
+    assert!(receipt.existed);
+    assert_eq!(receipt.reason, "user_delete");
+    assert!(
+        receipt.receipt_ref.is_none(),
+        "tombstone path writes no receipt entity"
+    );
+
+    let hard_target = put_person(&vault, 0xB7);
+    let receipt = facade
+        .safe_delete(&hard_target.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("hard delete");
+    assert!(receipt.existed);
+    let receipt_ref = receipt
+        .receipt_ref
+        .expect("hard delete writes a redaction receipt");
+    assert!(receipt_ref.starts_with("redaction:"));
+    assert!(
+        facade
+            .get_entity(&hard_target.to_hex())
+            .expect("read back")
+            .is_none(),
+        "hard-deleted entity is purged"
+    );
+
+    let gdpr_target = put_person(&vault, 0xB8);
+    let receipt = facade
+        .safe_delete(&gdpr_target.to_hex(), SafeDeleteReason::GdprDelete)
+        .expect("gdpr delete");
+    assert!(receipt.receipt_ref.is_some());
+}
+
+// ── error surface (AC-7) ────────────────────────────────────────────────
+
+#[test]
+fn facade_errors_carry_stable_codes_and_suggestions() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xB1);
+    let subject = put_person(&vault, 0xB2);
+    let facade = facade_for(&vault, actor);
+
+    // Wrong-predicate case.
+    let err = facade
+        .claim_upsert(&claim_input(
+            "Bad Predicate!",
+            &subject,
+            "user_stated",
+            serde_json::json!("x"),
+        ))
+        .expect_err("bad predicate must fail");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(!err.suggestions.is_empty());
+
+    // Above-ceiling case: confidence outside [0, 1].
+    let mut over = claim_input(
+        "profile.name",
+        &subject,
+        "user_stated",
+        serde_json::json!("x"),
+    );
+    over.confidence = 2.0;
+    let err = facade.claim_upsert(&over).expect_err("confidence ceiling");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(!err.suggestions.is_empty());
+
+    // Maintenance-band kinds are not writable through the facade.
+    let err = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "REDACTION_AUDIT".to_owned(),
+            body: serde_json::json!({}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 100,
+            learned_at: None,
+        })
+        .expect_err("maintenance kind must be rejected");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(!err.suggestions.is_empty());
+
+    // Unknown claim source.
+    let mut bad_source = claim_input(
+        "profile.name",
+        &subject,
+        "user_stated",
+        serde_json::json!(1),
+    );
+    bad_source.source = "vibes".to_owned();
+    let err = facade
+        .claim_upsert(&bad_source)
+        .expect_err("unknown source");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(err.suggestions.iter().any(|s| s.contains("user_stated")));
+}
+
+// ── B2 migrator write-verb group ────────────────────────────────────────
+
+#[test]
+fn put_structural_carries_text_index_fields_and_edges() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xC1);
+    let facade = facade_for(&vault, actor);
+
+    let asset = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "ASSET".to_owned(),
+            body: serde_json::json!({"hash": "abc123", "media_type": "audio/mp4"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 700,
+            learned_at: None,
+        })
+        .expect("asset put");
+
+    let person = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".to_owned(),
+            body: serde_json::json!({"name": "Chihiro", "bio": "loves moss gardens"}),
+            text_fields: Some(vec![
+                TextIndexField {
+                    field: "name".to_owned(),
+                    value: "Chihiro".to_owned(),
+                },
+                TextIndexField {
+                    field: "bio".to_owned(),
+                    value: "loves moss gardens".to_owned(),
+                },
+            ]),
+            edges: Some(vec![StructuralEdgeSpec {
+                edge_kind: "attached".to_owned(),
+                target_ref: asset.id_hex.clone(),
+                weight: None,
+            }]),
+            occurred_at: 701,
+            learned_at: None,
+        })
+        .expect("person put");
+
+    // Kind + body round-trip.
+    let view = facade
+        .get_entity(&person.entity_ref)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(view.kind, "PERSON");
+    assert_eq!(view.body.unwrap()["name"], serde_json::json!("Chihiro"));
+
+    // Edge landed.
+    let person_id = EntityId::from_hex(&person.id_hex).unwrap();
+    let asset_id = EntityId::from_hex(&asset.id_hex).unwrap();
+    let edges = vault.edges_out(&person_id).expect("edges");
+    assert!(
+        edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::Attached && e.target == asset_id)
+    );
+
+    // Text fields are BM25-findable.
+    let hits = vault.search_text("moss", 10).expect("search");
+    assert!(hits.iter().any(|hit| hit.id == person_id));
+
+    // CLAIM kind is rejected on this verb.
+    let err = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "CLAIM".to_owned(),
+            body: serde_json::json!({}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 702,
+            learned_at: None,
+        })
+        .expect_err("CLAIM kind must go through commit");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(err.suggestions.iter().any(|s| s.contains("commit")));
+
+    // Entities land with correct type bytes.
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 1);
+}
+
+#[test]
+fn put_habit_checkin_appends_child_with_pinned_role() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xD1);
+    let facade = facade_for(&vault, actor);
+
+    let habit = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "TASK".to_owned(),
+            body: serde_json::json!({"role": 4, "content": "meditate"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 800,
+            learned_at: None,
+        })
+        .expect("habit put");
+
+    let checkin = facade
+        .put_habit_checkin(&HabitCheckinInput {
+            habit_ref: habit.id_hex.clone(),
+            id: None,
+            data: Some(serde_json::json!({"note": "10 minutes"})),
+            occurred_at: 801,
+            learned_at: None,
+        })
+        .expect("checkin");
+
+    let checkin_id = EntityId::from_hex(&checkin.id_hex).unwrap();
+    let habit_id = EntityId::from_hex(&habit.id_hex).unwrap();
+    let edges = vault.edges_out(&checkin_id).expect("edges");
+    assert!(
+        edges
+            .iter()
+            .any(|e| e.kind == EdgeKind::ChildOf && e.target == habit_id),
+        "checkin carries the pack-contract ChildOf edge"
+    );
+    let view = facade
+        .get_entity(&checkin.entity_ref)
+        .unwrap()
+        .expect("checkin view");
+    let body = view.body.unwrap();
+    assert_eq!(
+        body["role"],
+        serde_json::json!(5),
+        "facade stamps HabitCheckin role"
+    );
+    assert_eq!(body["note"], serde_json::json!("10 minutes"));
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(), 2);
+
+    // Caller-supplied role keys are rejected.
+    let err = facade
+        .put_habit_checkin(&HabitCheckinInput {
+            habit_ref: habit.id_hex,
+            id: None,
+            data: Some(serde_json::json!({"role": 1})),
+            occurred_at: 802,
+            learned_at: None,
+        })
+        .expect_err("role key must be facade-stamped");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn put_companion_record_creates_and_optionally_retires() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xE1);
+    let owner = put_person(&vault, 0xE2);
+    let persona = put_person(&vault, 0xE3);
+    let facade = facade_for(&vault, actor);
+
+    let active = facade
+        .put_companion_record(&CompanionRecordInput {
+            id: None,
+            owner_ref: owner.to_hex(),
+            persona_ref: persona.to_hex(),
+            value: serde_json::json!({"name": "Yuki", "vibes": ["calm"]}),
+            source: None,
+            retired_at: None,
+            learned_at: 900,
+        })
+        .expect("companion record");
+    let record = vault
+        .get_companion_record(&EntityId::from_hex(&active.id_hex).unwrap())
+        .expect("read record")
+        .expect("record exists");
+    assert_eq!(record.lifecycle, ClaimLifecycleStatus::Active);
+    assert!(!record.lifecycle_events.is_empty(), "created event stamped");
+
+    // A second persona registered retired (migration of isActive == false).
+    let persona_two = put_person(&vault, 0xE4);
+    let retired = facade
+        .put_companion_record(&CompanionRecordInput {
+            id: None,
+            owner_ref: owner.to_hex(),
+            persona_ref: persona_two.to_hex(),
+            value: serde_json::json!({"name": "Rei"}),
+            source: Some("imported".to_owned()),
+            retired_at: Some(950),
+            learned_at: 900,
+        })
+        .expect("retired record");
+    let record = vault
+        .get_companion_record(&EntityId::from_hex(&retired.id_hex).unwrap())
+        .expect("read record")
+        .expect("record exists");
+    assert_eq!(record.lifecycle, ClaimLifecycleStatus::Retracted);
+}
+
+#[test]
+fn admit_imported_claim_rides_the_ingest_trust_ceiling() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xF1);
+    let subject = put_person(&vault, 0xF2);
+    let facade = facade_for(&vault, actor);
+
+    // The only registered source at base has permits_auto == false, so the
+    // admission parks proposed — the gate still decides (B1a).
+    let receipt = facade
+        .admit_imported_claim(&AdmitImportedClaimInput {
+            source_id: "jsonl-transcript".to_owned(),
+            source_record_id: "row-42".to_owned(),
+            id: None,
+            subject_ref: subject.to_hex(),
+            predicate: "eiri.onboarding.answer".to_owned(),
+            value: serde_json::json!({"question_id": "q-9", "selected_option_id": "b"}),
+            occurred_at: 1000,
+            learned_at: None,
+        })
+        .expect("admission");
+    assert_eq!(receipt.approval, "proposed");
+    assert!(receipt.receipt_ref.starts_with("gate:"));
+    let pending = facade.pending_writes(10).expect("pending");
+    assert_eq!(pending.len(), 1);
+
+    // Unregistered sources fail closed (convex_migration lands in ONE-258).
+    let err = facade
+        .admit_imported_claim(&AdmitImportedClaimInput {
+            source_id: "convex_migration".to_owned(),
+            source_record_id: "row-1".to_owned(),
+            id: None,
+            subject_ref: subject.to_hex(),
+            predicate: "eiri.onboarding.answer".to_owned(),
+            value: serde_json::json!({"question_id": "q-1"}),
+            occurred_at: 1001,
+            learned_at: None,
+        })
+        .expect_err("unknown ingest source must fail closed");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+    assert!(err.suggestions.iter().any(|s| s.contains("registry")));
+}
+
+#[test]
+fn blob_door_round_trips_bytes_and_dedupes_head() {
+    // FINDING (flagged in the ONE-1454 report): under the DEFAULT policy
+    // manifest, `blob.version` is an unknown predicate ⇒ CRITICAL
+    // criticality ⇒ the engine's UserUpload auto-approval is gate-refused
+    // (gate.pending.criticality_floor). The engine's own blob tests clear
+    // the manifest; this test mirrors that until ONE-258's runbook installs
+    // a manifest rule for blob.version.
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let actor = put_person(&vault, 0x12);
+    let facade = facade_for(&vault, actor);
+
+    let artifact = facade
+        .put_blob_artifact(&BlobArtifactInput {
+            id: None,
+            name: "voice-note.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            occurred_at: 1100,
+            learned_at: None,
+        })
+        .expect("artifact");
+
+    let mut bytes = vec![0_u8; 2048];
+    let mut state: u64 = 0x1234_5678_9ABC_DEF0;
+    for chunk in bytes.chunks_mut(8) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let raw = state.to_le_bytes();
+        chunk.copy_from_slice(&raw[..chunk.len()]);
+    }
+
+    let version = facade
+        .append_blob_version(&artifact.id_hex, &bytes, None, 1101, None)
+        .expect("append");
+    assert_eq!(version.version, 1);
+    assert_eq!(version.content_hash_hex.len(), 64);
+
+    let read = facade
+        .read_blob_version(&artifact.id_hex, version.version)
+        .expect("read")
+        .expect("version exists");
+    assert_eq!(read, bytes, "byte identity through the blob door");
+
+    // Re-appending identical head bytes is a dedupe no-op.
+    let again = facade
+        .append_blob_version(&artifact.id_hex, &bytes, None, 1102, None)
+        .expect("re-append");
+    assert_eq!(again.version, 1);
+}
+
+// ── reads: list/history/retract/hydrate ─────────────────────────────────
+
+#[test]
+fn claim_retract_preserves_readable_history() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x13);
+    let subject = put_person(&vault, 0x14);
+    let facade = facade_for(&vault, actor);
+
+    let receipt = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("claim");
+    let retracted = facade
+        .claim_retract(&receipt.claim_short_id)
+        .expect("retract");
+    assert_eq!(
+        short_id_part(&retracted.claim_short_id),
+        short_id_part(&receipt.claim_short_id)
+    );
+
+    let claims = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: Some("profile.name".to_owned()),
+            lifecycle: Some("retracted".to_owned()),
+            limit: 10,
+        })
+        .expect("list retracted");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].lifecycle, "retracted");
+}
+
+#[test]
+fn hydrate_round_trips_witness_short_ids() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x15);
+    let facade = facade_for(&vault, actor);
+
+    let receipt = facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x16; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "hydrate me")],
+            occurred_at: 1200,
+        })
+        .expect("witness");
+
+    let mut refs = vec![receipt.turn_short_id.clone()];
+    refs.extend(receipt.message_short_ids.iter().cloned());
+    let views = facade.hydrate(&refs).expect("hydrate");
+    assert_eq!(views.len(), 2);
+    assert_eq!(views[0].kind, "TURN");
+    assert_eq!(views[1].kind, "MESSAGE");
+    assert_eq!(
+        views[1].body.as_ref().unwrap()["content"],
+        serde_json::json!("hydrate me")
+    );
+
+    let err = facade
+        .hydrate(&["zz999:ff".to_owned()])
+        .expect_err("dangling short ref must be a typed error");
+    assert_eq!(err.code, FACADE_CODE_NOT_FOUND);
+}
+
+// ── security regressions (codex review of #471) ─────────────────────────
+
+/// F5: the migrator pre-creates derived parents with the pinned
+/// `{convex_id}` bodies via put_structural; witness create-or-get REUSES
+/// them without any re-put, so the pinned bytes survive untouched.
+#[test]
+fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x43);
+    let facade = facade_for(&vault, actor);
+
+    let conversation_hex = EntityId::from_bytes([0x44; 16]).unwrap().to_hex();
+    let turn_hex = EntityId::from_bytes([0x45; 16]).unwrap().to_hex();
+    for (id_hex, kind, convex_id) in [
+        (&conversation_hex, "CONVERSATION", "conv-11"),
+        (&turn_hex, "TURN", "turn-77"),
+    ] {
+        facade
+            .put_structural(&StructuralPutInput {
+                id: Some(id_hex.clone()),
+                kind: kind.to_owned(),
+                body: serde_json::json!({"convex_id": convex_id}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 650,
+                learned_at: None,
+            })
+            .expect("pinned parent put");
+    }
+    let turn_id = EntityId::from_hex(&turn_hex).unwrap();
+    let conversation_id = EntityId::from_hex(&conversation_hex).unwrap();
+    let turn_raw = vault.get_raw(&turn_id).unwrap().expect("turn raw");
+    let conversation_raw = vault
+        .get_raw(&conversation_id)
+        .unwrap()
+        .expect("conversation raw");
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn_hex),
+            messages: vec![witness_message(0, WitnessAuthor::User, "migrated row")],
+            occurred_at: 651,
+        })
+        .expect("witness over pinned parents");
+
+    assert_eq!(
+        vault.get_raw(&turn_id).unwrap().expect("turn after"),
+        turn_raw,
+        "pinned {{convex_id}} TURN body must be byte-identical after witness"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&conversation_id)
+            .unwrap()
+            .expect("conversation after"),
+        conversation_raw,
+        "pinned {{convex_id}} CONVERSATION body must be byte-identical after witness"
+    );
+}
+
+/// F1: no non-owner actor can mint an actor-capable entity type. MACHINE
+/// (the `system` class type) is never facade-writable; PERSON (rebindable
+/// as human/agent) requires a verified human-class owner actor.
+#[test]
+fn put_structural_gates_actor_capable_kinds() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x46);
+    let agent_person = put_person(&vault, 0x4E);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
+
+    let mint = |facade: &MemoryFacade<'_>, kind: &str| {
+        facade.put_structural(&StructuralPutInput {
+            id: None,
+            kind: kind.to_owned(),
+            body: serde_json::json!({"name": "candidate actor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 660,
+            learned_at: None,
+        })
+    };
+
+    // Every actor-capable kind is refused for an agent-bound actor.
+    for kind in ["PERSON", "MACHINE"] {
+        let err = mint(&agent_facade, kind)
+            .expect_err("agent-bound actors must not mint actor-capable kinds");
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert!(!err.suggestions.is_empty());
+    }
+    // MACHINE is refused even for the owner (engine-host provisioning).
+    let err = mint(&owner_facade, "MACHINE").expect_err("MACHINE never facade-writable");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    // The verified owner may mint PERSON (design §2.3/§2.8 migrator door).
+    mint(&owner_facade, "PERSON").expect("owner mints companion persona");
+    // Non-actor kinds stay open to agents.
+    mint(&agent_facade, "EVENT").expect("agents may write non-actor structural kinds");
+}
+
+/// F2: caller-asserted actor keys are resolved against the store before
+/// any authority is granted — nonexistent ids and class/type mismatches
+/// fail closed on every authority-bearing verb.
+#[test]
+fn asserted_actor_bindings_resolve_against_the_store() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x5A);
+    let subject = put_person(&vault, 0x5B);
+    let owner_facade = facade_for(&vault, owner);
+    let claim = owner_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("owner claim");
+    let event = owner_facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".to_owned(),
+            body: serde_json::json!({"name": "hanami"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 670,
+            learned_at: None,
+        })
+        .expect("event");
+
+    // A nonexistent actor id gets NO authority from its asserted class.
+    let ghost = EntityId::from_bytes([0x77; 16]).unwrap();
+    let ghost_facade = facade_for(&vault, ghost);
+    for err in [
+        ghost_facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("ghost retract"),
+        ghost_facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("ghost delete"),
+        ghost_facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0x78; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, "x")],
+                occurred_at: 671,
+            })
+            .expect_err("ghost witness"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert!(err.message.contains("does not exist"), "{}", err.message);
+    }
+
+    // An existing NON-PERSON entity asserted as human is a type mismatch.
+    let event_id = EntityId::from_hex(&event.id_hex).unwrap();
+    let mismatch_facade = facade_for(&vault, event_id);
+    for err in [
+        mismatch_facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("mismatch retract"),
+        mismatch_facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("mismatch delete"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert!(
+            err.message.contains("cannot act as class"),
+            "{}",
+            err.message
+        );
+    }
+
+    // Bind-time verification: asActor keys hit the same store truth.
+    let err =
+        parse_actor_key(&vault, &format!("human:{}", ghost.to_hex())).expect_err("ghost bind");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let err = parse_actor_key(&vault, &format!("system:{}", owner.to_hex()))
+        .expect_err("PERSON cannot bind as system");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+}
+
+/// F3: a commit is one transaction — a write that fails validation after
+/// the gate leaves NO phantom decision behind.
+#[test]
+fn failed_commit_leaves_no_phantom_gate_decision() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x5C);
+    let facade = facade_for(&vault, actor);
+
+    let claim_id = EntityId::from_bytes([0x5D; 16]).unwrap();
+    let missing_subject = EntityId::from_bytes([0x5E; 16]).unwrap();
+    let mut input = claim_input(
+        "profile.name",
+        &missing_subject,
+        "user_stated",
+        serde_json::json!("Nobody"),
+    );
+    input.id = Some(claim_id.to_hex());
+    let receipts = facade.commit(&[input]).expect("commit batch");
+    assert_eq!(receipts[0].approval, "rejected");
+
+    assert!(
+        vault.get_claim(&claim_id).expect("read back").is_none(),
+        "rejected element must not persist"
+    );
+    assert!(
+        !facade
+            .receipts(100)
+            .expect("receipts")
+            .iter()
+            .any(|r| r.claim_ref.as_deref() == Some(claim_id.to_hex().as_str())),
+        "no phantom gate decision for a write that never happened"
+    );
+}
+
+/// F2: retraction authority — agents may retract only their own writes;
+/// deletion is an owner (human-class) verb outright.
+#[test]
+fn retract_and_delete_enforce_actor_authority() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x47);
+    let agent_person = put_person(&vault, 0x48);
+    let subject = put_person(&vault, 0x49);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
+
+    // Owner writes a claim; a foreign agent may NOT retract it.
+    let owner_claim = owner_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("owner claim");
+    let err = agent_facade
+        .claim_retract(&owner_claim.claim_short_id)
+        .expect_err("cross-actor retract must be denied");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(!err.suggestions.is_empty());
+
+    // The agent CAN retract its own write. The writer here is the
+    // first-party eiri agent (the one agent ref the default manifest
+    // grants an auto ceiling) so its claim lands auto — a proposed claim
+    // parks a pending consent, and the engine refuses body rewrites while
+    // consent is parked (GateConsentStale), which is consent-queue
+    // machinery, not retraction authority.
+    let eiri_agent = EntityId::from_hex(&crate::gate::first_party_eiri_connector_actor_ref())
+        .expect("first-party agent id");
+    vault
+        .put_entity(
+            &eiri_agent,
+            ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"eiri agent",
+        )
+        .expect("put eiri agent");
+    let eiri_facade = vault.memory_facade(eiri_agent, EdgeActorClass::Agent);
+    let mut agent_input = claim_input(
+        "profile.mood",
+        &subject,
+        "observed",
+        serde_json::json!("curious"),
+    );
+    agent_input.occurred_at = Some(120);
+    agent_input.learned_at = Some(120);
+    let agent_claim = eiri_facade.claim_upsert(&agent_input).expect("agent claim");
+    assert_eq!(agent_claim.approval, "auto");
+    let err = agent_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect_err("a DIFFERENT agent may not retract it");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    eiri_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect("agent retracts its own write");
+
+    // The human owner can retract anything (here: nothing left active from
+    // the agent, so retract the owner claim to prove the owner path).
+    owner_facade
+        .claim_retract(&owner_claim.claim_short_id)
+        .expect("owner retracts");
+
+    // Deletion is an owner verb: agents are denied regardless of target.
+    let target = put_person(&vault, 0x4A);
+    let err = agent_facade
+        .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("agent delete must be denied");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let receipt = owner_facade
+        .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("owner delete");
+    assert!(receipt.existed);
+}
+
+/// F3: the replacement write and the supersession are one transaction — a
+/// refused supersession (generated-origin claim over user-stated truth)
+/// rolls the replacement back instead of leaving an orphan revision.
+#[test]
+fn refused_supersession_rolls_back_the_replacement() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x4B);
+    let subject = put_person(&vault, 0x4C);
+    let facade = facade_for(&vault, actor);
+
+    let first = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("user-stated truth");
+
+    // A generated-origin revision may not supersede user-stated truth
+    // (engine source-trust supersession rights): the whole composed write
+    // must roll back.
+    let replacement_id = EntityId::from_bytes([0x4D; 16]).unwrap();
+    let mut generated = claim_input(
+        "profile.name",
+        &subject,
+        "generated",
+        serde_json::json!("Overwritten"),
+    );
+    generated.id = Some(replacement_id.to_hex());
+    generated.occurred_at = Some(200);
+    generated.learned_at = Some(200);
+    let err = facade
+        .claim_upsert(&generated)
+        .expect_err("generated must not supersede user-stated");
+    assert!(!err.suggestions.is_empty());
+
+    assert!(
+        vault
+            .get_claim(&replacement_id)
+            .expect("read back")
+            .is_none(),
+        "refused supersession must not leave the replacement persisted"
+    );
+    let survivors = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: Some("profile.name".to_owned()),
+            lifecycle: Some("active".to_owned()),
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(
+        survivors.len(),
+        1,
+        "the prior truth stays the only active claim"
+    );
+    assert_eq!(
+        short_id_part(&survivors[0].short_ref.clone().unwrap_or_default()),
+        short_id_part(&first.claim_short_id),
+        "prior claim untouched"
+    );
+}
+
+/// D1: a hard-deleted id is permanent through the facade — recreation is
+/// refused (same type AND retyped), killing the two-step retype
+/// (hard-delete → recreate) and re-import resurrection. A soft
+/// user_delete keeps engine semantics: the shell retains its type, so a
+/// same-type re-put stays engine-legal and a retype re-put stays blocked
+/// by EntityTypeImmutable.
+#[test]
+fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x62);
+    let facade = facade_for(&vault, owner);
+
+    let put_kind = |kind: &str, id_hex: &str, at: u64| {
+        facade.put_structural(&StructuralPutInput {
+            id: Some(id_hex.to_owned()),
+            kind: kind.to_owned(),
+            body: serde_json::json!({"name": "target"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: at,
+            learned_at: None,
+        })
+    };
+
+    // Hard delete → recreation refused, retyped or not.
+    let victim = EntityId::from_bytes([0x63; 16]).unwrap();
+    put_kind("EVENT", &victim.to_hex(), 700).expect("create victim");
+    facade
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("hard delete");
+    for kind in ["PERSON", "EVENT"] {
+        let err = put_kind(kind, &victim.to_hex(), 701)
+            .expect_err("recreation at a hard-deleted id must be refused");
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert!(err.message.contains("hard-deleted"), "{}", err.message);
+    }
+    // The refusal covers the claim door too (resurrection, not just retype).
+    let mut claim = claim_input(
+        "profile.name",
+        &owner,
+        "user_stated",
+        serde_json::json!("ghost"),
+    );
+    claim.id = Some(victim.to_hex());
+    let err = facade.claim_upsert(&claim).expect_err("claim at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
+    // ... and the witness door (message ids) and the blob-artifact door.
+    let mut ghost_message = witness_message(0, WitnessAuthor::User, "revenant");
+    ghost_message.id = Some(victim.to_hex());
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x66; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![ghost_message],
+            occurred_at: 707,
+        })
+        .expect_err("witness message at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let err = facade
+        .put_blob_artifact(&BlobArtifactInput {
+            id: Some(victim.to_hex()),
+            name: "revenant.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            occurred_at: 708,
+            learned_at: None,
+        })
+        .expect_err("blob artifact at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
+    // GDPR (hard reason) marks the id permanent the same way.
+    let gdpr_victim = EntityId::from_bytes([0x64; 16]).unwrap();
+    put_kind("EVENT", &gdpr_victim.to_hex(), 702).expect("create gdpr victim");
+    facade
+        .safe_delete(&gdpr_victim.to_hex(), SafeDeleteReason::GdprDelete)
+        .expect("gdpr delete");
+    let err = put_kind("EVENT", &gdpr_victim.to_hex(), 703)
+        .expect_err("gdpr-erased id must not resurrect");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
+    // Soft user_delete: shell keeps its type; a facade RETYPE at the id
+    // stays blocked by the engine (EntityTypeImmutable), and the id is
+    // NOT marked hard-deleted.
+    let soft_victim = EntityId::from_bytes([0x65; 16]).unwrap();
+    put_kind("EVENT", &soft_victim.to_hex(), 704).expect("create soft victim");
+    facade
+        .safe_delete(&soft_victim.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("soft delete");
+    let err = put_kind("PERSON", &soft_victim.to_hex(), 705)
+        .expect_err("soft-deleted shell keeps its type");
+    assert!(
+        !err.message.contains("hard-deleted"),
+        "soft delete must not use the hard marker: {}",
+        err.message
+    );
+    // A3 positive case: a SAME-TYPE re-put at a soft-deleted id stays
+    // legal — guards against a future over-broadened refusal that would
+    // start blocking legitimate soft re-puts.
+    let recreated = put_kind("EVENT", &soft_victim.to_hex(), 706)
+        .expect("same-type re-put after soft delete must succeed");
+    assert_eq!(recreated.id_hex, soft_victim.to_hex());
+}

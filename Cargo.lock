@@ -2949,6 +2949,8 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3236,6 +3238,7 @@ dependencies = [
 name = "oneiron-napi"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "napi",
  "napi-build",
  "napi-derive",
