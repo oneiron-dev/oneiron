@@ -4465,6 +4465,7 @@ struct LifecycleDag {
     pact_two: [u8; 32],
     pact_three: [u8; 32],
     pact_four: [u8; 32],
+    pact_five: [u8; 32],
     grant_four_a: EntityId,
     grant_four_b: EntityId,
     low_scope: FederationPactScope,
@@ -4473,11 +4474,12 @@ struct LifecycleDag {
     digest_three: [u8; 32],
 }
 
-/// Thirteen-entry lifecycle+device DAG exercising the four merge shapes:
+/// Fourteen-entry lifecycle+device DAG exercising the merge shapes:
 /// concurrent narrows (intersection incl. band ⊥), concurrent divergent
 /// repacts (Suspended), Disconnect vs higher-epoch repact (terminal wins),
-/// and concurrent Connects binding one pact id to two grants (Suspended,
-/// both grants denied).
+/// concurrent Connects binding one pact id to two grants (Suspended, both
+/// grants denied), and one grant bound to TWO pacts (activation folds over
+/// every binding — an Active second pact must not mask a suspended one).
 fn lifecycle_dag() -> LifecycleDag {
     let facet = scope_entity;
     let fixture = pact_fixture_with_scope(
@@ -4649,6 +4651,16 @@ fn lifecycle_dag() -> LifecycleDag {
         12,
         connect_action_with(&fixture, pact_four, grant_four_b, &scope_four, nonce_four),
     );
+    // grant_four_b bound to a SECOND pact on a branch that never saw the
+    // P4 bindings: P5 folds Active with grant_four_b operative, but the
+    // activation must still deny grant_four_b through suspended P4.
+    let pact_five = [0xB5; 32];
+    let connect_five = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        13,
+        connect_action_with(&fixture, pact_five, grant_four_b, &scope_four, [0x77; 16]),
+    );
 
     let digest_three = scope_digest_for(&scope_three, &nonce_three);
     let entries = vec![
@@ -4665,6 +4677,7 @@ fn lifecycle_dag() -> LifecycleDag {
         disconnect_three,
         connect_four_a,
         connect_four_b,
+        connect_five,
     ];
     LifecycleDag {
         fixture,
@@ -4672,6 +4685,7 @@ fn lifecycle_dag() -> LifecycleDag {
         pact_two,
         pact_three,
         pact_four,
+        pact_five,
         grant_four_a,
         grant_four_b,
         low_scope,
@@ -4736,6 +4750,13 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     assert_eq!(p4.status, FederationPactStatus::Suspended);
     assert_eq!(p4.pact_epoch, 1);
     assert_eq!(p4.grant_ref, dag.grant_four_a.min(dag.grant_four_b));
+
+    // P5: Active with grant_four_b operative — but activation folds over
+    // EVERY pact the grant was ever bound to, so suspended P4 still denies
+    // grant_four_b; a second live pact never masks a conflicted one.
+    let p5 = &fold.federation_pacts[&dag.pact_five];
+    assert_eq!(p5.status, FederationPactStatus::Active);
+    assert_eq!(p5.grant_ref, dag.grant_four_b);
     for grant in [dag.grant_four_a, dag.grant_four_b] {
         assert_eq!(
             federation_grant_activation(&fold, &grant),
@@ -4797,7 +4818,7 @@ fn lifecycle_entries_use_existing_type_122_doors() {
 proptest! {
     #[test]
     fn federation_lifecycle_fold_is_permutation_invariant(
-        perm in prop::collection::vec(0_usize..13, 13),
+        perm in prop::collection::vec(0_usize..14, 14),
     ) {
         let dag = lifecycle_dag();
         let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
@@ -5017,5 +5038,123 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
     assert_eq!(
         lifecycle_rejection(&fold, rebind_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+}
+
+#[test]
+fn federation_activation_denies_grant_bound_to_any_non_active_pact() {
+    // The residual fail-open shape: grant G bound to pact P AND pact Q via
+    // concurrent Connects (validate-time GrantAlreadyBound cannot stop a
+    // merge of two independently folded branches). P also binds H with
+    // H < G, so P suspends with H as its operative binding — P is then
+    // invisible to an operative-state scan for G, and only the binding
+    // registry knows G↔P. Activation must fold over EVERY registered pact:
+    // Q being Active must never mask P.
+    let fixture = pact_fixture(176);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let grant_h = scope_entity(0x47);
+    let grant_g = scope_entity(0x48);
+    let pact_p = fixture.pact_id;
+    let pact_q = [0xD5; 32];
+
+    let connect_p_g = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        1,
+        connect_action_with(
+            &fixture,
+            pact_p,
+            grant_g,
+            &fixture.scope,
+            fixture.pact_nonce,
+        ),
+    );
+    let connect_p_h = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        2,
+        connect_action_with(
+            &fixture,
+            pact_p,
+            grant_h,
+            &fixture.scope,
+            fixture.pact_nonce,
+        ),
+    );
+    let connect_q_g = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        3,
+        connect_action_with(&fixture, pact_q, grant_g, &fixture.scope, [0x78; 16]),
+    );
+    let connect_p_g_hash = authority_entry_hash(&connect_p_g).unwrap();
+    let connect_p_h_hash = authority_entry_hash(&connect_p_h).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect_p_g.clone(),
+        connect_p_h.clone(),
+        connect_q_g.clone(),
+    ]);
+    assert!(fold.issues.is_empty());
+    // P suspended with H operative (equal digests, H < G); Q Active with G
+    // operative — so the operative-state scan for G sees ONLY Q.
+    assert_eq!(
+        fold.federation_pacts[&pact_p].status,
+        FederationPactStatus::Suspended
+    );
+    assert_eq!(fold.federation_pacts[&pact_p].grant_ref, grant_h);
+    assert_eq!(
+        fold.federation_pacts[&pact_q].status,
+        FederationPactStatus::Active
+    );
+    assert_eq!(
+        fold.pact_for_grant(&grant_g).map(|pact| pact.status),
+        Some(FederationPactStatus::Active),
+        "operative-state scan alone would authorize G — activation is the gate"
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &grant_g),
+        FederationGrantActivation::Inactive(FederationPactStatus::Suspended),
+        "suspended P must deny G despite Active Q"
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &grant_h),
+        FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+    );
+
+    // Terminal revocation of P (unilateral Disconnect under its operative
+    // binding) must keep G denied: no survival via Q.
+    let disconnect_p = lifecycle_entry(
+        &fixture,
+        vec![connect_p_g_hash, connect_p_h_hash],
+        4,
+        unilateral_action_with(
+            &fixture,
+            pact_p,
+            grant_h,
+            FederationLifecycleKind::Disconnect,
+            1,
+        ),
+    );
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis,
+        connect_p_g,
+        connect_p_h,
+        connect_q_g,
+        disconnect_p,
+    ]);
+    assert_eq!(
+        fold.federation_pacts[&pact_p].status,
+        FederationPactStatus::Disconnected
+    );
+    assert_eq!(
+        fold.federation_pacts[&pact_q].status,
+        FederationPactStatus::Active
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &grant_g),
+        FederationGrantActivation::Inactive(FederationPactStatus::Disconnected),
+        "G must not survive P's revocation through Q"
     );
 }
