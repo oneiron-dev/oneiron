@@ -599,6 +599,18 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreContextPackRequest",
+        "interlocutors",
+        "Optional interlocutor presence controls (OF-365 ILD-1).",
+    );
+    set_schema_property_description(
+        spec,
+        "CoreContextPackResponse",
+        "interlocutors",
+        "Resolved per-speaker interlocutor stamps when an interlocutors block was supplied or the auth is principal_ref-scoped.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreEiriMemoryBoardBudget",
         "claims",
         "Claim row cap.",

@@ -219,6 +219,13 @@
           ],
           "telemetry_persisted": true
         },
+        "interlocutors": [
+          {
+            "claims_not_instructions": true,
+            "class": "unknown",
+            "speaker": "7e000000000000000000000012210004"
+          }
+        ],
         "memory_board": {
           "budget": {
             "claims": 0,

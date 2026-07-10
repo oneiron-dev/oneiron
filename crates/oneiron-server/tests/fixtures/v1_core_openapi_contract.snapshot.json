@@ -2003,6 +2003,16 @@
           "include_vectors": {
             "type": "boolean"
           },
+          "interlocutors": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreInterlocutorControls"
+              }
+            ]
+          },
           "limit": {
             "default": 10,
             "type": "integer"
@@ -2096,6 +2106,15 @@
           },
           "evidence": {
             "$ref": "#/components/schemas/CoreContextPackEvidence"
+          },
+          "interlocutors": {
+            "items": {
+              "$ref": "#/components/schemas/CoreInterlocutorStamp"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "memory_board": {
             "oneOf": [
@@ -2750,6 +2769,83 @@
           "deleted"
         ],
         "type": "string"
+      },
+      "CoreInterlocutorControls": {
+        "properties": {
+          "owner_present": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "third_parties": {
+            "items": {
+              "$ref": "#/components/schemas/CoreInterlocutorParty"
+            },
+            "type": "array"
+          },
+          "voice_session_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreInterlocutorParty": {
+        "properties": {
+          "channel_identity_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimed_owner": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "contact_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counterparty": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CoreInterlocutorStamp": {
+        "properties": {
+          "claims_not_instructions": {
+            "type": "boolean"
+          },
+          "class": {
+            "type": "string"
+          },
+          "speaker": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "speaker",
+          "class",
+          "claims_not_instructions"
+        ],
+        "type": "object"
       },
       "CoreListQuery": {
         "properties": {
