@@ -97,7 +97,7 @@ fn owner_consent(compile: &PersonaSnapshotCompile) -> PersonaSnapshotExportConse
 #[test]
 fn tier_a_claims_never_enter_compile_or_renders() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(
         &vault,
@@ -147,7 +147,7 @@ fn tier_a_claims_never_enter_compile_or_renders() -> Result<()> {
 
 #[test]
 fn ambiguous_sensitivity_band_fails_closed() {
-    let subject = EntityId::from_bytes([0xA2; 16]).expect("entity id");
+    let subject = EntityId::from_bytes([0x62; 16]).expect("entity id");
     let mut body = claim_body(subject, "profile.preference", "text", 0.5, None);
     body.scope = Some(Value::Map(vec![
         (Value::from("sensitivity"), Value::from(0_u64)),
@@ -159,7 +159,7 @@ fn ambiguous_sensitivity_band_fails_closed() {
 #[test]
 fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     let friend = put_person(&vault, 0xB1)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(
@@ -222,7 +222,7 @@ fn export_honors_strike_list_and_explicit_unstrike() -> Result<()> {
 #[test]
 fn strike_list_with_unknown_row_id_is_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
 
     let compile =
@@ -241,7 +241,7 @@ fn strike_list_with_unknown_row_id_is_rejected() -> Result<()> {
 #[test]
 fn third_party_rows_default_coarse_name_and_role() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     let friend = put_person(&vault, 0xB1)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
@@ -281,7 +281,7 @@ fn third_party_rows_default_coarse_name_and_role() -> Result<()> {
 #[test]
 fn agent_takes_absent_unless_toggled_and_always_attributed() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     let take = PersonaSnapshotAgentTake {
         actor_ref: "eiri".to_owned(),
@@ -330,7 +330,7 @@ fn agent_takes_absent_unless_toggled_and_always_attributed() -> Result<()> {
 #[test]
 fn one_compile_dual_renders_share_stamp_and_freshness_hints() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(&vault, subject, "profile.role", "founder", 0.8, None)?;
     put_claim(
@@ -392,7 +392,7 @@ fn one_compile_dual_renders_share_stamp_and_freshness_hints() -> Result<()> {
 #[test]
 fn export_receipt_carries_persona_compile_stamp() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
 
     let compile =
@@ -427,7 +427,7 @@ fn export_receipt_carries_persona_compile_stamp() -> Result<()> {
 #[test]
 fn stale_consent_stamp_rejects_export() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
 
     let compile =
@@ -450,7 +450,7 @@ fn stale_consent_stamp_rejects_export() -> Result<()> {
 #[test]
 fn audience_scoped_compile_changes_stamp_identity() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
 
     let neutral =
@@ -482,7 +482,7 @@ fn audience_scoped_compile_changes_stamp_identity() -> Result<()> {
 #[test]
 fn export_record_body_round_trips() -> Result<()> {
     let record = PersonaSnapshotExportRecord {
-        subject_ref: EntityId::from_bytes([0xA1; 16])?,
+        subject_ref: EntityId::from_bytes([0x61; 16])?,
         audience_ref: Some("contact:kenji".to_owned()),
         identity_line: "Lexi — founder".to_owned(),
         compiled_at_secs: 1_000,
@@ -520,7 +520,7 @@ fn export_record_body_round_trips() -> Result<()> {
 #[test]
 fn soft_deleted_subject_is_absent_for_compile() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
 
     vault.delete_entity_with_reason(&subject, DeleteReason::UserDelete)?;
@@ -535,7 +535,7 @@ fn soft_deleted_subject_is_absent_for_compile() -> Result<()> {
 #[test]
 fn soft_deleted_claim_shells_are_skipped_in_compile() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     let deleted = put_claim(
         &vault,
@@ -571,7 +571,7 @@ fn soft_deleted_claim_shells_are_skipped_in_compile() -> Result<()> {
 #[test]
 fn tampered_compile_is_rejected_at_export() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(
         &vault,
@@ -622,7 +622,7 @@ fn tampered_compile_is_rejected_at_export() -> Result<()> {
 #[test]
 fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     let friend = put_person(&vault, 0xB1)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(&vault, friend, "profile.name", "Kenji", 0.9, None)?;
@@ -667,7 +667,7 @@ fn relationship_rows_render_coarse_without_internal_refs() -> Result<()> {
 #[test]
 fn markdown_render_collapses_multiline_text() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(
         &vault,
@@ -706,7 +706,7 @@ fn markdown_render_collapses_multiline_text() -> Result<()> {
 #[test]
 fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
     let (_dir, vault) = test_vault();
-    let subject = put_person(&vault, 0xA1)?;
+    let subject = put_person(&vault, 0x61)?;
     put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
     put_claim(&vault, subject, "profile.hobby", "bouldering", 0.7, None)?;
 
