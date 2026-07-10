@@ -569,10 +569,10 @@ fn commit_batch_gating_is_per_element() {
 #[test]
 fn safe_delete_requires_named_reason_and_returns_receipt() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xA1);
+    let actor = put_person(&vault, 0xB5);
     let facade = facade_for(&vault, actor);
 
-    let soft_target = put_person(&vault, 0xA2);
+    let soft_target = put_person(&vault, 0xB6);
     let receipt = facade
         .safe_delete(&soft_target.to_hex(), SafeDeleteReason::UserDelete)
         .expect("user delete");
@@ -583,7 +583,7 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         "tombstone path writes no receipt entity"
     );
 
-    let hard_target = put_person(&vault, 0xA3);
+    let hard_target = put_person(&vault, 0xB7);
     let receipt = facade
         .safe_delete(&hard_target.to_hex(), SafeDeleteReason::UserHardDelete)
         .expect("hard delete");
@@ -600,7 +600,7 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         "hard-deleted entity is purged"
     );
 
-    let gdpr_target = put_person(&vault, 0xA4);
+    let gdpr_target = put_person(&vault, 0xB8);
     let receipt = facade
         .safe_delete(&gdpr_target.to_hex(), SafeDeleteReason::GdprDelete)
         .expect("gdpr delete");

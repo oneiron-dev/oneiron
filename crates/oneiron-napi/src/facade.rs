@@ -728,9 +728,12 @@ impl ActorScopedVault {
                 "forget selector needs shortRef, or subjectRef + predicate".to_owned(),
             ));
         };
-        let receipts = forget_active_matches(&facade, subject_ref, predicate)
-            .map_err(|e| facade_error(&e))?;
-        Ok(receipts.into_iter().map(commit_receipt_from_engine).collect())
+        let receipts =
+            forget_active_matches(&facade, subject_ref, predicate).map_err(|e| facade_error(&e))?;
+        Ok(receipts
+            .into_iter()
+            .map(commit_receipt_from_engine)
+            .collect())
     }
 
     /// Lists claims by subject/predicate/lifecycle, bounded by `limit`.
@@ -1101,10 +1104,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "oneiron-napi-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("oneiron-napi-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp vault dir");
         dir
     }
