@@ -17,6 +17,7 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 #[cfg(feature = "sync")]
@@ -2652,11 +2653,11 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
         return Ok(());
     };
 
-    // A milestone naming an agent-dispatch job becomes durable-index visible
-    // only when its stamped envelope attribution matches the dispatched
-    // payload's agent — a forged milestone stays an ordinary claim but never
-    // enters `latest_durable_milestone` (tolerant skip, never a write error:
-    // replicated replay must not diverge on local queue state).
+    // A milestone becomes durable-index visible only when it is BOUND to the
+    // job it names — for EVERY milestone kind. A forged claim stays an
+    // ordinary claim but never enters `latest_durable_milestone` (tolerant
+    // skip, never a write error: replicated replay must not fail a peer's
+    // write on local queue state).
     if !dreamer_milestone_attribution_is_bound(store, wtxn, milestone.job_id, body) {
         return Ok(());
     }
@@ -2669,27 +2670,43 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
     Ok(())
 }
 
-/// F4 binding check for the durable milestone index. Resolution ladder:
-/// * no local queue row → bound (a synced milestone claim for a job that
-///   lives on another device has nothing local to bind against, and resume
-///   only consults the index on the device holding the row);
-/// * unreadable/undecodable local row → NOT bound (fail closed, warn);
-/// * non-dreamer or non-agent-dispatch job → bound (non-agent milestones
-///   keep today's semantics);
-/// * agent-dispatch job → bound iff the claim's stamped envelope attribution
-///   equals the payload's `agent_id`.
+/// F4 binding check for the durable milestone index, applied to EVERY
+/// milestone kind on every door that indexes (the `apply_put` hook and the
+/// one-time backfill). Resolution ladder:
+///
+/// * no local queue row → NOT bound (fail closed). Queue rows are private
+///   per-device runner state and are never sync-materialized, so a milestone
+///   claim replicated from a peer has nothing local to bind against —
+///   indexing it would let a peer's (or a forger's) claim decide this
+///   device's resume point. `latest_durable_milestone` is only meaningful on
+///   the device holding the row, so nothing legitimate is lost;
+/// * unreadable/undecodable local row or payload → NOT bound (fail closed);
+/// * non-dreamer or non-agent-dispatch job → bound (today's semantics for
+///   milestones that carry no agent attribution);
+/// * agent-dispatch job → bound only when ALL THREE bindings hold:
+///   the claim's subject is the job id, its write envelope is a SYSTEM
+///   (Dreamer bookkeeping) envelope, and its stamped attribution equals the
+///   dispatched payload's `agent_id`.
 fn dreamer_milestone_attribution_is_bound(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     job_id: JobId,
     body: &ClaimBody,
 ) -> bool {
+    let job_hex = bytes_to_hex_lower(job_id.as_bytes());
     let raw = match store.job_records.get(txn, job_id.as_bytes()) {
         Ok(Some(raw)) => raw,
-        Ok(None) => return true,
+        Ok(None) => {
+            tracing::warn!(
+                job_id = %job_hex,
+                "milestone names a job with no local queue row; \
+                 refusing durable index entry",
+            );
+            return false;
+        }
         Err(error) => {
             tracing::warn!(
-                job_id = %bytes_to_hex_lower(job_id.as_bytes()),
+                job_id = %job_hex,
                 %error,
                 "milestone job row read failed; refusing durable index entry",
             );
@@ -2703,7 +2720,7 @@ fn dreamer_milestone_attribution_is_bound(
     };
     let Ok(record) = rmp_serde::from_slice::<JobRecord>(record_body) else {
         tracing::warn!(
-            job_id = %bytes_to_hex_lower(job_id.as_bytes()),
+            job_id = %job_hex,
             "milestone job row failed to decode; refusing durable index entry",
         );
         return false;
@@ -2713,7 +2730,7 @@ fn dreamer_milestone_attribution_is_bound(
     }
     let Ok(payload) = decode_dreamer_job_payload(&record.payload) else {
         tracing::warn!(
-            job_id = %bytes_to_hex_lower(job_id.as_bytes()),
+            job_id = %job_hex,
             "milestone job payload failed to decode; refusing durable index entry",
         );
         return false;
@@ -2723,16 +2740,43 @@ fn dreamer_milestone_attribution_is_bound(
     }
     let Some(expected) = crate::agent_dispatch::agent_dispatch_payload_agent_id(&payload) else {
         tracing::warn!(
-            job_id = %bytes_to_hex_lower(job_id.as_bytes()),
+            job_id = %job_hex,
             "agent dispatch payload is unattributable; refusing durable index entry",
         );
         return false;
     };
+
+    // (1) Subject binding: the milestone must be about THIS job.
+    let Ok(expected_subject) = EntityId::from_bytes(*job_id.as_bytes()) else {
+        return false;
+    };
+    if body.subject != ClaimSubject::Entity(expected_subject) {
+        tracing::warn!(
+            job_id = %job_hex,
+            "milestone subject is not the dispatched job id; \
+             refusing durable index entry",
+        );
+        return false;
+    }
+
+    // (2) Envelope-actor binding: agent-dispatch milestones are runner
+    // bookkeeping and ride the SYSTEM/Dreamer envelope (B1 (a)). An
+    // agent-envelope milestone is not bookkeeping and never indexes.
+    if milestone_claim_envelope_actor_class(body) != Some(EdgeActorClass::System) {
+        tracing::warn!(
+            job_id = %job_hex,
+            "milestone does not ride a system/Dreamer envelope; \
+             refusing durable index entry",
+        );
+        return false;
+    }
+
+    // (3) Attribution binding: the stamped agent is the dispatched agent.
     match milestone_claim_agent_attribution(body) {
         Some(claimed) if claimed == expected => true,
         claimed => {
             tracing::warn!(
-                job_id = %bytes_to_hex_lower(job_id.as_bytes()),
+                job_id = %job_hex,
                 expected,
                 ?claimed,
                 "milestone attribution does not match the dispatched agent; \
@@ -2743,16 +2787,39 @@ fn dreamer_milestone_attribution_is_bound(
     }
 }
 
+/// Reads the write-envelope evidence map a claim carries (`evid`).
+fn milestone_claim_envelope_evidence(body: &ClaimBody) -> Option<&Vec<(Value, Value)>> {
+    match body.evidence.as_ref() {
+        Some(Value::Map(evidence)) => Some(evidence),
+        _ => None,
+    }
+}
+
+/// Reads the actor class stamped into a claim's write-envelope evidence.
+fn milestone_claim_envelope_actor_class(body: &ClaimBody) -> Option<EdgeActorClass> {
+    milestone_claim_envelope_evidence(body)?
+        .iter()
+        .find_map(|(key, value)| {
+            (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY))
+                .then(|| {
+                    value
+                        .as_u64()
+                        .and_then(|raw| u8::try_from(raw).ok())
+                        .and_then(EdgeActorClass::try_from_u8)
+                })
+                .flatten()
+        })
+}
+
 /// Reads the agent attribution a milestone claim carries in its stamped
 /// write-envelope evidence (`evid.provenance.agent`).
 fn milestone_claim_agent_attribution(body: &ClaimBody) -> Option<String> {
-    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
-        return None;
-    };
-    let provenance = evidence.iter().find_map(|(key, value)| {
-        (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY))
-            .then_some(value)
-    })?;
+    let provenance = milestone_claim_envelope_evidence(body)?
+        .iter()
+        .find_map(|(key, value)| {
+            (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY))
+                .then_some(value)
+        })?;
     let Value::Map(entries) = provenance else {
         return None;
     };
@@ -2859,6 +2926,13 @@ fn backfill_dreamer_milestone_index(
         else {
             continue;
         };
+        // The one-time backfill is an indexing door like the `apply_put`
+        // hook, so it runs the SAME binding check — otherwise a forged
+        // milestone written before the index existed would be admitted by
+        // the rebuild.
+        if !dreamer_milestone_attribution_is_bound(store, &*wtxn, milestone.job_id, &body) {
+            continue;
+        }
         milestones.push(milestone);
     }
 
