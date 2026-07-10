@@ -45,7 +45,7 @@ use crate::temporal::TemporalGranularity;
 use crate::temporal::TimeRange;
 use crate::temporal::temporal_expression_from_query;
 
-const DEFAULT_RESULT_LIMIT: usize = 20;
+pub(crate) const DEFAULT_RESULT_LIMIT: usize = 20;
 const DEFAULT_SIGMA_SECS: u64 = 86_400;
 const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 const TEMPORAL_KEY_LEN: usize = 24;
