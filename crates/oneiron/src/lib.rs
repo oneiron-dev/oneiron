@@ -375,8 +375,11 @@ pub use crate::dreamer_tournament::{
 #[cfg(feature = "sync")]
 pub use crate::dreamer_wake::WakeProgressLane;
 pub use crate::dreamer_wake::{
-    DreamerJobExecution, DreamerJobExecutor, DreamerWakeDriver, RunWakePass, WakeJobContext,
-    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, request_wake,
+    BudgetLegibilityEnvelope, DREAMER_GRACEFUL_WRAP_WINDOW_MS, DREAMER_HARD_CUT_PARK_OWNER,
+    DREAMER_HARD_CUT_PARK_REASON, DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
+    DREAMER_WRAP_UP_NOTICE_PERCENT, DreamerJobExecution, DreamerJobExecutor, DreamerWakeDriver,
+    RunWakePass, WakeJobContext, WakeMilestoneAuthor, WakePassDeadline, WakePassReport,
+    WakePassStop, WakeTrigger, current_legibility, legibility_envelope, request_wake,
 };
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
@@ -401,8 +404,9 @@ pub use crate::engine_executor::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME,
     ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig, EngineExecutorError,
     EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
-    EngineNativeExecutor, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
-    JsCodeModeStepOutcome,
+    EngineNativeExecutor, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,
+    JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    SelfDispatchResponse, guest_response_with_budget,
 };
 pub use crate::entity_id::EntityId;
 pub use crate::error::{Error, ErrorKind, Result};

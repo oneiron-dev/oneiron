@@ -463,3 +463,345 @@ fn request_wake_enqueues_with_advisory_dedupe() -> Result<()> {
     assert!(matches!(second, EnqueueDreamerJobOutcome::Existing(_)));
     Ok(())
 }
+
+fn injected_clock(start_ms: u64) -> (Arc<AtomicU64>, WakePassDeadline) {
+    let elapsed = Arc::new(AtomicU64::new(start_ms));
+    let clock = Arc::clone(&elapsed);
+    let deadline = WakePassDeadline::with_clock(
+        DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
+        Arc::new(move || clock.load(Ordering::SeqCst)),
+    );
+    (elapsed, deadline)
+}
+
+/// Completes jobs while advancing the injected pass clock, simulating work
+/// that consumes wall time.
+struct ClockAdvancingExecutor {
+    clock: Arc<AtomicU64>,
+    advance_by_ms: u64,
+    completed_units: u64,
+    executed: u32,
+}
+
+impl DreamerJobExecutor for ClockAdvancingExecutor {
+    async fn execute(
+        &mut self,
+        _job: &DreamerAdmittedJob,
+        _ctx: &mut WakeJobContext<'_>,
+    ) -> Result<DreamerJobExecution> {
+        self.executed += 1;
+        self.clock.fetch_add(self.advance_by_ms, Ordering::SeqCst);
+        Ok(DreamerJobExecution::Completed {
+            completed_units: self.completed_units,
+        })
+    }
+}
+
+#[test]
+fn wake_pass_never_exceeds_ceiling() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "one", 10)?;
+    let second = enqueue_micro(&store, "two", 11)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // The first job eats the whole ceiling; the pass must hard-stop without
+    // admitting the second.
+    let (clock, deadline) = injected_clock(0);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = ClockAdvancingExecutor {
+        clock: Arc::clone(&clock),
+        advance_by_ms: DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS + 1,
+        completed_units: 10,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+
+    assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
+    assert_eq!(report.admitted, 1, "no admission past the ceiling");
+    assert_eq!(report.completed, 1);
+    assert_eq!(exec.executed, 1);
+    let status = store.status(second.job.id)?.expect("second job status");
+    assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    Ok(())
+}
+
+#[test]
+fn wrap_notice_fires_exactly_once_counter_first() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "a", 10)?;
+    enqueue_micro(&store, "b", 11)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // Pre-consume the wake-budget counter to 85%: the counter crosses the
+    // notice threshold while the clock is far from it.
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        1_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let admission = guard.admit_reserve(850).expect("pre-spend admission");
+    guard
+        .settle_absolute(&admission.lease, 850)
+        .expect("pre-spend settle");
+
+    let (_clock, deadline) = injected_clock(0);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_budget_guard(guard);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+    assert_eq!(report.completed, 2, "notice does not stop the pass");
+
+    let plans: Vec<_> = driver
+        .steering_signals()
+        .iter()
+        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .collect();
+    assert_eq!(plans.len(), 1, "exactly one PLAN signal per pass");
+    assert_eq!(plans[0].template_id, crate::BUDGET_PLAN_PROMPT_TEMPLATE_ID);
+    Ok(())
+}
+
+#[test]
+fn wrap_notice_fires_exactly_once_clock_first() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "a", 10)?;
+    enqueue_micro(&store, "b", 11)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // Clock at 80% of the ceiling (144s), counter fresh: the clock side of
+    // the trigger fires. 144s is below the 165s finalize threshold, so the
+    // pass still admits and completes work.
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        1_000_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let (_clock, deadline) = injected_clock(144_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_budget_guard(guard);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+    assert_eq!(report.completed, 2);
+
+    let plans: Vec<_> = driver
+        .steering_signals()
+        .iter()
+        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .collect();
+    assert_eq!(plans.len(), 1, "exactly one PLAN signal per pass");
+    Ok(())
+}
+
+#[test]
+fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "wrapped", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let author = milestone_author(&vault, 5)?;
+
+    // Segment 1 — finalize window (165s..180s): the driver enters finalize
+    // ONCE, emits ONE LAND signal, and admits nothing.
+    let (_clock, deadline) = injected_clock(170_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+    assert_eq!(report.admitted, 0, "finalize admits no new jobs");
+    assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
+    let lands: Vec<_> = driver
+        .steering_signals()
+        .iter()
+        .filter(|signal| signal.threshold == crate::BudgetThreshold::Land95)
+        .collect();
+    assert_eq!(lands.len(), 1, "exactly one LAND signal");
+    assert_eq!(lands[0].template_id, crate::BUDGET_LAND_PROMPT_TEMPLATE_ID);
+
+    // The envelope carries the finalize deadline in the window.
+    let (_clock2, deadline2) = injected_clock(170_000);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        1_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let envelope = current_legibility(&guard.read(), &deadline2);
+    assert!(envelope.wrap_up);
+    assert_eq!(envelope.finalize_by_ms, Some(10_000));
+
+    // Segment 2 — hard cut through the ERROR path: the step layer parks the
+    // running job at the ceiling and its DeadlineHardCut error is propagated
+    // by the executor (a host that does not map it to Park). The driver must
+    // still run the whole release sequence — budget-reservation refund,
+    // park/publish bookkeeping, and the CheckpointReached milestone — and
+    // stop DeadlineHardCut instead of bailing with the error.
+    let (clock, deadline) = injected_clock(100_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_milestone_author(author);
+    struct HardCutExecutor {
+        clock: Arc<AtomicU64>,
+    }
+    impl DreamerJobExecutor for HardCutExecutor {
+        async fn execute(
+            &mut self,
+            job: &DreamerAdmittedJob,
+            ctx: &mut WakeJobContext<'_>,
+        ) -> Result<DreamerJobExecution> {
+            // Simulates the ONE-1305 step-layer deadline race exactly: the
+            // step layer parks at the ceiling under its hard-cut owner, then
+            // the error (not Park) escapes the executor.
+            self.clock.store(180_001, Ordering::SeqCst);
+            DreamerRunnerStore::new(ctx.vault).park_job(ParkDreamerJob {
+                job_id: job.status.job.id,
+                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
+                now: ctx.now_ms / 1_000,
+            })?;
+            Err(crate::Error::InvariantViolation(
+                "durable step hard cut at the wake-pass deadline",
+            ))
+        }
+    }
+    let mut exec = HardCutExecutor {
+        clock: Arc::clone(&clock),
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 30),
+        &mut exec,
+    ))
+    .expect("hard-cut pass reports instead of erroring");
+    assert_eq!(report.admitted, 1);
+    assert_eq!(report.parked, 1);
+    assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
+    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    assert_eq!(parked.reason, DREAMER_HARD_CUT_PARK_REASON);
+    assert_eq!(parked.park_owner, DREAMER_HARD_CUT_PARK_OWNER);
+
+    // Budget refund: the admission reservation was aborted, not leaked.
+    assert!(
+        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        "hard cut must refund the runner budget reservation"
+    );
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000);
+
+    // Checkpoint: the deadline-cut park left a durable resume point.
+    let milestone = store
+        .latest_durable_milestone(queued.job.id)?
+        .expect("durable milestone");
+    assert_eq!(milestone.kind, DreamerMilestoneKind::CheckpointReached);
+
+    // Queue-lease cleanup: the cut job's stale lease is reclaimable through
+    // the normal path, so the job re-queues for the next pass.
+    let queue = JobQueue::new(&vault);
+    let cleaned = queue.cleanup_leases(CleanupJobLeases {
+        now: 200,
+        lease_timeout_secs: 10,
+    })?;
+    assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
+    let status = store.status(queued.job.id)?.expect("job status");
+    assert_eq!(status.job.state, JobState::Queued);
+    Ok(())
+}
+
+#[test]
+fn reused_driver_fires_wrap_notice_each_pass() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // Pass 1 at 83% elapsed: the clock-side wrap notice fires.
+    let (clock, deadline) = injected_clock(150_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+    ))?;
+    assert_eq!(
+        driver.steering_signals().len(),
+        1,
+        "pass 1 fires its wrap notice"
+    );
+
+    // Pass 2 on the SAME driver, below the notice threshold: the buffer is
+    // per-pass — pass 1's signal must not linger, and nothing new fires.
+    clock.store(10_000, Ordering::SeqCst);
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 30),
+        &mut exec,
+    ))?;
+    assert!(
+        driver.steering_signals().is_empty(),
+        "pass 2 below threshold carries no stale pass-1 signal"
+    );
+
+    // Pass 3 back over the threshold: the notice fires AGAIN — per-pass
+    // state, not per-driver state.
+    clock.store(150_000, Ordering::SeqCst);
+    block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 40),
+        &mut exec,
+    ))?;
+    let plans: Vec<_> = driver
+        .steering_signals()
+        .iter()
+        .filter(|signal| signal.threshold == crate::BudgetThreshold::Plan80)
+        .collect();
+    assert_eq!(plans.len(), 1, "pass 3 fires its own wrap notice");
+    Ok(())
+}
+
+#[test]
+fn monotonic_clock_immune_to_wall_jump() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "wall-jump", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    // The deadline reads only its injected monotonic source: wildly
+    // different wall-clock `now` inputs do not move it.
+    let (_clock, deadline) = injected_clock(1_000);
+    assert_eq!(deadline.remaining_ms(), 179_000);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 20);
+    input.now = 9_999_999_999; // wall clock jumped far forward
+    let report = block_on_ready(driver.run_wake_pass(input, &mut exec))?;
+    assert_eq!(report.completed, 1);
+    assert_eq!(report.stop, WakePassStop::QueueEmpty);
+    assert_eq!(
+        driver.deadline().remaining_ms(),
+        179_000,
+        "wall input never moves the monotonic deadline"
+    );
+    Ok(())
+}

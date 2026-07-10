@@ -21,6 +21,10 @@ use crate::Vault;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::dreamer_wake::{
+    BudgetLegibilityEnvelope, DREAMER_HARD_CUT_PARK_OWNER, DREAMER_HARD_CUT_PARK_REASON,
+    WakePassDeadline, current_legibility,
+};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -137,6 +141,14 @@ pub enum DurableStepError {
         "durable step fatal LLM error; execute declared deterministic fallback {fallback:?}: {source}"
     )]
     FallbackDemanded { fallback: String, source: LlmError },
+    /// NEW steps are refused once the wake pass enters its graceful-wrap
+    /// finalize window (ONE-1305); memoized hits still return.
+    #[error("durable step refused: wake pass is in its finalize window")]
+    FinalizeRefused,
+    /// The in-flight call lost the race against the wake-pass deadline: the
+    /// lease was aborted and the job parked at the hard cut (ONE-1305).
+    #[error("durable step hard cut at the wake-pass deadline")]
+    DeadlineHardCut,
 }
 
 /// Live progression of one durable step, stored as `u8` in the private
@@ -261,7 +273,21 @@ pub struct DurableStepContext<'a> {
     pub run_id: Option<String>,
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
+    /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
+    /// the finalize-window refusal for NEW steps, the mid-call deadline
+    /// race, and the budget legibility envelope on finished outcomes.
+    pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
+}
+
+impl DurableStepContext<'_> {
+    /// The step clock in Unix SECONDS. Park rows store `parked_at` in seconds
+    /// (`park_job_with_progress` multiplies it by 1_000 for `updated_at_ms`),
+    /// so the millisecond `now_ms` must be divided down before it reaches
+    /// `park_job` — otherwise `parked_at` lands ~1000x too large (#480-1).
+    const fn now_s(&self) -> u64 {
+        self.now_ms / 1_000
+    }
 }
 
 /// Handle to a suspended step's trap record chain. `trap_claim_id` is the
@@ -279,6 +305,9 @@ pub enum StepOutcome {
     Finished {
         response: LlmResponse,
         memoized: bool,
+        /// Budget legibility (ONE-1305): Some inside wake passes (when
+        /// [`DurableStepContext::deadline`] is set), None outside.
+        legibility: Option<BudgetLegibilityEnvelope>,
     },
     Trapped(TrapRef),
 }
@@ -310,6 +339,7 @@ pub async fn call_as_step(
         return Ok(StepOutcome::Finished {
             response,
             memoized: true,
+            legibility: step_legibility(ctx, guard),
         });
     }
 
@@ -326,7 +356,17 @@ pub async fn call_as_step(
         return Ok(StepOutcome::Finished {
             response,
             memoized: true,
+            legibility: step_legibility(ctx, guard),
         });
+    }
+
+    // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps
+    // are refused — memoized hits and stored-payload recoveries above still
+    // return without spending.
+    if let Some(deadline) = ctx.deadline
+        && deadline.in_finalize_window()
+    {
+        return Err(DurableStepError::FinalizeRefused);
     }
 
     step_state_write(
@@ -353,7 +393,7 @@ pub async fn call_as_step(
                 job_id: ctx.job_id,
                 reason: "durable step budget exhausted".to_owned(),
                 park_owner: trap_park_owner(&trap.trap_claim_id),
-                now: ctx.now_ms,
+                now: ctx.now_s(),
             })?;
             step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
             return Ok(StepOutcome::Trapped(trap));
@@ -361,7 +401,35 @@ pub async fn call_as_step(
         Err(denied) => return Err(LlmError::from(denied).into()),
     };
 
-    let response = match generate_with_retry(backend, &request, &admission.lease).await {
+    // Mid-step preemption (ONE-1305, G1): inside a wake pass the in-flight
+    // generate future races the deadline; on loss the lease aborts (actual
+    // spend settled) and the job parks at the hard cut.
+    let generated = match ctx.deadline {
+        Some(deadline) => {
+            match race_deadline(
+                generate_with_retry(backend, &request, &admission.lease),
+                deadline,
+            )
+            .await
+            {
+                DeadlineRace::Completed(result) => result,
+                DeadlineRace::DeadlineExpired => {
+                    let _ = guard.abort(&admission.lease);
+                    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
+                    store.park_job(crate::dreamer_runner::ParkDreamerJob {
+                        job_id: ctx.job_id,
+                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                        park_owner: DREAMER_HARD_CUT_PARK_OWNER.to_owned(),
+                        now: ctx.now_s(),
+                    })?;
+                    step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
+                    return Err(DurableStepError::DeadlineHardCut);
+                }
+            }
+        }
+        None => generate_with_retry(backend, &request, &admission.lease).await,
+    };
+    let response = match generated {
         Ok(response) => response,
         Err(error) => {
             let _ = guard.abort(&admission.lease);
@@ -397,7 +465,67 @@ pub async fn call_as_step(
     Ok(StepOutcome::Finished {
         response,
         memoized: false,
+        legibility: step_legibility(ctx, guard),
     })
+}
+
+/// The wake-pass legibility envelope for this step's outcome: Some inside
+/// wake passes (deadline present), None outside.
+fn step_legibility(
+    ctx: &DurableStepContext<'_>,
+    guard: &BudgetGuard,
+) -> Option<BudgetLegibilityEnvelope> {
+    ctx.deadline
+        .map(|deadline| current_legibility(&guard.read(), deadline))
+}
+
+enum DeadlineRace<T> {
+    Completed(T),
+    DeadlineExpired,
+}
+
+/// Upper bound between deadline re-checks while racing an in-flight call:
+/// bounds how far past the ceiling a hung provider can run, and lets
+/// injected test clocks advance while the timer sleeps real time.
+const DEADLINE_RACE_RECHECK_MS: u64 = 50;
+
+/// Races a future against the wake-pass deadline: checks expiry FIRST, then
+/// polls the future, re-arming a bounded timer until one side wins.
+///
+/// The expiry-before-poll order is load-bearing: a call whose deadline
+/// passed while the racer slept loses even if its response arrived in the
+/// meantime — a hard-cut pass must never record a new `Finished` step.
+async fn race_deadline<F: Future>(
+    future: F,
+    deadline: &WakePassDeadline,
+) -> DeadlineRace<F::Output> {
+    let mut future = std::pin::pin!(future);
+    let mut timer: Option<Pin<Box<SleepFuture>>> = None;
+    std::future::poll_fn(move |cx| {
+        if deadline.expired() {
+            return Poll::Ready(DeadlineRace::DeadlineExpired);
+        }
+        if let Poll::Ready(output) = future.as_mut().poll(cx) {
+            return Poll::Ready(DeadlineRace::Completed(output));
+        }
+        loop {
+            let armed = timer.get_or_insert_with(|| {
+                Box::pin(sleep_ms(
+                    deadline.remaining_ms().clamp(1, DEADLINE_RACE_RECHECK_MS),
+                ))
+            });
+            match armed.as_mut().poll(cx) {
+                Poll::Ready(()) => {
+                    if deadline.expired() {
+                        return Poll::Ready(DeadlineRace::DeadlineExpired);
+                    }
+                    timer = None;
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    })
+    .await
 }
 
 fn step_call_failure(request: &LlmRequest, error: LlmError) -> DurableStepError {
