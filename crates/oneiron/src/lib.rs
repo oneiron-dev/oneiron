@@ -23,6 +23,7 @@ pub mod code_symbol;
 pub mod codebase;
 pub mod companion;
 pub mod config;
+pub mod connector_key;
 pub mod context_pack;
 pub mod counterparty_contact;
 pub mod critic;
@@ -258,6 +259,12 @@ pub use crate::companion::{
 };
 pub use crate::config::{
     Bm25RankProfile, HnswConfig, TextAnalyzerConfig, TextIndexOptions, VaultConfig,
+};
+pub use crate::connector_key::{
+    CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, CalendarPeriod, ConnectorKeyRecord,
+    ConnectorKeyStatus, EffectorBudget, EffectorBudgetCharge, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetRowRead,
+    EffectorBudgetWindow, decode_connector_key_body, encode_connector_key_body,
 };
 pub use crate::context_pack::{
     ContextEntity, ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, EmptyContext,
