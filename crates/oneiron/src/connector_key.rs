@@ -102,14 +102,12 @@ pub(crate) const CONNECTOR_KEY_CONNECTOR_INDEX_PREFIX: &[u8] = b"connector_key/c
 pub(crate) const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0";
 
 /// vault_meta spend-settlement idempotency rows: prefix ++ key id (16 bytes)
-/// ++ event_ref bytes -> row_index u16 BE. One row per settlement event id;
-/// a replayed event id settles nothing.
+/// ++ event_ref bytes -> row_index u16 BE ++ minor_units u64 BE ++
+/// cost_occurred_at u64 BE. One row per settlement event id, binding the
+/// WHOLE declared settlement: a replayed event id settles nothing when every
+/// field matches and fails closed when any field differs (a pre-claimed
+/// event_ref cannot force a silent no-op for a different settlement).
 pub(crate) const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
-
-/// Maximum accepted forward clock skew for a settlement timestamp: `at` may
-/// not exceed the engine clock by more than this, so a caller-picked future
-/// timestamp cannot roll a budget window open.
-const CONNECTOR_KEY_SETTLE_MAX_CLOCK_SKEW_S: u64 = 300;
 
 const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
 
@@ -1229,6 +1227,16 @@ pub(crate) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Resu
         .map_err(|_| Error::CorruptedIndex("connector key connector index key"))
 }
 
+/// The stored settlement-event value: the whole declared settlement, so a
+/// replay is idempotent only for the SAME settlement.
+fn settle_event_value(row_index: u16, minor_units: u64, cost_occurred_at: u64) -> Vec<u8> {
+    let mut value = Vec::with_capacity(size_of::<u16>() + 2 * size_of::<u64>());
+    value.extend_from_slice(&row_index.to_be_bytes());
+    value.extend_from_slice(&minor_units.to_be_bytes());
+    value.extend_from_slice(&cost_occurred_at.to_be_bytes());
+    value
+}
+
 pub(crate) fn connector_key_settle_event_key(id: &EntityId, event_ref: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(
         CONNECTOR_KEY_SETTLE_EVENT_PREFIX.len() + ENTITY_ID_LEN + event_ref.len(),
@@ -1786,12 +1794,21 @@ impl Vault {
     /// the limit on an `on_exhaust: Suspend` row and the key is Active, the
     /// key flips Suspended in the same transaction. No retroactive refusal —
     /// the effect already occurred; the NEXT admission refuses.
+    ///
+    /// Two different times are deliberately kept apart. `cost_occurred_at`
+    /// is the DECLARED fact — when the provider cost happened, legitimately
+    /// lagging, recorded faithfully in the settlement-event row and never
+    /// consulted for accounting. Which budget window the debit lands in, the
+    /// usage-entry chronology, and any suspension stamp all take the ENGINE
+    /// clock at settle time, unconditionally: the record says when the cost
+    /// happened; the ledger says when we learned of it. A caller-picked
+    /// timestamp therefore cannot select, roll, or clear any window.
     pub fn settle_connector_spend(
         &self,
         id: &EntityId,
         row_index: u16,
         minor_units: u64,
-        at: u64,
+        cost_occurred_at: u64,
         event_ref: &str,
     ) -> Result<EffectorBudgetRowRead> {
         if event_ref.trim().is_empty() {
@@ -1803,13 +1820,7 @@ impl Vault {
         if event_ref.as_bytes().contains(&0) {
             return Err(invalid_body("settle event_ref must not contain NUL"));
         }
-        // Budget accounting never trusts caller time unchecked: `at` may lag
-        // the engine clock (costs settle post-hoc) but may not lead it, so a
-        // caller cannot pick a timestamp that opens a fresh window.
-        let now = crate::unix_seconds_now();
-        if at > now.saturating_add(CONNECTOR_KEY_SETTLE_MAX_CLOCK_SKEW_S) {
-            return Err(invalid_body("settle timestamp too far in the future"));
-        }
+        let settled_at = crate::unix_seconds_now();
 
         let mut wtxn = self.store.env.write_txn()?;
         let record =
@@ -1837,38 +1848,29 @@ impl Vault {
             None => ConnectorKeyUsage::default(),
         };
 
-        // Idempotency: a replayed event id settles nothing (a retry after a
-        // timeout must not double-debit or falsely suspend) and answers with
-        // the row's current state.
+        // Idempotency bound to the WHOLE declared settlement: a replayed
+        // event id settles nothing when (row, amount, cost time) all match
+        // (a retry after a timeout must not double-debit or falsely
+        // suspend) and fails closed when any field differs — a pre-claimed
+        // event_ref cannot force a silent no-op for a different settlement.
         let event_key = connector_key_settle_event_key(id, event_ref);
+        let event_value = settle_event_value(row_index, minor_units, cost_occurred_at);
         if let Some(stored) = self.store.vault_meta.get(&wtxn, &event_key)? {
-            if stored != row_index.to_be_bytes() {
-                return Err(invalid_body("settle event replay with different row"));
+            if stored != event_value {
+                return Err(invalid_body(
+                    "settle event replay with different settlement",
+                ));
             }
-            // Read-only echo of the row in the caller's (validated) time
-            // frame; nothing is written.
-            usage.touch(&budget.window, at);
+            // Read-only echo of the row's current state; nothing is written.
+            usage.touch(&budget.window, settled_at);
             return Ok(budget_row_read(row_index, &budget, &usage));
         }
 
-        // Monotonic per row: a timestamp before the row's last touch could
-        // re-shape a window that already accounted later debits.
-        let last_touch = usage
-            .entries
-            .iter()
-            .map(|(ts, _)| *ts)
-            .max()
-            .unwrap_or(0)
-            .max(usage.window_start);
-        if at < last_touch {
-            return Err(invalid_body("settle timestamp before last usage touch"));
-        }
-
-        usage.touch(&budget.window, at);
-        usage.entries.push((at, minor_units));
+        usage.touch(&budget.window, settled_at);
+        usage.entries.push((settled_at, minor_units));
         self.store
             .vault_meta
-            .put(&mut wtxn, &event_key, &row_index.to_be_bytes())?;
+            .put(&mut wtxn, &event_key, &event_value)?;
         self.store
             .vault_meta
             .put(&mut wtxn, &usage_key, &usage.encode()?)?;
@@ -1892,7 +1894,7 @@ impl Vault {
                 id,
                 &settled_record,
                 reason,
-                at,
+                settled_at,
             )?;
         }
 
@@ -1905,7 +1907,7 @@ impl Vault {
             "gate.connector_key.spend_settle",
             &settled_record,
             policy.read_frontier_hash()?,
-            at,
+            settled_at,
         )?;
         wtxn.commit()?;
         Ok(row_read)

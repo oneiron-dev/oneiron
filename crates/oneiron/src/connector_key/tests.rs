@@ -620,7 +620,7 @@ fn connector_key_for_resolves_exact_actor_over_agnostic() -> Result<()> {
 }
 
 #[test]
-fn spend_settle_validates_timestamps_and_event_identity() -> Result<()> {
+fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let id = test_id(0xF9);
     vault.register_connector_key(
@@ -633,7 +633,7 @@ fn spend_settle_validates_timestamps_and_event_identity() -> Result<()> {
                     1_000,
                     "USD",
                     EffectorBudgetWindow::Calendar {
-                        period: CalendarPeriod::Month,
+                        period: CalendarPeriod::Day,
                         tz: None,
                     },
                     EffectorBudgetOnExhaust::Suspend,
@@ -664,43 +664,57 @@ fn spend_settle_validates_timestamps_and_event_identity() -> Result<()> {
         Err(Error::InvalidConnectorKeyBody("settle event_ref too long"))
     ));
 
-    // A caller-picked future timestamp cannot roll a budget window open.
-    let far_future = crate::unix_seconds_now() + 10_000;
-    assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 10, far_future, "settle:future"),
-        Err(Error::InvalidConnectorKeyBody(
-            "settle timestamp too far in the future"
-        ))
-    ));
-
-    // Honest settle, then a REPLAY of the same event id: idempotent — no
-    // double debit, no op record side effects, current state echoed back.
-    let first = vault.settle_connector_spend(&id, 0, 400, 2_000, "settle:evt-1")?;
-    assert_eq!(first.used, 400);
-    let replay = vault.settle_connector_spend(&id, 0, 400, 2_000, "settle:evt-1")?;
-    assert_eq!(replay.used, 400, "replay settles nothing");
+    // cost_occurred_at is a DECLARED fact, never a window selector: a
+    // far-past, a far-future, a calendar-edge, and a first-touch-on-empty-row
+    // declared time all debit the CURRENT engine-clock window and cannot
+    // clear or shift prior usage.
+    let now = crate::unix_seconds_now();
+    let live_bucket = calendar_window_start(CalendarPeriod::Day, now);
+    let day_edge = live_bucket + SECONDS_PER_DAY - 1;
+    let declared_times = [
+        (5_u64, "settle:first-touch-ancient"),
+        (now + 10_000, "settle:far-future"),
+        (day_edge, "settle:calendar-edge"),
+        (1_100, "settle:far-past"),
+    ];
+    let mut expected_used = 0;
+    for (declared, event_ref) in declared_times {
+        expected_used += 100;
+        let read = vault.settle_connector_spend(&id, 0, 100, declared, event_ref)?;
+        assert_eq!(read.used, expected_used, "{event_ref} accumulates");
+        assert!(
+            read.window_start >= live_bucket && read.window_start <= crate::unix_seconds_now(),
+            "{event_ref} landed in the live engine-clock bucket"
+        );
+    }
     assert_eq!(
         vault.get_connector_key(&id)?.expect("record").status,
         ConnectorKeyStatus::Active
     );
-    // Replaying the same event id against a different row is a caller bug.
-    assert!(matches!(
-        vault.settle_connector_spend(&id, 1, 400, 2_000, "settle:evt-1"),
-        Err(Error::InvalidConnectorKeyBody(
-            "settle event replay with different row"
-        ))
-    ));
 
-    // Monotonic per row: usage cannot be re-shaped by choosing a timestamp
-    // before the row's last touch.
-    assert!(matches!(
-        vault.settle_connector_spend(&id, 0, 10, 1_500, "settle:evt-2"),
-        Err(Error::InvalidConnectorKeyBody(
-            "settle timestamp before last usage touch"
-        ))
-    ));
-    // A later timestamp still settles normally.
-    let second = vault.settle_connector_spend(&id, 0, 100, 2_500, "settle:evt-3")?;
-    assert_eq!(second.used, 500);
+    // A replay of the SAME settlement is idempotent: nothing debits, the
+    // current state echoes back.
+    let replay = vault.settle_connector_spend(&id, 0, 100, 5, "settle:first-touch-ancient")?;
+    assert_eq!(replay.used, expected_used, "replay settles nothing");
+    // A replayed event id with ANY differing field fails closed — a
+    // pre-claimed event_ref cannot force a silent no-op for a different
+    // settlement.
+    for (row, amount, declared) in [(1_u16, 100_u64, 5_u64), (0, 999, 5), (0, 100, 6)] {
+        assert!(
+            matches!(
+                vault.settle_connector_spend(
+                    &id,
+                    row,
+                    amount,
+                    declared,
+                    "settle:first-touch-ancient"
+                ),
+                Err(Error::InvalidConnectorKeyBody(
+                    "settle event replay with different settlement"
+                ))
+            ),
+            "mismatched replay (row {row}, amount {amount}, declared {declared}) must fail closed"
+        );
+    }
     Ok(())
 }
