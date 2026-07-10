@@ -83,6 +83,7 @@ pub const DREAMER_STEP_RETRY_BACKOFF_MS: [u64; 3] = [250, 1_000, 4_000];
 const DREAMER_PRIVATE_STEP_STATE_PREFIX: &[u8] = b"dreamer:step_state:v1:"; // + job_id(16) + step_hash(32)
 const DREAMER_PRIVATE_STEP_INDEX_PREFIX: &[u8] = b"dreamer:step_index:v1:"; // + job_id(16) + step_hash(32) -> claim id (16)
 const DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX: &[u8] = b"dreamer:step_index:v1:i:"; // + claim id (16) -> forward key
+const DREAMER_PRIVATE_TRAP_BINDING_PREFIX: &[u8] = b"dreamer:trap_binding:v1:"; // + trap anchor claim id (16)
 
 const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 1;
 const DREAMER_STEP_STATE_KEYS: [&str; 5] = [
@@ -92,6 +93,10 @@ const DREAMER_STEP_STATE_KEYS: [&str; 5] = [
     "updated_at",
     "response",
 ];
+
+const DREAMER_TRAP_BINDING_SCHEMA_VERSION: u64 = 1;
+const DREAMER_TRAP_BINDING_KEYS: [&str; 4] =
+    ["schema_version", "job_id", "step_hash", "park_owner"];
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_JOB_ID: &str = "job_id";
@@ -108,6 +113,7 @@ const KEY_AT: &str = "at";
 const KEY_TRAP_KIND: &str = "trap_kind";
 const KEY_STATE: &str = "state";
 const KEY_NOTE: &str = "note";
+const KEY_PARK_OWNER: &str = "park_owner";
 const KEY_STARTED_AT: &str = "started_at";
 const KEY_UPDATED_AT: &str = "updated_at";
 
@@ -346,6 +352,7 @@ pub async fn call_as_step(
             store.park_job(crate::dreamer_runner::ParkDreamerJob {
                 job_id: ctx.job_id,
                 reason: "durable step budget exhausted".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
                 now: ctx.now_ms,
             })?;
             step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
@@ -1145,7 +1152,22 @@ fn step_state_delete(vault: &Vault, job_id: JobId, step_hash: &[u8; 32]) -> Resu
 // Trap record: ONE claim kind, supersession-based state machine (design D4)
 // ---------------------------------------------------------------------------
 
-/// Opens a trap for a suspended step: writes the `created` anchor claim.
+/// Park-owner token derived from a trap's `created` anchor claim id. The
+/// step layer parks trapped jobs under THIS token, records it in the trap's
+/// private binding row, and the consume path resumes with it — a parked row
+/// held by any other owner is refused fail-closed.
+#[must_use]
+pub fn trap_park_owner(trap_claim_id: &EntityId) -> String {
+    format!(
+        "dreamer.trap:{}",
+        bytes_to_hex_lower(trap_claim_id.as_bytes())
+    )
+}
+
+/// Opens a trap for a suspended step: writes the `created` anchor claim AND
+/// the private trap-binding row (job id + step hash + park owner) in ONE
+/// wtxn. The binding row is the device-local ground truth the consume path
+/// validates against — it never syncs and cannot be forged through claims.
 /// The budget path in [`call_as_step`] parks the job right after; consent
 /// waits arrive via [`trap_for_durable_wait`].
 pub fn open_trap(
@@ -1179,7 +1201,17 @@ pub fn open_trap(
         vault
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
-            .apply(wtxn)
+            .apply(wtxn)?;
+        trap_binding_put_in_txn(
+            vault,
+            wtxn,
+            &claim_id,
+            &TrapBindingRow {
+                job_id: ctx.job_id,
+                step_hash,
+                park_owner: trap_park_owner(&claim_id),
+            },
+        )
     })?;
     Ok(TrapRef {
         trap_claim_id: claim_id,
@@ -1240,12 +1272,15 @@ pub fn send_trap_signal(
 /// Validates and absorbs the resume signal (`→consumed`).
 ///
 /// Fail-closed validation (ruling L8, uniform including the durable path):
-/// the head must be `sent`; its `step_hash` must equal the trap's suspended
-/// step hash (forged → typed reject); its supersession lineage must chain
-/// back to this trap's `created` anchor through legal transitions (stale →
+/// the head must be `sent`; the anchor must be THIS trap's `created` record
+/// (a record in any other state cannot anchor a consume); the binding —
+/// job id, step hash, and park owner — is re-derived from the PRIVATE row
+/// written when the trap opened on this device, never from caller-supplied
+/// fields or synced claims (forged → typed reject); the head's supersession
+/// lineage must chain back to the anchor through legal transitions (stale →
 /// typed reject). On success the `consumed` transition and the
-/// `resume_parked` un-park commit in ONE wtxn (atomic consume+resume,
-/// design D4); the resumed job id is returned.
+/// `resume_parked` un-park (owner-checked) commit in ONE wtxn (atomic
+/// consume+resume, design D4); the resumed job id is returned.
 pub fn consume_trap_signal(
     vault: &Vault,
     store: &crate::dreamer_runner::DreamerRunnerStore<'_>,
@@ -1256,15 +1291,23 @@ pub fn consume_trap_signal(
     if head.state != DreamerTrapState::Sent {
         return Err(invalid_trap("dreamer trap consume requires a sent signal"));
     }
-    if head.step_hash != trap.step_hash {
-        return Err(invalid_trap("dreamer trap signal hash mismatch"));
-    }
     let anchor = vault
         .get_claim(&trap.trap_claim_id)?
         .ok_or(invalid_trap("dreamer trap created record missing"))?;
     let anchor_decoded = decode_trap_claim_value(&anchor.value)?;
-    if anchor_decoded.step_hash != trap.step_hash {
+    if anchor_decoded.state != DreamerTrapState::Created {
+        return Err(invalid_trap("dreamer trap anchor must be a created record"));
+    }
+    let binding = trap_binding_read(vault, &trap.trap_claim_id)?
+        .ok_or(invalid_trap("dreamer trap binding missing"))?;
+    if head.step_hash != binding.step_hash
+        || anchor_decoded.step_hash != binding.step_hash
+        || trap.step_hash != binding.step_hash
+    {
         return Err(invalid_trap("dreamer trap signal hash mismatch"));
+    }
+    if head.job_id != binding.job_id || anchor_decoded.job_id != binding.job_id {
+        return Err(invalid_trap("dreamer trap signal names a different job"));
     }
     require_lineage_chains_to_anchor(vault, &head_id, &trap.trap_claim_id)?;
 
@@ -1279,11 +1322,14 @@ pub fn consume_trap_signal(
             None,
         )?;
         // Idempotent when no parked row exists (a consent trap raised before
-        // any park, or a resume raced by the runner).
-        store.resume_parked_in_txn(wtxn, head.job_id, now)?;
+        // any park, or a resume raced by the runner); a row parked by any
+        // OTHER owner is refused inside resume_parked_in_txn.
+        store.resume_parked_in_txn(wtxn, binding.job_id, &binding.park_owner, now)?;
+        // Consumed is terminal — retire the private binding with the trap.
+        trap_binding_delete_in_txn(vault, wtxn, &trap.trap_claim_id)?;
         Ok(())
     })?;
-    Ok(head.job_id)
+    Ok(binding.job_id)
 }
 
 #[derive(Debug, Clone)]
@@ -1570,6 +1616,145 @@ fn envelope_from_claim_body(body: &ClaimBody) -> Result<WriteEnvelope> {
         WriteProvenance::new(provenance)?,
         ClaimApprovalStatus::Proposed,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Private trap-binding rows (device-local consume ground truth, ruling L8)
+// ---------------------------------------------------------------------------
+
+/// Device-local binding of one trap anchor to the suspended step: written by
+/// [`open_trap`] in the anchor's wtxn, read back at consume as the ONLY
+/// authority for the job id, step hash, and park owner.
+struct TrapBindingRow {
+    job_id: JobId,
+    step_hash: [u8; 32],
+    park_owner: String,
+}
+
+fn trap_binding_key(anchor: &EntityId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(DREAMER_PRIVATE_TRAP_BINDING_PREFIX.len() + 16);
+    key.extend_from_slice(DREAMER_PRIVATE_TRAP_BINDING_PREFIX);
+    key.extend_from_slice(anchor.as_bytes());
+    key
+}
+
+fn trap_binding_put_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    anchor: &EntityId,
+    row: &TrapBindingRow,
+) -> Result<()> {
+    let entries = vec![
+        (
+            Value::from(KEY_SCHEMA_VERSION),
+            Value::from(DREAMER_TRAP_BINDING_SCHEMA_VERSION),
+        ),
+        (
+            Value::from(KEY_JOB_ID),
+            Value::Binary(row.job_id.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(KEY_STEP_HASH),
+            Value::Binary(row.step_hash.to_vec()),
+        ),
+        (
+            Value::from(KEY_PARK_OWNER),
+            Value::from(row.park_owner.as_str()),
+        ),
+    ];
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
+        .map_err(|_| invalid_trap("dreamer trap binding row MessagePack encode failed"))?;
+    vault
+        .store
+        .vault_meta
+        .put(wtxn, &trap_binding_key(anchor), &encoded)?;
+    Ok(())
+}
+
+fn trap_binding_read(vault: &Vault, anchor: &EntityId) -> Result<Option<TrapBindingRow>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &trap_binding_key(anchor))?
+    else {
+        return Ok(None);
+    };
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
+        .map_err(|_| invalid_trap("dreamer trap binding row MessagePack decode failed"))?;
+    let entries = expect_map(&value, "dreamer trap binding row must be a MessagePack map")?;
+
+    let mut schema_version = None;
+    let mut job_id = None;
+    let mut step_hash = None;
+    let mut park_owner = None;
+    let mut seen = [false; DREAMER_TRAP_BINDING_KEYS.len()];
+
+    for (key, value) in entries {
+        let key = expect_key(key, "dreamer trap binding row keys must be strings")?;
+        let index = pinned_key_index(key, &DREAMER_TRAP_BINDING_KEYS)
+            .ok_or(invalid_trap("dreamer trap binding row key is not pinned"))?;
+        if seen[index] {
+            return Err(invalid_trap("duplicate dreamer trap binding row key"));
+        }
+        seen[index] = true;
+
+        match DREAMER_TRAP_BINDING_KEYS[index] {
+            KEY_SCHEMA_VERSION => {
+                schema_version = Some(expect_u64(
+                    value,
+                    "dreamer trap binding schema_version must be an integer",
+                )?);
+            }
+            KEY_JOB_ID => job_id = Some(decode_job_id_value(value)?),
+            KEY_STEP_HASH => {
+                let Value::Binary(bytes) = value else {
+                    return Err(invalid_trap(
+                        "dreamer trap binding step_hash must be binary",
+                    ));
+                };
+                let raw: [u8; 32] = bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| invalid_trap("dreamer trap binding step_hash must be 32 bytes"))?;
+                step_hash = Some(raw);
+            }
+            KEY_PARK_OWNER => {
+                park_owner = Some(expect_string(
+                    value,
+                    "dreamer trap binding park_owner must be a string",
+                )?);
+            }
+            _ => unreachable!("index resolved from DREAMER_TRAP_BINDING_KEYS"),
+        }
+    }
+
+    let schema_version =
+        schema_version.ok_or(invalid_trap("missing dreamer trap binding schema_version"))?;
+    if schema_version != DREAMER_TRAP_BINDING_SCHEMA_VERSION {
+        return Err(invalid_trap(
+            "unsupported dreamer trap binding schema_version",
+        ));
+    }
+
+    Ok(Some(TrapBindingRow {
+        job_id: job_id.ok_or(invalid_trap("missing dreamer trap binding job_id"))?,
+        step_hash: step_hash.ok_or(invalid_trap("missing dreamer trap binding step_hash"))?,
+        park_owner: park_owner.ok_or(invalid_trap("missing dreamer trap binding park_owner"))?,
+    }))
+}
+
+fn trap_binding_delete_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    anchor: &EntityId,
+) -> Result<()> {
+    vault
+        .store
+        .vault_meta
+        .delete(wtxn, &trap_binding_key(anchor))?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

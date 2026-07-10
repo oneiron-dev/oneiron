@@ -13,7 +13,7 @@ pub use step::{
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
     DurableStepContext, DurableStepError, DurableStepResult, StepOutcome, StepProgression, TrapRef,
     call_as_step, consume_trap_signal, open_trap, register_wait, send_trap_signal,
-    trap_for_durable_wait,
+    trap_for_durable_wait, trap_park_owner,
 };
 pub(crate) use step::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
 

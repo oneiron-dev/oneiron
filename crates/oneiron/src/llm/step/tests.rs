@@ -420,9 +420,11 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     assert_eq!(decoded.job_id, fixture.job_id);
     assert_eq!(decoded.step_hash, trap.step_hash);
 
-    // The job is parked and the transition row is deleted.
+    // The job is parked UNDER THE TRAP'S OWNER TOKEN and the transition row
+    // is deleted.
     let runner = DreamerRunnerStore::new(&vault);
-    assert!(runner.parked_job(fixture.job_id)?.is_some(), "job parked");
+    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
     assert!(step_state_read(&vault, fixture.job_id, &trap.step_hash)?.is_none());
     Ok(())
 }
@@ -438,6 +440,7 @@ fn signal_before_wait_ordering() -> Result<()> {
     runner.park_job(crate::dreamer_runner::ParkDreamerJob {
         job_id: fixture.job_id,
         reason: "consent".to_owned(),
+        park_owner: trap_park_owner(&trap.trap_claim_id),
         now: 10_001,
     })?;
 
@@ -496,6 +499,7 @@ fn forged_resume_signal_rejected() -> Result<()> {
     runner.park_job(crate::dreamer_runner::ParkDreamerJob {
         job_id: fixture.job_id,
         reason: "budget".to_owned(),
+        park_owner: trap_park_owner(&trap.trap_claim_id),
         now: 10_001,
     })?;
     register_wait(&vault, &trap, 10_002)?;
@@ -583,6 +587,180 @@ fn stale_resume_signal_rejected() -> Result<()> {
     let error = consume_trap_signal(&vault, &runner, &cross, 10_006)
         .expect_err("cross-chain signal rejected");
     assert!(matches!(error, Error::InvalidClaimBody(_)));
+    Ok(())
+}
+
+#[test]
+fn own_anchor_sent_record_refused() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // The job is genuinely parked by its real trap, so a successful forgery
+    // WOULD resume it.
+    let real = open_trap(&vault, &ctx, DreamerTrapKind::Budget, step_hash, "budget")?;
+    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
+        job_id: fixture.job_id,
+        reason: "budget".to_owned(),
+        park_owner: trap_park_owner(&real.trap_claim_id),
+        now: 10_001,
+    })?;
+
+    // Forge ONE claim already in state Sent and present it as its own
+    // anchor: head == anchor, so the lineage walk is trivially satisfied and
+    // only the anchor-state check stands in the way.
+    let forged_id = EntityId::now();
+    let forged_value = encode_trap_claim_value(&EncodedTrapClaim {
+        kind: DreamerTrapKind::Budget,
+        job_id: fixture.job_id,
+        step_hash,
+        state: DreamerTrapState::Sent,
+        at: 10_002,
+        note: "forged self-anchor".to_owned(),
+    });
+    let candidate = ClaimCandidate::new(
+        DREAMER_TRAP_PREDICATE,
+        ClaimSubject::Entity(fixture.subject),
+        forged_value,
+        1.0,
+    );
+    let envelope = dreamer_runtime_envelope(&ctx)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .claim_candidate(&forged_id, candidate, &envelope, occurred(10_002), 10_002)
+            .apply(wtxn)
+    })?;
+
+    let forged = TrapRef {
+        trap_claim_id: forged_id,
+        kind: DreamerTrapKind::Budget,
+        step_hash,
+    };
+    let error = consume_trap_signal(&vault, &runner, &forged, 10_003)
+        .expect_err("self-anchored sent record refused");
+    assert!(matches!(
+        error,
+        Error::InvalidClaimBody("dreamer trap anchor must be a created record")
+    ));
+    assert!(
+        runner.parked_job(fixture.job_id)?.is_some(),
+        "job stays parked"
+    );
+    Ok(())
+}
+
+#[test]
+fn signal_naming_other_owners_job_refused() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // Job J is parked under ITS OWN trap's park-owner token.
+    let fixture_j = step_fixture(&vault, 10)?;
+    let ctx_j = ctx(&vault, &fixture_j, 10_000);
+    let hash_j = request_fixture().canonical_hash().expect("hash");
+    let trap_j = open_trap(&vault, &ctx_j, DreamerTrapKind::Budget, hash_j, "budget j")?;
+    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
+        job_id: fixture_j.job_id,
+        reason: "budget j".to_owned(),
+        park_owner: trap_park_owner(&trap_j.trap_claim_id),
+        now: 10_001,
+    })?;
+
+    // Trap K suspends a DIFFERENT job.
+    let fixture_k = step_fixture(&vault, 11)?;
+    let ctx_k = ctx(&vault, &fixture_k, 10_010);
+    let hash_k = [0x66_u8; 32];
+    let trap_k = open_trap(
+        &vault,
+        &ctx_k,
+        DreamerTrapKind::Consent,
+        hash_k,
+        "consent k",
+    )?;
+    register_wait(&vault, &trap_k, 10_011)?;
+
+    // Forge a sent record on K's chain that names JOB J — another owner's
+    // parked job. The private binding says trap K belongs to job K, so the
+    // consume must refuse instead of unparking J.
+    let (head_id, _) = trap_head(&vault, &trap_k.trap_claim_id)?;
+    let head_body = vault.get_claim(&head_id)?.expect("head body");
+    let forged_id = EntityId::now();
+    let forged_value = encode_trap_claim_value(&EncodedTrapClaim {
+        kind: DreamerTrapKind::Consent,
+        job_id: fixture_j.job_id,
+        step_hash: hash_k,
+        state: DreamerTrapState::Sent,
+        at: 10_012,
+        note: "forged cross-job".to_owned(),
+    });
+    let forged_candidate = ClaimCandidate::new(
+        DREAMER_TRAP_PREDICATE,
+        ClaimSubject::Entity(fixture_k.subject),
+        forged_value,
+        1.0,
+    );
+    let envelope = envelope_from_claim_body(&head_body)?;
+    vault.with_write_txn(|wtxn| {
+        vault
+            .batch_in()
+            .claim_candidate(
+                &forged_id,
+                forged_candidate,
+                &envelope,
+                occurred(10_012),
+                10_012,
+            )
+            .apply(wtxn)?;
+        vault.supersede_claim_in_txn(wtxn, &forged_id, &head_id, 10_012)
+    })?;
+
+    let error = consume_trap_signal(&vault, &runner, &trap_k, 10_013)
+        .expect_err("cross-job signal refused");
+    assert!(matches!(
+        error,
+        Error::InvalidClaimBody("dreamer trap signal names a different job")
+    ));
+    assert!(
+        runner.parked_job(fixture_j.job_id)?.is_some(),
+        "job J stays parked"
+    );
+    let (_, head) = trap_head(&vault, &trap_k.trap_claim_id)?;
+    assert_ne!(head.state, DreamerTrapState::Consumed);
+    Ok(())
+}
+
+#[test]
+fn consume_refuses_when_parked_by_other_owner() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    let trap = open_trap(&vault, &ctx, DreamerTrapKind::Consent, step_hash, "consent")?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // The job is parked by SOMEONE ELSE (e.g. the wake driver), not by this
+    // trap's recorded owner.
+    runner.park_job(crate::dreamer_runner::ParkDreamerJob {
+        job_id: fixture.job_id,
+        reason: "driver park".to_owned(),
+        park_owner: "wake-worker".to_owned(),
+        now: 10_001,
+    })?;
+    register_wait(&vault, &trap, 10_002)?;
+    send_trap_signal(&vault, &trap.trap_claim_id, step_hash, 10_003)?;
+
+    let error =
+        consume_trap_signal(&vault, &runner, &trap, 10_004).expect_err("owner mismatch refused");
+    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
+
+    // The whole consume wtxn rolled back: no consumed transition landed and
+    // the other owner's parked row is intact.
+    let (_, head) = trap_head(&vault, &trap.trap_claim_id)?;
+    assert_ne!(head.state, DreamerTrapState::Consumed);
+    assert!(runner.parked_job(fixture.job_id)?.is_some());
     Ok(())
 }
 

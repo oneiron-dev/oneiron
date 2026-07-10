@@ -115,6 +115,7 @@ impl DreamerJobExecutor for ParkingExecutor {
             DreamerRunnerStore::new(ctx.vault).park_job(ParkDreamerJob {
                 job_id: job.status.job.id,
                 reason: self.reason.clone(),
+                park_owner: "step-layer".to_owned(),
                 now: ctx.now_ms / 1_000,
             })?;
         }
@@ -315,13 +316,18 @@ fn park_and_resume_roundtrip() -> Result<()> {
     assert_eq!(budget.remaining_units, 10_000);
     assert_eq!(budget.reserved_units, 0);
 
-    // Resume clears the parked row and is idempotent on re-call.
+    // Resume clears the parked row and is idempotent on re-call. The driver
+    // parked under its lease owner, so resume must present the same token.
     let resumed = store
-        .resume_parked(queued.job.id, 30)?
+        .resume_parked(queued.job.id, "wake-worker", 30)?
         .expect("resumed status");
     assert_eq!(resumed.job.id, queued.job.id);
     assert!(store.parked_job(queued.job.id)?.is_none());
-    assert!(store.resume_parked(queued.job.id, 31)?.is_none());
+    assert!(
+        store
+            .resume_parked(queued.job.id, "wake-worker", 31)?
+            .is_none()
+    );
 
     // Expire the stale lease so normal admission can re-claim the job.
     let queue = JobQueue::new(&vault);

@@ -554,6 +554,7 @@ pub use crate::llm::{
     RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError, StepOutcome,
     StepProgression, TierPrecedence, TrapRef, UnsupportedCapability, call_as_step,
     consume_trap_signal, open_trap, register_wait, send_trap_signal, trap_for_durable_wait,
+    trap_park_owner,
 };
 pub use crate::maintain::{MaintenanceBuilder, MaintenanceReport};
 pub use crate::off_record::{

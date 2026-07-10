@@ -378,7 +378,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         // job inside its trap wtxn — publish only.
                         self.publish(job_id, ProgressKind::Parked, Some(reason), input.now)?;
                     } else {
-                        self.park_job(job_id, reason, input.now)?;
+                        self.park_job(job_id, reason, input.lease_owner.clone(), input.now)?;
                     }
                     report.parked += 1;
                 }
@@ -463,10 +463,17 @@ impl<'a> DreamerWakeDriver<'a> {
         Ok(())
     }
 
-    fn park_job(&mut self, job_id: JobId, reason: String, now: u64) -> Result<()> {
+    fn park_job(
+        &mut self,
+        job_id: JobId,
+        reason: String,
+        park_owner: String,
+        now: u64,
+    ) -> Result<()> {
         let input = ParkDreamerJob {
             job_id,
             reason,
+            park_owner,
             now,
         };
         #[cfg(feature = "sync")]

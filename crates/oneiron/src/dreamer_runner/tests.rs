@@ -1775,6 +1775,7 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
     let parked = runner.park_job(ParkDreamerJob {
         job_id: queued.job.id,
         reason: "waiting for wake budget settle".to_owned(),
+        park_owner: "dreamer-worker".to_owned(),
         now: 30,
     })?;
     assert_eq!(runner.parked_job(queued.job.id)?, Some(parked));
@@ -1835,6 +1836,62 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
     Ok(())
 }
 
+#[test]
+fn park_row_ownership_enforced() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_job(&runner, "expand", 10)?;
+
+    // Same-owner park → re-park round-trip refreshes the row.
+    runner.park_job(ParkDreamerJob {
+        job_id: queued.job.id,
+        reason: "first park".to_owned(),
+        park_owner: "owner-a".to_owned(),
+        now: 20,
+    })?;
+    let reparked = runner.park_job(ParkDreamerJob {
+        job_id: queued.job.id,
+        reason: "refreshed park".to_owned(),
+        park_owner: "owner-a".to_owned(),
+        now: 21,
+    })?;
+    assert_eq!(runner.parked_job(queued.job.id)?, Some(reparked));
+
+    // A DIFFERENT owner must not overwrite the row.
+    let error = runner
+        .park_job(ParkDreamerJob {
+            job_id: queued.job.id,
+            reason: "steal park".to_owned(),
+            park_owner: "owner-b".to_owned(),
+            now: 22,
+        })
+        .expect_err("overwrite by other owner refused");
+    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
+    let parked = runner.parked_job(queued.job.id)?.expect("row intact");
+    assert_eq!(parked.park_owner, "owner-a");
+    assert_eq!(parked.reason, "refreshed park");
+
+    // A DIFFERENT owner must not resume (delete) the row.
+    let error = runner
+        .resume_parked(queued.job.id, "owner-b", 23)
+        .expect_err("unpark by other owner refused");
+    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
+    assert!(runner.parked_job(queued.job.id)?.is_some(), "row intact");
+
+    // The recorded owner resumes; a second resume is an idempotent no-op.
+    let resumed = runner
+        .resume_parked(queued.job.id, "owner-a", 24)?
+        .expect("resumed status");
+    assert_eq!(resumed.job.id, queued.job.id);
+    assert!(runner.parked_job(queued.job.id)?.is_none());
+    assert!(
+        runner
+            .resume_parked(queued.job.id, "owner-a", 25)?
+            .is_none()
+    );
+    Ok(())
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> {
@@ -1864,6 +1921,7 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
     runner_a.park_job(ParkDreamerJob {
         job_id: queued.job.id,
         reason: "waiting for wake budget settle".to_owned(),
+        park_owner: "dreamer-worker".to_owned(),
         now: learned_at + 1,
     })?;
 

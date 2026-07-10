@@ -102,6 +102,7 @@ const KEY_NODE_ID: &str = "node_id";
 const KEY_CLASS: &str = "class";
 const KEY_ELECTED_AT: &str = "elected_at";
 const KEY_REASON: &str = "reason";
+const KEY_PARK_OWNER: &str = "park_owner";
 const KEY_PARKED_AT: &str = "parked_at";
 #[cfg(feature = "sync")]
 const KEY_STATE: &str = "state";
@@ -124,7 +125,8 @@ const DREAMER_JOB_PROGRESS_VALUE_KEYS: [&str; 7] = [
 const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
 const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 1;
 const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
-const DREAMER_PARKED_SCHEMA_VERSION: u64 = 1;
+// v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
+const DREAMER_PARKED_SCHEMA_VERSION: u64 = 2;
 const DREAMER_BUDGET_KEYS: [&str; 6] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
@@ -147,7 +149,13 @@ const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_PARENT_JOB,
     KEY_CREATED_AT,
 ];
-const DREAMER_PARKED_KEYS: [&str; 4] = [KEY_SCHEMA_VERSION, KEY_JOB_ID, KEY_REASON, KEY_PARKED_AT];
+const DREAMER_PARKED_KEYS: [&str; 5] = [
+    KEY_SCHEMA_VERSION,
+    KEY_JOB_ID,
+    KEY_REASON,
+    KEY_PARK_OWNER,
+    KEY_PARKED_AT,
+];
 const DREAMER_PRIVATE_BUDGET_PREFIX: &[u8] = b"dreamer:budget:";
 const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reservation:";
 const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
@@ -156,6 +164,7 @@ const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";
 const MAX_DREAMER_JOB_TYPE_LEN: usize = 128;
 const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 const MAX_DREAMER_PARK_REASON_LEN: usize = 512;
+const MAX_DREAMER_PARK_OWNER_LEN: usize = 128;
 #[cfg(feature = "sync")]
 const MAX_DREAMER_PROGRESS_MESSAGE_LEN: usize = 512;
 const MIN_DREAMER_TOURNAMENT_SAMPLE_COUNT: u32 = 3;
@@ -1219,10 +1228,14 @@ pub struct DreamerRunTreeRecord {
 }
 
 /// Input for parking a Dreamer job in local runner state.
+///
+/// `park_owner` is the parker's ownership token: only the owner recorded on
+/// the row may overwrite it or resume the job (fail-closed on mismatch).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParkDreamerJob {
     pub job_id: JobId,
     pub reason: String,
+    pub park_owner: String,
     pub now: u64,
 }
 
@@ -1231,6 +1244,7 @@ pub struct ParkDreamerJob {
 pub struct DreamerParkedJobRecord {
     pub job_id: JobId,
     pub reason: String,
+    pub park_owner: String,
     pub parked_at: u64,
 }
 
@@ -1949,8 +1963,12 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Parks a Dreamer job in private runner state without changing the
     /// generic queue row.
+    ///
+    /// A row already parked by a DIFFERENT owner is never overwritten
+    /// (fail-closed error); the same owner may re-park to refresh the row.
     pub fn park_job(&self, input: ParkDreamerJob) -> Result<DreamerParkedJobRecord> {
         validate_park_reason(&input.reason)?;
+        validate_park_owner(&input.park_owner)?;
         if self.status(input.job_id)?.is_none() {
             return Err(invalid_dreamer_runner("dreamer parked job must exist"));
         }
@@ -1958,11 +1976,26 @@ impl<'a> DreamerRunnerStore<'a> {
         let record = DreamerParkedJobRecord {
             job_id: input.job_id,
             reason: input.reason,
+            park_owner: input.park_owner,
             parked_at: input.now,
         };
         let encoded = encode_parked_record(&record)?;
         let key = parked_key(record.job_id);
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let existing = self
+            .vault
+            .store
+            .vault_meta
+            .get(&wtxn, &key)?
+            .map(decode_parked_record)
+            .transpose()?;
+        if let Some(existing) = existing
+            && existing.park_owner != record.park_owner
+        {
+            return Err(invalid_dreamer_runner(
+                "dreamer parked row is owned by a different parker",
+            ));
+        }
         self.vault.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
         wtxn.commit()?;
         Ok(record)
@@ -2000,11 +2033,18 @@ impl<'a> DreamerRunnerStore<'a> {
     ///
     /// Returns the job status when a parked row was cleared. A job with NO
     /// parked row is an idempotent no-op: `Ok(None)`, nothing mutated
-    /// (pinned). `now` is accepted for symmetry with the other transition
-    /// inputs; the queue row is not touched — re-admission re-leases it.
-    pub fn resume_parked(&self, job_id: JobId, now: u64) -> Result<Option<DreamerJobStatus>> {
+    /// (pinned). A row parked by a DIFFERENT owner than `park_owner` is a
+    /// fail-closed error, nothing deleted. `now` is accepted for symmetry
+    /// with the other transition inputs; the queue row is not touched —
+    /// re-admission re-leases it.
+    pub fn resume_parked(
+        &self,
+        job_id: JobId,
+        park_owner: &str,
+        now: u64,
+    ) -> Result<Option<DreamerJobStatus>> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let resumed = self.resume_parked_in_txn(&mut wtxn, job_id, now)?;
+        let resumed = self.resume_parked_in_txn(&mut wtxn, job_id, park_owner, now)?;
         wtxn.commit()?;
         Ok(resumed)
     }
@@ -2016,11 +2056,18 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         job_id: JobId,
+        park_owner: &str,
         _now: u64,
     ) -> Result<Option<DreamerJobStatus>> {
         let key = parked_key(job_id);
-        if self.vault.store.vault_meta.get(wtxn, &key)?.is_none() {
+        let Some(raw) = self.vault.store.vault_meta.get(wtxn, &key)? else {
             return Ok(None);
+        };
+        let record = decode_parked_record(raw)?;
+        if record.park_owner != park_owner {
+            return Err(invalid_dreamer_runner(
+                "dreamer parked row is owned by a different parker",
+            ));
         }
         let status = self
             .status(job_id)?
@@ -3635,6 +3682,7 @@ fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecord> {
 
 fn encode_parked_record(record: &DreamerParkedJobRecord) -> Result<Vec<u8>> {
     validate_park_reason(&record.reason)?;
+    validate_park_owner(&record.park_owner)?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -3642,6 +3690,10 @@ fn encode_parked_record(record: &DreamerParkedJobRecord) -> Result<Vec<u8>> {
         ),
         (Value::from(KEY_JOB_ID), encode_job_id(record.job_id)),
         (Value::from(KEY_REASON), Value::from(record.reason.as_str())),
+        (
+            Value::from(KEY_PARK_OWNER),
+            Value::from(record.park_owner.as_str()),
+        ),
         (Value::from(KEY_PARKED_AT), Value::from(record.parked_at)),
     ]);
     encode_value(&value, "dreamer parked row MessagePack encode failed")
@@ -3653,6 +3705,7 @@ fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
     let mut schema_version = None;
     let mut job_id = None;
     let mut reason = None;
+    let mut park_owner = None;
     let mut parked_at = None;
     let mut seen = [false; DREAMER_PARKED_KEYS.len()];
 
@@ -3679,6 +3732,11 @@ fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
                 validate_park_reason(&parsed)?;
                 reason = Some(parsed);
             }
+            KEY_PARK_OWNER => {
+                let parsed = expect_string(value, "dreamer parked park_owner must be a string")?;
+                validate_park_owner(&parsed)?;
+                park_owner = Some(parsed);
+            }
             KEY_PARKED_AT => {
                 parked_at = Some(expect_u64(value, "dreamer parked_at must be an integer")?);
             }
@@ -3698,6 +3756,8 @@ fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedJobRecord> {
     Ok(DreamerParkedJobRecord {
         job_id: job_id.ok_or(invalid_dreamer_runner("missing dreamer parked job_id"))?,
         reason: reason.ok_or(invalid_dreamer_runner("missing dreamer parked reason"))?,
+        park_owner: park_owner
+            .ok_or(invalid_dreamer_runner("missing dreamer parked park_owner"))?,
         parked_at: parked_at.ok_or(invalid_dreamer_runner("missing dreamer parked_at"))?,
     })
 }
@@ -3837,6 +3897,20 @@ fn validate_park_reason(reason: &str) -> Result<()> {
     if reason.len() > MAX_DREAMER_PARK_REASON_LEN {
         return Err(invalid_dreamer_runner(
             "dreamer parked reason exceeds 512 bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_park_owner(park_owner: &str) -> Result<()> {
+    if park_owner.is_empty() {
+        return Err(invalid_dreamer_runner(
+            "dreamer parked park_owner must not be empty",
+        ));
+    }
+    if park_owner.len() > MAX_DREAMER_PARK_OWNER_LEN {
+        return Err(invalid_dreamer_runner(
+            "dreamer parked park_owner exceeds 128 bytes",
         ));
     }
     Ok(())
