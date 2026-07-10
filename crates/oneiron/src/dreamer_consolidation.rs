@@ -851,7 +851,14 @@ impl Ord for SwarmEvidenceRef {
 /// DATA, and the weave's read pin.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SwarmChildReturn {
-    pub evidence: BTreeSet<SwarmEvidenceRef>,
+    /// Evidence hashes as a `Vec`, deliberately NOT a set keyed on
+    /// identity: two refs sharing one `(source_id, content_hash)` but
+    /// differing in `trust_class` must BOTH reach
+    /// `collapse_sibling_evidence`, the single authority that melts a
+    /// same-identity tie to the most-restrictive class. A set would drop
+    /// the stricter tie at insertion (identity-only `Ord`), silently
+    /// inflating trust before the meet ever runs.
+    pub evidence: Vec<SwarmEvidenceRef>,
     pub candidates: Vec<PromotionCandidate>,
     /// The max `learned_at` watermark captured ONCE at weave start and
     /// stamped into every child payload.

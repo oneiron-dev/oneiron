@@ -1115,6 +1115,35 @@ fn sibling_collapse_on_shared_hash() -> Result<()> {
 }
 
 #[test]
+fn intra_child_trust_tie_resolves_to_most_restrictive() {
+    // A SINGLE child listing the same (source_id, content_hash) at two
+    // different trust classes must not silently drop the stricter one: the
+    // evidence container is a Vec precisely so BOTH refs reach the collapse
+    // meet. A BTreeSet keyed on identity would keep only the first-inserted
+    // entry, letting a child inflate trust by listing the higher class first.
+    let source = EntityId::from_bytes([0x3C; 16]).expect("source");
+    let make = |trust_class| SwarmEvidenceRef {
+        source_id: source,
+        content_hash: [0x63; 32],
+        trust_class,
+    };
+    // Higher trust listed FIRST — the drop-the-stricter bug would keep it.
+    let child = SwarmChildReturn {
+        evidence: vec![make(ClaimSource::UserStated), make(ClaimSource::Imported)],
+        candidates: Vec::new(),
+        read_pin: 1,
+    };
+    let collapsed = collapse_sibling_evidence(&[child]).expect("collapse");
+    assert_eq!(collapsed.independent.len(), 1);
+    assert_eq!(collapsed.duplicates_collapsed, 1);
+    assert_eq!(
+        collapsed.independent[0].trust_class,
+        ClaimSource::Imported,
+        "intra-child trust tie must resolve to the most restrictive class"
+    );
+}
+
+#[test]
 fn most_restrictive_trust() {
     let entry = |trust_class| SwarmEvidenceRef {
         source_id: EntityId::from_bytes([0x3B; 16]).expect("id"),
@@ -1145,7 +1174,7 @@ fn most_restrictive_trust() {
 #[test]
 fn ledger_revision_pin() {
     let child = SwarmChildReturn {
-        evidence: std::collections::BTreeSet::new(),
+        evidence: Vec::new(),
         candidates: Vec::new(),
         read_pin: 41,
     };
