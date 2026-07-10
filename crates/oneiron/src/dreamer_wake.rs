@@ -32,10 +32,29 @@ use crate::dreamer_runner::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::job_queue::JobId;
+use crate::llm::{
+    BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID, BUDGET_PLAN_PROMPT_TEMPLATE,
+    BUDGET_PLAN_PROMPT_TEMPLATE_ID, BudgetGuard, BudgetRead, BudgetSignalDeliveryChannel,
+    BudgetSteeringSignal, BudgetThreshold,
+};
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+
+/// Wake-pass wall-clock ceiling: the REAL ceiling (1184-D4-C), monotonic.
+pub const DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS: u64 = 180_000;
+/// Bounded graceful-wrap window before the hard cut (1184-D4-E):
+/// finalize window = `[165_000, 180_000)` under the default ceiling.
+pub const DREAMER_GRACEFUL_WRAP_WINDOW_MS: u64 = 15_000;
+/// Wrap-up-soon notice threshold (1184-D4-D): counter OR clock percent.
+pub const DREAMER_WRAP_UP_NOTICE_PERCENT: u64 = 80;
+/// Park reason stamped on jobs cut at the wake-pass ceiling.
+pub const DREAMER_HARD_CUT_PARK_REASON: &str = "wake-pass hard cut";
+/// Park-owner token for deadline hard-cut parks: the step layer parks the
+/// cut job under this token (no trap is opened at the ceiling), and only a
+/// resumer presenting it may clear the row.
+pub const DREAMER_HARD_CUT_PARK_OWNER: &str = "dreamer.step:hard-cut";
 
 /// What woke the Dreamer (C9 wake model, design D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -118,6 +137,16 @@ impl WakePassDeadline {
     pub fn expired(&self) -> bool {
         self.elapsed() >= self.ceiling_ms
     }
+
+    /// True inside the bounded graceful-wrap window before the hard cut:
+    /// `elapsed >= ceiling - DREAMER_GRACEFUL_WRAP_WINDOW_MS` (ONE-1305).
+    #[must_use]
+    pub fn in_finalize_window(&self) -> bool {
+        self.elapsed()
+            >= self
+                .ceiling_ms
+                .saturating_sub(DREAMER_GRACEFUL_WRAP_WINDOW_MS)
+    }
 }
 
 impl fmt::Debug for WakePassDeadline {
@@ -127,6 +156,50 @@ impl fmt::Debug for WakePassDeadline {
             .field("elapsed_ms", &self.elapsed())
             .finish()
     }
+}
+
+/// Budget legibility attached to EVERY host-call response inside a wake
+/// pass (1184-D4-D): remaining budget, remaining wall-clock, the wrap-up
+/// notice, and the finalize deadline once the graceful-wrap window opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BudgetLegibilityEnvelope {
+    pub remaining_units: u64,
+    pub limit_units: u64,
+    pub remaining_ms: u64,
+    pub wrap_up: bool,
+    pub finalize_by_ms: Option<u64>,
+}
+
+/// Composes the legibility envelope from the ONE wake-budget counter read
+/// ([`BudgetRead`]) and the pass deadline. The runner-store reservation
+/// ledger is NOT consulted (design §D5).
+#[must_use]
+pub fn legibility_envelope(
+    read: &BudgetRead,
+    deadline: &WakePassDeadline,
+    wrap_fired: bool,
+    finalize: bool,
+) -> BudgetLegibilityEnvelope {
+    BudgetLegibilityEnvelope {
+        remaining_units: read.remaining_units,
+        limit_units: read.limit_units,
+        remaining_ms: deadline.remaining_ms(),
+        wrap_up: wrap_fired,
+        finalize_by_ms: finalize.then(|| deadline.remaining_ms()),
+    }
+}
+
+/// [`legibility_envelope`] with wrap/finalize derived from the same read:
+/// wrap-up once `max(counter_percent, clock_percent) >= 80`, finalize once
+/// the deadline enters its graceful-wrap window.
+#[must_use]
+pub fn current_legibility(
+    read: &BudgetRead,
+    deadline: &WakePassDeadline,
+) -> BudgetLegibilityEnvelope {
+    let wrap_fired =
+        read.depleted_percent().max(deadline.elapsed_percent()) >= DREAMER_WRAP_UP_NOTICE_PERCENT;
+    legibility_envelope(read, deadline, wrap_fired, deadline.in_finalize_window())
 }
 
 /// Input for one wake pass.
@@ -227,6 +300,12 @@ pub struct DreamerWakeDriver<'a> {
     budget_id: String,
     deadline: WakePassDeadline,
     milestones: Option<WakeMilestoneAuthor>,
+    /// The ONE wake-budget counter (LLM-4 guard) for legibility + the 80%
+    /// wrap notice; None keeps the counter side of the trigger silent.
+    guard: Option<BudgetGuard>,
+    wrap_notice_fired: bool,
+    finalize_entered: bool,
+    steering: Vec<BudgetSteeringSignal>,
     #[cfg(feature = "sync")]
     progress: Option<WakeProgressLane<'a>>,
 }
@@ -241,9 +320,28 @@ impl<'a> DreamerWakeDriver<'a> {
             budget_id: budget_id.into(),
             deadline,
             milestones: None,
+            guard: None,
+            wrap_notice_fired: false,
+            finalize_entered: false,
+            steering: Vec::new(),
             #[cfg(feature = "sync")]
             progress: None,
         }
+    }
+
+    /// Configures the wake-budget counter for legibility and the 80% wrap
+    /// notice (reuses the LLM-4 guard — never a second counter).
+    #[must_use]
+    pub fn with_budget_guard(mut self, guard: BudgetGuard) -> Self {
+        self.guard = Some(guard);
+        self
+    }
+
+    /// Steering signals queued during this pass (`SteeringQueueNextTurn`
+    /// delivery: the host drains and delivers them on the next turn).
+    #[must_use]
+    pub fn steering_signals(&self) -> &[BudgetSteeringSignal] {
+        &self.steering
     }
 
     /// Configures durable Started/Done milestone authorship.
@@ -276,6 +374,13 @@ impl<'a> DreamerWakeDriver<'a> {
         input: RunWakePass,
         exec: &mut E,
     ) -> Result<WakePassReport> {
+        // Per-pass driver state (ONE-1305): a reused driver must fire its
+        // wrap/finalize notices anew each pass, and steering signals belong
+        // to the pass that raised them — the host drains them after run.
+        self.wrap_notice_fired = false;
+        self.finalize_entered = false;
+        self.steering.clear();
+
         let mut report = WakePassReport {
             admitted: 0,
             completed: 0,
@@ -285,8 +390,22 @@ impl<'a> DreamerWakeDriver<'a> {
         };
 
         loop {
+            self.maybe_fire_wrap_notice();
             if self.deadline.expired() {
+                // Hard cut, unconditionally: the sequential driver holds no
+                // in-flight leases here (the step layer's deadline race
+                // aborts and parks mid-step losers before returning).
                 report.stop = WakePassStop::DeadlineHardCut;
+                break;
+            }
+            if self.enter_finalize_if_due() {
+                // Graceful wrap: admit NO new jobs and NO new step leases;
+                // the pass ends under deadline/budget pressure.
+                report.stop = if self.counter_exhausted() {
+                    WakePassStop::BudgetExhausted
+                } else {
+                    WakePassStop::DeadlineHardCut
+                };
                 break;
             }
 
@@ -342,14 +461,35 @@ impl<'a> DreamerWakeDriver<'a> {
             let job_id = admitted.status.job.id;
             self.publish(job_id, ProgressKind::Running, None, input.now)?;
 
-            let execution = {
+            let executed = {
                 let mut ctx = WakeJobContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
                 };
-                exec.execute(&admitted, &mut ctx).await?
+                exec.execute(&admitted, &mut ctx).await
+            };
+            let execution = match executed {
+                Ok(execution) => execution,
+                Err(error) => {
+                    // A mid-step deadline loss may surface as an executor
+                    // ERROR (a host propagating the step layer's
+                    // DeadlineHardCut instead of mapping it to Park). The
+                    // budget refund, the park bookkeeping, and the
+                    // checkpoint milestone must still run — treat it as the
+                    // hard-cut park it is instead of bailing out.
+                    let step_layer_parked = self
+                        .store
+                        .parked_job(job_id)?
+                        .is_some_and(|row| row.reason == DREAMER_HARD_CUT_PARK_REASON);
+                    if !step_layer_parked && !self.deadline.expired() {
+                        return Err(error);
+                    }
+                    DreamerJobExecution::Park {
+                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                    }
+                }
             };
 
             match execution {
@@ -373,6 +513,8 @@ impl<'a> DreamerWakeDriver<'a> {
                             child_job: job_id,
                             now: input.now,
                         })?;
+                    let hard_cut =
+                        reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                     if self.store.parked_job(job_id)?.is_some() {
                         // One park-owner: the step layer already parked this
                         // job inside its trap wtxn — publish only.
@@ -380,12 +522,70 @@ impl<'a> DreamerWakeDriver<'a> {
                     } else {
                         self.park_job(job_id, reason, input.lease_owner.clone(), input.now)?;
                     }
+                    if hard_cut {
+                        // A deadline-cut park leaves a durable resume point.
+                        self.write_milestone(
+                            job_id,
+                            DreamerMilestoneKind::CheckpointReached,
+                            input.now,
+                        )?;
+                    }
                     report.parked += 1;
                 }
             }
         }
 
         Ok(report)
+    }
+
+    /// Fires the ONE 80% wrap-up notice: `max(counter_percent,
+    /// clock_percent) >= 80`, whichever crosses first, exactly once per
+    /// pass. Reuses the LLM-4 `Plan80` threshold + PLAN template — the
+    /// driver is the one emitter, so the guard's own ladder events (which
+    /// surface inside step admissions) never double-signal the pass.
+    fn maybe_fire_wrap_notice(&mut self) {
+        if self.wrap_notice_fired {
+            return;
+        }
+        let counter_percent = self
+            .guard
+            .as_ref()
+            .map_or(0, |guard| guard.read().depleted_percent());
+        if counter_percent.max(self.deadline.elapsed_percent()) < DREAMER_WRAP_UP_NOTICE_PERCENT {
+            return;
+        }
+        self.wrap_notice_fired = true;
+        self.steering.push(BudgetSteeringSignal {
+            threshold: BudgetThreshold::Plan80,
+            channel: BudgetSignalDeliveryChannel::SteeringQueueNextTurn,
+            template_id: BUDGET_PLAN_PROMPT_TEMPLATE_ID.to_owned(),
+            message: BUDGET_PLAN_PROMPT_TEMPLATE.to_owned(),
+        });
+    }
+
+    fn counter_exhausted(&self) -> bool {
+        self.guard
+            .as_ref()
+            .is_some_and(|guard| guard.read().remaining_units == 0)
+    }
+
+    /// Enters the graceful-wrap finalize phase once (`in_finalize_window()`
+    /// OR counter exhaustion), emitting the LAND steering signal exactly
+    /// once. Returns true while finalize is active.
+    fn enter_finalize_if_due(&mut self) -> bool {
+        if !self.finalize_entered {
+            if !self.deadline.in_finalize_window() && !self.counter_exhausted() {
+                return false;
+            }
+            self.finalize_entered = true;
+            self.steering.push(BudgetSteeringSignal {
+                threshold: BudgetThreshold::Land95,
+                channel: BudgetSignalDeliveryChannel::SteeringQueueNextTurn,
+                template_id: BUDGET_LAND_PROMPT_TEMPLATE_ID.to_owned(),
+                message: BUDGET_LAND_PROMPT_TEMPLATE.to_owned(),
+            });
+        }
+        true
     }
 
     fn milestone_claim(
