@@ -1385,3 +1385,77 @@ fn refused_supersession_rolls_back_the_replacement() {
         "prior claim untouched"
     );
 }
+
+/// D1: a hard-deleted id is permanent through the facade — recreation is
+/// refused (same type AND retyped), killing the two-step retype
+/// (hard-delete → recreate) and re-import resurrection. A soft
+/// user_delete keeps engine semantics: the shell retains its type, so a
+/// same-type re-put stays engine-legal and a retype re-put stays blocked
+/// by EntityTypeImmutable.
+#[test]
+fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x62);
+    let facade = facade_for(&vault, owner);
+
+    let put_kind = |kind: &str, id_hex: &str, at: u64| {
+        facade.put_structural(&StructuralPutInput {
+            id: Some(id_hex.to_owned()),
+            kind: kind.to_owned(),
+            body: serde_json::json!({"name": "target"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: at,
+            learned_at: None,
+        })
+    };
+
+    // Hard delete → recreation refused, retyped or not.
+    let victim = EntityId::from_bytes([0x63; 16]).unwrap();
+    put_kind("EVENT", &victim.to_hex(), 700).expect("create victim");
+    facade
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("hard delete");
+    for kind in ["PERSON", "EVENT"] {
+        let err = put_kind(kind, &victim.to_hex(), 701)
+            .expect_err("recreation at a hard-deleted id must be refused");
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert!(err.message.contains("hard-deleted"), "{}", err.message);
+    }
+    // The refusal covers the claim door too (resurrection, not just retype).
+    let mut claim = claim_input(
+        "profile.name",
+        &owner,
+        "user_stated",
+        serde_json::json!("ghost"),
+    );
+    claim.id = Some(victim.to_hex());
+    let err = facade.claim_upsert(&claim).expect_err("claim at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
+    // GDPR (hard reason) marks the id permanent the same way.
+    let gdpr_victim = EntityId::from_bytes([0x64; 16]).unwrap();
+    put_kind("EVENT", &gdpr_victim.to_hex(), 702).expect("create gdpr victim");
+    facade
+        .safe_delete(&gdpr_victim.to_hex(), SafeDeleteReason::GdprDelete)
+        .expect("gdpr delete");
+    let err = put_kind("EVENT", &gdpr_victim.to_hex(), 703)
+        .expect_err("gdpr-erased id must not resurrect");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
+    // Soft user_delete: shell keeps its type; a facade RETYPE at the id
+    // stays blocked by the engine (EntityTypeImmutable), and the id is
+    // NOT marked hard-deleted.
+    let soft_victim = EntityId::from_bytes([0x65; 16]).unwrap();
+    put_kind("EVENT", &soft_victim.to_hex(), 704).expect("create soft victim");
+    facade
+        .safe_delete(&soft_victim.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("soft delete");
+    let err = put_kind("PERSON", &soft_victim.to_hex(), 705)
+        .expect_err("soft-deleted shell keeps its type");
+    assert!(
+        !err.message.contains("hard-deleted"),
+        "soft delete must not use the hard marker: {}",
+        err.message
+    );
+}

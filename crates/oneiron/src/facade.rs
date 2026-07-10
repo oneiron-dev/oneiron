@@ -671,10 +671,24 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// Store-truth check behind every actor binding: the entity must exist
 /// and its stored type must permit the asserted class.
 ///
-/// The gated claim path re-validates the actor INSIDE its write
-/// transaction (`apply_claim_candidate`), closing the bind/use race
-/// there; retract/delete cannot re-validate in-txn today — see the race
-/// notes on [`MemoryFacade::claim_retract`] / [`MemoryFacade::safe_delete`].
+/// Bind/use race window (applies to EVERY non-claim write verb — witness,
+/// structural puts, checkin, companion, blob, schedule, enqueue — not just
+/// retract/delete): this check runs in its own read transaction while the
+/// engine operation opens its own write transaction. Only the gated claim
+/// path re-validates the actor INSIDE its write transaction
+/// (`apply_claim_candidate`). Within the window:
+/// * in-place retype is impossible (`apply_put` rejects type changes with
+///   `EntityTypeImmutable`), and the two-step retype — hard delete, then
+///   recreate under a different type — is refused facade-side
+///   ([`MemoryFacade::refuse_hard_deleted_id`] on every id-accepting
+///   create verb);
+/// * a soft `user_delete` leaves a 25-byte shell that KEEPS its type, so
+///   a soft-deleted PERSON still passes this check — the meaningful
+///   deleted-actor residual is specifically a HARD purge landing between
+///   check and apply, which itself requires verified owner authority.
+///
+/// Closing the window fully needs in-txn engine seams on the non-claim
+/// write paths (follow-up outside this module's walls).
 fn verify_actor_binding(
     vault: &Vault,
     actor: EntityId,
@@ -927,11 +941,19 @@ impl MemoryFacade<'_> {
             None => (EntityId::now(), true),
         };
 
+        if conversation_is_new {
+            self.refuse_hard_deleted_id(&conversation_id)?;
+        }
+        if turn_is_new {
+            self.refuse_hard_deleted_id(&turn_id)?;
+        }
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
         let mut message_ids = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            message_ids.push(id_from_optional_hex(message.id.as_deref())?);
+            let message_id = id_from_optional_hex(message.id.as_deref())?;
+            self.refuse_hard_deleted_id(&message_id)?;
+            message_ids.push(message_id);
             bodies.push(encode_witness_message_body(message)?);
         }
 
@@ -1018,16 +1040,13 @@ impl MemoryFacade<'_> {
     /// actor. Everything else is a typed denial — binding an actor key is
     /// not authority (W3).
     ///
-    /// Race window (documented, not closable in-facade): the actor check
-    /// runs in its own read transaction while `Vault::retract_claim` opens
-    /// its own write transaction — the engine exposes no in-txn retract
-    /// seam to compose them. Entity types are immutable engine-wide
-    /// (`apply_put` rejects type changes with `EntityTypeImmutable`), so
-    /// the actor cannot be RETYPED in the window; the only mutation that
-    /// fits is the actor entity being DELETED between check and apply,
-    /// and deletion itself requires verified owner authority. Closing the
-    /// window fully needs a `retract_claim_in_txn` engine seam
-    /// (follow-up, outside this module's walls).
+    /// Race window: the actor check and `Vault::retract_claim` run in
+    /// separate transactions — no in-txn retract seam exists. See the
+    /// full window analysis on `verify_actor_binding` (in-place retype
+    /// impossible; two-step hard-delete retype refused facade-side; the
+    /// residual is a hard purge between check and apply, itself
+    /// owner-gated). Closing it fully needs a `retract_claim_in_txn`
+    /// engine seam (follow-up).
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
         let actor_class = self.verified_actor_class()?;
         let id = self.resolve_ref(claim_ref)?;
@@ -1088,13 +1107,11 @@ impl MemoryFacade<'_> {
     /// denial (agents withdraw their own claims via
     /// [`Self::claim_retract`]).
     ///
-    /// Race window (documented, not closable in-facade): the actor check
-    /// and `Vault::delete_entity_with_reason` run in separate
-    /// transactions — no in-txn delete seam exists. Retyping the actor in
-    /// the window is impossible (`EntityTypeImmutable`); the residual is
-    /// the actor entity being deleted between check and apply, which
-    /// itself requires verified owner authority. Closing it fully needs a
-    /// `delete_entity_with_reason_in_txn` engine seam (follow-up).
+    /// Race window: the actor check and `Vault::delete_entity_with_reason`
+    /// run in separate transactions — no in-txn delete seam exists. See
+    /// the full window analysis on `verify_actor_binding`. Closing it
+    /// fully needs a `delete_entity_with_reason_in_txn` engine seam
+    /// (follow-up).
     pub fn safe_delete(
         &self,
         entity_ref: &str,
@@ -1180,6 +1197,7 @@ impl MemoryFacade<'_> {
             ));
         }
         let id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&id)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -1224,6 +1242,7 @@ impl MemoryFacade<'_> {
         self.verified_actor_class()?;
         let habit_id = self.resolve_ref(&input.habit_ref)?;
         let checkin_id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&checkin_id)?;
         let mut entries = vec![(
             Value::from("role"),
             Value::from(u64::from(TaskRole::HabitCheckin.role_byte())),
@@ -1264,6 +1283,7 @@ impl MemoryFacade<'_> {
     ) -> FacadeResult<EntityRefReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
         let persona = self.resolve_ref(&input.persona_ref)?;
         let source = match &input.source {
@@ -1312,6 +1332,7 @@ impl MemoryFacade<'_> {
             ));
         };
         let id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self
             .vault
@@ -1386,6 +1407,7 @@ impl MemoryFacade<'_> {
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> FacadeResult<EntityRefReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&id)?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
             input.media_type.clone(),
@@ -1603,6 +1625,7 @@ impl MemoryFacade<'_> {
     fn commit_one(&self, input: &ClaimInput, auto_supersede: bool) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
+        self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self
             .vault
@@ -1811,6 +1834,40 @@ impl MemoryFacade<'_> {
 
     fn resolve_ref(&self, reference: &str) -> FacadeResult<EntityId> {
         resolve_entity_ref(self.vault, reference)
+    }
+
+    /// Refuses creation at an id carrying the durable `dt:` hard-delete
+    /// marker (hard-once-seen — the same presence-only marker the sync
+    /// replay path consults). Without this, a delete-authorized caller
+    /// could two-step retype an entity (hard delete, then recreate under a
+    /// different type), and a migration re-run could resurrect data the
+    /// user erased. Applied to every facade verb that accepts a
+    /// caller-supplied id.
+    fn refuse_hard_deleted_id(&self, id: &EntityId) -> FacadeResult<()> {
+        let rtxn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|err| FacadeError::from(Error::from(err)))?;
+        if self
+            .vault
+            .local_hard_delete_marker_exists_in_txn(&rtxn, id)
+            .map_err(FacadeError::from)?
+        {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                format!(
+                    "id {} was hard-deleted and cannot be recreated through the facade",
+                    id.to_hex()
+                ),
+                &[
+                    "Hard-deleted ids are permanent (hard-once-seen); use a fresh id.",
+                    "Recreation at a purged id would resurrect erased data or retype an actor.",
+                ],
+            ));
+        }
+        Ok(())
     }
 
     /// Resolves the caller-asserted actor against the STORE before any
