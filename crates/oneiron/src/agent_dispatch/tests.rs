@@ -1096,3 +1096,69 @@ fn milestone_with_absent_job_row_does_not_index() -> Result<()> {
     );
     Ok(())
 }
+
+// Security hardening R2: the envelope binding is RESOLVED from the writer's
+// stored entity, not trusted from the stamped class byte. A milestone whose
+// writer entity is deleted after the write no longer resolves to a stored
+// MACHINE (system) actor, so it drops out of the durable index on the next
+// rebuild — the stale System class byte on the record cannot keep it visible.
+#[test]
+fn milestone_writer_resolved_from_storage_not_class_byte() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest(&vault, 0x13, vec![actor_ceiling_row("system", "auto")])?;
+
+    let def_id = test_id(0x4E);
+    vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let AgentDispatchOutcome::Dispatched(status) = dispatch_custom(&dispatcher, def_id, None, 10)?
+    else {
+        panic!("expected fresh dispatch");
+    };
+    let job_id = status.job.id;
+    let agent_id = status.input.definition.agent_id;
+
+    let dreamer_actor = test_id(0x3C);
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+
+    // A fully bound milestone: it indexes while its MACHINE writer exists.
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        subject,
+        job_id,
+        DreamerMilestoneKind::CheckpointReached,
+        20,
+        &dreamer_envelope(dreamer_actor, &agent_id)?,
+    )?;
+    let runner = DreamerRunnerStore::new(&vault);
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone indexed while writer exists")
+            .kind,
+        DreamerMilestoneKind::CheckpointReached
+    );
+
+    // Delete the writer entity and force an index rebuild. The claim's stamped
+    // class byte still reads System, but the writer no longer resolves to a
+    // stored MACHINE, so resolve-from-storage drops it.
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .entities
+            .delete(wtxn, dreamer_actor.as_bytes())?;
+        vault
+            .store
+            .vault_meta
+            .delete(wtxn, b"dreamer.milestone_index.v1.backfilled")?;
+        Ok(())
+    })?;
+    assert_eq!(
+        runner.latest_durable_milestone(job_id)?,
+        None,
+        "a milestone whose writer entity no longer exists must not stay indexed"
+    );
+    Ok(())
+}

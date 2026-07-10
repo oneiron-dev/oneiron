@@ -17,7 +17,6 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 #[cfg(feature = "sync")]
@@ -30,7 +29,7 @@ use crate::job_queue::{
     FailOutcome, InterveneJob, JobId, JobInterventionEffect, JobInterventionKind, JobQueue,
     JobRecord,
 };
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::{EphemeralStore, LoroValue, TransportError, encode_ephemeral};
@@ -2760,15 +2759,26 @@ fn dreamer_milestone_attribution_is_bound(
     }
 
     // (2) Envelope-actor binding: agent-dispatch milestones are runner
-    // bookkeeping and ride the SYSTEM/Dreamer envelope (B1 (a)). An
-    // agent-envelope milestone is not bookkeeping and never indexes.
-    if milestone_claim_envelope_actor_class(body) != Some(EdgeActorClass::System) {
-        tracing::warn!(
-            job_id = %job_hex,
-            "milestone does not ride a system/Dreamer envelope; \
-             refusing durable index entry",
-        );
-        return false;
+    // bookkeeping and ride the SYSTEM/Dreamer envelope (B1 (a)). This is
+    // RESOLVED from the writer's stored entity, not trusted from the class
+    // byte on the record: the milestone's stamped `actor_entity_ref` must
+    // name a currently-stored MACHINE (the only System-capable kind), so an
+    // agent-envelope milestone, a class-byte lie, or a writer whose entity
+    // was deleted after the write all fail closed. (The residual — a genuine
+    // MACHINE actor the manifest grants Auto — is the manifest boundary; see
+    // the report. oneiron has no per-actor write authentication, so WHICH
+    // system actor is Auto-granted is deployment policy.)
+    match milestone_claim_envelope_writer_kind(store, txn, body) {
+        Ok(Some(kind)) if kind == ENTITY_TYPE_MACHINE => {}
+        other => {
+            tracing::warn!(
+                job_id = %job_hex,
+                ?other,
+                "milestone writer does not resolve to a stored MACHINE (system) \
+                 actor; refusing durable index entry",
+            );
+            return false;
+        }
     }
 
     // (3) Attribution binding: the stamped agent is the dispatched agent.
@@ -2795,19 +2805,39 @@ fn milestone_claim_envelope_evidence(body: &ClaimBody) -> Option<&Vec<(Value, Va
     }
 }
 
-/// Reads the actor class stamped into a claim's write-envelope evidence.
-fn milestone_claim_envelope_actor_class(body: &ClaimBody) -> Option<EdgeActorClass> {
+/// Resolves the STORED entity type of a milestone claim's write actor from
+/// its stamped `actor_entity_ref` evidence — the resolved writer, not the
+/// self-asserted class byte. `Ok(None)` when the evidence carries no actor
+/// ref, the ref is malformed, or no entity is stored there (a deleted or
+/// never-existent writer); the stored type byte otherwise. Read errors
+/// propagate so the caller fails closed.
+fn milestone_claim_envelope_writer_kind(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<Option<u8>> {
+    let Some(actor_ref) = milestone_claim_envelope_actor_ref(body) else {
+        return Ok(None);
+    };
+    let Some(raw) = store.entities.get(txn, actor_ref.as_bytes())? else {
+        return Ok(None);
+    };
+    Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
+}
+
+/// Reads the actor entity id stamped into a claim's write-envelope evidence.
+fn milestone_claim_envelope_actor_ref(body: &ClaimBody) -> Option<EntityId> {
     milestone_claim_envelope_evidence(body)?
         .iter()
         .find_map(|(key, value)| {
-            (key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY))
-                .then(|| {
-                    value
-                        .as_u64()
-                        .and_then(|raw| u8::try_from(raw).ok())
-                        .and_then(EdgeActorClass::try_from_u8)
-                })
-                .flatten()
+            if key.as_str() != Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+                return None;
+            }
+            let Value::Binary(bytes) = value else {
+                return None;
+            };
+            let arr: [u8; 16] = bytes.as_slice().try_into().ok()?;
+            EntityId::from_bytes(arr).ok()
         })
 }
 
