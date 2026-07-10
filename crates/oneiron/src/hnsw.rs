@@ -42,6 +42,7 @@ const ERR_COUNT_BYTES: &str = "hnsw count bytes are malformed";
 const ERR_NEIGHBOR_KEY_BYTES: &str = "hnsw neighbor key bytes are malformed";
 const ERR_NEIGHBOR_VALUE_BYTES: &str = "hnsw neighbor list bytes are malformed";
 const ERR_VECTOR_BYTES: &str = "hnsw vector bytes are malformed";
+const ERR_VECTOR_ROW_TOO_SHORT: &str = "hnsw vector row shorter than scoring dimensions";
 const ERR_VECTOR_KEY_BYTES: &str = "hnsw vector key bytes are malformed";
 const ERR_VECTOR_VERSION_BYTES: &str = "hnsw vector version bytes are malformed";
 const ERR_COUNT_UNDERFLOW: &str = "hnsw node count underflowed during delete";
@@ -979,6 +980,12 @@ pub(crate) fn hnsw_search(
                 // snapshot; keep the prefix distance defensively.
                 continue;
             };
+            // Same fail-closed rule as `score_prefix`: a row shorter than
+            // the full query is a truncated/corrupted row and must not
+            // rescore on a partial comparison.
+            if row.len() < query_vector.len() {
+                return Err(Error::CorruptedIndex(ERR_VECTOR_ROW_TOO_SHORT));
+            }
             entry.distance = cosine_distance(query_vector, row);
         }
         // HeapEntry orders by (distance asc, id bytes asc) — the pinned
@@ -1102,8 +1109,17 @@ fn score_dims_for(config: &VaultConfig) -> usize {
 /// Prefix-slices one operand for a funnel distance computation. Prefix
 /// cosine is exact for the prefix space — `cosine_distance` computes norms
 /// per call, so no renormalization step is needed.
-fn score_prefix(vector: &[f32], score_dims: usize) -> &[f32] {
-    &vector[..score_dims.min(vector.len())]
+///
+/// A vector with FEWER than `score_dims` components fails closed
+/// (persisted-data corruption): healthy rows are always full-dimension and
+/// both accepted query lengths are >= `score_dims`, so a short vector can
+/// only be a truncated/corrupted row — and scoring it on a partial prefix
+/// would let it look CLOSER than healthy rows rather than being rejected.
+fn score_prefix(vector: &[f32], score_dims: usize) -> Result<&[f32]> {
+    if vector.len() < score_dims {
+        return Err(Error::CorruptedIndex(ERR_VECTOR_ROW_TOO_SHORT));
+    }
+    Ok(&vector[..score_dims])
 }
 
 fn beam_search(
@@ -1131,8 +1147,8 @@ fn beam_search(
     let entry = HeapEntry {
         id: entry_point,
         distance: cosine_distance(
-            score_prefix(query_vector, score_dims),
-            score_prefix(entry_vector, score_dims),
+            score_prefix(query_vector, score_dims)?,
+            score_prefix(entry_vector, score_dims)?,
         ),
     };
 
@@ -1184,8 +1200,8 @@ fn beam_search(
             };
 
             let distance = cosine_distance(
-                score_prefix(query_vector, score_dims),
-                score_prefix(neighbor_vector, score_dims),
+                score_prefix(query_vector, score_dims)?,
+                score_prefix(neighbor_vector, score_dims)?,
             );
             let should_add = results.len() < ef
                 || distance
@@ -1231,8 +1247,8 @@ fn beam_search_snapshot(
     let entry = HeapEntry {
         id: entry_point,
         distance: cosine_distance(
-            score_prefix(&query_vector, score_dims),
-            score_prefix(&entry_vector, score_dims),
+            score_prefix(&query_vector, score_dims)?,
+            score_prefix(&entry_vector, score_dims)?,
         ),
     };
 
@@ -1271,8 +1287,8 @@ fn beam_search_snapshot(
             };
 
             let distance = cosine_distance(
-                score_prefix(&query_vector, score_dims),
-                score_prefix(neighbor_vector, score_dims),
+                score_prefix(&query_vector, score_dims)?,
+                score_prefix(neighbor_vector, score_dims)?,
             );
             let should_add = results.len() < ef
                 || distance
@@ -1806,8 +1822,8 @@ fn prune_neighbors_for_node(
         scored.push(HeapEntry {
             id: *neighbor_id,
             distance: cosine_distance(
-                score_prefix(node_vector, score_dims),
-                score_prefix(neighbor_vector, score_dims),
+                score_prefix(node_vector, score_dims)?,
+                score_prefix(neighbor_vector, score_dims)?,
             ),
         });
     }

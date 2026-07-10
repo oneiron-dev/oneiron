@@ -1936,3 +1936,62 @@ fn funnel_construction_slices_prefix_and_rescore_restores_exactness() -> Result<
     }
     Ok(())
 }
+
+/// Qodo #473-F4: a stored row with fewer components than the scoring prefix
+/// must fail closed — never silently score on a partial prefix, where its
+/// shorter norm could make the corrupt row look CLOSER than healthy rows.
+/// Covers both the traversal (prefix) path and the full-dim rescore path.
+#[test]
+fn truncated_stored_row_fails_closed_under_funnel_scoring() -> Result<()> {
+    const DIMS: usize = 8;
+    const FAST: usize = 4;
+    let temp_dir = tempdir()?;
+    let vault = Vault::open(temp_dir.path(), funnel_config(DIMS, Some(FAST as u16), 128))?;
+    let vectors = skip_rescore_fixture();
+    let ids = build_funnel_vault(&vault, &vectors)?;
+    let query = &vectors[0];
+
+    let healthy = vault.search_vector(query, 3)?;
+    assert_eq!(healthy.len(), 3, "healthy baseline must rank all rows");
+
+    // Shorter than fast_dims: valid f32-LE bytes, wrong length — the
+    // traversal itself must fail closed, so the corrupt row can never
+    // outrank anything.
+    let mut wtxn = vault.store.env.write_txn()?;
+    put_vector_raw(&vault.store, &mut wtxn, &ids[1], &[0.1, 0.2])?;
+    wtxn.commit()?;
+    let err = vault.search_vector(query, 3).unwrap_err();
+    assert_matches!(
+        err,
+        Error::CorruptedIndex(message) if message == ERR_VECTOR_ROW_TOO_SHORT
+    );
+
+    // Length in [fast_dims, dimensions): the prefix traversal scores fine,
+    // so the exact full-dim rescore must be the stage that fails closed
+    // rather than comparing mismatched lengths.
+    let mut wtxn = vault.store.env.write_txn()?;
+    put_vector_raw(
+        &vault.store,
+        &mut wtxn,
+        &ids[1],
+        &[1.0, 0.0, 0.0, 0.0, -1.0, 0.0],
+    )?;
+    wtxn.commit()?;
+    let err = vault.search_vector(query, 3).unwrap_err();
+    assert_matches!(
+        err,
+        Error::CorruptedIndex(message) if message == ERR_VECTOR_ROW_TOO_SHORT
+    );
+
+    // The prefix-only hot lane never touches the full row, so the
+    // [fast_dims, dimensions) corruption stays invisible there by design —
+    // but the sub-fast_dims case still fails closed.
+    let hot_lane = vault
+        .query()
+        .search_vector(query, 3)
+        .skip_vector_rescore(true)
+        .limit(3)
+        .run()?;
+    assert_eq!(hot_lane.len(), 3);
+    Ok(())
+}
