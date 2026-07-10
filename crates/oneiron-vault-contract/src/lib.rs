@@ -106,6 +106,8 @@ pub enum CtlRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CtlResponse {
+    /// Supervisors must run [`validate_wake_entries`] on `next_wake` before
+    /// trusting it — deserialization alone does not enforce the wire limits.
     PrepareReap {
         quiescent: bool,
         ledger_rev: u64,
@@ -164,25 +166,32 @@ pub struct LedgerUpdate {
     pub entries: Vec<WakeEntry>,
 }
 
+/// Shared wire-limit enforcement for any wake-entry list — ledger pushes and
+/// `prepare_reap` replies alike: entry count bound + per-entry bounds.
+pub fn validate_wake_entries(entries: &[WakeEntry]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        entries.len() <= MAX_LEDGER_ENTRIES,
+        "too many ledger entries"
+    );
+    for e in entries {
+        e.validate()?;
+    }
+    Ok(())
+}
+
 impl LedgerUpdate {
     /// Reject-not-truncate enforcement of the wire limits: op discriminator,
-    /// token shape, entry count, per-entry bounds. Supervisors call this
-    /// immediately after parsing an untrusted push.
+    /// vault name, token shape, entry count, per-entry bounds. Supervisors
+    /// call this immediately after parsing an untrusted push.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.op == "ledger_update", "unknown op");
+        anyhow::ensure!(valid_vault_name(&self.vault), "bad vault name");
         let t = self.token.expose();
         anyhow::ensure!(
             t.len() == TOKEN_LEN * 2 && t.bytes().all(|b| b.is_ascii_hexdigit()),
             "malformed token"
         );
-        anyhow::ensure!(
-            self.entries.len() <= MAX_LEDGER_ENTRIES,
-            "too many ledger entries"
-        );
-        for e in &self.entries {
-            e.validate()?;
-        }
-        Ok(())
+        validate_wake_entries(&self.entries)
     }
 }
 
@@ -374,6 +383,10 @@ mod tests {
         assert!(u.validate().is_err());
         u.op = "ledger_update".into();
 
+        u.vault = "../x".into();
+        assert!(u.validate().is_err());
+        u.vault = "v".into();
+
         u.token = TokenHex::new("zz".into());
         assert!(u.validate().is_err());
         u.token = TokenHex::from_token(&[0u8; TOKEN_LEN]);
@@ -386,5 +399,8 @@ mod tests {
             })
             .collect();
         assert!(u.validate().is_err());
+        // Same list through the shared helper (the prepare_reap path).
+        assert!(validate_wake_entries(&u.entries).is_err());
+        assert!(validate_wake_entries(&u.entries[..1]).is_ok());
     }
 }
