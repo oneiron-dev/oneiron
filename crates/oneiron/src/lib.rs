@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub mod access_grant;
 pub mod affect;
 pub mod agent_def;
+pub mod agent_dispatch;
 pub mod analyzer;
 pub mod anchored_annotation;
 pub mod artifact_hosting;
@@ -112,6 +113,12 @@ pub use crate::agent_def::{
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, MCP_REF_KEYS, McpRef,
     SYSTEM_AGENT_PRESET_VERSION, SystemAgentPreset, decode_agent_definition,
     encode_agent_definition,
+};
+pub use crate::agent_dispatch::{
+    AGENT_DISPATCH_INPUT_KEYS, AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_JOB_TYPE,
+    AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
+    AgentDispatcher, DispatchAgent, agent_dispatch_actor, decode_agent_dispatch_input,
+    encode_agent_dispatch_input,
 };
 pub use crate::analyzer::{
     ANALYZER_VERSION, AnalyzerAssetManifest, AnalyzerChannel, AnalyzerContext, AnalyzerManifest,
