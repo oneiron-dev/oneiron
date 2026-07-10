@@ -50,6 +50,10 @@ use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProv
 pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
+/// Domain for deterministic, write-once promotion-candidate claim ids. A
+/// candidate's id is a pure function of its identity + the owning job so an
+/// at-least-once re-run of the same durable step re-mints the SAME id.
+pub const DREAMER_CLAIM_ID_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// A gap not re-observed within this window decays and is never re-surfaced
 /// (escalate-or-let-go, never re-nag nightly).
 pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;
@@ -954,6 +958,53 @@ fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
     encode_value(&canonicalize_value(value))
 }
 
+/// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
+/// from its identity (owning job, subject, predicate, canonical value, world,
+/// facet).
+///
+/// `EntityId::now()` mints a fresh id on every call, so under the wake
+/// driver's at-least-once re-execution (a crash after `sink.accept` but before
+/// the job completes) a memoized step re-run would hand the promotion writer
+/// NEW ids for the same beliefs — DUPLICATE claims. A content-addressed id is
+/// stable across re-runs (and independent of `now`), so promotion stays
+/// idempotent (#485-3).
+fn deterministic_claim_id(
+    job_id: crate::job_queue::JobId,
+    subject: EntityId,
+    predicate: &str,
+    value: &Value,
+    world: Option<EntityId>,
+    facet: Option<EntityId>,
+) -> EntityId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
+    hasher.update(job_id.as_bytes());
+    hasher.update(subject.as_bytes());
+    hasher.update(&(predicate.len() as u64).to_le_bytes());
+    hasher.update(predicate.as_bytes());
+    let value_bytes = canonical_value_bytes(value).unwrap_or_default();
+    hasher.update(&(value_bytes.len() as u64).to_le_bytes());
+    hasher.update(&value_bytes);
+    hasher.update(&[u8::from(world.is_some())]);
+    if let Some(world) = world {
+        hasher.update(world.as_bytes());
+    }
+    hasher.update(&[u8::from(facet.is_some())]);
+    if let Some(facet) = facet {
+        hasher.update(facet.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut raw = [0_u8; 16];
+    raw.copy_from_slice(&digest.as_bytes()[..16]);
+    // A blake3 prefix colliding with a reserved id is ~2^-120; perturb
+    // deterministically rather than fall back to a non-deterministic id.
+    EntityId::from_bytes(raw).unwrap_or_else(|_| {
+        raw[0] ^= 0x01;
+        raw[15] ^= 0x01;
+        EntityId::from_bytes(raw).expect("perturbed derived claim id is non-reserved")
+    })
+}
+
 /// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded
 /// key so canonical bytes are independent of map key order.
 ///
@@ -1397,6 +1448,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
+        job_id: crate::job_queue::JobId,
         now_ms: u64,
     ) -> Result<Vec<PromotionCandidate>> {
         let text: String = response
@@ -1431,6 +1483,14 @@ impl ConsolidationExecutor<'_> {
                 .and_then(serde_json::Value::as_f64)
                 .unwrap_or(0.5) as f32;
             let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
+            let claim_id = deterministic_claim_id(
+                job_id,
+                subject,
+                predicate,
+                &value,
+                partition.world_ref,
+                partition.facet_ref,
+            );
             let evidence_turn_refs: Vec<EntityId> = item
                 .get("evidence_turn_refs")
                 .and_then(|value| value.as_array())
@@ -1453,7 +1513,7 @@ impl ConsolidationExecutor<'_> {
                 )]));
             }
             candidates.push(PromotionCandidate {
-                claim_id: EntityId::now(),
+                claim_id,
                 candidate,
                 evidence_turn_refs,
                 supersedes: None,
@@ -1516,7 +1576,7 @@ impl ConsolidationExecutor<'_> {
             // empty extraction (#485-1).
             StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
-        let candidates = self.decode_candidates(&partition, &response, ctx.now_ms)?;
+        let candidates = self.decode_candidates(&partition, &response, job_id, ctx.now_ms)?;
         match self
             .resolve_conflicts(candidates, ctx, job_id_for_steps(job_id, run_id_ref))
             .await?
@@ -1600,7 +1660,13 @@ impl ConsolidationExecutor<'_> {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge { value } => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
-                    merged.push(merged_candidate(conflict, &members, value, ctx.now_ms));
+                    merged.push(merged_candidate(
+                        conflict,
+                        &members,
+                        value,
+                        step_identity.0,
+                        ctx.now_ms,
+                    ));
                 }
                 MergeResolution::Escalate => {
                     dropped.extend(conflict.candidate_indexes.iter().copied());
@@ -1713,6 +1779,7 @@ fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
     value: Value,
+    job_id: crate::job_queue::JobId,
     now_ms: u64,
 ) -> PromotionCandidate {
     let mut evidence: Vec<EntityId> = Vec::new();
@@ -1727,6 +1794,14 @@ fn merged_candidate(
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
+    let claim_id = deterministic_claim_id(
+        job_id,
+        conflict.identity.subject,
+        &conflict.identity.predicate,
+        &value,
+        conflict.identity.world,
+        conflict.identity.facet,
+    );
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
         ClaimSubject::Entity(conflict.identity.subject),
@@ -1743,7 +1818,7 @@ fn merged_candidate(
         )]));
     }
     PromotionCandidate {
-        claim_id: EntityId::now(),
+        claim_id,
         candidate,
         evidence_turn_refs: evidence,
         supersedes: conflict.prior_head,

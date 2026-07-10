@@ -1185,3 +1185,127 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     assert_eq!(delta.refreshed, 0);
     Ok(())
 }
+
+#[test]
+fn re_executed_step_mints_same_claim_id() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) =
+        admitted_job_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+    let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
+    let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+
+    let run = |now_ms: u64| -> Result<Vec<EntityId>> {
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+        };
+        let mut ctx = WakeJobContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms,
+        };
+        block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        Ok(sink.accepted.iter().map(|candidate| candidate.claim_id).collect())
+    };
+
+    let ids_first = run(21_000)?;
+    // At-least-once re-execution at a DIFFERENT wall clock: the extraction step
+    // memo-hits (backend never called again) and the candidate id must be
+    // identical — proving it is content-addressed, not EntityId::now() (#485-3).
+    let ids_second = run(987_000)?;
+
+    assert_eq!(ids_first.len(), 1, "one extracted candidate");
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        1,
+        "the re-run memo-hit; no second generate"
+    );
+    assert_eq!(
+        ids_first, ids_second,
+        "re-running the same durable step mints the SAME write-once claim id"
+    );
+    Ok(())
+}
+
+#[test]
+fn re_executed_merge_mints_same_claim_id() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) = admitted_job_fixture(
+        &vault,
+        &store,
+        0x2F,
+        &[("user", "call me Oleksii"), ("user", "or Alex")],
+    )?;
+    let actor = EntityId::now();
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
+    let subject = EntityId::from_bytes([0x38; 16]).expect("subject");
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let backend = ScriptedBackend::new(vec![
+        Ok(two_candidate_extraction(&subject, &turns[0], &turns[1])),
+        Ok(text_response(
+            "{\"resolution\": \"merge\", \"value\": \"Oleksii (Alex)\"}".to_owned(),
+        )),
+    ]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+
+    let run = |now_ms: u64| -> Result<Vec<EntityId>> {
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+        };
+        let mut ctx = WakeJobContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms,
+        };
+        block_on_ready(executor.execute(&admitted, &mut ctx))?;
+        Ok(sink.accepted.iter().map(|candidate| candidate.claim_id).collect())
+    };
+
+    let ids_first = run(21_000)?;
+    // Both the extraction and the merge memo-hit on the re-run; the MERGED
+    // candidate id is content-addressed, so it is stable across re-execution
+    // and independent of `now` (#485-3).
+    let ids_second = run(987_000)?;
+
+    assert_eq!(ids_first.len(), 1, "one merged candidate");
+    assert_eq!(
+        backend.calls.load(Ordering::SeqCst),
+        2,
+        "the re-run memo-hit both steps; no new generate"
+    );
+    assert_eq!(
+        ids_first, ids_second,
+        "re-running the same merge mints the SAME write-once claim id"
+    );
+    Ok(())
+}
