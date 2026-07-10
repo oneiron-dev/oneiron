@@ -16,6 +16,7 @@ fn test_config() -> VaultConfig {
     VaultConfig {
         map_size: 16 * 1024 * 1024,
         dimensions: 4,
+        fast_dims: None,
         embedding_model: None,
         max_readers: 16,
         hnsw: HnswConfig {
