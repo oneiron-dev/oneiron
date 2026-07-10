@@ -38,14 +38,18 @@ pub fn valid_vault_name(name: &str) -> bool {
         return false;
     }
     (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
 /// Timestamps ride the wire as unix seconds (UTC by construction).
 pub type UnixTs = u64;
 
 pub fn now_ts() -> UnixTs {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,7 +73,10 @@ impl WakeEntry {
     /// Concrete fire-time selection and window jitter live supervisor-side.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.id.is_empty() && self.id.len() <= 128, "bad entry id");
-        anyhow::ensure!(self.reason_tag.len() <= MAX_REASON_TAG, "reason_tag too long");
+        anyhow::ensure!(
+            self.reason_tag.len() <= MAX_REASON_TAG,
+            "reason_tag too long"
+        );
         if let Schedule::Window { start, end } = self.at {
             anyhow::ensure!(end >= start, "window end < start");
         }
@@ -91,9 +98,20 @@ pub enum CtlRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CtlResponse {
-    PrepareReap { quiescent: bool, ledger_rev: u64, next_wake: Vec<WakeEntry> },
-    Ping { ok: bool, vault: String, pid: u32, contract_version: u32 },
-    Ok { ok: bool },
+    PrepareReap {
+        quiescent: bool,
+        ledger_rev: u64,
+        next_wake: Vec<WakeEntry>,
+    },
+    Ping {
+        ok: bool,
+        vault: String,
+        pid: u32,
+        contract_version: u32,
+    },
+    Ok {
+        ok: bool,
+    },
 }
 
 /// Hex of the 32-byte spawn token. Debug is redacted so the value can never
@@ -189,7 +207,11 @@ pub fn read_credentials(mut r: impl Read) -> anyhow::Result<Credentials> {
 }
 
 /// Supervisor side: write DEK ‖ token and close (drop) the write end.
-pub fn write_credentials(mut w: impl Write, dek: &[u8; DEK_LEN], token: &[u8; TOKEN_LEN]) -> anyhow::Result<()> {
+pub fn write_credentials(
+    mut w: impl Write,
+    dek: &[u8; DEK_LEN],
+    token: &[u8; TOKEN_LEN],
+) -> anyhow::Result<()> {
     let mut buf = [0u8; CREDENTIALS_LEN];
     buf[..DEK_LEN].copy_from_slice(dek);
     buf[DEK_LEN..].copy_from_slice(token);
@@ -211,10 +233,13 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,7 +291,10 @@ mod tests {
         };
         let j = serde_json::to_value(&u).unwrap();
         assert_eq!(j["token"], "aa");
-        let back: LedgerUpdate = serde_json::from_str(r#"{"op":"ledger_update","vault":"v","token":"aa","rev":1,"entries":[]}"#).unwrap();
+        let back: LedgerUpdate = serde_json::from_str(
+            r#"{"op":"ledger_update","vault":"v","token":"aa","rev":1,"entries":[]}"#,
+        )
+        .unwrap();
         assert_eq!(back.token.expose(), "aa");
     }
 
