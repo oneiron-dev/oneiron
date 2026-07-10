@@ -558,9 +558,9 @@ fn receipted_ops_project_into_gate_receipts() -> Result<()> {
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
     let grant_ref = format!("ckey:{}", id.to_hex());
     for op in [
-        "connector_key.register",
-        "connector_key.suspend",
-        "connector_key.resume",
+        "gate.connector_key.register",
+        "gate.connector_key.suspend",
+        "gate.connector_key.resume",
     ] {
         let receipt = receipts
             .iter()

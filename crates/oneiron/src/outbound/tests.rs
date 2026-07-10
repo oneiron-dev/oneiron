@@ -2805,8 +2805,8 @@ fn dispatch_sends_budget_exhausts_suspends_and_walls_until_resume()
     // re-deny with the exhausted code (the reason-code difference across the
     // three phases is the AC).
     vault.resume_connector_key(&key_id, 2_000)?;
-    let result = vault
-        .dispatch_outbound_intent(email_send_dispatch_request(actor, 5), &mut executor)?;
+    let result =
+        vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 5), &mut executor)?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::Suppressed);
     assert_eq!(
         result.gate_reason_codes,

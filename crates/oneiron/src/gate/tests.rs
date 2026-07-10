@@ -4916,3 +4916,55 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     assert_eq!(charge.rows[0].used, 1);
     Ok(())
 }
+
+#[test]
+fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
+    let (_tmp, vault) = temp_vault();
+    let append = |reason: &str| -> Result<()> {
+        vault.with_write_txn(|wtxn| {
+            vault.store.append_gate_decision_in_txn(
+                wtxn,
+                &GateDecisionRecord {
+                    version: 0,
+                    decision_id: GateDecisionId::now(),
+                    created_at: 1,
+                    outcome: "deny".to_owned(),
+                    reason_codes: vec!["gate.deny.effector_budget_exhausted".to_owned()],
+                    receipt_reasons: vec![reason.to_owned()],
+                    system_notices: Vec::new(),
+                    actor_class: "first_party".to_owned(),
+                    actor_ref: None,
+                    content_kind: "external_effect".to_owned(),
+                    policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
+                    claim_id: None,
+                    grant_ref: None,
+                    diff_handle: vec![0xAA],
+                    read_frontier_hash: [0; 32],
+                },
+            )
+        })
+    };
+
+    for accepted in [
+        "counterparty_opt_out",
+        "connector_key_suspended",
+        "effector_budget_exhausted",
+        "charter_drift",
+    ] {
+        append(accepted).unwrap_or_else(|error| panic!("{accepted} must be accepted: {error}"));
+    }
+    for rejected in [
+        // Unknown prefix family.
+        "foo_bar",
+        // Family prefix but charset rules still bind.
+        "connector_key_SUSPENDED",
+        "charter_drift.extra",
+        // Reason-code namespace never leaks into receipt reasons.
+        "gate.connector_key.register",
+    ] {
+        assert!(
+            matches!(append(rejected), Err(Error::CorruptedIndex(_))),
+            "{rejected} must be rejected"
+        );
+    }
+}
