@@ -790,6 +790,51 @@ impl Vault {
         scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
     }
 
+    /// Bounded neighbor-edge scan for one direction with the kind and
+    /// minimum-weight filters pushed into the LMDB prefix iterator, stopping
+    /// after `limit` matches.
+    ///
+    /// Unlike [`Self::edges_out`]/[`Self::edges_in`] (which materialize every
+    /// edge and error with [`Error::IndexOverflow`] past
+    /// `MAX_EDGE_QUERY_RESULTS`), this walks only until `limit` matches accrue,
+    /// so a high-degree node never allocates its full edge set. When `kind` is
+    /// set the walk is further narrowed to the `[id | kind]` key span.
+    pub(crate) fn neighbor_edges_bounded(
+        &self,
+        center: &EntityId,
+        outbound: bool,
+        kind: Option<EdgeKind>,
+        min_weight: Option<f32>,
+        limit: usize,
+    ) -> Result<Vec<EdgeInfo>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let db = if outbound {
+            &self.store.edges_out
+        } else {
+            &self.store.edges_in
+        };
+        let prefix: Vec<u8> = match kind {
+            Some(kind) => edge_kind_prefix(center, kind).to_vec(),
+            None => center.as_bytes().to_vec(),
+        };
+        let rtxn = self.store.env.read_txn()?;
+        let mut edges = Vec::new();
+        for entry in db.prefix_iter(&rtxn, prefix.as_slice())? {
+            let (key, value) = entry?;
+            let edge = parse_edge_record(key, value)?;
+            if min_weight.is_some_and(|min| edge.weight < min) {
+                continue;
+            }
+            edges.push(edge);
+            if edges.len() >= limit {
+                break;
+            }
+        }
+        Ok(edges)
+    }
+
     /// Returns BM25 text matches for a query under the contract-default
     /// rank profile.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<ScoredEntity>> {
