@@ -66,9 +66,10 @@
 //!   survive the close, and a replica that goes offline before tombstone
 //!   replay retains the transcript indefinitely. True cross-device
 //!   evaporation needs the fence (or the session contract) on the wire.
-//! * **`export.rs` is fence-unaware.** A whole-vault export taken while an
-//!   off-record session is live serializes the fenced turns like any other
-//!   entity; the export bundle outlives close.
+//! * **Whole-vault export refuses while a session is live.** The export seam
+//!   checks the durable session family before it writes an artifact, returning
+//!   a typed error naming the open session rather than producing a bundle that
+//!   could outlive close with fenced content.
 //! * **Context-receipt registration is caller discipline.** See the MUST
 //!   above — auto-registration needs session plumbing at the
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
@@ -301,6 +302,32 @@ fn session_record_in_txn(
     Ok(Some(record))
 }
 
+/// Returns the first durable off-record session ref, if any. Session rows are
+/// the source of truth for the export gate: a session remains open until its
+/// close transaction removes the row, including while the close `closing`
+/// flag is stamped. LMDB's key ordering makes the result deterministic when a
+/// caller has (incorrectly) left more than one session open.
+fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Result<Option<String>> {
+    if let Some(row) = store
+        .vault_meta
+        .prefix_iter(rtxn, OFF_RECORD_SESSION_KEY_PREFIX)?
+        .next()
+    {
+        let (key, bytes) = row?;
+        let suffix = key
+            .strip_prefix(OFF_RECORD_SESSION_KEY_PREFIX)
+            .ok_or(Error::CorruptedIndex("off-record session key"))?;
+        let session_ref = std::str::from_utf8(suffix)
+            .map_err(|_| Error::CorruptedIndex("off-record session key"))?;
+        let record = decode_off_record_session(bytes)?;
+        if record.session_ref != session_ref {
+            return Err(Error::CorruptedIndex("off-record session record"));
+        }
+        return Ok(Some(session_ref.to_owned()));
+    }
+    Ok(None)
+}
+
 /// Loads the record for a mutator: errors when the session is unknown, and
 /// rejects typed once close has stamped the closing flag — no record
 /// mutation may interleave with close's multi-transaction deletion pass.
@@ -323,6 +350,17 @@ fn mutable_session_record_in_txn(
 }
 
 impl Vault {
+    /// Refuses whole-vault export while any off-record session row remains
+    /// live. The row is retained through the close `closing` phase, so an
+    /// export cannot race a partially completed delete-at-close pass.
+    pub(crate) fn ensure_no_open_off_record_session(&self) -> Result<()> {
+        let rtxn = self.store.env.read_txn()?;
+        if let Some(session_ref) = first_open_off_record_session_in_txn(&self.store, &rtxn)? {
+            return Err(Error::OffRecordExportRefused { session_ref });
+        }
+        Ok(())
+    }
+
     /// Explicitly enters off-record mode for `session_ref` (OF-326: enter is
     /// never implicit). Errors with [`Error::OffRecordSessionAlreadyExists`]
     /// while a record for the ref exists — a closed session's ref may be
