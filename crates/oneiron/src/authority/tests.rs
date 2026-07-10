@@ -5,6 +5,8 @@ use proptest::prelude::*;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
+use crate::registry::TypeByteBand;
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -3238,5 +3240,1519 @@ proptest! {
         prop_assert_eq!(folded.pending_widens, baseline.pending_widens);
         prop_assert_eq!(folded.vetoed_widens, baseline.vetoed_widens);
         prop_assert_eq!(folded.tier_floor, baseline.tier_floor);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Federation lifecycle (ONE-1408)
+// ---------------------------------------------------------------------------
+
+fn scope_entity(byte: u8) -> EntityId {
+    EntityId::from_bytes([byte; 16]).unwrap()
+}
+
+fn symmetric_scope(
+    facets: crate::federation::FederationScopeFacets,
+    bands: crate::federation::FederationScopeBands,
+) -> FederationPactScope {
+    let half = FederationDirectionScope {
+        worlds: crate::federation::FederationScopeWorlds::All,
+        facets,
+        bands,
+    };
+    FederationPactScope {
+        lo_to_hi: half.clone(),
+        hi_to_lo: half,
+    }
+}
+
+fn default_pact_scope() -> FederationPactScope {
+    FederationPactScope {
+        lo_to_hi: FederationDirectionScope {
+            worlds: crate::federation::FederationScopeWorlds::All,
+            facets: crate::federation::FederationScopeFacets::All,
+            bands: crate::federation::FederationScopeBands::All,
+        },
+        hi_to_lo: FederationDirectionScope {
+            worlds: crate::federation::FederationScopeWorlds::Base,
+            facets: crate::federation::FederationScopeFacets::All,
+            bands: crate::federation::FederationScopeBands::All,
+        },
+    }
+}
+
+fn scope_digest_for(scope: &FederationPactScope, nonce: &[u8; 16]) -> [u8; 32] {
+    federation_scope_digest(nonce, &encode_federation_pact_scope(scope).unwrap())
+}
+
+struct PactFixture {
+    owner: SigningKey,
+    peer: SigningKey,
+    genesis: AuthorityLogEntry,
+    peer_genesis: AuthorityLogEntry,
+    vault_id: AuthorityVaultId,
+    peer_vault_id: AuthorityVaultId,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    pact_nonce: [u8; 16],
+    scope: FederationPactScope,
+    scope_digest: [u8; 32],
+}
+
+fn pact_fixture_with_scope(seed: u8, scope: FederationPactScope) -> PactFixture {
+    let owner = ed_key(seed);
+    let genesis = genesis_entry(seed, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let peer = ed_key(seed.wrapping_add(1));
+    let peer_genesis = genesis_entry(seed.wrapping_add(1), 86_400, 1);
+    let peer_vault_id = genesis_vault_id(&peer_genesis).unwrap();
+    let pact_nonce = [seed.wrapping_add(2); 16];
+    PactFixture {
+        scope_digest: scope_digest_for(&scope, &pact_nonce),
+        owner,
+        peer,
+        genesis,
+        peer_genesis,
+        vault_id,
+        peer_vault_id,
+        pact_id: [seed.wrapping_add(3); 32],
+        grant_ref: scope_entity(seed.wrapping_add(4)),
+        pact_nonce,
+        scope,
+    }
+}
+
+fn pact_fixture(seed: u8) -> PactFixture {
+    pact_fixture_with_scope(seed, default_pact_scope())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ed_pact_gesture(
+    kind: FederationLifecycleKind,
+    pact_id: &[u8; 32],
+    vault_a: &AuthorityVaultId,
+    vault_b: &AuthorityVaultId,
+    pact_epoch: u64,
+    scope_digest: &[u8; 32],
+    successor: Option<&AuthorityVaultId>,
+    pact_nonce: &[u8; 16],
+    peer: &SigningKey,
+) -> FederationPactGesture {
+    sign_federation_pact_gesture(
+        kind,
+        pact_id,
+        vault_a,
+        vault_b,
+        pact_epoch,
+        scope_digest,
+        successor,
+        pact_nonce,
+        authority_key_from_ed(peer),
+        |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+    )
+    .unwrap()
+}
+
+fn connect_action_with(
+    fixture: &PactFixture,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    scope: &FederationPactScope,
+    nonce: [u8; 16],
+) -> FederationLifecycleAction {
+    let digest = scope_digest_for(scope, &nonce);
+    FederationLifecycleAction {
+        kind: FederationLifecycleKind::Connect,
+        pact_id,
+        grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        pact_epoch: 1,
+        pact_scope: Some(scope.clone()),
+        effective_scope: None,
+        scope_digest: Some(digest),
+        gesture: Some(ed_pact_gesture(
+            FederationLifecycleKind::Connect,
+            &pact_id,
+            &fixture.vault_id,
+            &fixture.peer_vault_id,
+            1,
+            &digest,
+            None,
+            &nonce,
+            &fixture.peer,
+        )),
+        successor_vault_id: None,
+        pact_nonce: nonce,
+    }
+}
+
+fn connect_action(fixture: &PactFixture) -> FederationLifecycleAction {
+    connect_action_with(
+        fixture,
+        fixture.pact_id,
+        fixture.grant_ref,
+        &fixture.scope,
+        fixture.pact_nonce,
+    )
+}
+
+fn narrow_action_with(
+    fixture: &PactFixture,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    pact_epoch: u64,
+    effective: FederationDirectionScope,
+) -> FederationLifecycleAction {
+    FederationLifecycleAction {
+        kind: FederationLifecycleKind::Rescope,
+        pact_id,
+        grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        pact_epoch,
+        pact_scope: None,
+        effective_scope: Some(effective),
+        scope_digest: None,
+        gesture: None,
+        successor_vault_id: None,
+        pact_nonce: fixture.pact_nonce,
+    }
+}
+
+fn repact_action_with(
+    fixture: &PactFixture,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    pact_epoch: u64,
+    scope: &FederationPactScope,
+    nonce: [u8; 16],
+) -> FederationLifecycleAction {
+    let digest = scope_digest_for(scope, &nonce);
+    FederationLifecycleAction {
+        kind: FederationLifecycleKind::Rescope,
+        pact_id,
+        grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        pact_epoch,
+        pact_scope: Some(scope.clone()),
+        effective_scope: None,
+        scope_digest: Some(digest),
+        gesture: Some(ed_pact_gesture(
+            FederationLifecycleKind::Rescope,
+            &pact_id,
+            &fixture.vault_id,
+            &fixture.peer_vault_id,
+            pact_epoch,
+            &digest,
+            None,
+            &nonce,
+            &fixture.peer,
+        )),
+        successor_vault_id: None,
+        pact_nonce: nonce,
+    }
+}
+
+fn unilateral_action_with(
+    fixture: &PactFixture,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    kind: FederationLifecycleKind,
+    pact_epoch: u64,
+) -> FederationLifecycleAction {
+    FederationLifecycleAction {
+        kind,
+        pact_id,
+        grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        pact_epoch,
+        pact_scope: None,
+        effective_scope: None,
+        scope_digest: None,
+        gesture: None,
+        successor_vault_id: None,
+        pact_nonce: fixture.pact_nonce,
+    }
+}
+
+fn promote_action_with(
+    fixture: &PactFixture,
+    pact_id: [u8; 32],
+    grant_ref: EntityId,
+    pact_epoch: u64,
+    stored_digest: [u8; 32],
+    successor: AuthorityVaultId,
+) -> FederationLifecycleAction {
+    FederationLifecycleAction {
+        kind: FederationLifecycleKind::Promote,
+        pact_id,
+        grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        pact_epoch,
+        pact_scope: None,
+        effective_scope: None,
+        scope_digest: Some(stored_digest),
+        gesture: Some(ed_pact_gesture(
+            FederationLifecycleKind::Promote,
+            &pact_id,
+            &fixture.vault_id,
+            &fixture.peer_vault_id,
+            pact_epoch,
+            &stored_digest,
+            Some(&successor),
+            &fixture.pact_nonce,
+            &fixture.peer,
+        )),
+        successor_vault_id: Some(successor),
+        pact_nonce: fixture.pact_nonce,
+    }
+}
+
+fn lifecycle_entry(
+    fixture: &PactFixture,
+    parents: Vec<AuthorityEntryHash>,
+    seq: u64,
+    action: FederationLifecycleAction,
+) -> AuthorityLogEntry {
+    sign_ed(
+        unsigned_entry(
+            Some(fixture.vault_id),
+            seq,
+            parents,
+            AuthorityOp::FederationLifecycle(action),
+            authority_key_from_ed(&fixture.owner),
+            100 + seq,
+        ),
+        &fixture.owner,
+    )
+}
+
+fn lifecycle_rejection(
+    fold: &AuthorityFold,
+    hash: AuthorityEntryHash,
+) -> Option<FederationLifecycleRejection> {
+    fold.issues.iter().find_map(|issue| match issue {
+        AuthorityFoldIssue::FederationLifecycleRejected { entry, reason } if *entry == hash => {
+            Some(*reason)
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn federation_connect_activates_pact_on_both_sides() {
+    let fixture = pact_fixture(120);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+
+    let fold =
+        fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), connect.clone()]);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&connect).unwrap())
+    );
+    let pact = fold
+        .federation_pacts
+        .get(&fixture.pact_id)
+        .expect("connect must activate the pact");
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 1);
+    assert_eq!(pact.grant_ref, fixture.grant_ref);
+    assert_eq!(pact.peer_vault_id, fixture.peer_vault_id);
+    assert_eq!(
+        pact.peer_owner_key,
+        authority_key_from_ed(&fixture.peer),
+        "peer key must be pinned at connect"
+    );
+    assert_eq!(pact.scope_digest, fixture.scope_digest);
+    assert_eq!(pact.pact_scope, fixture.scope);
+    let expected_half = if fixture.vault_id <= fixture.peer_vault_id {
+        fixture.scope.lo_to_hi.clone()
+    } else {
+        fixture.scope.hi_to_lo.clone()
+    };
+    assert_eq!(pact.effective_scope, expected_half);
+    assert_eq!(pact.successor_vault_id, None);
+    assert_eq!(pact.terminal_epoch, None);
+    assert_eq!(fold.pact_for_grant(&fixture.grant_ref), Some(pact));
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Active
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &scope_entity(0x77)),
+        FederationGrantActivation::Unpacted
+    );
+
+    // Symmetric entry on B: same pact id, same digest, gesture signed by A's
+    // owner over the identical (sorted-vault) transcript.
+    let symmetric_grant = scope_entity(0x41);
+    let symmetric_action = FederationLifecycleAction {
+        kind: FederationLifecycleKind::Connect,
+        pact_id: fixture.pact_id,
+        grant_ref: symmetric_grant,
+        peer_vault_id: fixture.vault_id,
+        pact_epoch: 1,
+        pact_scope: Some(fixture.scope.clone()),
+        effective_scope: None,
+        scope_digest: Some(fixture.scope_digest),
+        gesture: Some(ed_pact_gesture(
+            FederationLifecycleKind::Connect,
+            &fixture.pact_id,
+            &fixture.vault_id,
+            &fixture.peer_vault_id,
+            1,
+            &fixture.scope_digest,
+            None,
+            &fixture.pact_nonce,
+            &fixture.owner,
+        )),
+        successor_vault_id: None,
+        pact_nonce: fixture.pact_nonce,
+    };
+    let symmetric_connect = sign_ed(
+        unsigned_entry(
+            Some(fixture.peer_vault_id),
+            1,
+            vec![authority_entry_hash(&fixture.peer_genesis).unwrap()],
+            AuthorityOp::FederationLifecycle(symmetric_action),
+            authority_key_from_ed(&fixture.peer),
+            2,
+        ),
+        &fixture.peer,
+    );
+    let peer_fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.peer_genesis.clone(),
+        symmetric_connect,
+    ]);
+    let peer_pact = peer_fold
+        .federation_pacts
+        .get(&fixture.pact_id)
+        .expect("symmetric connect must activate on B");
+    assert_eq!(peer_pact.status, FederationPactStatus::Active);
+    assert_eq!(peer_pact.peer_owner_key, authority_key_from_ed(&fixture.owner));
+    let expected_peer_half = if fixture.peer_vault_id <= fixture.vault_id {
+        fixture.scope.lo_to_hi.clone()
+    } else {
+        fixture.scope.hi_to_lo.clone()
+    };
+    assert_eq!(peer_pact.effective_scope, expected_peer_half);
+    assert_eq!(
+        federation_grant_activation(&peer_fold, &symmetric_grant),
+        FederationGrantActivation::Active
+    );
+}
+
+#[test]
+fn federation_connect_digest_mismatch_never_activates() {
+    // (a) Gesture signed over digest Y while the entry claims X: the scope
+    // recomputes to X, so the gesture check fails.
+    let fixture = pact_fixture(124);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let mut action = connect_action(&fixture);
+    action.gesture = Some(ed_pact_gesture(
+        FederationLifecycleKind::Connect,
+        &fixture.pact_id,
+        &fixture.vault_id,
+        &fixture.peer_vault_id,
+        1,
+        &[0xEE; 32],
+        None,
+        &fixture.pact_nonce,
+        &fixture.peer,
+    ));
+    let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
+    let entry_hash = authority_entry_hash(&entry).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), entry]);
+    assert!(fold.federation_pacts.is_empty(), "no pact state may form");
+    assert_eq!(fold.pact_for_grant(&fixture.grant_ref), None);
+    assert_eq!(
+        lifecycle_rejection(&fold, entry_hash),
+        Some(FederationLifecycleRejection::GestureInvalid)
+    );
+
+    // (b) Entry's pact_scope tampered: the recompute no longer matches the
+    // claimed (and gesture-signed) digest.
+    let fixture = pact_fixture(126);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let mut action = connect_action(&fixture);
+    action.pact_scope = Some(symmetric_scope(
+        crate::federation::FederationScopeFacets::Bottom,
+        crate::federation::FederationScopeBands::All,
+    ));
+    let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
+    let entry_hash = authority_entry_hash(&entry).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), entry]);
+    assert!(fold.federation_pacts.is_empty(), "no pact state may form");
+    assert_eq!(
+        lifecycle_rejection(&fold, entry_hash),
+        Some(FederationLifecycleRejection::ScopeDigestMismatch)
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Unpacted
+    );
+}
+
+#[test]
+fn federation_rescope_narrow_and_repact_rules() {
+    let ceiling_facets = crate::federation::FederationScopeFacets::Some(vec![
+        scope_entity(0x21),
+        scope_entity(0x22),
+    ]);
+    let fixture = pact_fixture_with_scope(
+        128,
+        symmetric_scope(ceiling_facets, crate::federation::FederationScopeBands::All),
+    );
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+
+    // Widen attempt: effective facets = All escapes the Some([...]) ceiling.
+    let widen = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            1,
+            FederationDirectionScope {
+                worlds: crate::federation::FederationScopeWorlds::All,
+                facets: crate::federation::FederationScopeFacets::All,
+                bands: crate::federation::FederationScopeBands::All,
+            },
+        ),
+    );
+    let widen_hash = authority_entry_hash(&widen).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect.clone(),
+        widen,
+    ]);
+    assert_eq!(
+        lifecycle_rejection(&fold, widen_hash),
+        Some(FederationLifecycleRejection::WidenWithoutGesture)
+    );
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(
+        pact.effective_scope, fixture.scope.lo_to_hi,
+        "rejected widen must leave the effective scope unchanged"
+    );
+
+    // Narrowing rescope (⊑ ceiling, epoch == cur) replaces effective_scope.
+    let narrowed = FederationDirectionScope {
+        worlds: crate::federation::FederationScopeWorlds::Base,
+        facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x21)]),
+        bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+    };
+    let narrow = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        3,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            1,
+            narrowed.clone(),
+        ),
+    );
+    let narrow_hash = authority_entry_hash(&narrow).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect.clone(),
+        narrow.clone(),
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 1);
+    assert_eq!(pact.effective_scope, narrowed);
+
+    // Dual-signed repact at epoch+1 replaces ceiling + digest wholesale.
+    let new_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x23)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let new_nonce = [0x5A; 16];
+    let repact = lifecycle_entry(
+        &fixture,
+        vec![narrow_hash],
+        4,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            &new_scope,
+            new_nonce,
+        ),
+    );
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        narrow,
+        repact,
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 2);
+    assert_eq!(pact.pact_scope, new_scope);
+    assert_eq!(pact.scope_digest, scope_digest_for(&new_scope, &new_nonce));
+    assert_eq!(pact.effective_scope, new_scope.lo_to_hi);
+}
+
+#[test]
+fn federation_disconnect_is_terminal_for_every_subsequent_op() {
+    let fixture = pact_fixture(132);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let disconnect = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        unilateral_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            FederationLifecycleKind::Disconnect,
+            1,
+        ),
+    );
+    let disconnect_hash = authority_entry_hash(&disconnect).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect.clone(),
+        disconnect.clone(),
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Disconnected);
+    assert_eq!(pact.terminal_epoch, Some(1));
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Inactive(FederationPactStatus::Disconnected)
+    );
+
+    // Every subsequent lifecycle op on P parented after the disconnect.
+    let followups = vec![
+        (
+            "connect",
+            lifecycle_entry(&fixture, vec![disconnect_hash], 3, connect_action(&fixture)),
+        ),
+        (
+            "narrow",
+            lifecycle_entry(
+                &fixture,
+                vec![disconnect_hash],
+                4,
+                narrow_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    fixture.grant_ref,
+                    1,
+                    fixture.scope.hi_to_lo.clone(),
+                ),
+            ),
+        ),
+        (
+            "repact",
+            lifecycle_entry(
+                &fixture,
+                vec![disconnect_hash],
+                5,
+                repact_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    fixture.grant_ref,
+                    2,
+                    &fixture.scope,
+                    [0x66; 16],
+                ),
+            ),
+        ),
+        (
+            "promote",
+            lifecycle_entry(
+                &fixture,
+                vec![disconnect_hash],
+                6,
+                promote_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    fixture.grant_ref,
+                    2,
+                    fixture.scope_digest,
+                    [0xCC; 32],
+                ),
+            ),
+        ),
+        (
+            "dissolve",
+            lifecycle_entry(
+                &fixture,
+                vec![disconnect_hash],
+                7,
+                unilateral_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    fixture.grant_ref,
+                    FederationLifecycleKind::Dissolve,
+                    1,
+                ),
+            ),
+        ),
+        (
+            "second disconnect",
+            lifecycle_entry(
+                &fixture,
+                vec![disconnect_hash],
+                8,
+                unilateral_action_with(
+                    &fixture,
+                    fixture.pact_id,
+                    fixture.grant_ref,
+                    FederationLifecycleKind::Disconnect,
+                    1,
+                ),
+            ),
+        ),
+    ];
+
+    let mut entries = vec![fixture.genesis.clone(), connect, disconnect];
+    let mut followup_hashes = Vec::new();
+    for (name, entry) in followups {
+        followup_hashes.push((name, authority_entry_hash(&entry).unwrap()));
+        entries.push(entry);
+    }
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    for (name, hash) in followup_hashes {
+        assert_eq!(
+            lifecycle_rejection(&fold, hash),
+            Some(FederationLifecycleRejection::TerminalPact),
+            "{name} after disconnect must reject TerminalPact"
+        );
+    }
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Disconnected);
+    assert_eq!(pact.terminal_epoch, Some(1));
+    assert_eq!(pact.pact_epoch, 1);
+    assert_eq!(fold.federation_pacts.len(), 1);
+
+    // Re-covering the SAME grant_ref under a NEW pact id stays rejected even
+    // though the binding pact is terminal: revoked access never resurrects.
+    let rebind = lifecycle_entry(
+        &fixture,
+        vec![disconnect_hash],
+        9,
+        connect_action_with(
+            &fixture,
+            [0xD1; 32],
+            fixture.grant_ref,
+            &fixture.scope,
+            [0x67; 16],
+        ),
+    );
+    let rebind_hash = authority_entry_hash(&rebind).unwrap();
+    entries.push(rebind);
+    let fold = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        lifecycle_rejection(&fold, rebind_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+    assert_eq!(fold.federation_pacts.len(), 1);
+}
+
+#[test]
+fn federation_connect_rejects_rebinding_an_actively_bound_grant() {
+    let fixture = pact_fixture(136);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let rebind = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        connect_action_with(
+            &fixture,
+            [0xD2; 32],
+            fixture.grant_ref,
+            &fixture.scope,
+            [0x68; 16],
+        ),
+    );
+    let rebind_hash = authority_entry_hash(&rebind).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        rebind,
+    ]);
+    assert_eq!(
+        lifecycle_rejection(&fold, rebind_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+    assert_eq!(fold.federation_pacts.len(), 1);
+    assert_eq!(
+        fold.federation_pacts[&fixture.pact_id].status,
+        FederationPactStatus::Active
+    );
+}
+
+#[test]
+fn federation_promote_records_successor_and_is_terminal() {
+    let fixture = pact_fixture(140);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let successor = [0xCD; 32];
+    let promote = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        promote_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            fixture.scope_digest,
+            successor,
+        ),
+    );
+    let promote_hash = authority_entry_hash(&promote).unwrap();
+    let after = lifecycle_entry(
+        &fixture,
+        vec![promote_hash],
+        3,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            fixture.scope.hi_to_lo.clone(),
+        ),
+    );
+    let after_hash = authority_entry_hash(&after).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        promote,
+        after,
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Promoted);
+    assert_eq!(pact.successor_vault_id, Some(successor));
+    assert_eq!(pact.terminal_epoch, Some(2));
+    assert_eq!(pact.pact_epoch, 2);
+    assert_eq!(
+        lifecycle_rejection(&fold, after_hash),
+        Some(FederationLifecycleRejection::TerminalPact)
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Inactive(FederationPactStatus::Promoted)
+    );
+
+    // Promote with a digest that differs from the stored one never lands.
+    let fixture = pact_fixture(144);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let bad_promote = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        promote_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            [0xEF; 32],
+            successor,
+        ),
+    );
+    let bad_hash = authority_entry_hash(&bad_promote).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        bad_promote,
+    ]);
+    assert_eq!(
+        lifecycle_rejection(&fold, bad_hash),
+        Some(FederationLifecycleRejection::ScopeDigestMismatch)
+    );
+    assert_eq!(
+        fold.federation_pacts[&fixture.pact_id].status,
+        FederationPactStatus::Active
+    );
+}
+
+#[test]
+fn federation_dissolve_is_terminal_and_never_recovered() {
+    let fixture = pact_fixture(148);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let dissolve = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        unilateral_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            FederationLifecycleKind::Dissolve,
+            1,
+        ),
+    );
+    let dissolve_hash = authority_entry_hash(&dissolve).unwrap();
+    let repact_after = lifecycle_entry(
+        &fixture,
+        vec![dissolve_hash],
+        3,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            &fixture.scope,
+            [0x69; 16],
+        ),
+    );
+    let repact_hash = authority_entry_hash(&repact_after).unwrap();
+    let rebind = lifecycle_entry(
+        &fixture,
+        vec![dissolve_hash],
+        4,
+        connect_action_with(
+            &fixture,
+            [0xD3; 32],
+            fixture.grant_ref,
+            &fixture.scope,
+            [0x6A; 16],
+        ),
+    );
+    let rebind_hash = authority_entry_hash(&rebind).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        dissolve,
+        repact_after,
+        rebind,
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Dissolved);
+    assert_eq!(pact.terminal_epoch, Some(1));
+    assert_eq!(
+        lifecycle_rejection(&fold, repact_hash),
+        Some(FederationLifecycleRejection::TerminalPact)
+    );
+    assert_eq!(
+        lifecycle_rejection(&fold, rebind_hash),
+        Some(FederationLifecycleRejection::GrantAlreadyBound)
+    );
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Inactive(FederationPactStatus::Dissolved)
+    );
+}
+
+#[test]
+fn federation_suspended_pact_heals_via_fresh_repact() {
+    let fixture = pact_fixture(152);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let left_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x21)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let right_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x22)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let left = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            &left_scope,
+            [0x6B; 16],
+        ),
+    );
+    let right = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        3,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            &right_scope,
+            [0x6C; 16],
+        ),
+    );
+    let left_hash = authority_entry_hash(&left).unwrap();
+    let right_hash = authority_entry_hash(&right).unwrap();
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect.clone(),
+        left.clone(),
+        right.clone(),
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(
+        pact.status,
+        FederationPactStatus::Suspended,
+        "divergent equal-epoch repacts must suspend"
+    );
+    assert_eq!(pact.pact_epoch, 2);
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Inactive(FederationPactStatus::Suspended)
+    );
+
+    // Narrow/Promote on the suspended pact reject SuspendedPact.
+    let narrow_on_suspended = lifecycle_entry(
+        &fixture,
+        vec![left_hash, right_hash],
+        4,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            2,
+            fixture.scope.hi_to_lo.clone(),
+        ),
+    );
+    let narrow_hash = authority_entry_hash(&narrow_on_suspended).unwrap();
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect.clone(),
+        left.clone(),
+        right.clone(),
+        narrow_on_suspended,
+    ]);
+    assert_eq!(
+        lifecycle_rejection(&fold, narrow_hash),
+        Some(FederationLifecycleRejection::SuspendedPact)
+    );
+
+    // A fresh dual-signed repact at epoch+1 heals the suspension.
+    let heal_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x23)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let heal_nonce = [0x6D; 16];
+    let heal = lifecycle_entry(
+        &fixture,
+        vec![left_hash, right_hash],
+        5,
+        repact_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            3,
+            &heal_scope,
+            heal_nonce,
+        ),
+    );
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect,
+        left,
+        right,
+        heal,
+    ]);
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.pact_epoch, 3);
+    assert_eq!(pact.pact_scope, heal_scope);
+    assert_eq!(pact.scope_digest, scope_digest_for(&heal_scope, &heal_nonce));
+    assert_eq!(
+        federation_grant_activation(&fold, &fixture.grant_ref),
+        FederationGrantActivation::Active
+    );
+}
+
+fn pact_state_with_status(
+    fixture: &PactFixture,
+    status: FederationPactStatus,
+) -> FederationPactState {
+    FederationPactState {
+        status,
+        grant_ref: fixture.grant_ref,
+        peer_vault_id: fixture.peer_vault_id,
+        peer_owner_key: authority_key_from_ed(&fixture.peer),
+        pact_epoch: 1,
+        scope_digest: fixture.scope_digest,
+        pact_scope: fixture.scope.clone(),
+        effective_scope: local_outbound_scope(
+            &fixture.vault_id,
+            &fixture.peer_vault_id,
+            &fixture.scope,
+        ),
+        successor_vault_id: None,
+        terminal_epoch: status.is_terminal().then_some(1),
+    }
+}
+
+fn fold_state_with_pact(
+    fixture: &PactFixture,
+    status: Option<FederationPactStatus>,
+) -> FoldState {
+    let owner_key = authority_key_from_ed(&fixture.owner);
+    let mut state = FoldState {
+        vault_id: fixture.vault_id,
+        roster: BTreeMap::from([(
+            owner_key.clone(),
+            FoldedDevice {
+                key: owner_key.clone(),
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+                revoked: false,
+            },
+        )]),
+        tier_floor: AuthorityTier::Software,
+        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        pending_widens: BTreeMap::new(),
+        vetoed_widens: BTreeSet::new(),
+        delayed_rotation_veto_revocations: BTreeMap::new(),
+        authority_forks: BTreeMap::new(),
+        federation_pacts: BTreeMap::new(),
+        seqs: BTreeMap::from([(owner_key, 0)]),
+    };
+    if let Some(status) = status {
+        state
+            .federation_pacts
+            .insert(fixture.pact_id, pact_state_with_status(fixture, status));
+    }
+    state
+}
+
+fn totality_ops(fixture: &PactFixture) -> Vec<(&'static str, FederationLifecycleAction)> {
+    let narrowed = FederationDirectionScope {
+        worlds: crate::federation::FederationScopeWorlds::Base,
+        facets: crate::federation::FederationScopeFacets::All,
+        bands: crate::federation::FederationScopeBands::All,
+    };
+    let repact_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    vec![
+        ("connect", connect_action(fixture)),
+        (
+            "narrow",
+            narrow_action_with(fixture, fixture.pact_id, fixture.grant_ref, 1, narrowed),
+        ),
+        (
+            "repact",
+            repact_action_with(
+                fixture,
+                fixture.pact_id,
+                fixture.grant_ref,
+                2,
+                &repact_scope,
+                [0x7A; 16],
+            ),
+        ),
+        (
+            "disconnect",
+            unilateral_action_with(
+                fixture,
+                fixture.pact_id,
+                fixture.grant_ref,
+                FederationLifecycleKind::Disconnect,
+                1,
+            ),
+        ),
+        (
+            "promote",
+            promote_action_with(
+                fixture,
+                fixture.pact_id,
+                fixture.grant_ref,
+                2,
+                fixture.scope_digest,
+                [0xCE; 32],
+            ),
+        ),
+        (
+            "dissolve",
+            unilateral_action_with(
+                fixture,
+                fixture.pact_id,
+                fixture.grant_ref,
+                FederationLifecycleKind::Dissolve,
+                1,
+            ),
+        ),
+    ]
+}
+
+fn expected_transition(
+    status: Option<FederationPactStatus>,
+    op: &str,
+) -> std::result::Result<FederationPactStatus, FederationLifecycleRejection> {
+    use FederationLifecycleRejection as R;
+    use FederationPactStatus as S;
+    match (status, op) {
+        (None, "connect") => Ok(S::Active),
+        (None, _) => Err(R::UnknownPact),
+        (Some(current), _) if current.is_terminal() => Err(R::TerminalPact),
+        (Some(_), "connect") => Err(R::DuplicateConnect),
+        (Some(S::Suspended), "narrow") | (Some(S::Suspended), "promote") => Err(R::SuspendedPact),
+        (Some(_), "narrow") | (Some(_), "repact") => Ok(S::Active),
+        (Some(_), "disconnect") => Ok(S::Disconnected),
+        (Some(_), "promote") => Ok(S::Promoted),
+        (Some(_), "dissolve") => Ok(S::Dissolved),
+        (status, op) => panic!("uncovered transition pair ({status:?}, {op})"),
+    }
+}
+
+#[test]
+fn federation_lifecycle_transition_table_is_total() {
+    let fixture = pact_fixture(156);
+    let statuses = [
+        None,
+        Some(FederationPactStatus::Active),
+        Some(FederationPactStatus::Suspended),
+        Some(FederationPactStatus::Promoted),
+        Some(FederationPactStatus::Disconnected),
+        Some(FederationPactStatus::Dissolved),
+    ];
+    for status in statuses {
+        for (name, action) in totality_ops(&fixture) {
+            let mut state = fold_state_with_pact(&fixture, status);
+            let before = state.federation_pacts.clone();
+            let result = apply_federation_lifecycle(&mut state, &action);
+            match expected_transition(status, name) {
+                Ok(next) => {
+                    assert_eq!(result, Ok(()), "({status:?}, {name}) must apply");
+                    assert_eq!(
+                        state.federation_pacts[&fixture.pact_id].status,
+                        next,
+                        "({status:?}, {name}) next status"
+                    );
+                }
+                Err(reason) => {
+                    assert_eq!(result, Err(reason), "({status:?}, {name}) rejection");
+                    assert_eq!(
+                        state.federation_pacts, before,
+                        "({status:?}, {name}) rejected op must not mutate state"
+                    );
+                }
+            }
+        }
+    }
+}
+
+struct LifecycleDag {
+    fixture: PactFixture,
+    entries: Vec<AuthorityLogEntry>,
+    pact_two: [u8; 32],
+    pact_three: [u8; 32],
+    low_scope: FederationPactScope,
+    low_digest: [u8; 32],
+    scope_three: FederationPactScope,
+    digest_three: [u8; 32],
+}
+
+/// Eleven-entry lifecycle+device DAG exercising the three merge shapes:
+/// concurrent narrows (intersection incl. band ⊥), concurrent divergent
+/// repacts (Suspended), and Disconnect vs higher-epoch repact (terminal wins).
+fn lifecycle_dag() -> LifecycleDag {
+    let facet = scope_entity;
+    let fixture = pact_fixture_with_scope(
+        200,
+        symmetric_scope(
+            crate::federation::FederationScopeFacets::Some(vec![
+                facet(0x21),
+                facet(0x22),
+                facet(0x23),
+            ]),
+            crate::federation::FederationScopeBands::All,
+        ),
+    );
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    let narrow_left = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        2,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            1,
+            FederationDirectionScope {
+                worlds: crate::federation::FederationScopeWorlds::All,
+                facets: crate::federation::FederationScopeFacets::Some(vec![
+                    facet(0x21),
+                    facet(0x22),
+                ]),
+                bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Semantic]),
+            },
+        ),
+    );
+    let narrow_right = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        3,
+        narrow_action_with(
+            &fixture,
+            fixture.pact_id,
+            fixture.grant_ref,
+            1,
+            FederationDirectionScope {
+                worlds: crate::federation::FederationScopeWorlds::All,
+                facets: crate::federation::FederationScopeFacets::Some(vec![
+                    facet(0x22),
+                    facet(0x23),
+                ]),
+                bands: crate::federation::FederationScopeBands::Some(vec![TypeByteBand::Core]),
+            },
+        ),
+    );
+    let enroll = enroll_entry(fixture.vault_id, &fixture.genesis, &fixture.owner, 210, 4, 50);
+
+    let pact_two = [0xB2; 32];
+    let grant_two = scope_entity(0x32);
+    let scope_two = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    let connect_two = lifecycle_entry(
+        &fixture,
+        vec![connect_hash],
+        5,
+        connect_action_with(&fixture, pact_two, grant_two, &scope_two, [0x71; 16]),
+    );
+    let connect_two_hash = authority_entry_hash(&connect_two).unwrap();
+    let left_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![facet(0x21)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let left_nonce = [0x72; 16];
+    let repact_left = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        6,
+        repact_action_with(&fixture, pact_two, grant_two, 2, &left_scope, left_nonce),
+    );
+    let right_scope = symmetric_scope(
+        crate::federation::FederationScopeFacets::Some(vec![facet(0x22)]),
+        crate::federation::FederationScopeBands::All,
+    );
+    let right_nonce = [0x73; 16];
+    let repact_right = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        7,
+        repact_action_with(&fixture, pact_two, grant_two, 2, &right_scope, right_nonce),
+    );
+    let left_digest = scope_digest_for(&left_scope, &left_nonce);
+    let right_digest = scope_digest_for(&right_scope, &right_nonce);
+    let (low_scope, low_digest) = if left_digest < right_digest {
+        (left_scope, left_digest)
+    } else {
+        (right_scope, right_digest)
+    };
+
+    let pact_three = [0xB3; 32];
+    let grant_three = scope_entity(0x33);
+    let scope_three = symmetric_scope(
+        crate::federation::FederationScopeFacets::All,
+        crate::federation::FederationScopeBands::All,
+    );
+    let nonce_three = [0x74; 16];
+    let connect_three = lifecycle_entry(
+        &fixture,
+        vec![connect_two_hash],
+        8,
+        connect_action_with(&fixture, pact_three, grant_three, &scope_three, nonce_three),
+    );
+    let connect_three_hash = authority_entry_hash(&connect_three).unwrap();
+    let repact_three = lifecycle_entry(
+        &fixture,
+        vec![connect_three_hash],
+        9,
+        repact_action_with(
+            &fixture,
+            pact_three,
+            grant_three,
+            2,
+            &symmetric_scope(
+                crate::federation::FederationScopeFacets::Some(vec![facet(0x23)]),
+                crate::federation::FederationScopeBands::All,
+            ),
+            [0x75; 16],
+        ),
+    );
+    let disconnect_three = lifecycle_entry(
+        &fixture,
+        vec![connect_three_hash],
+        10,
+        unilateral_action_with(
+            &fixture,
+            pact_three,
+            grant_three,
+            FederationLifecycleKind::Disconnect,
+            1,
+        ),
+    );
+
+    let digest_three = scope_digest_for(&scope_three, &nonce_three);
+    let entries = vec![
+        fixture.genesis.clone(),
+        connect,
+        narrow_left,
+        narrow_right,
+        enroll,
+        connect_two,
+        repact_left,
+        repact_right,
+        connect_three,
+        repact_three,
+        disconnect_three,
+    ];
+    LifecycleDag {
+        fixture,
+        entries,
+        pact_two,
+        pact_three,
+        low_scope,
+        low_digest,
+        scope_three,
+        digest_three,
+    }
+}
+
+#[test]
+fn federation_lifecycle_dag_merges_pacts_fail_closed() {
+    let dag = lifecycle_dag();
+    let fold = fold_authority_log_without_seen_time_delay(&dag.entries);
+    assert!(fold.issues.is_empty(), "unexpected issues: {:?}", fold.issues);
+    assert_eq!(fold.valid_entries.len(), dag.entries.len());
+    assert!(fold.roster.contains_key(&authority_key_from_ed(&ed_key(210))));
+
+    // P1: concurrent unilateral narrows merge to the INTERSECTION; the
+    // disjoint band sets meet at the kind-tagged ⊥, never at all-bands.
+    let p1 = &fold.federation_pacts[&dag.fixture.pact_id];
+    assert_eq!(p1.status, FederationPactStatus::Active);
+    assert_eq!(p1.pact_epoch, 1);
+    assert_eq!(
+        p1.effective_scope,
+        FederationDirectionScope {
+            worlds: crate::federation::FederationScopeWorlds::All,
+            facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x22)]),
+            bands: crate::federation::FederationScopeBands::Bottom,
+        }
+    );
+
+    // P2: concurrent equal-epoch divergent-digest repacts suspend, with the
+    // min-digest side's scope fields (determinism-only pick).
+    let p2 = &fold.federation_pacts[&dag.pact_two];
+    assert_eq!(p2.status, FederationPactStatus::Suspended);
+    assert_eq!(p2.pact_epoch, 2);
+    assert_eq!(p2.scope_digest, dag.low_digest);
+    assert_eq!(p2.pact_scope, dag.low_scope);
+    assert_eq!(p2.successor_vault_id, None);
+    assert_eq!(p2.terminal_epoch, None);
+
+    // P3: concurrent Disconnect + higher-epoch repact merges to Disconnected
+    // (terminal beats epoch), keeping the terminal side's fields verbatim.
+    let p3 = &fold.federation_pacts[&dag.pact_three];
+    assert_eq!(p3.status, FederationPactStatus::Disconnected);
+    assert_eq!(p3.pact_epoch, 1);
+    assert_eq!(p3.terminal_epoch, Some(1));
+    assert_eq!(p3.scope_digest, dag.digest_three);
+    assert_eq!(p3.pact_scope, dag.scope_three);
+}
+
+#[test]
+fn lifecycle_entries_use_existing_type_122_doors() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let fixture = pact_fixture(190);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+
+    let genesis_id = scope_entity(0x51);
+    let connect_id = scope_entity(0x52);
+    vault
+        .put_authority_log_entry(
+            &genesis_id,
+            &fixture.genesis,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+    vault
+        .put_authority_log_entry(&connect_id, &connect, TimeRange { start: 2, end: 2 }, 2)
+        .unwrap();
+    assert_eq!(
+        vault.get_authority_log_entry(&connect_id).unwrap(),
+        Some(connect.clone()),
+        "lifecycle entry must round-trip through the type-122 write door"
+    );
+    let fold = vault.authority_fold().unwrap();
+    assert_eq!(
+        fold.federation_pacts[&fixture.pact_id].status,
+        FederationPactStatus::Active
+    );
+
+    let body = encode_authority_log_entry_body(&connect).unwrap();
+    let err = vault
+        .batch()
+        .put(
+            &scope_entity(0x53),
+            ENTITY_TYPE_AUTHORITY_LOG,
+            TimeRange { start: 3, end: 3 },
+            3,
+            &body,
+        )
+        .commit()
+        .expect_err("generic public type-122 put must stay rejected");
+    assert_eq!(
+        err.kind(),
+        crate::error::ErrorKind::MaintenanceKindNotWritable
+    );
+}
+
+proptest! {
+    #[test]
+    fn federation_lifecycle_fold_is_permutation_invariant(
+        perm in prop::collection::vec(0_usize..11, 11),
+    ) {
+        let dag = lifecycle_dag();
+        let baseline = fold_authority_log_without_seen_time_delay(&dag.entries);
+        prop_assert!(baseline.issues.is_empty());
+
+        let mut permuted = Vec::new();
+        for index in perm {
+            if let Some(entry) = dag.entries.get(index % dag.entries.len()) {
+                permuted.push(entry.clone());
+            }
+        }
+        for entry in &dag.entries {
+            if !permuted.iter().any(|candidate| candidate == entry) {
+                permuted.push(entry.clone());
+            }
+        }
+
+        let folded = fold_authority_log_without_seen_time_delay(&permuted);
+        prop_assert_eq!(folded, baseline);
     }
 }
