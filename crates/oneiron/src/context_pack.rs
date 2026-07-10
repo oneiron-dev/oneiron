@@ -1348,8 +1348,9 @@ fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         RetrievalSignal::Recency
         | RetrievalSignal::Salience
         | RetrievalSignal::Confidence
-        | RetrievalSignal::Gravity => {
-            unreachable!("blend score components are not context-pack retrieval channels")
+        | RetrievalSignal::Gravity
+        | RetrievalSignal::Rerank => {
+            unreachable!("blend/rerank score components are not context-pack retrieval channels")
         }
     }
 }

@@ -4574,3 +4574,436 @@ fn ppr_reblend_keeps_original_dead_claims_filtered() -> Result<()> {
     );
     Ok(())
 }
+
+// ===== RET-010 (ONE-1292) host-injected rerank hook =====
+
+/// Scores candidates ascending by engine rank, so the rerank order is the
+/// exact reversal of the engine block order.
+struct ReversingReranker;
+
+impl Reranker for ReversingReranker {
+    fn id(&self) -> &str {
+        "test/reranker-reversing@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        Ok((0..candidates.len()).map(|index| index as f32).collect())
+    }
+}
+
+struct MismatchReranker;
+
+impl Reranker for MismatchReranker {
+    fn id(&self) -> &str {
+        "test/reranker-mismatch@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        Ok(vec![0.0; candidates.len() + 1])
+    }
+}
+
+struct NanReranker;
+
+impl Reranker for NanReranker {
+    fn id(&self) -> &str {
+        "test/reranker-nan@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        let mut scores = vec![0.0; candidates.len()];
+        if let Some(first) = scores.first_mut() {
+            *first = f32::NAN;
+        }
+        Ok(scores)
+    }
+}
+
+struct FailingReranker;
+
+impl Reranker for FailingReranker {
+    fn id(&self) -> &str {
+        "test/reranker-failing@v1"
+    }
+
+    fn rerank(&self, _query: &str, _candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        Err(Error::InvalidConfig("reranker offline".to_owned()))
+    }
+}
+
+#[derive(Default)]
+struct ClaimProbeReranker {
+    seen: std::sync::Mutex<Vec<(EntityId, bool)>>,
+}
+
+impl Reranker for ClaimProbeReranker {
+    fn id(&self) -> &str {
+        "test/reranker-claim-probe@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        self.seen.lock().unwrap().extend(
+            candidates
+                .iter()
+                .map(|candidate| (candidate.id, candidate.claim.is_some())),
+        );
+        Ok(vec![0.0; candidates.len()])
+    }
+}
+
+/// Five entities with strictly decreasing cosine similarity to
+/// `[1, 0, 0, 0]`, so the engine block order is e1..e5 deterministically.
+fn rerank_fixture(vault: &Vault) -> Result<Vec<EntityId>> {
+    let vectors = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.9, 0.1, 0.0, 0.0],
+        [0.8, 0.2, 0.0, 0.0],
+        [0.7, 0.3, 0.0, 0.0],
+        [0.6, 0.4, 0.0, 0.0],
+    ];
+    let mut ids = Vec::new();
+    for (index, vector) in vectors.iter().enumerate() {
+        let id = entity_id(0xE1 + index as u8);
+        put_text_and_vector(vault, id, "rerank block fixture", *vector)?;
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+fn rerank_query_vector() -> [f32; 4] {
+    [1.0, 0.0, 0.0, 0.0]
+}
+
+#[test]
+fn rerank_reorders_block_with_score_ladder_reassignment() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let ids = rerank_fixture(&vault)?;
+    let query = rerank_query_vector();
+
+    let baseline = vault.query().search_vector(&query, 10).limit(10).run()?;
+    assert_eq!(
+        baseline.iter().map(|scored| scored.id).collect::<Vec<_>>(),
+        ids,
+        "fixture must produce the deterministic engine order"
+    );
+
+    let reranker = ReversingReranker;
+    let reranked = vault
+        .query()
+        .search_vector(&query, 10)
+        .limit(10)
+        .rerank(
+            &reranker,
+            RerankOptions {
+                top_n: 5,
+                query: Some("rerank probe".to_owned()),
+            },
+        )
+        .run()?;
+
+    let mut reversed_ids: Vec<EntityId> = baseline.iter().map(|scored| scored.id).collect();
+    reversed_ids.reverse();
+    assert_eq!(
+        reranked.iter().map(|scored| scored.id).collect::<Vec<_>>(),
+        reversed_ids,
+        "reversing reranker must reverse the block order"
+    );
+    // Score-ladder reassignment: position i keeps the i-th highest ENGINE
+    // score; the score vector is unchanged even though ids permuted.
+    assert_eq!(
+        reranked.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+        baseline.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+    );
+    assert!(
+        reranked
+            .windows(2)
+            .all(|pair| pair[0].score >= pair[1].score),
+        "scores must stay globally non-increasing"
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_top_n_two_reorders_only_top_block() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let ids = rerank_fixture(&vault)?;
+    let query = rerank_query_vector();
+
+    let baseline = vault.query().search_vector(&query, 10).limit(10).run()?;
+    let reranker = ReversingReranker;
+    let reranked = vault
+        .query()
+        .search_vector(&query, 10)
+        .limit(10)
+        .rerank(
+            &reranker,
+            RerankOptions {
+                top_n: 2,
+                query: Some("rerank probe".to_owned()),
+            },
+        )
+        .run()?;
+
+    let reranked_ids: Vec<EntityId> = reranked.iter().map(|scored| scored.id).collect();
+    assert_eq!(
+        reranked_ids,
+        vec![ids[1], ids[0], ids[2], ids[3], ids[4]],
+        "only the top-2 block may reorder"
+    );
+    assert_eq!(
+        reranked.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+        baseline.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+        "tail scores and ladder positions must be untouched"
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_trace_and_telemetry_carry_rerank_components() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let ids = rerank_fixture(&vault)?;
+    let query = rerank_query_vector();
+    let reranker = ReversingReranker;
+
+    let results = vault
+        .query()
+        .search_text("rerank block fixture", 10)
+        .search_vector(&query, 10)
+        .limit(10)
+        .rerank(&reranker, RerankOptions::default())
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let run_id = results.run_id.expect("rerank trace run id");
+    let run = vault.retrieval_run(run_id)?.expect("rerank trace run");
+    let trace = run.trace.clone().expect("rerank trace");
+
+    let blended_ids: Vec<[u8; 16]> = trace
+        .blended
+        .candidates
+        .iter()
+        .map(|candidate| candidate.result_id)
+        .collect();
+    let reranked_ids: Vec<[u8; 16]> = trace
+        .reranked
+        .candidates
+        .iter()
+        .map(|candidate| candidate.result_id)
+        .collect();
+    assert_ne!(
+        blended_ids, reranked_ids,
+        "reranked stage must differ from blended under the reversing reranker"
+    );
+    let mut reversed = blended_ids;
+    reversed.reverse();
+    assert_eq!(reranked_ids, reversed);
+
+    // Every reranked-stage candidate carries a raw Rerank component appended
+    // after any blend components; the blended stage carries none.
+    for candidate in &trace.reranked.candidates {
+        let rerank_component = candidate
+            .components
+            .iter()
+            .find(|component| component.signal == RetrievalSignal::Rerank)
+            .expect("reranked stage candidate must carry a Rerank component");
+        assert!(rerank_component.score.is_finite());
+    }
+    assert!(
+        trace.blended.candidates.iter().all(|candidate| {
+            candidate
+                .components
+                .iter()
+                .all(|component| component.signal != RetrievalSignal::Rerank)
+        }),
+        "blended stage must stay rerank-free"
+    );
+
+    // `final` stays the post-truncate pack.
+    assert_eq!(
+        trace
+            .final_stage
+            .candidates
+            .iter()
+            .map(|candidate| candidate.result_id)
+            .collect::<Vec<_>>(),
+        run.result_ids
+    );
+
+    // Base telemetry: score_breakdown includes the rerank components for
+    // block entries (always-on, not trace-gated).
+    for id in &ids {
+        let breakdown = run
+            .score_breakdown
+            .iter()
+            .find(|breakdown| breakdown.result_id == *id.as_bytes())
+            .expect("block entry in score breakdown");
+        assert!(
+            breakdown
+                .components
+                .iter()
+                .any(|component| component.signal == RetrievalSignal::Rerank),
+            "score_breakdown must carry rerank components for block entries"
+        );
+    }
+
+    // `signals` stays channels-only.
+    assert!(!run.signals.contains(&RetrievalSignal::Rerank));
+    assert!(!results.value.is_empty());
+
+    // Inactive passthrough: without rerank the reranked stage mirrors final.
+    let passthrough = captured_retrieval_trace(
+        &vault,
+        vault
+            .query()
+            .search_text("rerank block fixture", 10)
+            .search_vector(&query, 10)
+            .limit(10),
+    )?;
+    assert_eq!(
+        passthrough.reranked.candidates,
+        passthrough.final_stage.candidates
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_fork_hash_distinguishes_configurations() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    rerank_fixture(&vault)?;
+    let query = rerank_query_vector();
+    let reranker = ReversingReranker;
+
+    let build = |top_n: Option<usize>| {
+        let builder = vault
+            .query()
+            .search_text("rerank block fixture", 10)
+            .search_vector(&query, 10)
+            .limit(10);
+        match top_n {
+            None => builder,
+            Some(top_n) => builder.rerank(
+                &reranker,
+                RerankOptions {
+                    top_n,
+                    query: None,
+                },
+            ),
+        }
+    };
+
+    let off = captured_retrieval_trace(&vault, build(None))?;
+    let on_30 = captured_retrieval_trace(&vault, build(Some(30)))?;
+    let on_50 = captured_retrieval_trace(&vault, build(Some(50)))?;
+    let on_30_again = captured_retrieval_trace(&vault, build(Some(30)))?;
+
+    assert_ne!(off.fork_hash, on_30.fork_hash, "off vs on must fork");
+    assert_ne!(on_30.fork_hash, on_50.fork_hash, "top_n must fork");
+    assert_eq!(
+        on_30.fork_hash, on_30_again.fork_hash,
+        "identical rerank-on runs must replay to the same fork hash"
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_fail_closed_validation_and_invariants() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    rerank_fixture(&vault)?;
+    let query = rerank_query_vector();
+    let reversing = ReversingReranker;
+
+    let err = vault
+        .query()
+        .search_vector(&query, 10)
+        .rerank(
+            &reversing,
+            RerankOptions {
+                top_n: 0,
+                query: Some("q".to_owned()),
+            },
+        )
+        .run()
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "rerank top_n must be greater than zero")
+    );
+
+    // No RerankOptions::query and no search_text: fails closed before any
+    // channel work.
+    let err = vault
+        .query()
+        .search_vector(&query, 10)
+        .rerank(&reversing, RerankOptions::default())
+        .run()
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "rerank requires a query: set RerankOptions::query or search_text")
+    );
+
+    let mismatch = MismatchReranker;
+    let err = vault
+        .query()
+        .search_text("rerank block fixture", 10)
+        .rerank(&mismatch, RerankOptions::default())
+        .run()
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvariantViolation("reranker returned mismatched score count")
+    ));
+
+    let nan = NanReranker;
+    let err = vault
+        .query()
+        .search_text("rerank block fixture", 10)
+        .rerank(&nan, RerankOptions::default())
+        .run()
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::InvariantViolation("reranker returned non-finite score")
+    ));
+
+    let failing = FailingReranker;
+    let err = vault
+        .query()
+        .search_text("rerank block fixture", 10)
+        .rerank(&failing, RerankOptions::default())
+        .run()
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "reranker offline"),
+        "a reranker Err must propagate, never degrade to passthrough"
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_claim_candidates_carry_decoded_bodies() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let claim_id = entity_id(0xE6);
+    let plain_id = entity_id(0xE7);
+    put_claim_text(&vault, claim_id, "clamprobe fixture", None)?;
+    put_text(&vault, plain_id, "clamprobe fixture")?;
+
+    let probe = ClaimProbeReranker::default();
+    vault
+        .query()
+        .search_text("clamprobe fixture", 10)
+        .limit(10)
+        .rerank(&probe, RerankOptions::default())
+        .run()?;
+
+    let seen = probe.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2, "both fixture entities must enter the block");
+    assert!(
+        seen.iter()
+            .any(|(id, has_claim)| *id == claim_id && *has_claim),
+        "gate-passing claim candidates must carry Some(claim)"
+    );
+    assert!(
+        seen.iter()
+            .any(|(id, has_claim)| *id == plain_id && !*has_claim),
+        "non-claim candidates must carry None"
+    );
+    Ok(())
+}
