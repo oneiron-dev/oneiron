@@ -611,6 +611,12 @@ pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {
     );
     set_schema_property_description(
         spec,
+        "CoreContextPackResponse",
+        "disclosure",
+        "Disclosure block for the clamp applied to this assembly; present under the same rule as interlocutors.",
+    );
+    set_schema_property_description(
+        spec,
         "CoreEiriMemoryBoardBudget",
         "claims",
         "Claim row cap.",

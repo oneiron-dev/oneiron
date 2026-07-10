@@ -1344,6 +1344,8 @@ pub(crate) fn validate_claim_body_and_decode(
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)
     {
         crate::counterparty_contact::validate_counterparty_contact_claim_structure(&body)?;
+    } else if crate::disclosure::is_disclosure_claim_predicate(&body.predicate) {
+        crate::disclosure::validate_disclosure_claim_structure(&body)?;
     } else if crate::delivery_window::is_delivery_window_claim_predicate(&body.predicate) {
         crate::delivery_window::validate_delivery_window_claim_structure(&body)?;
     }

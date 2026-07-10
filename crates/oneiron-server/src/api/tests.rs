@@ -83,6 +83,7 @@ const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreEiriMemoryBoardRow",
     "CoreEiriMemoryBoardSlot",
     "CoreEiriMemoryBoardSource",
+    "CoreDisclosureAssembly",
     "CoreEiriSessionRagState",
     "CoreInterlocutorControls",
     "CoreInterlocutorParty",
@@ -3531,6 +3532,7 @@ fn generated_openapi_has_descriptions_examples_and_defaults() {
         "CoreEiriCompanionAssembly",
         "CoreEiriMemoryBoard",
         "CoreEiriMemoryBoardBudget",
+        "CoreDisclosureAssembly",
         "CoreEiriMemoryBoardRow",
         "CoreEiriSessionRagState",
         "CoreInterlocutorControls",
@@ -8083,6 +8085,385 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
     }
 }
 
+// ─── OF-365 disclosure clamp HTTP red-team suite (ONE-1517) ─────────────────
+
+fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::EntityId {
+    let turn = oneiron::EntityId::now();
+    let body = rmp_serde::to_vec_named(&json!({
+        "txt": text,
+        "spkr": "user",
+        "at": 100_u64,
+    }))
+    .expect("encode turn body");
+    server
+        .vault
+        .batch()
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            &body,
+        )
+        .text(&turn, &[("body", text)])
+        .commit()
+        .expect("seed text turn");
+    turn
+}
+
+fn seed_disclosure_scope(
+    server: &SyncServer,
+    contact_id: oneiron::EntityId,
+    entities: Vec<oneiron::EntityId>,
+) {
+    let scope = oneiron::DisclosureScope::task_scoped("party planning", entities, 100)
+        .expect("disclosure scope");
+    server
+        .vault
+        .set_counterparty_disclosure_scope(&contact_id, &scope)
+        .expect("set disclosure scope");
+}
+
+#[tokio::test]
+async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1517_0001);
+    let contact_principal = seeded_test_entity_id(0x1517_0002);
+    seed_counterparty_contact(
+        &server,
+        contact_principal,
+        identity_ref,
+        "kenji@example.com",
+    );
+    let party = seed_text_turn(&server, "hanami party planning needle17");
+    let diary = seed_text_turn(&server, "private diary entry needle17");
+    seed_disclosure_scope(&server, contact_principal, vec![party]);
+
+    // Scoped bearer whose principal IS the contact row; no block (N13 shape
+    // with a real scope). AbsenceClamp admits only the allowlisted party.
+    let request = json!({ "query": "needle17", "limit": 10 });
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &contact_principal.to_hex(),
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
+    assert!(
+        body["disclosure"]["notice"].is_null(),
+        "notice is Some iff supervised"
+    );
+    assert!(
+        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
+        "candidate sweep counted removals: {body:?}"
+    );
+    let result_ids: Vec<&str> = body["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    assert!(result_ids.contains(&party.to_hex().as_str()));
+    assert!(
+        !result_ids.contains(&diary.to_hex().as_str()),
+        "out-of-scope Tier-B memory absent from the assembled context"
+    );
+    let neighbors = body["neighbors"].as_array().expect("neighbors");
+    assert!(neighbors.is_empty());
+    let stamps = body["disclosure"]["interlocutors"]
+        .as_array()
+        .expect("stamps");
+    assert_eq!(stamps.len(), 1);
+    assert_eq!(stamps[0]["class"], Value::from("known_contact"));
+}
+
+#[tokio::test]
+async fn core_context_pack_supervised_path_carries_notice_and_tier_b() {
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1517_0011);
+    let contact_id = seeded_test_entity_id(0x1517_0012);
+    seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
+    let diary = seed_text_turn(&server, "tier b memory needle18");
+
+    let request = json!({
+        "query": "needle18",
+        "interlocutors": {
+            "owner_present": true,
+            "third_parties": [{ "contact_ref": contact_id.to_hex() }]
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["disclosure"]["mode"], Value::from("supervised"));
+    let notice = body["disclosure"]["notice"].as_str().expect("notice");
+    assert!(
+        notice.starts_with(
+            "Others present: kenji@example.com (known_contact, first contact: user_introduction)"
+        ),
+        "pinned template: {notice}"
+    );
+    assert!(notice.ends_with(
+        "Don't volunteer personal or sensitive information; if asked about private matters, \
+         defer to the owner."
+    ));
+    let result_ids: Vec<&str> = body["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    assert!(
+        result_ids.contains(&diary.to_hex().as_str()),
+        "supervised mode keeps Tier B present"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_n4_spoofed_owner_claim_stays_absence_clamped() {
+    let (_dir, server) = interlocutor_test_server();
+    let diary = seed_text_turn(&server, "tier b memory needle19");
+
+    // Owner-grade auth narrows itself away; the only party is a spoofed
+    // "it's me" claim. The claim is a label, never authority (I3/I4).
+    let request = json!({
+        "query": "needle19",
+        "interlocutors": {
+            "owner_present": false,
+            "third_parties": [{ "label": "it's me", "claimed_owner": true }]
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
+    let stamps = body["disclosure"]["interlocutors"]
+        .as_array()
+        .expect("stamps");
+    assert_eq!(stamps.len(), 1);
+    assert_eq!(stamps[0]["speaker"], Value::from("it's me"));
+    assert_eq!(stamps[0]["class"], Value::from("unknown"));
+    assert!(
+        body["results"].as_array().expect("results").is_empty(),
+        "unknown party gets the deny-all scope: {diary:?} must not surface"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_n5_voice_session_seam_cannot_widen() {
+    // The ILD-3 roster seam is accepted but inert: a voice_session_ref with
+    // no session owner resolves to no roster entries and stays AbsenceClamp.
+    // The enrolled-print corroboration case (owner_print_matched) lands with
+    // ONE-1518 and can never mint an Owner entry by construction.
+    let (_dir, server) = interlocutor_test_server();
+    seed_text_turn(&server, "tier b memory needle20");
+
+    let request = json!({
+        "query": "needle20",
+        "interlocutors": {
+            "owner_present": false,
+            "third_parties": [{ "label": "speaker 1", "claimed_owner": false }],
+            "voice_session_ref": "call-123"
+        }
+    });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
+    assert!(body["results"].as_array().expect("results").is_empty());
+}
+
+#[tokio::test]
+async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1517_0021);
+    let contact_id = seeded_test_entity_id(0x1517_0022);
+    seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
+    let party = seed_text_turn(&server, "party event needle21");
+    let diary = seed_text_turn(&server, "private diary needle21");
+    seed_disclosure_scope(&server, contact_id, vec![party]);
+
+    let clean = json!({
+        "query": "needle21",
+        "interlocutors": {
+            "owner_present": false,
+            "third_parties": [{ "contact_ref": contact_id.to_hex() }]
+        }
+    });
+    // No request field can name scope entities; smuggled members fall to
+    // serde's ignored-unknown-fields floor and change nothing.
+    let smuggled = json!({
+        "query": "needle21",
+        "interlocutors": {
+            "owner_present": false,
+            "third_parties": [{ "contact_ref": contact_id.to_hex() }],
+            "scope": { "entities": [diary.to_hex()] },
+            "entities": [diary.to_hex()]
+        }
+    });
+    let (clean_status, clean_body) = core_json(
+        server.clone(),
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&clean),
+    )
+    .await;
+    let (smuggled_status, smuggled_body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&smuggled),
+    )
+    .await;
+    assert_eq!(clean_status, StatusCode::OK);
+    assert_eq!(smuggled_status, StatusCode::OK);
+    let scrub = |mut body: Value| {
+        // Retrieval run ids and query timings differ per request; everything
+        // else must match.
+        body["evidence"]["retrieval_run_id"] = Value::Null;
+        body["stats"]["query_time_us"] = Value::Null;
+        body
+    };
+    assert_eq!(
+        scrub(clean_body),
+        scrub(smuggled_body),
+        "smuggled scope members must not change the assembly"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_n13_scoped_token_defaults_to_absence_clamp() {
+    let (_dir, server) = interlocutor_test_server();
+    let diary = seed_text_turn(&server, "tier b memory needle22");
+    let principal_ref = seeded_test_entity_id(0x1517_0031).to_hex();
+
+    let request = json!({ "query": "needle22", "limit": 10 });
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["disclosure"]["mode"],
+        Value::from("absence_clamp"),
+        "principal_ref tokens with no block assemble under AbsenceClamp"
+    );
+    let result_ids: Vec<&str> = body["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    assert!(
+        !result_ids.contains(&diary.to_hex().as_str()),
+        "N1-style assertion: Tier-B memory absent for an unknown principal"
+    );
+    assert!(result_ids.is_empty());
+}
+
+#[tokio::test]
+async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() {
+    // CONTENT-level N14 (RATIFY-20260710 R8): a bearer scoped to X naming a
+    // wider-scoped contact Y resolves {X ∩ Y} — no Tier-B data readable via
+    // the wider-scoped contact.
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x1517_0041);
+    let wider_contact = seeded_test_entity_id(0x1517_0042);
+    seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
+    let party = seed_text_turn(&server, "party event needle23");
+    seed_disclosure_scope(&server, wider_contact, vec![party]);
+    // Principal X has no contact row: it contributes the deny-all scope.
+    let principal_ref = seeded_test_entity_id(0x1517_0043).to_hex();
+
+    let request = json!({
+        "query": "needle23",
+        "interlocutors": {
+            "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
+        }
+    });
+    let (status, body) = route_json(
+        server,
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &principal_ref,
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
+    let stamps = body["disclosure"]["interlocutors"]
+        .as_array()
+        .expect("stamps");
+    assert_eq!(stamps.len(), 2, "both operands enter the resolved set");
+    assert!(
+        body["results"].as_array().expect("results").is_empty(),
+        "deny-all ∩ wider scope = nothing readable: {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn core_context_pack_owner_auth_without_block_carries_no_disclosure_field() {
+    let (_dir, server) = interlocutor_test_server();
+    seed_text_turn(&server, "owner alone regression needle24");
+    let request = json!({ "query": "needle24", "limit": 3 });
+    let (status, body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.get("disclosure").is_none(),
+        "owner-grade auth with no block stays byte-identical: {body:?}"
+    );
+    assert!(
+        !body["results"].as_array().expect("results").is_empty(),
+        "owner-alone behavior unchanged"
+    );
+}
+
 #[tokio::test]
 async fn core_context_pack_caps_the_third_parties_block() {
     let (_dir, server) = interlocutor_test_server();
@@ -8333,7 +8714,17 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
         ..Default::default()
     });
     let asset_text = seeded_test_entity_id(0x1482_0001);
-    let principal_ref = seeded_test_entity_id(0x1482_0002).to_hex();
+    // ONE-1517: principal_ref tokens assemble under AbsenceClamp, so the
+    // consumer principal is a known contact whose disclosure scope
+    // allowlists the ASSET_TEXT entity — the intended scoped-read shape.
+    let principal_contact = seeded_test_entity_id(0x1482_0002);
+    let principal_ref = principal_contact.to_hex();
+    seed_counterparty_contact(
+        &server,
+        principal_contact,
+        seeded_test_entity_id(0x1482_0003),
+        "asset-consumer@example.com",
+    );
     let needle = "one1482 text-only asset transcript";
     let body = rmp_serde::to_vec_named(&json!({
         "txt": needle,
@@ -8356,6 +8747,7 @@ async fn context_pack_v4_asset_text_consumer_hydrates_asset_text_by_ref() {
         .text(&asset_text, &[("body", needle)])
         .commit()
         .expect("seed ASSET_TEXT");
+    seed_disclosure_scope(&server, principal_contact, vec![asset_text]);
 
     let request = json!({
         "query": needle,

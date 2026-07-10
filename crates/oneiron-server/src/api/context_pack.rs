@@ -373,6 +373,24 @@ pub(crate) struct CoreInterlocutorParty {
     claimed_owner: Option<bool>,
 }
 
+/// Agent-visible disclosure block for a clamped context assembly (OF-365
+/// ILD-2).
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreDisclosureAssembly {
+    /// Disclosure mode: owner_alone, supervised, or absence_clamp.
+    #[schema(example = "absence_clamp")]
+    mode: String,
+    /// Named-presence discretion notice; present iff supervised.
+    #[schema(example = "Others present: Kenji (known_contact).")]
+    notice: Option<String>,
+    /// Per-speaker interlocutor stamps for the clamped assembly.
+    interlocutors: Vec<CoreInterlocutorStamp>,
+    /// Scored candidates dropped by the clamp's candidate sweep.
+    #[serde(rename = "clamped_out")]
+    #[schema(example = 2)]
+    clamped_out: u64,
+}
+
 /// Per-speaker interlocutor stamp echoed with a context pack (OF-365 ILD-1).
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreInterlocutorStamp {
@@ -822,6 +840,11 @@ pub(crate) struct CoreContextPackResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<CoreInterlocutorStamp>>)]
     interlocutors: Option<Vec<oneiron::InterlocutorStamp>>,
+    /// Disclosure block for the clamp applied to this assembly (OF-365
+    /// ILD-2); present under the same rule as `interlocutors`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<CoreDisclosureAssembly>)]
+    disclosure: Option<oneiron::DisclosureAssembly>,
     /// Empty-result context when no entities surface.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
@@ -897,6 +920,17 @@ pub(crate) async fn core_context_pack(
             companion_auth: Some(&auth),
         },
     )?;
+    // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
+    // response, so the response can never describe a different clamp than
+    // the one applied (design §11 rule 6).
+    let disclosure = interlocutors
+        .as_ref()
+        .map(|set| oneiron::DisclosureContext::resolve(&server.vault, set.clone()))
+        .transpose()
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack disclosure resolution failed");
+            core_engine_error("core context-pack disclosure resolution failed", error)
+        })?;
 
     let mut builder = server
         .vault
@@ -916,7 +950,7 @@ pub(crate) async fn core_context_pack(
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;
-    let (builder, retrieval_budget) = apply_context_pack_budget(
+    let (mut builder, retrieval_budget) = apply_context_pack_budget(
         builder,
         req.budget.as_ref(),
         0,
@@ -924,6 +958,9 @@ pub(crate) async fn core_context_pack(
         req.limit,
         max_neighbors,
     )?;
+    if let Some(ctx) = disclosure.as_ref() {
+        builder = builder.disclosure_context(ctx.clone());
+    }
 
     let mut response = run_context_pack_builder(
         &server.vault,
@@ -937,6 +974,7 @@ pub(crate) async fn core_context_pack(
         },
         "core context-pack failed",
         eiri_context,
+        disclosure,
     )
     .await?;
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
@@ -1742,6 +1780,10 @@ pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) 
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "single funnel keeps builder, board, and response fed by one DisclosureContext"
+)]
 pub(crate) async fn run_context_pack_builder(
     vault: &oneiron::Vault,
     scoped_read: &oneiron::claim::ScopedRead<'_>,
@@ -1750,11 +1792,13 @@ pub(crate) async fn run_context_pack_builder(
     response_limits: ContextPackResponseLimits,
     error_context: &'static str,
     eiri_context: Option<EiriContextV4Request>,
+    disclosure: Option<oneiron::DisclosureContext>,
 ) -> Result<CoreContextPackResponse, ApiError> {
     let mut pack = builder.run_unfinalized_with_telemetry().map_err(|error| {
         tracing::error!(error = %error, "{error_context}");
         core_engine_error(error_context, error)
     })?;
+    let clamped_out = pack.clamped_out();
     scoped_read
         .filter_context_pack(&mut pack.value)
         .map_err(|error| {
@@ -1768,6 +1812,7 @@ pub(crate) async fn run_context_pack_builder(
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;
     let evidence = core_context_pack_evidence_for_results(evidence, &pack.results);
+    let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     let memory_board = eiri_context
         .as_ref()
         .and_then(|context| context.memory_board_budget)
@@ -1778,6 +1823,7 @@ pub(crate) async fn run_context_pack_builder(
                 eiri_context
                     .as_ref()
                     .and_then(|context| context.companion.clone()),
+                assembly.clone(),
             )
         });
     let session_rag = if let Some(context) = eiri_context.as_ref() {
@@ -1803,6 +1849,7 @@ pub(crate) async fn run_context_pack_builder(
         context_version,
         memory_board,
         session_rag,
+        assembly,
     ))
 }
 
@@ -1855,6 +1902,7 @@ pub(crate) fn core_context_pack_response(
     context_version: Option<String>,
     memory_board: Option<oneiron::EiriMemoryBoard>,
     session_rag: Option<oneiron::EiriSessionRagState>,
+    disclosure: Option<oneiron::DisclosureAssembly>,
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
@@ -1871,6 +1919,7 @@ pub(crate) fn core_context_pack_response(
         memory_board,
         session_rag,
         interlocutors: None,
+        disclosure,
         empty: pack
             .empty
             .map(|empty| serde_json::to_value(empty).expect("EmptyContext serializes")),
@@ -2274,6 +2323,9 @@ pub(crate) async fn context_pack(
             },
             "context-pack failed",
             eiri_context,
+            // The legacy route has no interlocutor surface: no disclosure
+            // context means OwnerAlone — untouched behavior.
+            None,
         )
         .await?,
     ))

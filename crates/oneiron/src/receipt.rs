@@ -63,6 +63,7 @@ const FIELD_SUBSTRATE_REF: &str = "substrate_ref";
 const FIELD_MODEL: &str = "model";
 const FIELD_REASONING_EFFORT: &str = "reasoning_effort";
 const FIELD_PROMPT_INPUT_REF: &str = "prompt_input_ref";
+const FIELD_DISCLOSURE_STAMP: &str = "disclosure_stamp";
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 const FIELD_RECEIPT_SCHEMA: &str = "receipt_schema";
@@ -335,6 +336,11 @@ pub struct ContextReceiptFields {
     /// (r-knob auditability).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_input_ref: Option<String>,
+    /// OF-365 disclosure stamp for the assembly that produced this emit:
+    /// `"mode=<mode>;interlocutors=<class>:<label>[,...]"`. Absent on
+    /// receipts stamped before the disclosure clamp existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disclosure_stamp: Option<String>,
 }
 
 impl ContextReceiptFields {
@@ -356,6 +362,7 @@ impl ContextReceiptFields {
             model: None,
             reasoning_effort: None,
             prompt_input_ref: None,
+            disclosure_stamp: None,
         })
     }
 
@@ -387,6 +394,14 @@ impl ContextReceiptFields {
         self
     }
 
+    /// Records the OF-365 disclosure stamp
+    /// (`DisclosureContext::receipt_stamp`) for this emit's assembly.
+    #[must_use]
+    pub fn disclosure_stamp(mut self, disclosure_stamp: impl Into<String>) -> Self {
+        self.disclosure_stamp = Some(disclosure_stamp.into());
+        self
+    }
+
     pub(crate) fn append_to_fields(&self, fields: &mut BTreeMap<String, String>) {
         fields.insert(
             FIELD_PERSONA_COMPILE_STAMP.to_owned(),
@@ -412,6 +427,9 @@ impl ContextReceiptFields {
         }
         if let Some(prompt_input_ref) = self.prompt_input_ref.as_ref() {
             fields.insert(FIELD_PROMPT_INPUT_REF.to_owned(), prompt_input_ref.clone());
+        }
+        if let Some(disclosure_stamp) = self.disclosure_stamp.as_ref() {
+            fields.insert(FIELD_DISCLOSURE_STAMP.to_owned(), disclosure_stamp.clone());
         }
     }
 }
@@ -474,6 +492,7 @@ impl ReceiptRecord {
             model: self.fields.get(FIELD_MODEL).cloned(),
             reasoning_effort: self.fields.get(FIELD_REASONING_EFFORT).cloned(),
             prompt_input_ref: self.fields.get(FIELD_PROMPT_INPUT_REF).cloned(),
+            disclosure_stamp: self.fields.get(FIELD_DISCLOSURE_STAMP).cloned(),
         })
     }
 }
