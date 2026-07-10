@@ -314,6 +314,62 @@ impl DreamerConsolidationScope {
     }
 }
 
+/// Speaker role of a TURN entity as seen by the Dreamer extraction lane.
+///
+/// GATE-10: only [`DreamerTurnRole::User`] and [`DreamerTurnRole::Assistant`]
+/// turns may seed first-party claims; every other role — including
+/// [`DreamerTurnRole::Unknown`] — is excluded fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DreamerTurnRole {
+    User,
+    Assistant,
+    System,
+    Tool,
+    Injected,
+    Unknown,
+}
+
+impl DreamerTurnRole {
+    /// Stable role string for diagnostics and extraction provenance.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+            Self::Tool => "tool",
+            Self::Injected => "injected",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Classify a TURN's stored speaker string into a [`DreamerTurnRole`].
+///
+/// Ingest already lowercase-normalizes `speaker|role|author`; this trims and
+/// lowercases again defensively. Absent, empty, or novel speaker strings map
+/// to [`DreamerTurnRole::Unknown`], which is never admissible.
+#[must_use]
+pub fn dreamer_turn_role(speaker: Option<&str>) -> DreamerTurnRole {
+    let Some(speaker) = speaker else {
+        return DreamerTurnRole::Unknown;
+    };
+    match speaker.trim().to_ascii_lowercase().as_str() {
+        "user" | "human" | "owner" => DreamerTurnRole::User,
+        "assistant" | "agent" | "eiri" | "ai" | "model" => DreamerTurnRole::Assistant,
+        "system" | "system_prompt" | "developer" => DreamerTurnRole::System,
+        "tool" | "function" | "tool_result" | "tool_call" => DreamerTurnRole::Tool,
+        "cron" | "metadata" | "injected" => DreamerTurnRole::Injected,
+        _ => DreamerTurnRole::Unknown,
+    }
+}
+
+/// GATE-10 admissibility: only User and Assistant turns feed extraction.
+#[must_use]
+pub const fn dreamer_extraction_role_admissible(role: DreamerTurnRole) -> bool {
+    matches!(role, DreamerTurnRole::User | DreamerTurnRole::Assistant)
+}
+
 /// Claim-authoring strategy on the OF-267/Dreamer path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
