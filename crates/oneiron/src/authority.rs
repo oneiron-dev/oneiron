@@ -2832,6 +2832,21 @@ fn merge_pact_states(
             .peer_owner_key
             .clone()
             .min(right.peer_owner_key.clone());
+        // Same discipline for the peer vault id (duplicate Connects can be
+        // dual-signed with different peers), and — reachable only through a
+        // digest collision — for divergent scope bytes via their canonical
+        // encoding, so this arm stays commutative, associative, and
+        // idempotent on every field it carries.
+        merged.peer_vault_id = left.peer_vault_id.min(right.peer_vault_id);
+        if left.pact_scope != right.pact_scope {
+            let left_scope_bytes =
+                encode_federation_pact_scope(&left.pact_scope).unwrap_or_default();
+            let right_scope_bytes =
+                encode_federation_pact_scope(&right.pact_scope).unwrap_or_default();
+            if right_scope_bytes < left_scope_bytes {
+                merged.pact_scope = right.pact_scope.clone();
+            }
+        }
         // A suspension carried by either side persists under an agreeing
         // competitor: the conflict that caused it is still unhealed.
         merged.status = left.status.max(right.status);

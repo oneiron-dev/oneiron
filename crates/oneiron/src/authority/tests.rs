@@ -5323,3 +5323,63 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
         );
     }
 }
+
+#[test]
+fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
+    // Two concurrent Connects with an identical (scope_digest, grant_ref)
+    // key can still be dual-signed with DIFFERENT peers: the combined state
+    // must pick the peer fields by a total order, never by which side the
+    // fold happened to hold on the left.
+    let fixture = pact_fixture(192);
+    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
+    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
+
+    let other_peer = ed_key(212);
+    let other_peer_vault_id = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
+    let connect_b = lifecycle_entry(
+        &fixture,
+        vec![genesis_hash],
+        2,
+        FederationLifecycleAction {
+            kind: FederationLifecycleKind::Connect,
+            pact_id: fixture.pact_id,
+            grant_ref: fixture.grant_ref,
+            peer_vault_id: other_peer_vault_id,
+            pact_epoch: 1,
+            pact_scope: Some(fixture.scope.clone()),
+            effective_scope: None,
+            scope_digest: Some(fixture.scope_digest),
+            gesture: Some(ed_pact_gesture(
+                FederationLifecycleKind::Connect,
+                &fixture.pact_id,
+                &fixture.vault_id,
+                &other_peer_vault_id,
+                1,
+                &fixture.scope_digest,
+                None,
+                &fixture.pact_nonce,
+                &other_peer,
+            )),
+            successor_vault_id: None,
+            pact_nonce: fixture.pact_nonce,
+        },
+    );
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        fixture.genesis.clone(),
+        connect_a,
+        connect_b,
+    ]);
+    assert!(fold.issues.is_empty());
+    let pact = &fold.federation_pacts[&fixture.pact_id];
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(
+        pact.peer_vault_id,
+        fixture.peer_vault_id.min(other_peer_vault_id)
+    );
+    assert_eq!(
+        pact.peer_owner_key,
+        authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
+    );
+    assert_eq!(pact.pact_scope, fixture.scope);
+}
