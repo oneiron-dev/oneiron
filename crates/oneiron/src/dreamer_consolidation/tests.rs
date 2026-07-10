@@ -157,6 +157,18 @@ fn candidate(
     }
 }
 
+fn map_candidate(subject: EntityId, predicate: &str, value: Value) -> PromotionCandidate {
+    PromotionCandidate {
+        claim_id: EntityId::now(),
+        candidate: ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, 0.7),
+        evidence_turn_refs: Vec::new(),
+        supersedes: None,
+        evidence_meet: ClaimSource::Generated,
+        occurred: occurred(1_000),
+        learned_at: 1_000,
+    }
+}
+
 fn prior_head(
     subject: EntityId,
     predicate: &str,
@@ -769,6 +781,62 @@ fn gap_detectors_v1_taxonomy() -> Result<()> {
         .find(|gap| gap.kind == ReflectionGapKind::StatedIntentWithoutAction)
         .expect("intent gap");
     assert_eq!(intent_gap.evidence_turn_refs, vec![intent]);
+    Ok(())
+}
+
+#[test]
+fn key_reordered_objects_are_not_a_conflict() -> Result<()> {
+    let subject = EntityId::from_bytes([0x40; 16]).expect("subject");
+    // Same object, keys reordered at BOTH the top level and inside the nested
+    // map (serde_json preserve_order carries the LLM key order verbatim into
+    // Value::Map). Canonical bytes must ignore key order (#485-4).
+    let value_ab = Value::Map(vec![
+        (
+            Value::from("geo"),
+            Value::Map(vec![
+                (Value::from("lat"), Value::from(1_u64)),
+                (Value::from("lon"), Value::from(2_u64)),
+            ]),
+        ),
+        (Value::from("city"), Value::from("Tokyo")),
+    ]);
+    let value_ba = Value::Map(vec![
+        (Value::from("city"), Value::from("Tokyo")),
+        (
+            Value::from("geo"),
+            Value::Map(vec![
+                (Value::from("lon"), Value::from(2_u64)),
+                (Value::from("lat"), Value::from(1_u64)),
+            ]),
+        ),
+    ]);
+    let candidates = vec![
+        map_candidate(subject, "profile.location", value_ab),
+        map_candidate(subject, "profile.location", value_ba),
+    ];
+    assert!(
+        detect_conflicts(&candidates, &[])?.is_empty(),
+        "key-reordered identical objects must not be a conflict"
+    );
+
+    // Sanity: a genuinely different value still conflicts.
+    let clashing = vec![
+        map_candidate(
+            subject,
+            "profile.location",
+            Value::Map(vec![(Value::from("city"), Value::from("Tokyo"))]),
+        ),
+        map_candidate(
+            subject,
+            "profile.location",
+            Value::Map(vec![(Value::from("city"), Value::from("Osaka"))]),
+        ),
+    ];
+    assert_eq!(
+        detect_conflicts(&clashing, &[])?.len(),
+        1,
+        "distinct object values must still conflict"
+    );
     Ok(())
 }
 

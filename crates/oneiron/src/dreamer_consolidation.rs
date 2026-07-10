@@ -951,7 +951,39 @@ fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> bool
 }
 
 fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
-    encode_value(value)
+    encode_value(&canonicalize_value(value))
+}
+
+/// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded
+/// key so canonical bytes are independent of map key order.
+///
+/// `json_to_rmpv` preserves serde_json object order and the workspace enables
+/// serde_json `preserve_order`, so the LLM's key order flows verbatim into the
+/// candidate value. Without this, two semantically identical objects that
+/// differ only in key order encode differently and `detect_conflicts` sees a
+/// FALSE conflict — spurious merge LLM calls, escalations, and gap writes
+/// (#485-4).
+fn canonicalize_value(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(canonicalize_value).collect()),
+        Value::Map(entries) => {
+            let mut canon: Vec<(Vec<u8>, Value, Value)> = entries
+                .iter()
+                .map(|(key, val)| {
+                    let key = canonicalize_value(key);
+                    let val = canonicalize_value(val);
+                    // Encoding a Value into a Vec never fails; a deterministic
+                    // total order over encoded keys is all that is required.
+                    let mut sort_key = Vec::new();
+                    let _ = rmpv::encode::write_value(&mut sort_key, &key);
+                    (sort_key, key, val)
+                })
+                .collect();
+            canon.sort_by(|left, right| left.0.cmp(&right.0));
+            Value::Map(canon.into_iter().map(|(_, key, val)| (key, val)).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Independent corroboration for one candidate: collapsed turn evidence
