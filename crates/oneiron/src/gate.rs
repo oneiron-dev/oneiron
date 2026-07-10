@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
-    sensitivity_band_from_value,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ScopedReadActorKey,
+    claim_sensitivity_band, sensitivity_band_from_value,
 };
 use crate::connector_key::{
     self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
@@ -3162,6 +3162,32 @@ pub(crate) fn claim_consent_binding_parts(
     let policy = resolve_policy_manifest(store, txn)?;
     let binding = GateConsentBinding::for_claim(body, &policy)?;
     Ok((binding.diff_handle, binding.read_frontier_hash))
+}
+
+/// Rebinds a pending consent to the body produced by an intentional claim
+/// retraction. The caller keeps this inside the retraction write transaction;
+/// the ordinary gate path immediately validates the rehashed binding before it
+/// can resolve the pending row. Ordinary body rewrites keep the stale-binding
+/// rejection path unchanged.
+pub(crate) fn rebind_pending_gate_consent_for_retraction(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    retracted_body: &ClaimBody,
+) -> Result<()> {
+    if retracted_body.lifecycle != ClaimLifecycleStatus::Retracted {
+        return Err(Error::InvariantViolation(
+            "pending gate consent rebind requires a retracted claim",
+        ));
+    }
+    let Some(mut pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
+        return Ok(());
+    };
+    let (diff_handle, read_frontier_hash) =
+        claim_consent_binding_parts(store, wtxn, retracted_body)?;
+    pending.diff_handle = diff_handle;
+    pending.read_frontier_hash = read_frontier_hash;
+    store.put_pending_gate_consent_in_txn(wtxn, &pending)
 }
 
 pub(crate) fn standing_outbound_grant_binding_parts(

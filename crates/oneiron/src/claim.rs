@@ -2410,7 +2410,9 @@ impl Vault {
     /// general claim lifecycle), in ONE write transaction: the body is
     /// closed (`life` = `retracted`, `to` = `now`) and the envelope
     /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
-    /// principle). The record is PRESERVED — retraction never deletes.
+    /// principle). A parked consent is atomically rebound to this closed body
+    /// before the ordinary gate evaluates and resolves it. The record is
+    /// PRESERVED — retraction never deletes.
     ///
     /// Fail-closed, nothing written on any rejection: missing id →
     /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
@@ -2424,6 +2426,7 @@ impl Vault {
 
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(now);
+        crate::gate::rebind_pending_gate_consent_for_retraction(&self.store, &mut wtxn, id, &body)?;
         let data = encode_claim_body(&body)?;
 
         let ops = vec![BatchOp::Put {

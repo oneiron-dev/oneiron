@@ -997,6 +997,115 @@ fn claim_retract_preserves_readable_history() {
 }
 
 #[test]
+fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
+    let (_dir, vault) = open_vault();
+    let agent = put_person(&vault, 0x17);
+    let subject = put_person(&vault, 0x18);
+    let facade = vault.memory_facade(agent, EdgeActorClass::Agent);
+
+    let parked = facade
+        .claim_upsert(&claim_input(
+            "profile.mood",
+            &subject,
+            "observed",
+            serde_json::json!("curious"),
+        ))
+        .expect("agent proposal parks for consent");
+    assert_eq!(parked.approval, "proposed");
+    let parked_id = EntityId::from_hex(
+        &facade
+            .get_entity(&parked.claim_short_id)
+            .expect("read parked claim")
+            .expect("parked claim exists")
+            .id_hex,
+    )
+    .expect("parked claim id");
+
+    let unrelated = facade
+        .claim_upsert(&claim_input(
+            "profile.color",
+            &subject,
+            "observed",
+            serde_json::json!("teal"),
+        ))
+        .expect("unrelated agent proposal parks for consent");
+    assert_eq!(unrelated.approval, "proposed");
+    let unrelated_id = EntityId::from_hex(
+        &facade
+            .get_entity(&unrelated.claim_short_id)
+            .expect("read unrelated claim")
+            .expect("unrelated claim exists")
+            .id_hex,
+    )
+    .expect("unrelated claim id");
+
+    let pending_before = vault.pending_gate_consents(10).expect("pending consent");
+    assert!(
+        pending_before
+            .iter()
+            .any(|record| record.claim_id == *parked_id.as_bytes()),
+        "the self-authored proposal must be parked before retraction"
+    );
+    assert!(
+        pending_before
+            .iter()
+            .any(|record| record.claim_id == *unrelated_id.as_bytes()),
+        "the unrelated proposal must be parked before retraction"
+    );
+
+    facade
+        .claim_retract(&parked.claim_short_id)
+        .expect("agent retracts its own parked proposal");
+
+    // Retraction is a state transition, not a tray-only dismissal: the
+    // claim remains stored as bitemporal history with its lifecycle closed.
+    let retracted = vault
+        .get_claim(&parked_id)
+        .expect("read retracted claim")
+        .expect("retracted claim remains stored");
+    assert_eq!(retracted.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert!(
+        retracted.valid_to.is_some(),
+        "retraction stamps a valid end"
+    );
+
+    let pending_after_retract = vault.pending_gate_consents(10).expect("pending consent");
+    assert!(
+        !pending_after_retract
+            .iter()
+            .any(|record| record.claim_id == *parked_id.as_bytes()),
+        "retracted proposal must no longer occupy the consent tray"
+    );
+    assert!(
+        pending_after_retract
+            .iter()
+            .any(|record| record.claim_id == *unrelated_id.as_bytes()),
+        "retract must not resolve unrelated parked consent"
+    );
+
+    // Ordinary content drift remains fail-closed. The retract-only rebinding
+    // must not make a different parked proposal redeemable by changing it.
+    let mut drifted = vault
+        .get_claim(&unrelated_id)
+        .expect("read unrelated claim")
+        .expect("unrelated claim remains stored");
+    drifted.value = rmpv::Value::from("blue");
+    drifted.approval = ClaimApprovalStatus::Approved;
+    let err = vault
+        .put_claim(&unrelated_id, &drifted, test_time(101), 101)
+        .expect_err("unrelated drifted consent remains stale");
+    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == unrelated_id));
+    assert!(
+        vault
+            .pending_gate_consents(10)
+            .expect("pending consent")
+            .iter()
+            .any(|record| record.claim_id == *unrelated_id.as_bytes()),
+        "stale unrelated proposal must stay parked"
+    );
+}
+
+#[test]
 fn hydrate_round_trips_witness_short_ids() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x15);
