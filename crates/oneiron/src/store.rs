@@ -316,6 +316,10 @@ pub enum RetrievalAction {
     ContextPack,
     VaultSearch,
     GraphFsCoreutils,
+    /// EMB-5 speculative fire over an ASR partial. Only speculative fires
+    /// carry this tag (the end-of-utterance full-quality pass logs as
+    /// `Pipeline`) — that is what makes wasted-retrieval budget measurable.
+    Speculative,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

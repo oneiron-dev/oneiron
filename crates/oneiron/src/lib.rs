@@ -76,6 +76,7 @@ pub mod run_tree;
 pub mod serialize;
 pub mod settings;
 pub mod skill;
+pub mod speculative;
 pub mod store;
 pub mod surface_event;
 pub(crate) mod sweep;
@@ -612,6 +613,10 @@ pub use crate::skill::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
     SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
     decode_skill_record, encode_skill_record,
+};
+pub use crate::speculative::{
+    SPECULATIVE_FIRE_CAP_DEFAULT, SPECULATIVE_FIRE_LIMIT_DEFAULT, SpeculativeFinal,
+    SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig,
 };
 pub use crate::store::{
     PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction, RetrievalBlendSignal,
