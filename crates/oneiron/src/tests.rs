@@ -150,8 +150,8 @@ fn seed_generated_auto_source_trust_manifest(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-const EXPECTED_HNSW_COMPATIBILITY_VERSION: u8 = 2;
-const EXPECTED_HNSW_COMPATIBILITY_LEN: usize = 27;
+const EXPECTED_HNSW_COMPATIBILITY_VERSION: u8 = 3;
+const EXPECTED_HNSW_COMPATIBILITY_LEN: usize = 29;
 const EXPECTED_HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
 const EXPECTED_HNSW_INDEX_STRUCTURE_FLAT_NSW: u8 = 1;
 const LEGACY_HNSW_COMPATIBILITY_LEN: usize = 25;
@@ -5079,8 +5079,8 @@ fn rejects_populated_vault_with_legacy_hnsw_compatibility_record() -> Result<()>
     assert_matches!(err, Error::HnswConfigChanged {
             ref stored,
             ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=missing,index_structure=missing"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw");
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=missing,index_structure=missing,fast_dims=none"
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none");
     Ok(())
 }
 
@@ -5100,8 +5100,8 @@ fn detects_hnsw_metric_and_structure_mismatch_on_open() -> Result<()> {
     assert_matches!(err, Error::HnswConfigChanged {
             ref stored,
             ref requested
-        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=unknown(2),index_structure=unknown(2)"
-            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw");
+        } if stored == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=unknown(2),index_structure=unknown(2),fast_dims=none"
+            && requested == "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none");
     Ok(())
 }
 
@@ -5115,12 +5115,12 @@ fn detects_hnsw_config_and_dimension_mismatch_on_open() {
         (
             "ef_construction_flip",
             |cfg: &mut VaultConfig| cfg.hnsw.ef_construction += 1,
-            "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw",
+            "dimensions=4,m_max_0=64,ef_construction=201,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none",
         ),
         (
             "dimensions_flip",
             |cfg: &mut VaultConfig| cfg.dimensions = 8,
-            "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+            "dimensions=8,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none",
         ),
     ];
 
@@ -5137,7 +5137,7 @@ fn detects_hnsw_config_and_dimension_mismatch_on_open() {
             Error::HnswConfigChanged { stored, requested } => {
                 assert_eq!(
                     stored,
-                    "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw",
+                    "dimensions=4,m_max_0=64,ef_construction=200,distance_metric=cosine,index_structure=flat_nsw,fast_dims=none",
                     "case {case_name}: stored literal"
                 );
                 assert_eq!(
