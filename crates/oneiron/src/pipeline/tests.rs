@@ -2024,6 +2024,98 @@ fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
 }
 
 #[test]
+fn fenced_text_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    put_text(&vault, fenced_a, "fencechannel fencechannel fencechannel")?;
+    put_text(&vault, fenced_b, "fencechannel fencechannel")?;
+    put_text(&vault, live_a, "fencechannel")?;
+    put_text(&vault, live_b, "fencechannel")?;
+
+    let fence_free_results = vault
+        .query()
+        .search_text("fencechannel", 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "text-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("text-fence", &fenced_a)?;
+    vault.tag_turn_off_record("text-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_text("fencechannel", 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    put_vector(&vault, fenced_a, [1.0, 0.0, 0.0, 0.0])?;
+    put_vector(&vault, fenced_b, [0.99, 0.01, 0.0, 0.0])?;
+    put_vector(&vault, live_a, [0.0, 1.0, 0.0, 0.0])?;
+    put_vector(&vault, live_b, [0.0, 0.0, 1.0, 0.0])?;
+
+    let fence_free_results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "vector-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-fence", &fenced_a)?;
+    vault.tag_turn_off_record("vector-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
+    Ok(())
+}
+
+#[test]
 fn exact_out_of_scope_text_hit_does_not_suppress_in_scope_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let out_of_scope_exact = entity_id(0x10);
@@ -2644,6 +2736,52 @@ fn recency_boost_auto_skips_when_temporal_search_present() -> Result<()> {
         assert!(approx_eq(left.score, right.score, 1e-6));
     }
 
+    Ok(())
+}
+
+#[test]
+fn fenced_temporal_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    for id in [fenced_a, fenced_b, live_a, live_b] {
+        put_entity(&vault, id, 1, anchor, anchor, anchor)?;
+    }
+
+    let fence_free_results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "temporal-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("temporal-fence", &fenced_a)?;
+    vault.tag_turn_off_record("temporal-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
     Ok(())
 }
 
