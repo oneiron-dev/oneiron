@@ -20,7 +20,9 @@ use crate::batch::EntityMetadataHeader;
 use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-use crate::llm::BudgetThreshold;
+use crate::llm::{
+    BudgetLadderEvent, BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold,
+};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
@@ -117,6 +119,54 @@ const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
 const CONNECTOR_KEY_OP_DIFF_DOMAIN: &[u8] = b"oneiron.connector_key.op.v0";
 
 const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Template id for the effector-meter ~80% wrap-up notice (GOV-02, ONE-1418).
+/// The LADDER and the delivery CHANNEL are the ARCHPASS-A3 shared vocabulary
+/// from `llm::budget`; only the message text is meter-specific.
+pub const EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID: &str = "effector_budget.plan.80";
+/// Template id for the effector-meter 95% LAND / graceful-wrap signal.
+pub const EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID: &str = "effector_budget.land.95";
+/// Steering message injected at the 80% effector-budget threshold.
+pub const EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE: &str = "\
+Effector budget is at or above 80%. Prioritize the sends that still matter, \
+defer the rest, and plan to finish within the remaining allowance.";
+/// Steering message injected at the 95% effector-budget threshold.
+pub const EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE: &str = "\
+Effector budget is at or above 95%. Enter LAND: start no new outreach, finish \
+or checkpoint in-flight sends, and treat the remaining allowance as a \
+graceful-wrap window before the hard cut.";
+
+/// Mirror of `llm::budget::steering_signal` for the effector meter: same
+/// ladder, same one delivery channel, meter-specific texts. `Silent50`
+/// carries no steering (same as the LLM meter).
+fn effector_steering_signal(threshold: BudgetThreshold) -> Option<BudgetSteeringSignal> {
+    let (template_id, message) = match threshold {
+        BudgetThreshold::Silent50 => return None,
+        BudgetThreshold::Plan80 => (
+            EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID,
+            EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
+        ),
+        BudgetThreshold::Land95 => (
+            EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
+            EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
+        ),
+    };
+    Some(BudgetSteeringSignal {
+        threshold,
+        channel: BudgetSignalDeliveryChannel::SteeringQueueNextTurn,
+        template_id: template_id.to_owned(),
+        message: message.to_owned(),
+    })
+}
+
+/// Pinned usage-row `fired` names (serde snake_case of `BudgetThreshold`).
+const fn budget_threshold_fired_name(threshold: BudgetThreshold) -> &'static str {
+    match threshold {
+        BudgetThreshold::Silent50 => "silent50",
+        BudgetThreshold::Plan80 => "plan80",
+        BudgetThreshold::Land95 => "land95",
+    }
+}
 
 /// ConnectorKeyRecord lifecycle status.
 ///
@@ -1113,14 +1163,24 @@ impl ConnectorKeyUsage {
             .fold(0_u64, |sum, (_, amount)| sum.saturating_add(*amount))
     }
 
-    /// Prunes entries to window liveness at `now`; calendar rollover resets
-    /// `entries` and `fired`.
-    pub(crate) fn touch(&mut self, window: &EffectorBudgetWindow, now: u64) {
+    /// Prunes entries to window liveness at `now`. Calendar rollover resets
+    /// `entries` and `fired` (fresh bucket ⇒ fresh ladder). Rolling windows
+    /// have no discrete rollover, so the ladder re-arms per the M5a rule
+    /// (resolved 2026-07-10): on each touch, drop `fired` entries whose
+    /// threshold percent exceeds the current `percent_used` — full expiry
+    /// re-arms everything, partial expiry re-arms exactly the thresholds no
+    /// longer satisfied.
+    pub(crate) fn touch(&mut self, window: &EffectorBudgetWindow, limit: u64, now: u64) {
         match window {
             EffectorBudgetWindow::Rolling { duration_s } => {
                 self.window_start = 0;
                 self.entries
                     .retain(|(ts, _)| ts.saturating_add(*duration_s) > now);
+                let percent = percent_used(self.used(), limit);
+                self.fired.retain(|name| {
+                    parse_fired_threshold(name)
+                        .is_none_or(|threshold| threshold.percent() <= percent)
+                });
             }
             EffectorBudgetWindow::Calendar { period, .. } => {
                 let bucket = calendar_window_start(*period, now);
@@ -1302,8 +1362,23 @@ pub struct EffectorBudgetRowRead {
     pub on_exhaust: EffectorBudgetOnExhaust,
     /// Calendar bucket start; 0 for rolling.
     pub window_start: u64,
-    /// Thresholds fired this window, ascending.
+    /// Thresholds the current window's usage has crossed, ascending — the
+    /// TRUE ladder state, computed from live usage rather than parsed from
+    /// the stored event-emission memory (which lags when usage advances
+    /// without incremental firing: spend settlements, pre-ladder rows).
     pub fired_thresholds: Vec<BudgetThreshold>,
+}
+
+/// The `self.*` effector-meter read (ARCHPASS A3): the response-borne budget
+/// is an ECHO of this read, never a second delivery lane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectorBudgetRead {
+    pub key_ref: EntityId,
+    pub connector: String,
+    pub status: ConnectorKeyStatus,
+    /// Key budget rows and, when a charter is stamped, the compiled-cap rows
+    /// at `0x8000 | i` (GOV-10) — ascending row index.
+    pub rows: Vec<EffectorBudgetRowRead>,
 }
 
 /// The budget outcome the gate hands back to dispatch when a governing key's
@@ -1314,8 +1389,14 @@ pub struct EffectorBudgetCharge {
     /// 1 iff ≥1 Sends-dimension row actually debited this dispatch, else 0
     /// (`NoRows`/`Exhausted` paths return 0).
     pub sends_debit: u64,
-    /// Post-debit state of every matched row.
-    pub rows: Vec<EffectorBudgetRowRead>,
+    /// Post-debit meter read over EVERY row of the governing key.
+    pub read: EffectorBudgetRead,
+    /// `row_index` values matched by this dispatch (the binding constraint
+    /// set for the receipt `"budget"` field — M4 resolution 2026-07-10).
+    pub matched_rows: Vec<u16>,
+    /// Threshold events fired by this charge, for the host steering queue
+    /// (same contract as `BudgetAdmission.ladder_events`).
+    pub ladder_events: Vec<BudgetLadderEvent>,
 }
 
 /// Outcome of one budget-stage evaluation over a key's matched rows.
@@ -1342,19 +1423,25 @@ fn percent_used(used: u64, limit: u64) -> u64 {
     u64::try_from(percent.min(100)).unwrap_or(100)
 }
 
-fn parse_fired_thresholds(fired: &[String]) -> Vec<BudgetThreshold> {
-    let mut thresholds: Vec<BudgetThreshold> = fired
-        .iter()
-        .filter_map(|name| match name.as_str() {
-            "silent50" => Some(BudgetThreshold::Silent50),
-            "plan80" => Some(BudgetThreshold::Plan80),
-            "land95" => Some(BudgetThreshold::Land95),
-            _ => None,
-        })
-        .collect();
-    thresholds.sort_unstable();
-    thresholds.dedup();
-    thresholds
+fn parse_fired_threshold(name: &str) -> Option<BudgetThreshold> {
+    match name {
+        "silent50" => Some(BudgetThreshold::Silent50),
+        "plan80" => Some(BudgetThreshold::Plan80),
+        "land95" => Some(BudgetThreshold::Land95),
+        _ => None,
+    }
+}
+
+/// Thresholds the given usage percentage has crossed, ascending.
+fn crossed_thresholds(percent: u64) -> Vec<BudgetThreshold> {
+    [
+        BudgetThreshold::Silent50,
+        BudgetThreshold::Plan80,
+        BudgetThreshold::Land95,
+    ]
+    .into_iter()
+    .filter(|threshold| percent >= threshold.percent())
+    .collect()
 }
 
 fn budget_row_read(
@@ -1363,6 +1450,7 @@ fn budget_row_read(
     usage: &ConnectorKeyUsage,
 ) -> EffectorBudgetRowRead {
     let used = usage.used();
+    let percent = percent_used(used, budget.limit);
     EffectorBudgetRowRead {
         row_index,
         dimension: budget.dimension,
@@ -1371,10 +1459,20 @@ fn budget_row_read(
         unit: budget.unit.clone(),
         used,
         remaining: budget.limit.saturating_sub(used),
-        percent_used: percent_used(used, budget.limit),
+        percent_used: percent,
         on_exhaust: budget.on_exhaust,
         window_start: usage.window_start,
-        fired_thresholds: parse_fired_thresholds(&usage.fired),
+        // The read reports the TRUE ladder state — every threshold the live
+        // usage has crossed — not the event-emission memory. Usage can
+        // advance without incremental firing (spend settlements never emit
+        // per M3b; pre-ladder upgrade rows carry entries with an empty
+        // `fired`), and the Exhausted path deliberately emits nothing (M5b
+        // carry-read-only), so a denial's history must be computed from the
+        // usage itself or a jump-to-exhausted row would read as
+        // signal-silent. Post-touch, the stored `fired` (the single-fire
+        // memory) is always a subset of this per the M5a re-arm rule, so for
+        // incrementally-fired rows the two coincide exactly.
+        fired_thresholds: crossed_thresholds(percent),
     }
 }
 
@@ -1390,9 +1488,100 @@ fn budget_debit_amount(dimension: EffectorBudgetDimension, send_like: bool) -> u
     }
 }
 
+/// Every budget row of a record in ascending row-index order: key rows at
+/// base 0, then (when a charter is stamped — GOV-10) compiled-cap rows at
+/// `0x8000 | i`. One row-set union so evaluate-all-then-apply-all atomicity
+/// spans key AND compiled rows.
+fn record_budget_rows(record: &ConnectorKeyRecord) -> Result<Vec<(u16, &EffectorBudget)>> {
+    let index = |base: u16, offset: usize| {
+        u16::try_from(offset)
+            .ok()
+            .filter(|offset| *offset < CONNECTOR_KEY_CHARTER_ROW_BASE)
+            .map(|offset| base | offset)
+            .ok_or(Error::InvariantViolation(
+                "connector key budget row index overflow",
+            ))
+    };
+    let mut rows = Vec::with_capacity(record.budgets.len());
+    for (offset, budget) in record.budgets.iter().enumerate() {
+        rows.push((index(0, offset)?, budget));
+    }
+    if let Some(charter) = record.charter.as_ref() {
+        for (offset, budget) in charter.compiled.channel_caps.iter().enumerate() {
+            rows.push((index(CONNECTOR_KEY_CHARTER_ROW_BASE, offset)?, budget));
+        }
+    }
+    Ok(rows)
+}
+
+struct BudgetRowState<'a> {
+    row_index: u16,
+    budget: &'a EffectorBudget,
+    usage: ConnectorKeyUsage,
+    amount: u64,
+    matched: bool,
+}
+
+fn load_budget_row_states<'a>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &'a ConnectorKeyRecord,
+    effect_channel: Option<&str>,
+    send_like: bool,
+    now: u64,
+) -> Result<Vec<BudgetRowState<'a>>> {
+    let mut states = Vec::new();
+    for (row_index, budget) in record_budget_rows(record)? {
+        let usage_key = connector_key_usage_row_key(key_id, row_index);
+        let mut usage = match store.vault_meta.get(txn, &usage_key)? {
+            Some(bytes) => ConnectorKeyUsage::decode(bytes)?,
+            None => ConnectorKeyUsage::default(),
+        };
+        usage.touch(&budget.window, budget.limit, now);
+        let matched = effect_channel.is_some_and(|channel| {
+            budget
+                .channel_class
+                .as_deref()
+                .is_none_or(|channel_class| channel_class == channel)
+        });
+        let amount = if matched {
+            budget_debit_amount(budget.dimension, send_like)
+        } else {
+            0
+        };
+        states.push(BudgetRowState {
+            row_index,
+            budget,
+            usage,
+            amount,
+            matched,
+        });
+    }
+    Ok(states)
+}
+
+fn budget_read_from_states(
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    states: &[BudgetRowState<'_>],
+) -> EffectorBudgetRead {
+    EffectorBudgetRead {
+        key_ref: *key_id,
+        connector: record.connector.clone(),
+        status: record.status,
+        rows: states
+            .iter()
+            .map(|state| budget_row_read(state.row_index, state.budget, &state.usage))
+            .collect(),
+    }
+}
+
 /// Evaluates and (only when every matched row passes) debits a key's budget
-/// rows for one admitted external effect. Evaluate-all-then-apply-all: an
-/// exhausted outcome applies NO debits.
+/// rows for one admitted external effect. Evaluate-all-then-apply-all across
+/// the key/compiled union: an exhausted outcome applies NO debits. The charge
+/// carries the full post-debit meter read, the matched row indices, and the
+/// ladder events fired by this charge (GOV-02, ONE-1418).
 pub(crate) fn charge_effector_budgets(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -1402,81 +1591,114 @@ pub(crate) fn charge_effector_budgets(
     send_like: bool,
     now: u64,
 ) -> Result<EffectorBudgetChargeOutcome> {
-    let mut matched: Vec<(u16, &EffectorBudget, ConnectorKeyUsage, u64)> = Vec::new();
-    for (index, budget) in key.budgets.iter().enumerate() {
-        let row_matches = budget
-            .channel_class
-            .as_deref()
-            .is_none_or(|channel_class| channel_class == effect_channel);
-        if !row_matches {
-            continue;
-        }
-        let row_index = u16::try_from(index)
-            .map_err(|_| Error::InvariantViolation("connector key budget row index overflow"))?;
-        let usage_key = connector_key_usage_row_key(key_id, row_index);
-        let mut usage = match store.vault_meta.get(wtxn, &usage_key)? {
-            Some(bytes) => ConnectorKeyUsage::decode(bytes)?,
-            None => ConnectorKeyUsage::default(),
-        };
-        usage.touch(&budget.window, now);
-        let amount = budget_debit_amount(budget.dimension, send_like);
-        matched.push((row_index, budget, usage, amount));
-    }
+    let mut states = load_budget_row_states(
+        store,
+        wtxn,
+        key_id,
+        key,
+        Some(effect_channel),
+        send_like,
+        now,
+    )?;
+    let matched_rows: Vec<u16> = states
+        .iter()
+        .filter(|state| state.matched)
+        .map(|state| state.row_index)
+        .collect();
 
-    if matched.is_empty() {
+    if matched_rows.is_empty() {
+        let read = budget_read_from_states(key_id, key, &states);
         return Ok(EffectorBudgetChargeOutcome::NoRows(EffectorBudgetCharge {
             key_ref: *key_id,
             sends_debit: 0,
-            rows: Vec::new(),
+            read,
+            matched_rows,
+            ladder_events: Vec::new(),
         }));
     }
 
-    // Evaluate ALL rows before applying ANY debit; report the first exceeding
-    // row in ascending row-index order.
-    let exhausted = matched.iter().find(|(_, budget, usage, amount)| {
-        let used = usage.used();
-        match budget.dimension {
+    // Evaluate ALL matched rows before applying ANY debit; report the first
+    // exceeding row in ascending row-index order (key rows before compiled).
+    let exhausted = states.iter().find(|state| {
+        if !state.matched {
+            return false;
+        }
+        let used = state.usage.used();
+        match state.budget.dimension {
             // Spend debits 0 at admission and refuses when already exhausted.
-            EffectorBudgetDimension::Spend => used >= budget.limit,
-            _ => used.saturating_add(*amount) > budget.limit,
+            EffectorBudgetDimension::Spend => used >= state.budget.limit,
+            _ => used.saturating_add(state.amount) > state.budget.limit,
         }
     });
-    if let Some((row_index, budget, _, _)) = exhausted {
-        let row_index = *row_index;
-        let on_exhaust = budget.on_exhaust;
-        let rows = matched
-            .iter()
-            .map(|(index, budget, usage, _)| budget_row_read(*index, budget, usage))
-            .collect();
+    if let Some(state) = exhausted {
+        let row_index = state.row_index;
+        let on_exhaust = state.budget.on_exhaust;
+        // Carry-read-only (M5b resolution 2026-07-10): the exhaustion path
+        // fires NO new ladder events and persists nothing — the signal
+        // history rides the read's `fired_thresholds`.
+        let read = budget_read_from_states(key_id, key, &states);
         return Ok(EffectorBudgetChargeOutcome::Exhausted {
             row_index,
             on_exhaust,
             charge: EffectorBudgetCharge {
                 key_ref: *key_id,
                 sends_debit: 0,
-                rows,
+                read,
+                matched_rows,
+                ladder_events: Vec::new(),
             },
         });
     }
 
     let mut sends_debit = 0;
-    let mut rows = Vec::with_capacity(matched.len());
-    for (row_index, budget, usage, amount) in &mut matched {
-        if *amount > 0 {
-            usage.entries.push((now, *amount));
-            if budget.dimension == EffectorBudgetDimension::Sends {
+    let mut ladder_events = Vec::new();
+    for state in states.iter_mut().filter(|state| state.matched) {
+        if state.amount > 0 {
+            state.usage.entries.push((now, state.amount));
+            if state.budget.dimension == EffectorBudgetDimension::Sends {
                 sends_debit = 1;
             }
         }
-        let usage_key = connector_key_usage_row_key(key_id, *row_index);
-        store.vault_meta.put(wtxn, &usage_key, &usage.encode()?)?;
-        rows.push(budget_row_read(*row_index, budget, usage));
+        // Fire ladder thresholds crossed by the post-debit usage, once per
+        // window per row (persisted in `fired`). Spend rows advance only via
+        // settlement — spend-ladder signals are an explicit v1 non-goal (M3b).
+        if state.budget.dimension != EffectorBudgetDimension::Spend {
+            let percent = percent_used(state.usage.used(), state.budget.limit);
+            for threshold in [
+                BudgetThreshold::Silent50,
+                BudgetThreshold::Plan80,
+                BudgetThreshold::Land95,
+            ] {
+                let name = budget_threshold_fired_name(threshold);
+                if percent >= threshold.percent()
+                    && !state.usage.fired.iter().any(|fired| fired == name)
+                {
+                    state.usage.fired.push(name.to_owned());
+                    // Each event carries the row that fired it: a dispatch
+                    // matching several rows can cross the same threshold on
+                    // more than one, and the consumer must be able to tell
+                    // "sends at 80%" from "rate at 80%".
+                    ladder_events.push(BudgetLadderEvent {
+                        threshold,
+                        steering: effector_steering_signal(threshold),
+                        row_index: Some(state.row_index),
+                    });
+                }
+            }
+        }
+        let usage_key = connector_key_usage_row_key(key_id, state.row_index);
+        store
+            .vault_meta
+            .put(wtxn, &usage_key, &state.usage.encode()?)?;
     }
 
+    let read = budget_read_from_states(key_id, key, &states);
     Ok(EffectorBudgetChargeOutcome::Charged(EffectorBudgetCharge {
         key_ref: *key_id,
         sends_debit,
-        rows,
+        read,
+        matched_rows,
+        ladder_events,
     }))
 }
 
@@ -1704,6 +1926,33 @@ impl Vault {
         read_connector_key_in_txn(&self.store, &rtxn, id)
     }
 
+    /// The `self.*` effector-meter read (ARCHPASS A3): resolves the governing
+    /// key and computes each row's live usage at `now` — no debit, no
+    /// threshold firing, no usage-row writes. Liveness (window rollover,
+    /// rolling prune/re-arm) is computed on the read, never stored. Rows
+    /// include the key budget rows and, when a charter is stamped (GOV-10),
+    /// the compiled-cap rows at `0x8000 | i`.
+    pub fn effector_budget_read(
+        &self,
+        connector: &str,
+        actor_entity_ref: Option<&EntityId>,
+    ) -> Result<Option<EffectorBudgetRead>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some((key_id, record)) = governing_connector_key(
+            &self.store,
+            &rtxn,
+            &normalize_connector_key(connector),
+            actor_entity_ref,
+        )?
+        else {
+            return Ok(None);
+        };
+        let now = crate::unix_seconds_now();
+        let states =
+            load_budget_row_states(&self.store, &rtxn, &key_id, &record, None, false, now)?;
+        Ok(Some(budget_read_from_states(&key_id, &record, &states)))
+    }
+
     /// Resolves the key governing `(connector, actor_entity_ref)` (read-txn
     /// wrapper over the gate's resolution order).
     pub fn connector_key_for(
@@ -1896,11 +2145,11 @@ impl Vault {
                 ));
             }
             // Read-only echo of the row's current state; nothing is written.
-            usage.touch(&budget.window, settled_at);
+            usage.touch(&budget.window, budget.limit, settled_at);
             return Ok(budget_row_read(row_index, &budget, &usage));
         }
 
-        usage.touch(&budget.window, settled_at);
+        usage.touch(&budget.window, budget.limit, settled_at);
         usage.entries.push((settled_at, minor_units));
         self.store
             .vault_meta
