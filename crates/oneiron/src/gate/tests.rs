@@ -6113,3 +6113,84 @@ fn incomplete_census_withholds_preset_auto() -> Result<()> {
     );
     Ok(())
 }
+
+// AGENT-2 R1 (at-open census for EXISTING vaults): the census runs
+// unconditionally in Vault::open — not only through the new-vault seed path —
+// so a legacy vault's occupant is censused before any caller holds the
+// handle. Without this, a caller whose FIRST operation deletes the occupant
+// (deletes never census) erases it unseen; the next apply_put censuses an
+// empty id, and the resolver hands the reserved id compiled preset Auto.
+#[test]
+fn reopened_legacy_vault_censuses_occupant_before_first_delete() -> Result<()> {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
+
+    // Build the legacy on-disk state: an occupant at a reserved id and no
+    // census (the vault predates the census machinery).
+    {
+        let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())
+            .expect("create vault");
+        let mut payload = vec![ENTITY_TYPE_PERSON];
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(&1_u64.to_be_bytes());
+        payload.extend_from_slice(b"legacy occupant");
+        vault.with_write_txn(|wtxn| {
+            vault
+                .store
+                .entities
+                .put(wtxn, scout_id.as_bytes(), &payload)?;
+            vault
+                .store
+                .vault_meta
+                .delete(wtxn, b"agent_def:reserved_actor_census:v2")?;
+            Ok(())
+        })?;
+        // Vault dropped: on disk = occupant present, census absent.
+    }
+
+    // Reopen as an EXISTING vault (created_new_vault is false, so the seed
+    // path does not run). The first caller operation is the DELETE.
+    let vault =
+        crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("reopen");
+    vault.with_write_txn(|wtxn| {
+        vault.store.entities.delete(wtxn, scout_id.as_bytes())?;
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&scout_id)?.is_none());
+
+    // A later put would re-census — and must find the occupancy already
+    // recorded at open, not a pristine id.
+    vault.put_entity(
+        &test_id(0x5B),
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"later",
+    )?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            &vault.store,
+            &rtxn,
+            WriteActor::new(scout_id, EdgeActorClass::Agent),
+        ),
+        Some(PolicyApprovalCeiling::Proposed),
+        "open must census the legacy occupant before any caller-issued delete"
+    );
+    // Presets on a censused legacy vault work immediately for never-occupied
+    // ids (no Proposed window waiting for a first apply_put).
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            &vault.store,
+            &rtxn,
+            WriteActor::new(
+                SystemAgentPreset::Keeper.actor_entity_id(),
+                EdgeActorClass::Agent,
+            ),
+        ),
+        Some(PolicyApprovalCeiling::Auto)
+    );
+    Ok(())
+}
