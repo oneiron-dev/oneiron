@@ -1832,55 +1832,98 @@ pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
 ///   agent must not be silent.
 pub(crate) fn agent_definition_ceiling_for_actor(
     store: &Store,
-    txn: &heed::RoTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
     actor: WriteActor,
 ) -> Option<PolicyApprovalCeiling> {
     if actor.actor_class() != EdgeActorClass::Agent {
         return None;
     }
-    let entity_ref = actor.entity_ref();
-    let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
-        Ok(raw) => raw,
+    match agent_bearing_for_entity(store, wtxn, actor.entity_ref()) {
+        AgentBearing::Bound(ceiling) => Some(ceiling),
+        // B3: a deleted definition can no longer drop its self-limit.
+        AgentBearing::Absent => Some(PolicyApprovalCeiling::Proposed),
+        // Live person-backed agent actors keep today's semantics.
+        AgentBearing::NonAgent => None,
+    }
+}
+
+/// How a governing entity id relates to the AGENT_DEF authority lattice.
+/// Derived from the STORED ENTITY, never from a caller-asserted actor class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentBearing {
+    /// The id is a system-preset actor id or a stored type-17 AGENT_DEF (or
+    /// a fail-closed variant of either): it carries a definition ceiling.
+    Bound(PolicyApprovalCeiling),
+    /// No entity is stored at the id.
+    Absent,
+    /// An entity is stored, but it is not agent-bearing (non-type-17).
+    NonAgent,
+}
+
+/// Classifies a governing entity id, recording the durable reserved-id
+/// occupancy marker when it first observes a legacy occupant (F3).
+fn agent_bearing_for_entity(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity_ref: EntityId,
+) -> AgentBearing {
+    let occupied = match store.entities.get(wtxn, entity_ref.as_bytes()) {
+        Ok(raw) => raw.is_some(),
         Err(error) => {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
                 %error,
                 "agent definition ceiling read failed; failing closed to proposed",
             );
-            return Some(PolicyApprovalCeiling::Proposed);
+            return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
         }
     };
+
     if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
-        // A pinned preset byte confers preset authority only while it is
-        // system-owned, i.e. UNOCCUPIED (presets are never persisted and the
-        // apply_put guard reserves the write door). A legacy occupant from a
-        // pre-reservation vault must not inherit the preset's compiled
-        // ceiling — it fails closed to Proposed instead.
-        return match raw {
-            None => Some(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling())),
-            Some(_) => {
-                tracing::warn!(
-                    actor_entity_id = %entity_ref.to_hex(),
-                    preset = preset.preset_id(),
-                    "reserved system agent actor id is occupied by a stored entity; \
-                     refusing preset authority and failing closed to proposed",
-                );
-                Some(PolicyApprovalCeiling::Proposed)
-            }
-        };
+        // A pinned preset id confers preset authority only while it is
+        // system-owned. `apply_put` reserves the write door, so an occupant
+        // can only come from a legacy pre-reservation vault — and occupancy
+        // must be remembered DURABLY, otherwise hard-deleting the occupant
+        // would resurrect the preset's compiled Auto (delete-to-widen).
+        let ever_occupied = crate::agent_def::reserved_actor_id_ever_occupied(store, wtxn, preset);
+        if occupied
+            && !ever_occupied
+            && let Err(error) =
+                crate::agent_def::mark_reserved_actor_id_occupied(store, wtxn, preset)
+        {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                preset = preset.preset_id(),
+                %error,
+                "failed to record reserved system agent occupancy marker",
+            );
+        }
+        if occupied || ever_occupied {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                preset = preset.preset_id(),
+                occupied,
+                ever_occupied,
+                "reserved system agent actor id is (or has been) occupied; \
+                 refusing preset authority and failing closed to proposed",
+            );
+            return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
+        }
+        return AgentBearing::Bound(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
     }
-    let Some(raw) = raw else {
-        return Some(PolicyApprovalCeiling::Proposed);
+
+    let Ok(Some(raw)) = store.entities.get(wtxn, entity_ref.as_bytes()) else {
+        return AgentBearing::Absent;
     };
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         tracing::warn!(
             actor_entity_id = %entity_ref.to_hex(),
             "agent definition entity header failed to parse; failing closed to proposed",
         );
-        return Some(PolicyApprovalCeiling::Proposed);
+        return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
     };
     if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-        return None;
+        return AgentBearing::NonAgent;
     }
     match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
         Ok(def) => {
@@ -1889,7 +1932,7 @@ pub(crate) fn agent_definition_ceiling_for_actor(
                 ceiling =
                     ceiling.restrict(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
             }
-            Some(ceiling)
+            AgentBearing::Bound(ceiling)
         }
         Err(error) => {
             tracing::warn!(
@@ -1897,50 +1940,121 @@ pub(crate) fn agent_definition_ceiling_for_actor(
                 %error,
                 "agent definition body failed to decode; failing closed to proposed",
             );
-            Some(PolicyApprovalCeiling::Proposed)
+            AgentBearing::Bound(PolicyApprovalCeiling::Proposed)
         }
     }
 }
 
-/// Resolves the definition ceiling for an AGENT-class EXTERNAL-EFFECT actor,
-/// first binding the host-supplied identity pair (F1/F2 hardening): effect
-/// inputs carry `actor_ref` (the string the manifest rows and grants key on)
-/// and `provenance.actor_entity_ref` (the audited identity) as independent
-/// fields, so the clamp must refuse to derive authority until they agree on
-/// ONE governing identity. Any mismatched, unparsable, or absent pair fails
-/// closed to `Some(Proposed)` — the request is held, never widened. (The
-/// claim and edge-provenance doors derive both fields from a single
-/// `WriteActor`/record and are bound by construction.)
+/// The actor classes the gate recognizes as NON-agent effect principals.
+/// Anything outside this set (and outside `"agent"`) is an unrecognized
+/// assertion and resolves fail-closed.
+const NON_AGENT_EFFECT_ACTOR_CLASSES: [&str; 3] = ["human", "system", "first_party"];
+
+/// Resolves the definition ceiling for an EXTERNAL-EFFECT actor.
+///
+/// Effect inputs are the one gate door whose actor identity is fully
+/// caller-asserted — `actor_class` (a free string), `actor_ref` (what the
+/// manifest rows and scoped grants key on) and `provenance.actor_entity_ref`
+/// (the audited identity) are three independent fields. Three hardenings:
+///
+/// * IDENTITY BINDING (F1/F2): `actor_ref` and `actor_entity_ref` must name
+///   ONE governing identity before any authority is derived — otherwise a
+///   Proposed-ceiling agent could pair its own provenance with an Auto
+///   identity's ref. Mismatched or unparsable pairs fail closed to Proposed.
+/// * ENTITY-TYPE-WINS (class-spoof): the ceiling is derived from what the
+///   governing entity IS, not from the class the caller asserts. A stored
+///   AGENT_DEF (or a preset actor id) is clamped under ANY class string.
+/// * CLASS FAIL-CLOSED (class-spoof): a class that is neither `"agent"` nor a
+///   recognized non-agent principal — unknown, empty, or absent — resolves to
+///   Proposed rather than skipping the clamp. Comparison is case-normalized,
+///   so `"Agent"`/`"AGENT"` cannot dodge the agent path.
+///
+/// (The claim and edge-provenance doors derive both identity fields from a
+/// single `WriteActor`/record and validate the class against the actor
+/// entity's kind, so they are bound by construction.)
 fn agent_definition_ceiling_for_effect_actor(
     store: &Store,
-    txn: &heed::RoTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor_class: &str,
     actor_ref: Option<&str>,
     actor_entity_ref: Option<EntityId>,
 ) -> Option<PolicyApprovalCeiling> {
-    let governing = match (actor_ref, actor_entity_ref) {
-        (Some(actor_ref), Some(entity_ref)) => match EntityId::from_hex(actor_ref) {
-            Ok(ref_id) if ref_id == entity_ref => entity_ref,
-            _ => {
+    let normalized_class = actor_class.trim().to_ascii_lowercase();
+    let recognized_non_agent = NON_AGENT_EFFECT_ACTOR_CLASSES.contains(&normalized_class.as_str());
+    let asserts_agent = normalized_class == "agent";
+
+    // Without an audited identity the gate denies the effect outright
+    // (DenyMissingActorProvenance). Resolve fail-closed anyway unless the
+    // caller asserts a recognized non-agent principal, so no path derives
+    // authority from an unaudited ref.
+    let Some(governing) = actor_entity_ref else {
+        return if recognized_non_agent {
+            None
+        } else {
+            Some(PolicyApprovalCeiling::Proposed)
+        };
+    };
+    if let Some(actor_ref) = actor_ref {
+        match EntityId::from_hex(actor_ref) {
+            // An entity-shaped ref MUST name the audited identity, whatever
+            // class is asserted: the manifest keys Auto on `actor_ref` while
+            // the clamp keys on the audited entity, so an unbound pair lets a
+            // Proposed agent borrow an Auto identity's grant.
+            Ok(ref_id) if ref_id != governing => {
                 tracing::warn!(
                     actor_ref,
-                    actor_entity_ref = %entity_ref.to_hex(),
-                    "agent effect actor_ref does not match actor_entity_ref; \
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor_ref does not match actor_entity_ref; \
                      failing closed to proposed",
                 );
                 return Some(PolicyApprovalCeiling::Proposed);
             }
-        },
-        (None, Some(entity_ref)) => entity_ref,
-        // Without a provenance identity the gate denies the effect outright
-        // (DenyMissingActorProvenance); resolve fail-closed regardless so no
-        // path ever derives authority from an unaudited ref.
-        (Some(_) | None, None) => return Some(PolicyApprovalCeiling::Proposed),
-    };
-    agent_definition_ceiling_for_actor(
-        store,
-        txn,
-        WriteActor::new(governing, EdgeActorClass::Agent),
-    )
+            Ok(_) => {}
+            // An opaque principal name. Only recognized non-agent principals
+            // key manifest rows by name; an agent's actor_ref is always the
+            // hex entity id, so a non-hex ref under an agent (or unrecognized)
+            // class is an unbindable assertion.
+            Err(_) if !recognized_non_agent => {
+                tracing::warn!(
+                    actor_ref,
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor_ref is not an entity id under a non-principal class; \
+                     failing closed to proposed",
+                );
+                return Some(PolicyApprovalCeiling::Proposed);
+            }
+            Err(_) => {}
+        }
+    }
+
+    match agent_bearing_for_entity(store, wtxn, governing) {
+        // Entity-type-wins: an agent-bearing identity is clamped regardless of
+        // the class the caller asserted.
+        AgentBearing::Bound(ceiling) => Some(ceiling),
+        AgentBearing::Absent => {
+            if recognized_non_agent {
+                // A connector/human/system principal whose entity is not
+                // stored keeps today's semantics.
+                None
+            } else {
+                // B3 for asserted agents; fail-closed for unrecognized classes.
+                Some(PolicyApprovalCeiling::Proposed)
+            }
+        }
+        AgentBearing::NonAgent => {
+            if asserts_agent || recognized_non_agent {
+                None
+            } else {
+                tracing::warn!(
+                    actor_class,
+                    actor_entity_ref = %governing.to_hex(),
+                    "effect actor asserts an unrecognized class; \
+                     failing closed to proposed",
+                );
+                Some(PolicyApprovalCeiling::Proposed)
+            }
+        }
+    }
 }
 
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
@@ -2269,7 +2383,7 @@ pub(crate) fn check_claim_policy_for_write(
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
             let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
-            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
+            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, wtxn, actor);
             (
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
@@ -2405,23 +2519,17 @@ pub(crate) fn check_external_effect_policy(
     if let Some((grant_id, _grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
     }
-    // Only class "agent" carries a definition bound. The ceiling is resolved
-    // from the ONE governing identity: host-supplied `actor_ref` and
-    // `actor_entity_ref` are independent fields, so they must agree before
-    // any authority is derived — an unbound pair would let a Proposed-ceiling
-    // agent borrow an Auto identity's ceiling (or launder its audit
-    // attribution). A mismatched, unparsable, or absent pair fails closed to
-    // Proposed.
-    let agent_definition_ceiling = if hydrated_effect.actor.actor_class.trim() == "agent" {
-        agent_definition_ceiling_for_effect_actor(
-            store,
-            &*wtxn,
-            hydrated_effect.actor.actor_ref.as_deref(),
-            hydrated_effect.provenance.actor_entity_ref,
-        )
-    } else {
-        None
-    };
+    // The effect door NEVER gates ceiling resolution on the caller-asserted
+    // class alone: the resolver binds the identity pair, derives authority
+    // from the governing entity's own type, and fails closed on unrecognized
+    // class assertions.
+    let agent_definition_ceiling = agent_definition_ceiling_for_effect_actor(
+        store,
+        wtxn,
+        &hydrated_effect.actor.actor_class,
+        hydrated_effect.actor.actor_ref.as_deref(),
+        hydrated_effect.provenance.actor_entity_ref,
+    );
     let input = hydrated_effect.gate_input(agent_definition_ceiling);
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
@@ -2856,7 +2964,7 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 
 pub(crate) fn check_edge_provenance_claim_policy(
     store: &Store,
-    txn: &heed::RoTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
     body: &ClaimBody,
     record: &crate::provenance::EdgeProvenanceClaimBody,
     actor_class: EdgeActorClass,
@@ -2865,7 +2973,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
     if policy.enforces_write_gate() {
         let agent_definition_ceiling = agent_definition_ceiling_for_actor(
             store,
-            txn,
+            wtxn,
             WriteActor::new(record.actor_entity_ref, actor_class),
         );
         let input = claim_gate_input(

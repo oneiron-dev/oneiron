@@ -1208,6 +1208,57 @@ fn system_agent_toggle_key(preset: SystemAgentPreset) -> Vec<u8> {
     key
 }
 
+/// Durable "this reserved system-agent actor id was EVER occupied" marker
+/// (`vault_meta`, one byte). The `apply_put` guard reserves the write door,
+/// so a stored entity at a pinned preset id can only come from a legacy
+/// pre-reservation vault. Occupancy alone is not a durable predicate —
+/// hard-deleting the occupant would resurrect the preset's compiled Auto —
+/// so the gate resolver records this marker the first time it observes an
+/// occupied reserved id, and the preset arm honours it forever after.
+const SYSTEM_AGENT_RESERVED_OCCUPIED_KEY_PREFIX: &[u8] = b"agent_def:reserved_actor_occupied:v1:";
+
+fn reserved_actor_occupied_key(preset: SystemAgentPreset) -> Vec<u8> {
+    let mut key = SYSTEM_AGENT_RESERVED_OCCUPIED_KEY_PREFIX.to_vec();
+    key.extend_from_slice(preset.preset_id().as_bytes());
+    key
+}
+
+/// True when this reserved actor id has ever been observed occupied. A read
+/// error fails closed (reported as "ever occupied"), never as pristine.
+pub(crate) fn reserved_actor_id_ever_occupied(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    preset: SystemAgentPreset,
+) -> bool {
+    match store
+        .vault_meta
+        .get(txn, &reserved_actor_occupied_key(preset))
+    {
+        Ok(marker) => marker.is_some(),
+        Err(error) => {
+            tracing::warn!(
+                preset = preset.preset_id(),
+                %error,
+                "reserved system agent occupancy marker read failed; failing closed",
+            );
+            true
+        }
+    }
+}
+
+/// Durably records that a reserved system-agent actor id was observed
+/// occupied. Idempotent.
+pub(crate) fn mark_reserved_actor_id_occupied(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    preset: SystemAgentPreset,
+) -> Result<()> {
+    store
+        .vault_meta
+        .put(wtxn, &reserved_actor_occupied_key(preset), &[0x01])?;
+    Ok(())
+}
+
 impl Vault {
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
     /// entity door.
