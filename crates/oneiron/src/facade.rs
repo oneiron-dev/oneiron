@@ -670,6 +670,11 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 
 /// Store-truth check behind every actor binding: the entity must exist
 /// and its stored type must permit the asserted class.
+///
+/// The gated claim path re-validates the actor INSIDE its write
+/// transaction (`apply_claim_candidate`), closing the bind/use race
+/// there; retract/delete cannot re-validate in-txn today — see the race
+/// notes on [`MemoryFacade::claim_retract`] / [`MemoryFacade::safe_delete`].
 fn verify_actor_binding(
     vault: &Vault,
     actor: EntityId,
@@ -1012,6 +1017,17 @@ impl MemoryFacade<'_> {
     /// claims whose write-envelope evidence names them as the writing
     /// actor. Everything else is a typed denial — binding an actor key is
     /// not authority (W3).
+    ///
+    /// Race window (documented, not closable in-facade): the actor check
+    /// runs in its own read transaction while `Vault::retract_claim` opens
+    /// its own write transaction — the engine exposes no in-txn retract
+    /// seam to compose them. Entity types are immutable engine-wide
+    /// (`apply_put` rejects type changes with `EntityTypeImmutable`), so
+    /// the actor cannot be RETYPED in the window; the only mutation that
+    /// fits is the actor entity being DELETED between check and apply,
+    /// and deletion itself requires verified owner authority. Closing the
+    /// window fully needs a `retract_claim_in_txn` engine seam
+    /// (follow-up, outside this module's walls).
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
         let actor_class = self.verified_actor_class()?;
         let id = self.resolve_ref(claim_ref)?;
@@ -1071,6 +1087,14 @@ impl MemoryFacade<'_> {
     /// strings are never trusted); `agent`/`system` actors get a typed
     /// denial (agents withdraw their own claims via
     /// [`Self::claim_retract`]).
+    ///
+    /// Race window (documented, not closable in-facade): the actor check
+    /// and `Vault::delete_entity_with_reason` run in separate
+    /// transactions — no in-txn delete seam exists. Retyping the actor in
+    /// the window is impossible (`EntityTypeImmutable`); the residual is
+    /// the actor entity being deleted between check and apply, which
+    /// itself requires verified owner authority. Closing it fully needs a
+    /// `delete_entity_with_reason_in_txn` engine seam (follow-up).
     pub fn safe_delete(
         &self,
         entity_ref: &str,
