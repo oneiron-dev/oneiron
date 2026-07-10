@@ -1718,6 +1718,22 @@ pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
         && !(body.approval == ClaimApprovalStatus::Auto && claim_generated_origin(body))
 }
 
+/// GATE-11: a generated-origin claim may never serve as extraction evidence
+/// or corroboration for another first-party write — only original turn
+/// records are admissible evidence inputs. Reads declared source AND the
+/// federated pre-restamp origin, like [`claim_consolidatable`].
+///
+/// Unlike consolidatability, approval status does NOT clear evidence
+/// admissibility: an `Approved` Generated claim is merge-eligible but still
+/// contributes ZERO corroboration. Consumption contract: the promotion
+/// writer (ONE-1290) drops any `evidence_turn_refs` entry resolving to a
+/// CLAIM entity that fails this predicate, and the consolidation working
+/// set (ONE-1289) is TURN-only — claims never enter it.
+#[cfg_attr(not(test), allow(dead_code))] // consumed by ONE-1289/ONE-1290
+pub(crate) fn claim_evidence_admissible(body: &ClaimBody) -> bool {
+    !claim_generated_origin(body)
+}
+
 pub(crate) fn psych_mirror_claim_affect_salience(body: &ClaimBody) -> Result<f32> {
     let salience = body.salience.unwrap_or(0.0);
     let affect = crate::affect::decode_affect_trigger_claim(body)?
