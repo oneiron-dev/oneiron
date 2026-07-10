@@ -325,6 +325,10 @@ pub enum RetrievalSignal {
     Salience,
     Confidence,
     Gravity,
+    /// RET-010 host-injected reranker component. Never a channel and never
+    /// a blend signal: the blend weight table must not train on reranker
+    /// output.
+    Rerank,
 }
 
 impl RetrievalSignal {
@@ -335,7 +339,12 @@ impl RetrievalSignal {
             Self::Salience => Some(RetrievalBlendSignal::Salience),
             Self::Confidence => Some(RetrievalBlendSignal::Confidence),
             Self::Gravity => Some(RetrievalBlendSignal::Gravity),
-            Self::Vector | Self::Text | Self::Phonetic | Self::Temporal | Self::Ppr => None,
+            Self::Vector
+            | Self::Text
+            | Self::Phonetic
+            | Self::Temporal
+            | Self::Ppr
+            | Self::Rerank => None,
         }
     }
 }
