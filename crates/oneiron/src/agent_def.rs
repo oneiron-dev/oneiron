@@ -27,11 +27,14 @@ use crate::temporal::TimeRange;
 
 /// The pinned on-disk body keys for an `AgentDefinition`, in encode order.
 ///
-/// `instructions`, `modelTier`, and `world` are optional and elided from the
-/// encoded map when absent (the elide-the-default pattern); every other key is
-/// required. Decode rejects any key outside this set, so the schema is a
-/// review-visible contract and hosts cannot add fields.
-pub const AGENT_DEF_BODY_KEYS: [&str; 17] = [
+/// `instructions`, `modelTier`, `world`, `ceiling`, and `forkedFrom` are
+/// optional and elided from the encoded map when absent or default-valued
+/// (the elide-the-default pattern); every other key is required. Decode
+/// rejects any key outside this set, so the schema is a review-visible
+/// contract and hosts cannot add fields. A body with `ceiling = proposed`
+/// (the default) and no fork lineage encodes byte-identically to the
+/// pre-AGENT-2 17-key codec.
+pub const AGENT_DEF_BODY_KEYS: [&str; 19] = [
     "agentId",
     "desc",
     "version",
@@ -42,6 +45,8 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 17] = [
     "modelTier",
     "scope",
     "world",
+    "ceiling",
+    "forkedFrom",
     "approvalStatus",
     "lifecycleStatus",
     "source",
@@ -79,13 +84,15 @@ const KEY_CODE_MODE_MCPS: &str = AGENT_DEF_BODY_KEYS[6];
 const KEY_MODEL_TIER: &str = AGENT_DEF_BODY_KEYS[7];
 const KEY_SCOPE: &str = AGENT_DEF_BODY_KEYS[8];
 const KEY_WORLD: &str = AGENT_DEF_BODY_KEYS[9];
-const KEY_APPROVAL_STATUS: &str = AGENT_DEF_BODY_KEYS[10];
-const KEY_LIFECYCLE_STATUS: &str = AGENT_DEF_BODY_KEYS[11];
-const KEY_SOURCE: &str = AGENT_DEF_BODY_KEYS[12];
-const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[13];
-const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[14];
-const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[15];
-const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[16];
+const KEY_CEILING: &str = AGENT_DEF_BODY_KEYS[10];
+const KEY_FORKED_FROM: &str = AGENT_DEF_BODY_KEYS[11];
+const KEY_APPROVAL_STATUS: &str = AGENT_DEF_BODY_KEYS[12];
+const KEY_LIFECYCLE_STATUS: &str = AGENT_DEF_BODY_KEYS[13];
+const KEY_SOURCE: &str = AGENT_DEF_BODY_KEYS[14];
+const KEY_CONFIDENCE: &str = AGENT_DEF_BODY_KEYS[15];
+const KEY_GENERATED: &str = AGENT_DEF_BODY_KEYS[16];
+const KEY_HUMAN_AUTHORED: &str = AGENT_DEF_BODY_KEYS[17];
+const KEY_PROVENANCE: &str = AGENT_DEF_BODY_KEYS[18];
 
 const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
 const KEY_DEP_MIN_VERSION: &str = SKILL_DEPENDENCY_KEYS[1];
@@ -165,6 +172,209 @@ impl AgentScope {
     }
 }
 
+/// The authored approval-ceiling bound persisted on an `AgentDefinition`
+/// (OF-074: binary — the third trust tier is compositional, not a variant).
+///
+/// This is the agent's *self-limit*, not the owner's grant: effective
+/// authority at every gate evaluation is `definition ceiling ∧ preset bound ∧
+/// manifest actor_ceilings projection` (the meet across all three), so a
+/// stored `Auto` never bypasses the owner-signed manifest. A persisted-
+/// descriptor mirror of the gate's `PolicyApprovalCeiling` (which stays
+/// `pub(crate)`); the conversion lives gate-side so this module never imports
+/// gate types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCeiling {
+    Auto,
+    Proposed,
+}
+
+impl AgentCeiling {
+    /// The pinned wire string, matching `PolicyApprovalCeiling` vocabulary.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Proposed => "proposed",
+        }
+    }
+
+    /// Parses the pinned wire vocabulary (`"auto"` / `"proposed"`).
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "proposed" => Some(Self::Proposed),
+            _ => None,
+        }
+    }
+
+    /// True iff `self` requests wider authority than `bound` — the only
+    /// ordering the no-widen rule ever needs.
+    #[must_use]
+    pub const fn widens_beyond(self, bound: Self) -> bool {
+        matches!((self, bound), (Self::Auto, Self::Proposed))
+    }
+}
+
+/// Version stamped into preset templates and fork provenance. Bumping it does
+/// not migrate anything: presets are compiled-in and never persisted; existing
+/// forks are snapshots that keep the version they forked from.
+pub const SYSTEM_AGENT_PRESET_VERSION: &str = "1";
+
+/// The five code-shipped system-agent presets (OF-334 / EF-155).
+///
+/// Presets are compiled-in templates, never stored as vault entities —
+/// "editing a system agent" is impossible by construction; the only mutation
+/// path is [`Vault::fork_system_agent`]. At the gate they are keyed by the
+/// pinned actor entity ids (`[0xA1; 16]`..`[0xA5; 16]`), never by labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SystemAgentPreset {
+    Scout,
+    Keeper,
+    Creative,
+    Herald,
+    Guide,
+}
+
+impl SystemAgentPreset {
+    /// The pinned preset id (also the template's `agent_id` and the
+    /// `forkedFrom` wire string).
+    #[must_use]
+    pub const fn preset_id(self) -> &'static str {
+        match self {
+            Self::Scout => "sys.scout",
+            Self::Keeper => "sys.keeper",
+            Self::Creative => "sys.creative",
+            Self::Herald => "sys.herald",
+            Self::Guide => "sys.guide",
+        }
+    }
+
+    /// Parses a pinned preset id (exact match on the five ids).
+    #[must_use]
+    pub fn parse(id: &str) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|preset| preset.preset_id() == id)
+    }
+
+    /// Deterministic roster order (declaration order).
+    #[must_use]
+    pub const fn all() -> [SystemAgentPreset; 5] {
+        [
+            Self::Scout,
+            Self::Keeper,
+            Self::Creative,
+            Self::Herald,
+            Self::Guide,
+        ]
+    }
+
+    /// The preset's compiled ceiling bound. Herald (external effector: email)
+    /// and Guide (policy/consent surfaces) self-limit to Proposed — no fork of
+    /// either can ever re-widen to Auto; the inward-facing memory workers do
+    /// not self-limit (their writes stay bounded by the manifest projection
+    /// and the gate's source-trust/criticality axes).
+    #[must_use]
+    pub const fn ceiling(self) -> AgentCeiling {
+        match self {
+            Self::Scout | Self::Keeper | Self::Creative => AgentCeiling::Auto,
+            Self::Herald | Self::Guide => AgentCeiling::Proposed,
+        }
+    }
+
+    const fn actor_id_byte(self) -> u8 {
+        match self {
+            Self::Scout => 0xA1,
+            Self::Keeper => 0xA2,
+            Self::Creative => 0xA3,
+            Self::Herald => 0xA4,
+            Self::Guide => 0xA5,
+        }
+    }
+
+    /// The pinned actor-provenance identity (precedent: the `[0xE1; 16]`
+    /// first-party connector actor id). Write-door-reserved in
+    /// `batch.rs::apply_put` so no entity can squat on a system identity, but
+    /// deliberately NOT added to the `EntityId::from_bytes` reserved sentinels
+    /// — the ids must stay constructible as actor identities.
+    #[must_use]
+    pub fn actor_entity_id(self) -> EntityId {
+        EntityId::from_bytes([self.actor_id_byte(); 16])
+            .expect("pinned system agent actor id is non-reserved")
+    }
+
+    /// Reverse lookup for the five pinned actor ids.
+    #[must_use]
+    pub fn from_actor_entity_id(id: &EntityId) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|preset| id.as_bytes() == &[preset.actor_id_byte(); 16])
+    }
+
+    /// Materializes the preset's in-memory `AgentDefinition` template (valid
+    /// under authoring validation, encodable for dispatch snapshots).
+    /// Prompts are host-layer (`instructions: None`); skill registries are
+    /// vault-populated, so presets ship reference-free; connector/MCP keys
+    /// are inert references, never existence-checked at write time.
+    #[must_use]
+    pub fn template(self) -> AgentDefinition {
+        let (desc, connectors, code_mode_mcps) = match self {
+            Self::Scout => (
+                "System scout: outbound research and retrieval runs.",
+                vec!["web.search".to_owned()],
+                Vec::new(),
+            ),
+            Self::Keeper => (
+                "System keeper: memory hygiene and consolidation follow-ups.",
+                Vec::new(),
+                Vec::new(),
+            ),
+            Self::Creative => (
+                "System creative: drafting and ideation runs.",
+                Vec::new(),
+                Vec::new(),
+            ),
+            Self::Herald => (
+                "System herald: outbound correspondence via connected email.",
+                Vec::new(),
+                vec![McpRef::new("email")],
+            ),
+            Self::Guide => (
+                "System guide: onboarding, policy and consent explanation.",
+                Vec::new(),
+                Vec::new(),
+            ),
+        };
+        AgentDefinition::new(
+            self.preset_id(),
+            desc,
+            SYSTEM_AGENT_PRESET_VERSION,
+            None,
+            Vec::new(),
+            connectors,
+            code_mode_mcps,
+            None,
+            AgentScope::All,
+            self.ceiling(),
+            None,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Value::Map(vec![
+                (Value::from("system"), Value::from(self.preset_id())),
+                (
+                    Value::from("presetVersion"),
+                    Value::from(SYSTEM_AGENT_PRESET_VERSION),
+                ),
+            ]),
+        )
+    }
+}
+
 /// A saved, host-agnostic agent composition record.
 ///
 /// The lifecycle block (`approval_status` … `provenance`) is the shared
@@ -183,6 +393,8 @@ pub struct AgentDefinition {
     pub code_mode_mcps: Vec<McpRef>,
     pub model_tier: Option<ModelTierRef>,
     pub scope: AgentScope,
+    pub ceiling: AgentCeiling,
+    pub forked_from: Option<SystemAgentPreset>,
     pub approval_status: ClaimApprovalStatus,
     pub lifecycle_status: ClaimLifecycleStatus,
     pub source: ClaimSource,
@@ -208,6 +420,8 @@ impl AgentDefinition {
         code_mode_mcps: Vec<McpRef>,
         model_tier: Option<ModelTierRef>,
         scope: AgentScope,
+        ceiling: AgentCeiling,
+        forked_from: Option<SystemAgentPreset>,
         approval_status: ClaimApprovalStatus,
         lifecycle_status: ClaimLifecycleStatus,
         source: ClaimSource,
@@ -226,6 +440,8 @@ impl AgentDefinition {
             code_mode_mcps,
             model_tier,
             scope,
+            ceiling,
+            forked_from,
             approval_status,
             lifecycle_status,
             source,
@@ -284,6 +500,15 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
     if let AgentScope::World(world) = &def.scope {
         entries.push((Value::from(KEY_WORLD), Value::from(world.to_hex())));
     }
+    if def.ceiling == AgentCeiling::Auto {
+        entries.push((Value::from(KEY_CEILING), Value::from(def.ceiling.as_str())));
+    }
+    if let Some(preset) = def.forked_from {
+        entries.push((
+            Value::from(KEY_FORKED_FROM),
+            Value::from(preset.preset_id()),
+        ));
+    }
     entries.push((
         Value::from(KEY_APPROVAL_STATUS),
         Value::from(def.approval_status.as_str()),
@@ -320,7 +545,27 @@ pub fn decode_agent_definition(bytes: &[u8]) -> Result<AgentDefinition> {
 }
 
 pub(crate) fn validate_agent_definition_bytes(bytes: &[u8]) -> Result<()> {
-    decode_agent_definition(bytes).map(|_| ())
+    let def = decode_agent_definition(bytes)?;
+    validate_agent_definition_no_widen(&def)
+}
+
+/// The authoring-side no-widen arm, deliberately SPLIT from the structural
+/// validation that decode runs (M1 resolution 2026-07-10): reads, snapshots,
+/// and the gate resolver must keep decoding stored forks even if the compiled
+/// preset ceiling table is later narrowed — such forks stay readable,
+/// live-clamped at gate time, and force-narrowed on their next update. Runs
+/// at every write door: the public raw-put seam
+/// ([`validate_agent_definition_bytes`]), the update gate, and fork/put
+/// (which ride the raw-put seam).
+fn validate_agent_definition_no_widen(def: &AgentDefinition) -> Result<()> {
+    if let Some(preset) = def.forked_from
+        && def.ceiling.widens_beyond(preset.ceiling())
+    {
+        return Err(Error::InvalidAgentDefBody(
+            "forked agent ceiling cannot widen beyond its parent preset ceiling",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_agent_definition_update(
@@ -328,12 +573,18 @@ pub(crate) fn validate_agent_definition_update(
     updated: &AgentDefinition,
 ) -> Result<()> {
     validate_agent_definition(updated)?;
+    validate_agent_definition_no_widen(updated)?;
     if prior == updated {
         return Ok(());
     }
     if prior.agent_id != updated.agent_id {
         return Err(Error::InvalidAgentDefBody(
             "agentId cannot change on update",
+        ));
+    }
+    if prior.forked_from != updated.forked_from {
+        return Err(Error::InvalidAgentDefBody(
+            "forkedFrom cannot change on update",
         ));
     }
     if prior.generated != updated.generated || prior.human_authored != updated.human_authored {
@@ -367,6 +618,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut model_tier = None;
     let mut scope_discriminant = None;
     let mut world = None;
+    let mut ceiling = None;
+    let mut forked_from = None;
     let mut approval_status = None;
     let mut lifecycle_status = None;
     let mut source = None;
@@ -446,6 +699,16 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                     Error::InvalidAgentDefBody("world must be a hex-encoded EntityId string")
                 })?);
             }
+            KEY_CEILING => {
+                ceiling = Some(value.as_str().and_then(AgentCeiling::parse).ok_or(
+                    Error::InvalidAgentDefBody("ceiling must be one of auto|proposed"),
+                )?);
+            }
+            KEY_FORKED_FROM => {
+                forked_from = Some(value.as_str().and_then(SystemAgentPreset::parse).ok_or(
+                    Error::InvalidAgentDefBody("forkedFrom must name a known system agent preset"),
+                )?);
+            }
             KEY_APPROVAL_STATUS => {
                 approval_status = Some(value.as_str().and_then(ClaimApprovalStatus::parse).ok_or(
                     Error::InvalidAgentDefBody(
@@ -511,6 +774,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         ))?,
         model_tier,
         scope,
+        ceiling: ceiling.unwrap_or(AgentCeiling::Proposed),
+        forked_from,
         approval_status: approval_status.ok_or(Error::InvalidAgentDefBody(
             "missing required key approvalStatus",
         ))?,
@@ -929,6 +1194,20 @@ fn validate_text_field(text: &str, max_bytes: usize, context: &'static str) -> R
     Ok(())
 }
 
+/// Per-vault system-agent toggle key prefix in `vault_meta` (full key =
+/// prefix + `preset_id()` bytes). Private runner-state style, precedent
+/// `dreamer:home_node_macro:v1` — deliberately per-device and non-synced:
+/// the toggle is a local scheduling/product preference, NOT a security
+/// control (authority enforcement is the replicated ceiling ∧ manifest gate
+/// lattice, which is fail-closed).
+const SYSTEM_AGENT_TOGGLE_KEY_PREFIX: &[u8] = b"agent_def:system_toggle:v1:";
+
+fn system_agent_toggle_key(preset: SystemAgentPreset) -> Vec<u8> {
+    let mut key = SYSTEM_AGENT_TOGGLE_KEY_PREFIX.to_vec();
+    key.extend_from_slice(preset.preset_id().as_bytes());
+    key
+}
+
 impl Vault {
     /// Encodes (validating) and writes an `AgentDefinition` through the generic
     /// entity door.
@@ -988,6 +1267,71 @@ impl Vault {
             ));
         }
         decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    }
+
+    /// Writes the per-vault toggle byte for a system-agent preset.
+    pub fn set_system_agent_enabled(&self, preset: SystemAgentPreset, enabled: bool) -> Result<()> {
+        let key = system_agent_toggle_key(preset);
+        let mut wtxn = self.store.env.write_txn()?;
+        self.store
+            .vault_meta
+            .put(&mut wtxn, key.as_slice(), &[u8::from(enabled)])?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Reads the per-vault toggle for a system-agent preset. Absent key =
+    /// enabled (presets ship on); any stored byte other than `0x00`/`0x01`
+    /// is an invariant violation.
+    pub fn system_agent_enabled(&self, preset: SystemAgentPreset) -> Result<bool> {
+        let key = system_agent_toggle_key(preset);
+        let rtxn = self.store.env.read_txn()?;
+        match self.store.vault_meta.get(&rtxn, key.as_slice())? {
+            None => Ok(true),
+            Some([0x01]) => Ok(true),
+            Some([0x00]) => Ok(false),
+            Some(_) => Err(Error::InvariantViolation("system agent toggle byte")),
+        }
+    }
+
+    /// Forks an enabled system-agent preset into a new custom definition —
+    /// the ONLY mutation path off a preset (OF-334/EF-155: edit-a-system-agent
+    /// = fork-to-custom). The fork inherits the preset's composition and
+    /// ceiling (`forked_from` pins the no-widen bound; narrowing happens via
+    /// later updates) and is stamped as an explicit user act
+    /// (`source = UserStated`). Rides the existing type-17 put door.
+    pub fn fork_system_agent(
+        &self,
+        id: &EntityId,
+        preset: SystemAgentPreset,
+        agent_id: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<AgentDefinition> {
+        if !self.system_agent_enabled(preset)? {
+            return Err(Error::SystemAgentDisabled(
+                "fork requires an enabled system agent preset",
+            ));
+        }
+        let mut def = preset.template();
+        def.agent_id = agent_id.to_owned();
+        def.version = "1".to_owned();
+        def.forked_from = Some(preset);
+        def.ceiling = preset.ceiling();
+        def.approval_status = ClaimApprovalStatus::Approved;
+        def.source = ClaimSource::UserStated;
+        def.confidence = 1.0;
+        def.generated = false;
+        def.human_authored = true;
+        def.provenance = Value::Map(vec![
+            (Value::from("forkOf"), Value::from(preset.preset_id())),
+            (
+                Value::from("presetVersion"),
+                Value::from(SYSTEM_AGENT_PRESET_VERSION),
+            ),
+        ]);
+        self.put_agent_definition(id, &def, occurred, learned_at)?;
+        Ok(def)
     }
 
     fn read_agent_definition_in_txn(

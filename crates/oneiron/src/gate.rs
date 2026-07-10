@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
+use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
@@ -36,11 +37,11 @@ use crate::outbound_grant::{
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -131,7 +132,16 @@ impl PolicyApprovalCeiling {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Gate-side conversion from the persisted AGENT_DEF descriptor mirror.
+    /// Lives here so the dependency direction stays `gate.rs` → `agent_def.rs`
+    /// and `PolicyApprovalCeiling` stays `pub(crate)`.
+    pub(crate) fn from_agent_ceiling(ceiling: AgentCeiling) -> Self {
+        match ceiling {
+            AgentCeiling::Auto => Self::Auto,
+            AgentCeiling::Proposed => Self::Proposed,
+        }
+    }
+
     fn restrict(self, other: Self) -> Self {
         if matches!(self, Self::Proposed) || matches!(other, Self::Proposed) {
             Self::Proposed
@@ -148,6 +158,18 @@ pub(crate) fn foreign_agent_effective_ceiling(
     introducer_ceiling: PolicyApprovalCeiling,
 ) -> PolicyApprovalCeiling {
     confirmed_scope.restrict(introducer_ceiling)
+}
+
+/// OF-074 symmetry helper mirroring [`foreign_agent_effective_ceiling`]: a
+/// dispatched agent's effective ceiling is its definition-authored bound
+/// restricted by the owner's `actor_ceilings` manifest projection.
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn dispatched_agent_effective_ceiling(
+    definition: PolicyApprovalCeiling,
+    policy_projection: PolicyApprovalCeiling,
+) -> PolicyApprovalCeiling {
+    definition.restrict(policy_projection)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +330,11 @@ pub(crate) struct GateEvaluatorInput {
     pub(crate) policy_manifest_version: String,
     pub(crate) provenance: GateProvenanceHandles,
     pub(crate) external_effect: Option<ExternalEffectGateContext>,
+    /// The AGENT_DEF-authored ceiling bound resolved live for definition-bound
+    /// actors ([`agent_definition_ceiling_for_actor`]); `None` = no definition
+    /// bound (owner writes, connectors, non-definition agent actors) —
+    /// preserves pre-AGENT-2 behavior at every existing construction site.
+    pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -369,7 +396,10 @@ pub(crate) struct ExternalEffectGateInput {
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl ExternalEffectGateInput {
-    fn gate_input(&self) -> GateEvaluatorInput {
+    fn gate_input(
+        &self,
+        agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    ) -> GateEvaluatorInput {
         GateEvaluatorInput {
             actor: self.actor.clone(),
             source: None,
@@ -378,6 +408,7 @@ impl ExternalEffectGateInput {
             criticality: PolicyCriticality::Normal,
             policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
             provenance: self.provenance.clone(),
+            agent_definition_ceiling,
             external_effect: Some(ExternalEffectGateContext {
                 verb: self.verb.clone(),
                 channel: self.channel.clone(),
@@ -959,6 +990,15 @@ impl PolicyManifestResolution {
     }
 
     fn actor_ceiling_allows_auto_for_content(&self, input: &GateEvaluatorInput) -> bool {
+        // A Proposed definition ceiling is an explicit authored bound that no
+        // manifest grant can widen past (OF-074 restrict / OF-043 live
+        // re-clamp) — the write is held to proposal regardless of rows.
+        if matches!(
+            input.agent_definition_ceiling,
+            Some(PolicyApprovalCeiling::Proposed)
+        ) {
+            return false;
+        }
         let actor_class = input.actor.actor_class.trim();
         if self.actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
             == PolicyApprovalCeiling::Auto
@@ -966,9 +1006,15 @@ impl PolicyManifestResolution {
             return true;
         }
 
+        // The edge-provenance no-matching-row auto exception is suppressed
+        // for ANY definition-bound actor (B2 resolution 2026-07-10): an Auto
+        // definition ceiling means "does not self-limit", not "inherits the
+        // no-row exception" — no row → Proposed holds as written for
+        // definition-bound actors.
         input.content_kind == GateContentKind::EdgeProvenanceClaim
             && matches!(actor_class, "agent" | "system")
             && !self.has_matching_actor_ceiling(actor_class, input.actor.actor_ref.as_deref())
+            && input.agent_definition_ceiling.is_none()
     }
 
     fn dreamer_auto_grant_requires_manifest_signature(&self, input: &GateEvaluatorInput) -> bool {
@@ -1188,6 +1234,17 @@ impl PolicyManifestResolution {
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
+        // A Proposed-ceiling definition-bound actor (e.g. any Herald fork)
+        // can never auto-fire an external effect regardless of grants; it is
+        // held to PendingExternalEffectAuthority. The counterparty opt-out
+        // early-deny is unaffected: it returns from `evaluate_gate` before
+        // this function is ever consulted.
+        if matches!(
+            input.agent_definition_ceiling,
+            Some(PolicyApprovalCeiling::Proposed)
+        ) {
+            return false;
+        }
         let Some(effect) = input.external_effect.as_ref() else {
             return false;
         };
@@ -1757,6 +1814,76 @@ pub(crate) fn first_party_eiri_connector_actor_ref() -> String {
     bytes_to_hex_lower(&FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
 }
 
+/// Resolves the AGENT_DEF-authored ceiling bound for a write actor, live at
+/// evaluation time (D11: authority is never read from dispatch snapshots).
+///
+/// * non-`Agent` actor class → `None` (no definition bound);
+/// * pinned system-preset actor id → the preset's compiled ceiling (presets
+///   have no stored entity);
+/// * entity ABSENT → `Some(Proposed)` — deletion fails closed (B3 resolution
+///   2026-07-10: a deleted Herald fork's definition can no longer drop its
+///   Proposed self-limit);
+/// * present but not type-17 → `None` (live person-backed agent actors keep
+///   today's semantics);
+/// * decoded definition → its ceiling restricted by the fork parent's preset
+///   bound;
+/// * unreadable/undecodable body → `Some(Proposed)` with a `tracing::warn!`
+///   naming the actor entity id — the fail-closed re-clamp of a believed-Auto
+///   agent must not be silent.
+pub(crate) fn agent_definition_ceiling_for_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+) -> Option<PolicyApprovalCeiling> {
+    if actor.actor_class() != EdgeActorClass::Agent {
+        return None;
+    }
+    let entity_ref = actor.entity_ref();
+    if let Some(preset) = SystemAgentPreset::from_actor_entity_id(&entity_ref) {
+        return Some(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
+    }
+    let raw = match store.entities.get(txn, entity_ref.as_bytes()) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return Some(PolicyApprovalCeiling::Proposed),
+        Err(error) => {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                %error,
+                "agent definition ceiling read failed; failing closed to proposed",
+            );
+            return Some(PolicyApprovalCeiling::Proposed);
+        }
+    };
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        tracing::warn!(
+            actor_entity_id = %entity_ref.to_hex(),
+            "agent definition entity header failed to parse; failing closed to proposed",
+        );
+        return Some(PolicyApprovalCeiling::Proposed);
+    };
+    if header.entity_type != ENTITY_TYPE_AGENT_DEF {
+        return None;
+    }
+    match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+        Ok(def) => {
+            let mut ceiling = PolicyApprovalCeiling::from_agent_ceiling(def.ceiling);
+            if let Some(preset) = def.forked_from {
+                ceiling =
+                    ceiling.restrict(PolicyApprovalCeiling::from_agent_ceiling(preset.ceiling()));
+            }
+            Some(ceiling)
+        }
+        Err(error) => {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                %error,
+                "agent definition body failed to decode; failing closed to proposed",
+            );
+            Some(PolicyApprovalCeiling::Proposed)
+        }
+    }
+}
+
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
@@ -2080,9 +2207,10 @@ pub(crate) fn check_claim_policy_for_write(
     }
 
     if policy.enforces_write_gate() {
-        let (actor, provenance) = if let Some(envelope) = envelope {
+        let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
             let dreamer_run_id = dreamer_run_id_from_write_envelope(envelope);
+            let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
                     actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
@@ -2093,6 +2221,7 @@ pub(crate) fn check_claim_policy_for_write(
                     dreamer_run_id,
                     ..GateProvenanceHandles::default()
                 },
+                agent_definition_ceiling,
             )
         } else {
             (
@@ -2104,6 +2233,7 @@ pub(crate) fn check_claim_policy_for_write(
                     actor_entity_ref: Some(local_write_actor_entity_ref()),
                     ..GateProvenanceHandles::default()
                 },
+                None,
             )
         };
         let input = claim_gate_input(
@@ -2113,6 +2243,7 @@ pub(crate) fn check_claim_policy_for_write(
             GateContentKind::Claim,
             provenance,
             mode.include_source_in_gate_input,
+            agent_definition_ceiling,
         );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
@@ -2215,7 +2346,25 @@ pub(crate) fn check_external_effect_policy(
     if let Some((grant_id, _grant)) = matched_grant.as_ref() {
         hydrated_effect.standing_grant_ref = Some(format!("grant:{}", grant_id.to_hex()));
     }
-    let input = hydrated_effect.gate_input();
+    // Recover the resolver's WriteActor from the effect input's hex actor_ref;
+    // only class "agent" can carry a definition bound.
+    let agent_definition_ceiling = if hydrated_effect.actor.actor_class.trim() == "agent" {
+        hydrated_effect
+            .actor
+            .actor_ref
+            .as_deref()
+            .and_then(|actor_ref| EntityId::from_hex(actor_ref).ok())
+            .and_then(|id| {
+                agent_definition_ceiling_for_actor(
+                    store,
+                    &*wtxn,
+                    WriteActor::new(id, EdgeActorClass::Agent),
+                )
+            })
+    } else {
+        None
+    };
+    let input = hydrated_effect.gate_input(agent_definition_ceiling);
     let mut decision = policy.evaluate_gate(&input);
     let binding = GateConsentBinding::for_external_effect(&input, policy)?;
     let decision_id = GateDecisionId::now();
@@ -2648,12 +2797,19 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn check_edge_provenance_claim_policy(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     body: &ClaimBody,
     record: &crate::provenance::EdgeProvenanceClaimBody,
     actor_class: EdgeActorClass,
     policy: &PolicyManifestResolution,
 ) -> Result<()> {
     if policy.enforces_write_gate() {
+        let agent_definition_ceiling = agent_definition_ceiling_for_actor(
+            store,
+            txn,
+            WriteActor::new(record.actor_entity_ref, actor_class),
+        );
         let input = claim_gate_input(
             body,
             policy,
@@ -2670,6 +2826,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
                 ..GateProvenanceHandles::default()
             },
             false,
+            agent_definition_ceiling,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -2695,6 +2852,7 @@ fn claim_gate_input(
     content_kind: GateContentKind,
     provenance: GateProvenanceHandles,
     include_source: bool,
+    agent_definition_ceiling: Option<PolicyApprovalCeiling>,
 ) -> GateEvaluatorInput {
     let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
     {
@@ -2712,6 +2870,7 @@ fn claim_gate_input(
         policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
         provenance,
         external_effect: None,
+        agent_definition_ceiling,
     }
 }
 

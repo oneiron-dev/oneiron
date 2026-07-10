@@ -2462,6 +2462,17 @@ fn apply_put(
     include_source_in_gate_input: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
+    // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
+    // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at
+    // one of them would resolve at the gate as a system preset with its
+    // compiled ceiling — an authority-bearing identity collision. Guarded here
+    // at the one choke point every entity materialization funnels through
+    // (public raw puts, typed puts, claim candidates, sync replay). The ids
+    // stay constructible via `EntityId::from_bytes` so they can serve as
+    // actor-provenance identities.
+    if crate::agent_def::SystemAgentPreset::from_actor_entity_id(&id).is_some() {
+        return Err(Error::InvalidKey);
+    }
     // Type-byte validation runs in `apply_ops` (the public-vs-maintenance gate:
     // public writes reject the engine-authored maintenance band, the sync
     // rematerialization path admits it via `allow_maintenance`). apply_put is

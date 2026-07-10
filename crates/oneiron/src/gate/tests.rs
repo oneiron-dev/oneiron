@@ -69,7 +69,8 @@ fn clear_policy_manifests_for_test(vault: &crate::Vault) {
 #[test]
 fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    let grant_id = test_id(0xA1);
+    // 0x71: [0xA1; 16] is a write-door-reserved system-agent actor id (ONE-1444).
+    let grant_id = test_id(0x71);
     let principal = test_id(0xB1);
     let other_principal = test_id(0xB3);
     let person = test_id(0xC1);
@@ -115,7 +116,8 @@ fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
 fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let malformed_id = test_id(0x01);
-    let valid_id = test_id(0xA2);
+    // 0x72: [0xA2; 16] is a write-door-reserved system-agent actor id (ONE-1444).
+    let valid_id = test_id(0x72);
     let principal = test_id(0xB2);
     let person = test_id(0xC2);
     let persona = test_id(0xD3);
@@ -1650,6 +1652,7 @@ fn gate_evaluator_input(
             ..GateProvenanceHandles::default()
         },
         external_effect: None,
+        agent_definition_ceiling: None,
     }
 }
 
@@ -2837,7 +2840,7 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
 
     let mut missing_opt_in = external_effect_gate_input("sender", "send", "line");
     missing_opt_in.has_opted_in = false;
-    let decision = policy.evaluate_gate(&missing_opt_in.gate_input());
+    let decision = policy.evaluate_gate(&missing_opt_in.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -2846,7 +2849,7 @@ fn external_effect_requires_opt_in_and_permission() -> Result<()> {
 
     let mut missing_permission = external_effect_gate_input("sender", "send", "line");
     missing_permission.has_permission = false;
-    let decision = policy.evaluate_gate(&missing_permission.gate_input());
+    let decision = policy.evaluate_gate(&missing_permission.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -2863,7 +2866,7 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
     let mut risky = external_effect_gate_input("sender", "send", "line");
     risky.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
 
-    let decision = pending_policy.evaluate_gate(&risky.gate_input());
+    let decision = pending_policy.evaluate_gate(&risky.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -2888,7 +2891,7 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
     )]);
     put_policy_manifest_bytes(&allowed_vault, 0xD3, &data)?;
     let allowed_policy = resolve(&allowed_vault)?;
-    let decision = allowed_policy.evaluate_gate(&risky.gate_input());
+    let decision = allowed_policy.evaluate_gate(&risky.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Allow);
     assert_eq!(gate_reason_strs(&decision), vec!["gate.allow"]);
     Ok(())
@@ -2909,7 +2912,7 @@ fn external_effect_budgeted_grants_hold_without_budget_enforcer() -> Result<()> 
     put_policy_manifest_bytes(&vault, 0xD4, &data)?;
     let policy = resolve(&vault)?;
     let effect = external_effect_gate_input("sender", "send", "line");
-    let decision = policy.evaluate_gate(&effect.gate_input());
+    let decision = policy.evaluate_gate(&effect.gate_input(None));
     assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         gate_reason_strs(&decision),
@@ -3377,11 +3380,13 @@ fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> R
 
     let run_a = "dreamer-run-a";
     let run_b = "dreamer-run-b";
-    let run_a_first = test_id(0xA1);
-    let run_b_first = test_id(0xA2);
-    let default_id = test_id(0xA3);
-    let run_a_second = test_id(0xA4);
-    let run_b_second = test_id(0xA5);
+    // 0x81..0x85: [0xA1; 16]..[0xA5; 16] are write-door-reserved system-agent
+    // actor ids (ONE-1444).
+    let run_a_first = test_id(0x81);
+    let run_b_first = test_id(0x82);
+    let default_id = test_id(0x83);
+    let run_a_second = test_id(0x84);
+    let run_b_second = test_id(0x85);
 
     let pending_body = |subject_seed: u8, value: &'static str, source: ClaimSource| {
         let mut body = source_trust_claim(source);
@@ -3819,8 +3824,10 @@ fn gate_chokepoint_edge_provenance_retract_uses_gate_before_reserved_reput() -> 
 fn gate_chokepoint_edge_provenance_supersede_checks_closed_prior_before_reput() -> Result<()> {
     let (_tmp, vault) = temp_vault();
 
-    let src = test_id(0xA4);
-    let tgt = test_id(0xA5);
+    // 0x94/0x95: [0xA4; 16]/[0xA5; 16] are write-door-reserved system-agent
+    // actor ids (ONE-1444).
+    let src = test_id(0x94);
+    let tgt = test_id(0x95);
     let human_actor = test_id(0xA6);
     let agent_actor = test_id(0xA7);
     let prior_claim_id = test_id(0xA8);
@@ -5269,5 +5276,361 @@ fn exhausted_denial_carries_backfilled_ladder_history() -> Result<()> {
             crate::BudgetThreshold::Land95,
         ]
     );
+    Ok(())
+}
+
+// ─── AGENT-2 (ONE-1444): definition-ceiling clamp + pinned actor ids ─────────
+
+// AGENT-2 AC test 9: a Proposed definition ceiling clamps a manifest
+// agent-class Auto grant (restrict semantics); Auto or no definition bound
+// keeps the grant.
+#[test]
+fn definition_ceiling_clamps_manifest_auto() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![]);
+    append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
+    put_policy_manifest_bytes(&vault, 0xC1, &data)?;
+    let policy = resolve(&vault)?;
+
+    let mut input = gate_evaluator_input(
+        "agent",
+        Some("dispatched-agent"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    assert_eq!(
+        policy.evaluate_gate(&input).outcome(),
+        GateOutcome::Allow,
+        "no definition bound keeps the manifest grant"
+    );
+
+    input.agent_definition_ceiling = Some(PolicyApprovalCeiling::Auto);
+    assert_eq!(
+        policy.evaluate_gate(&input).outcome(),
+        GateOutcome::Allow,
+        "an Auto definition ceiling does not restrict the grant"
+    );
+
+    input.agent_definition_ceiling = Some(PolicyApprovalCeiling::Proposed);
+    let decision = policy.evaluate_gate(&input);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingActorCeiling]
+    );
+    Ok(())
+}
+
+// AGENT-2 AC test 10 (B2 resolution): the edge-provenance no-matching-row
+// auto exception is suppressed for ANY definition-bound actor — Proposed AND
+// Auto — while non-definition actors keep today's exception.
+#[test]
+fn definition_ceiling_blocks_edge_provenance_exception() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // No agent-class rows: the manifest has only first_party rows.
+    put_policy_manifest_bytes(&vault, 0xC2, &encode_policy_manifest(vec![]))?;
+    let policy = resolve(&vault)?;
+
+    let mut input = gate_evaluator_input(
+        "agent",
+        Some("dispatched-agent"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    input.content_kind = GateContentKind::EdgeProvenanceClaim;
+
+    assert_eq!(
+        policy.evaluate_gate(&input).outcome(),
+        GateOutcome::Allow,
+        "a non-definition agent actor keeps today's no-row exception"
+    );
+
+    input.agent_definition_ceiling = Some(PolicyApprovalCeiling::Proposed);
+    let decision = policy.evaluate_gate(&input);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingActorCeiling]
+    );
+
+    // Auto means "does not self-limit", not "inherits the no-row exception":
+    // with no owner row the definition-bound actor still holds to proposal.
+    input.agent_definition_ceiling = Some(PolicyApprovalCeiling::Auto);
+    let decision = policy.evaluate_gate(&input);
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingActorCeiling]
+    );
+    Ok(())
+}
+
+// AGENT-2 AC test 11: a Proposed definition ceiling holds an otherwise
+// auto-eligible external effect to PendingExternalEffectAuthority.
+#[test]
+fn definition_ceiling_blocks_external_effect_auto() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![]);
+    append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
+    put_policy_manifest_bytes(&vault, 0xC3, &data)?;
+    let policy = resolve(&vault)?;
+
+    let mut effect = external_effect_gate_input("dispatched-agent", "send", "line");
+    effect.actor.actor_class = "agent".to_owned();
+    effect.standing_grant_ref = Some("grant:test".to_owned());
+
+    assert_eq!(
+        policy.evaluate_gate(&effect.gate_input(None)).outcome(),
+        GateOutcome::Allow,
+        "the effect is auto-eligible without a definition bound"
+    );
+
+    let decision = policy.evaluate_gate(&effect.gate_input(Some(PolicyApprovalCeiling::Proposed)));
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert!(
+        decision
+            .reason_codes()
+            .contains(&GateReasonCode::PendingExternalEffectAuthority),
+        "a Proposed-ceiling agent can never auto-fire an external effect, got {:?}",
+        decision.reason_codes()
+    );
+    Ok(())
+}
+
+// AGENT-2 AC test 12: the live resolver maps every actor shape per the pinned
+// table (B3: absent entity fails closed to Proposed).
+#[test]
+fn resolver_maps_actors() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let store = &vault.store;
+
+    let scout_fork_id = test_id(0x51);
+    let scout_fork = vault.fork_system_agent(
+        &scout_fork_id,
+        SystemAgentPreset::Scout,
+        "eiri.scout.fork",
+        test_time(1),
+        1,
+    )?;
+    let person_id = test_id(0x52);
+    vault.put_entity(&person_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"person")?;
+
+    {
+        let rtxn = store.env.read_txn()?;
+        // Pinned system actor ids resolve to the compiled preset ceilings.
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(
+                    SystemAgentPreset::Herald.actor_entity_id(),
+                    EdgeActorClass::Agent
+                ),
+            ),
+            Some(PolicyApprovalCeiling::Proposed)
+        );
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(
+                    SystemAgentPreset::Scout.actor_entity_id(),
+                    EdgeActorClass::Agent
+                ),
+            ),
+            Some(PolicyApprovalCeiling::Auto)
+        );
+        // A stored Scout fork resolves to its effective ceiling (Auto ∧ Auto).
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Auto)
+        );
+        // Non-agent classes carry no definition bound.
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_fork_id, EdgeActorClass::Human),
+            ),
+            None
+        );
+        // Absent/deleted agent entity fails closed to Proposed (B3).
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(test_id(0x53), EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Proposed)
+        );
+        // Present-but-non-type-17 keeps today's semantics.
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(person_id, EdgeActorClass::Agent),
+            ),
+            None
+        );
+    }
+
+    // Narrowing the stored fork bites the next resolution (live authority).
+    let mut narrowed = scout_fork;
+    narrowed.version = "2".to_owned();
+    narrowed.ceiling = AgentCeiling::Proposed;
+    vault.update_agent_definition(&scout_fork_id, &narrowed, test_time(2), 2)?;
+    {
+        let rtxn = store.env.read_txn()?;
+        assert_eq!(
+            agent_definition_ceiling_for_actor(
+                store,
+                &rtxn,
+                WriteActor::new(scout_fork_id, EdgeActorClass::Agent),
+            ),
+            Some(PolicyApprovalCeiling::Proposed)
+        );
+    }
+
+    // OF-074 symmetry helper: effective = definition ∧ manifest projection.
+    assert_eq!(
+        dispatched_agent_effective_ceiling(
+            PolicyApprovalCeiling::Auto,
+            PolicyApprovalCeiling::Auto
+        ),
+        PolicyApprovalCeiling::Auto
+    );
+    assert_eq!(
+        dispatched_agent_effective_ceiling(
+            PolicyApprovalCeiling::Auto,
+            PolicyApprovalCeiling::Proposed
+        ),
+        PolicyApprovalCeiling::Proposed
+    );
+    assert_eq!(
+        dispatched_agent_effective_ceiling(
+            PolicyApprovalCeiling::Proposed,
+            PolicyApprovalCeiling::Auto
+        ),
+        PolicyApprovalCeiling::Proposed
+    );
+    Ok(())
+}
+
+// AGENT-2 AC test 13 (integration, N1): a Herald fork writing through the
+// envelope door under a manifest granting agent-class Auto lands non-auto —
+// the type-17 actor passes validate_actor_class and the live gate holds the
+// write to proposal. Control: a Scout fork (effective Auto) is not held.
+#[test]
+fn herald_fork_claim_held_to_proposed_under_agent_auto_manifest() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut data = encode_policy_manifest(vec![]);
+    append_actor_ceiling(&mut data, actor_ceiling_row("agent", "auto"));
+    put_policy_manifest_bytes(&vault, 0xC4, &data)?;
+
+    let herald_id = test_id(0x61);
+    vault.fork_system_agent(
+        &herald_id,
+        SystemAgentPreset::Herald,
+        "eiri.herald.custom",
+        test_time(1),
+        1,
+    )?;
+
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.approval = ClaimApprovalStatus::Proposed;
+    if let ClaimSubject::Entity(subject) = body.subject {
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
+    }
+
+    let claim_id = test_id(0x62);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(herald_id, EdgeActorClass::Agent),
+        ClaimSource::UserStated,
+        WriteProvenance::new(Value::from("herald-fork-write"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            claim_candidate_from_body(&body),
+            &envelope,
+            test_time(3),
+            3,
+        )
+        .commit()?;
+
+    // Held to proposal: pending consent recorded with the actor-ceiling
+    // reason, approval NOT auto-widened.
+    assert!(has_pending_gate_consent(&vault, &claim_id)?);
+    let pending = vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &claim_id)?
+            .ok_or(Error::CorruptedIndex("pending gate consent"))
+    })?;
+    assert_eq!(pending.reason_codes, vec!["gate.pending.actor_ceiling"]);
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("held claim").approval,
+        ClaimApprovalStatus::Proposed
+    );
+
+    // Control: a Scout fork's effective ceiling is Auto under the same
+    // manifest — the identical write is not held.
+    let scout_id = test_id(0x63);
+    vault.fork_system_agent(
+        &scout_id,
+        SystemAgentPreset::Scout,
+        "eiri.scout.custom",
+        test_time(1),
+        1,
+    )?;
+    let control_id = test_id(0x64);
+    let control_envelope = WriteEnvelope::new(
+        WriteActor::new(scout_id, EdgeActorClass::Agent),
+        ClaimSource::UserStated,
+        WriteProvenance::new(Value::from("scout-fork-write"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &control_id,
+            claim_candidate_from_body(&body),
+            &control_envelope,
+            test_time(4),
+            4,
+        )
+        .commit()?;
+    assert!(!has_pending_gate_consent(&vault, &control_id)?);
+    Ok(())
+}
+
+// AGENT-2 AC test 14 (pin E18): the five pinned system-agent actor ids are
+// write-door-reserved for entity materialization while staying constructible
+// as actor identities.
+#[test]
+fn pinned_actor_ids_not_storable() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    for preset in SystemAgentPreset::all() {
+        let id = preset.actor_entity_id();
+        for entity_type in [ENTITY_TYPE_PERSON, ENTITY_TYPE_MACHINE] {
+            let err = vault
+                .put_entity(&id, entity_type, test_time(1), 1, b"squatter")
+                .expect_err("pinned system actor id must not be storable");
+            assert!(
+                matches!(err, Error::InvalidKey),
+                "expected InvalidKey for {}, got {err:?}",
+                preset.preset_id()
+            );
+        }
+        assert!(vault.get_raw(&id)?.is_none());
+        // Pin A7 unbroken: the id remains constructible as an actor identity.
+        assert_eq!(SystemAgentPreset::from_actor_entity_id(&id), Some(preset));
+    }
     Ok(())
 }
