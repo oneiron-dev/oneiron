@@ -312,10 +312,10 @@ pub use crate::dreamer_runner::{
     DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkedJobRecord, DreamerReservedBudget,
     DreamerRunTreeRecord, DreamerRunnerStore, DreamerTournamentAdmission,
     DreamerTournamentAdmissionGrant, DreamerTournamentBudgetAxes, DreamerTournamentClaim,
-    DreamerWakeBudgetConfig, EnqueueDreamerConsolidationJob, EnqueueDreamerJob,
+    DreamerTurnRole, DreamerWakeBudgetConfig, EnqueueDreamerConsolidationJob, EnqueueDreamerJob,
     EnqueueDreamerJobOutcome, FailDreamerJob, FailDreamerJobOutcome, ParkDreamerJob,
     ReserveDreamerBudget, SettleDreamerBudget, decode_dreamer_job_payload,
-    encode_dreamer_job_payload,
+    dreamer_extraction_role_admissible, dreamer_turn_role, encode_dreamer_job_payload,
 };
 #[cfg(feature = "sync")]
 pub use crate::dreamer_runner::{
