@@ -17,11 +17,13 @@
 //! (`GateWriteRejected`), the facade resubmits the same claim `proposed`, so
 //! writes park as pending consents instead of vanishing.
 
+use std::sync::atomic::Ordering;
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::parse_short_id_value;
+use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode, parse_short_id_value};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -39,11 +41,13 @@ use crate::ingest::{
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_REGISTRY,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{
+    ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+};
 
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
@@ -247,7 +251,7 @@ pub struct WitnessTurn {
 pub struct WitnessReceipt {
     /// Short-id ref of the TURN (hex fallback if no short id exists).
     pub turn_short_id: String,
-    /// Short-id refs of the written MESSAGEs, input order.
+    /// Short-id refs of the written MESSAGE entities, input order.
     pub message_short_ids: Vec<String>,
     /// Facade write ref (`witness:<turn-hex>`). Structural puts produce no
     /// gate decision at base, so this is a write marker, not a
@@ -772,8 +776,10 @@ fn type_byte_for_kind(kind: &str) -> FacadeResult<u8> {
 }
 
 fn kind_string_for_type(entity_type: u8) -> String {
-    crate::registry::entity_type_registry_entry(entity_type)
-        .map_or_else(|| format!("TYPE_{entity_type}"), |entry| entry.kind.to_owned())
+    crate::registry::entity_type_registry_entry(entity_type).map_or_else(
+        || format!("TYPE_{entity_type}"),
+        |entry| entry.kind.to_owned(),
+    )
 }
 
 fn facade_provenance(verb: &str) -> Value {
@@ -783,7 +789,10 @@ fn facade_provenance(verb: &str) -> Value {
     ])
 }
 
-fn requested_approval(source: ClaimSource, scope: Option<&serde_json::Value>) -> ClaimApprovalStatus {
+fn requested_approval(
+    source: ClaimSource,
+    scope: Option<&serde_json::Value>,
+) -> ClaimApprovalStatus {
     let auto_source = matches!(source, ClaimSource::UserStated | ClaimSource::Observed);
     let has_sensitivity_key = scope
         .and_then(serde_json::Value::as_object)
@@ -806,8 +815,17 @@ fn id_from_optional_hex(id: Option<&str>) -> FacadeResult<EntityId> {
 fn subject_ref_string(subject: &ClaimSubject) -> String {
     match subject {
         ClaimSubject::Entity(id) => id.to_hex(),
-        ClaimSubject::Edge { source, kind, target } => {
-            format!("edge:{}:{}:{}", source.to_hex(), *kind as u8, target.to_hex())
+        ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } => {
+            format!(
+                "edge:{}:{}:{}",
+                source.to_hex(),
+                *kind as u8,
+                target.to_hex()
+            )
         }
     }
 }
@@ -887,7 +905,13 @@ impl MemoryFacade<'_> {
             );
         }
         if turn_is_new {
-            batch = batch.put(&turn_id, ENTITY_TYPE_TURN, occurred, learned_at, &container_body);
+            batch = batch.put(
+                &turn_id,
+                ENTITY_TYPE_TURN,
+                occurred,
+                learned_at,
+                &container_body,
+            );
         }
         for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
             batch = batch
@@ -943,15 +967,49 @@ impl MemoryFacade<'_> {
     }
 
     /// Retracts an active claim (deliberate withdrawal; record preserved).
+    ///
+    /// Authority (fail-closed): a `human`-class actor holds the vault
+    /// owner's memory authority and may retract any claim; `agent`/`system`
+    /// actors may retract ONLY claims whose write-envelope evidence names
+    /// them as the writing actor. Everything else is a typed denial —
+    /// binding an actor key is not authority (W3).
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
         let id = self.resolve_ref(claim_ref)?;
+        if self.actor_class != EdgeActorClass::Human {
+            let authored = self
+                .vault
+                .get_claim(&id)
+                .map_err(FacadeError::from)?
+                .as_ref()
+                .and_then(claim_envelope_actor)
+                .is_some_and(|writer| writer == self.actor);
+            if !authored {
+                return Err(FacadeError::new(
+                    FACADE_CODE_FORBIDDEN,
+                    format!(
+                        "actor {} ({}) may not retract a claim it did not write",
+                        self.actor.to_hex(),
+                        self.actor_class.gate_actor_class(),
+                    ),
+                    &[
+                        "Only the writing actor or a human-class owner actor may retract.",
+                        "Bind the owner actor key for cross-actor retraction.",
+                    ],
+                ));
+            }
+        }
         let now = crate::unix_seconds_now();
-        self.vault.retract_claim(&id, now).map_err(FacadeError::from)?;
+        self.vault
+            .retract_claim(&id, now)
+            .map_err(FacadeError::from)?;
         let approval = self
             .vault
             .get_claim(&id)
             .map_err(FacadeError::from)?
-            .map_or_else(|| "retracted".to_owned(), |body| body.approval.as_str().to_owned());
+            .map_or_else(
+                || "retracted".to_owned(),
+                |body| body.approval.as_str().to_owned(),
+            );
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("retract:{}", id.to_hex()));
@@ -965,11 +1023,29 @@ impl MemoryFacade<'_> {
 
     /// Deletes an entity under a NAMED reason (S7). `user_delete` is the
     /// tombstone path; the other three run the redaction-audit machinery.
+    ///
+    /// Authority (fail-closed): deletion is an OWNER verb — the named
+    /// reasons are `user_*`/compliance erasures. Only a `human`-class
+    /// actor may delete; `agent`/`system` actors get a typed denial
+    /// (agents withdraw their own claims via [`Self::claim_retract`]).
     pub fn safe_delete(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
     ) -> FacadeResult<DeleteReceipt> {
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} may not delete entities; deletion is an owner verb",
+                    self.actor_class.gate_actor_class(),
+                ),
+                &[
+                    "Bind a human-class owner actor key to delete.",
+                    "Agents withdraw their own claims via claim_retract.",
+                ],
+            ));
+        }
         let id = self.resolve_ref(entity_ref)?;
         let outcome = self
             .vault
@@ -988,7 +1064,13 @@ impl MemoryFacade<'_> {
 
     /// Structural put carrying text-index fields and outgoing edges, in one
     /// atomic batch. CLAIM-kind writes are rejected — claims go through
-    /// [`Self::commit`] so the gate always sees them.
+    /// [`Self::commit`] so the gate always sees them. MACHINE-kind writes
+    /// are rejected: MACHINE is the system-actor class type
+    /// (`validate_actor_class`), and minting one would let a bound actor
+    /// forge a rebindable `system` actor — the facade is not an
+    /// actor-provisioning door. (PERSON stays writable: companion-persona
+    /// and owner PERSON creation through this door is design-pinned,
+    /// §2.3/§2.8, and person actors remain gate-ceilinged per class.)
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
@@ -997,8 +1079,20 @@ impl MemoryFacade<'_> {
                 &["Use commit/claim_upsert so the write gate sees the claim."],
             ));
         }
+        if type_byte == ENTITY_TYPE_MACHINE {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                "MACHINE entities cannot be written through the facade",
+                &[
+                    "MACHINE is the system-actor class type; minting one would forge an actor.",
+                    "System actors are provisioned by the engine host, not the bridge.",
+                ],
+            ));
+        }
         if !input.body.is_object() {
-            return Err(FacadeError::bad_request("structural body must be a JSON object"));
+            return Err(FacadeError::bad_request(
+                "structural body must be a JSON object",
+            ));
         }
         let id = id_from_optional_hex(input.id.as_deref())?;
         let occurred = TimeRange {
@@ -1021,10 +1115,7 @@ impl MemoryFacade<'_> {
                     )
                 })?;
                 let target = self.resolve_ref(&spec.target_ref)?;
-                let weight = spec
-                    .weight
-                    .or_else(|| kind.default_weight())
-                    .unwrap_or(1.0);
+                let weight = spec.weight.or_else(|| kind.default_weight()).unwrap_or(1.0);
                 batch = batch.edge(&id, kind, &target, weight);
             }
         }
@@ -1053,7 +1144,9 @@ impl MemoryFacade<'_> {
         )];
         if let Some(data) = &input.data {
             let Some(map) = data.as_object() else {
-                return Err(FacadeError::bad_request("checkin data must be a JSON object"));
+                return Err(FacadeError::bad_request(
+                    "checkin data must be a JSON object",
+                ));
             };
             for (key, value) in map {
                 if key == "role" {
@@ -1174,7 +1267,10 @@ impl MemoryFacade<'_> {
             .vault
             .get_claim(&id)
             .map_err(FacadeError::from)?
-            .map_or_else(|| approval.as_str().to_owned(), |b| b.approval.as_str().to_owned());
+            .map_or_else(
+                || approval.as_str().to_owned(),
+                |b| b.approval.as_str().to_owned(),
+            );
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
@@ -1291,7 +1387,9 @@ impl MemoryFacade<'_> {
     /// `filter.limit`.
     pub fn claim_list(&self, filter: &ClaimListFilter) -> FacadeResult<Vec<ClaimView>> {
         if filter.limit == 0 {
-            return Err(FacadeError::bad_request("claim_list limit must be at least 1"));
+            return Err(FacadeError::bad_request(
+                "claim_list limit must be at least 1",
+            ));
         }
         let lifecycle = match filter.lifecycle.as_deref() {
             Some(value) => Some(ClaimLifecycleStatus::parse(value).ok_or_else(|| {
@@ -1349,7 +1447,11 @@ impl MemoryFacade<'_> {
         records.sort_by_key(|record| (record.learned_at.unwrap_or(0), record.id.to_hex()));
         let mut views = Vec::with_capacity(records.len());
         for record in records {
-            if let Some(body) = self.vault.get_claim(&record.id).map_err(FacadeError::from)? {
+            if let Some(body) = self
+                .vault
+                .get_claim(&record.id)
+                .map_err(FacadeError::from)?
+            {
                 views.push(self.claim_view(&record.id, &body)?);
             }
         }
@@ -1376,7 +1478,10 @@ impl MemoryFacade<'_> {
 
     /// Lists gate decision receipts.
     pub fn receipts(&self, limit: usize) -> FacadeResult<Vec<FacadeReceipt>> {
-        let records = self.vault.gate_decisions(limit).map_err(FacadeError::from)?;
+        let records = self
+            .vault
+            .gate_decisions(limit)
+            .map_err(FacadeError::from)?;
         Ok(records
             .into_iter()
             .map(|record| FacadeReceipt {
@@ -1415,6 +1520,12 @@ impl MemoryFacade<'_> {
         };
 
         let mut approval = requested_approval(source, input.scope.as_ref());
+        // With a prior revision, the replacement write and the supersession
+        // compose into ONE engine transaction: a refused supersession rolls
+        // the replacement back too, so no orphan revision can persist
+        // behind a rejected receipt. (The atomic path records its gate
+        // decision inside the same txn, so a rollback also drops the
+        // decision — the fail-closed trade for atomicity.)
         let write = |approval: ClaimApprovalStatus| -> Result<(), Error> {
             let mut candidate = ClaimCandidate::new(
                 input.predicate.clone(),
@@ -1438,19 +1549,37 @@ impl MemoryFacade<'_> {
                 WriteProvenance::new(facade_provenance("commit"))?,
                 approval,
             );
-            self.vault
-                .batch()
-                .claim_candidate(
-                    &id,
-                    candidate,
-                    &envelope,
-                    TimeRange {
-                        start: occurred_at,
-                        end: occurred_at,
-                    },
-                    learned_at,
-                )
-                .commit()
+            let occurred = TimeRange {
+                start: occurred_at,
+                end: occurred_at,
+            };
+            match prior {
+                None => self
+                    .vault
+                    .batch()
+                    .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
+                    .commit(),
+                Some(old_id) => self.vault.with_write_txn(|wtxn| {
+                    apply_ops_with_gate_mode(
+                        &self.vault.store,
+                        &self.vault.config,
+                        &self.vault.analyzer,
+                        wtxn,
+                        vec![BatchOp::ClaimCandidate {
+                            id,
+                            candidate: Box::new(candidate),
+                            envelope,
+                            occurred,
+                            learned_at,
+                            internal_lexical_query_hint: false,
+                        }],
+                        self.vault.text_index_trusted.load(Ordering::Acquire),
+                        ApplyOpsGateMode::new(true, true),
+                    )?;
+                    self.vault
+                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)
+                }),
+            }
         };
         match write(approval) {
             Ok(()) => {}
@@ -1465,19 +1594,17 @@ impl MemoryFacade<'_> {
         }
 
         let superseded_short_id = match prior {
-            Some(old_id) => {
-                self.vault
-                    .supersede_claim(&id, &old_id, learned_at)
-                    .map_err(FacadeError::from)?;
-                Some(self.short_ref_or_hex(&old_id)?)
-            }
+            Some(old_id) => Some(self.short_ref_or_hex(&old_id)?),
             None => None,
         };
         let final_approval = self
             .vault
             .get_claim(&id)
             .map_err(FacadeError::from)?
-            .map_or_else(|| approval.as_str().to_owned(), |b| b.approval.as_str().to_owned());
+            .map_or_else(
+                || approval.as_str().to_owned(),
+                |b| b.approval.as_str().to_owned(),
+            );
         let receipt_ref = self
             .latest_decision_ref_for(&id)?
             .unwrap_or_else(|| format!("claim:{}", id.to_hex()));
@@ -1662,15 +1789,41 @@ impl MemoryFacade<'_> {
 fn encode_witness_message_body(message: &WitnessMessage) -> FacadeResult<Vec<u8>> {
     let mut entries = vec![
         (Value::from("author"), Value::from(message.author.as_str())),
-        (Value::from("type"), Value::from(message.message_type.as_str())),
-        (Value::from("content"), Value::from(message.content.as_str())),
+        (
+            Value::from("type"),
+            Value::from(message.message_type.as_str()),
+        ),
+        (
+            Value::from("content"),
+            Value::from(message.content.as_str()),
+        ),
     ];
     if let Some(metadata) = &message.metadata {
         entries.push((Value::from("metadata"), json_to_rmpv(metadata)));
     }
-    entries.push((Value::from("is_visible"), Value::Boolean(message.is_visible)));
+    entries.push((
+        Value::from("is_visible"),
+        Value::Boolean(message.is_visible),
+    ));
     entries.push((Value::from("order"), Value::from(u64::from(message.order))));
     encode_rmpv(&Value::Map(entries))
+}
+
+/// Extracts the write-envelope actor stamped into a claim's evidence
+/// (gated candidate path). `None` for claims written without an envelope.
+fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
+    let Value::Map(entries) = body.evidence.as_ref()? else {
+        return None;
+    };
+    for (key, value) in entries {
+        if key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+            && let Value::Binary(bytes) = value
+        {
+            let raw: [u8; 16] = bytes.as_slice().try_into().ok()?;
+            return EntityId::from_bytes(raw).ok();
+        }
+    }
+    None
 }
 
 fn hex_string(bytes: &[u8]) -> String {

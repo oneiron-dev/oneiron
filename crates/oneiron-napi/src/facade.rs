@@ -3,9 +3,9 @@
 //! `VaultBridge.open(path)` → `asActor("<actor_class>:<entity_ref>")` →
 //! `ActorScopedVault` carrying every facade verb (W3 ABI). All methods are
 //! sync `&self` (W2 — no async FFI, no `&mut`). Facade vocabulary only:
-//! short-id refs, registry kind strings, typed DTOs (S1). The ONLY `Buffer`
-//! on this surface is blob-version content bytes (B8 blob door) — binary
-//! audio payloads have no JSON-shaped representation.
+//! short-id refs, registry kind strings, typed DTOs — no byte buffers, no
+//! type bytes, no JSON-as-bytes anywhere on this surface (S1; enforced by
+//! the fitness scan). Blob content crosses as standard base64 strings.
 //!
 //! Errors cross the boundary as `napi::Error` whose reason is the
 //! JSON-serialized engine `FacadeError` (`{code, message, suggestions}`),
@@ -13,7 +13,8 @@
 
 use std::sync::Arc;
 
-use napi::bindgen_prelude::Buffer;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, ClaimInput, ClaimListFilter, CompanionRecordInput,
@@ -25,9 +26,7 @@ use oneiron::{
 type BoundaryResult<T> = std::result::Result<T, String>;
 
 fn facade_error(err: &FacadeError) -> napi::Error {
-    napi::Error::from_reason(
-        serde_json::to_string(err).unwrap_or_else(|_| err.to_string()),
-    )
+    napi::Error::from_reason(serde_json::to_string(err).unwrap_or_else(|_| err.to_string()))
 }
 
 fn boundary_error(reason: String) -> napi::Error {
@@ -424,7 +423,10 @@ fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<WitnessTurn>
     })
 }
 
-#[expect(clippy::cast_possible_truncation, reason = "f64→f32 confidence/salience narrowing at the N-API boundary is intentional")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64→f32 confidence/salience narrowing at the N-API boundary is intentional"
+)]
 fn claim_input_to_engine(input: &NapiClaimInput) -> BoundaryResult<ClaimInput> {
     Ok(ClaimInput {
         id: input.id.clone(),
@@ -477,8 +479,14 @@ fn claim_view_from_engine(view: oneiron::ClaimView) -> BoundaryResult<NapiClaimV
         source: view.source,
         world_ref: view.world_ref,
         scope: view.scope,
-        valid_from: view.valid_from.map(|v| ts_from_engine(v, "valid_from")).transpose()?,
-        valid_to: view.valid_to.map(|v| ts_from_engine(v, "valid_to")).transpose()?,
+        valid_from: view
+            .valid_from
+            .map(|v| ts_from_engine(v, "valid_from"))
+            .transpose()?,
+        valid_to: view
+            .valid_to
+            .map(|v| ts_from_engine(v, "valid_to"))
+            .transpose()?,
         salience: view.salience.map(f64::from),
         stale: view.stale,
     })
@@ -492,7 +500,10 @@ fn entity_ref_receipt_from_engine(receipt: oneiron::EntityRefReceipt) -> NapiEnt
     }
 }
 
-#[expect(clippy::cast_possible_truncation, reason = "f64→f32 edge-weight narrowing at the N-API boundary is intentional")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64→f32 edge-weight narrowing at the N-API boundary is intentional"
+)]
 fn structural_put_to_engine(input: &NapiStructuralPutInput) -> BoundaryResult<StructuralPutInput> {
     Ok(StructuralPutInput {
         id: input.id.clone(),
@@ -616,7 +627,10 @@ impl ActorScopedVault {
             .facade()?
             .commit(&engine_claims)
             .map_err(|e| facade_error(&e))?;
-        Ok(receipts.into_iter().map(commit_receipt_from_engine).collect())
+        Ok(receipts
+            .into_iter()
+            .map(commit_receipt_from_engine)
+            .collect())
     }
 
     /// Commits one claim with single-cardinality auto-supersede.
@@ -717,7 +731,11 @@ impl ActorScopedVault {
     /// `user_hard_delete` | `gdpr_delete` | `policy_delete`). There is no
     /// bool-delete on this surface.
     #[napi]
-    pub fn safe_delete(&self, entity_ref: String, reason: String) -> napi::Result<NapiDeleteReceipt> {
+    pub fn safe_delete(
+        &self,
+        entity_ref: String,
+        reason: String,
+    ) -> napi::Result<NapiDeleteReceipt> {
         let reason = SafeDeleteReason::parse(&reason).ok_or_else(|| {
             boundary_error(format!(
                 "unknown delete reason {reason:?}; use user_delete, user_hard_delete, gdpr_delete, or policy_delete"
@@ -784,7 +802,10 @@ impl ActorScopedVault {
     /// Hydrates short refs (or hex ids) to full entity views.
     #[napi]
     pub fn hydrate(&self, refs: Vec<String>) -> napi::Result<Vec<NapiEntityView>> {
-        let views = self.facade()?.hydrate(&refs).map_err(|e| facade_error(&e))?;
+        let views = self
+            .facade()?
+            .hydrate(&refs)
+            .map_err(|e| facade_error(&e))?;
         views
             .into_iter()
             .map(|view| entity_view_from_engine(view).map_err(boundary_error))
@@ -904,22 +925,25 @@ impl ActorScopedVault {
         Ok(entity_ref_receipt_from_engine(receipt))
     }
 
-    /// Appends one content-addressed blob version. `bytes` is the ONE
-    /// deliberate `Buffer` on this surface (binary content, B8).
+    /// Appends one content-addressed blob version. Content crosses as a
+    /// standard base64 string (buffer-free S1 ABI, B8).
     #[napi]
     pub fn append_blob_version(
         &self,
         artifact_ref: String,
-        bytes: Buffer,
+        bytes_base64: String,
         run_ref: Option<String>,
         occurred_at: i64,
         learned_at: Option<i64>,
     ) -> napi::Result<NapiBlobVersionView> {
+        let bytes = BASE64_STANDARD
+            .decode(bytes_base64.as_bytes())
+            .map_err(|_| boundary_error("bytes_base64 is not valid standard base64".to_owned()))?;
         let view = self
             .facade()?
             .append_blob_version(
                 &artifact_ref,
-                bytes.as_ref(),
+                &bytes,
                 run_ref.as_deref(),
                 ts_to_engine(occurred_at, "occurred_at").map_err(boundary_error)?,
                 ts_opt_to_engine(learned_at, "learned_at").map_err(boundary_error)?,
@@ -934,13 +958,14 @@ impl ActorScopedVault {
         })
     }
 
-    /// Reads one blob version's bytes (hash-verified engine-side).
+    /// Reads one blob version's bytes (hash-verified engine-side) as a
+    /// standard base64 string; `null` when the version does not exist.
     #[napi]
     pub fn read_blob_version(
         &self,
         artifact_ref: String,
         version: i64,
-    ) -> napi::Result<Option<Buffer>> {
+    ) -> napi::Result<Option<String>> {
         let bytes = self
             .facade()?
             .read_blob_version(
@@ -948,7 +973,7 @@ impl ActorScopedVault {
                 ts_to_engine(version, "version").map_err(boundary_error)?,
             )
             .map_err(|e| facade_error(&e))?;
-        Ok(bytes.map(Buffer::from))
+        Ok(bytes.map(|bytes| BASE64_STANDARD.encode(bytes)))
     }
 }
 
@@ -976,6 +1001,19 @@ mod tests {
                 "{name} must not reference {needle}"
             );
         }
+    }
+
+    /// S1 ABI fitness: the facade surface carries typed DTOs only — no
+    /// byte buffers cross it (blob content rides base64 strings). The
+    /// systems-layer `NapiVault` in lib.rs keeps its buffer vocabulary.
+    #[test]
+    fn napi_facade_surface_carries_no_byte_buffers() {
+        let needle = concat!("Buf", "fer");
+        let source = include_str!("facade.rs");
+        assert!(
+            !source.contains(needle),
+            "facade.rs must not reference {needle} (S1 no-buffer ABI)"
+        );
     }
 
     #[test]

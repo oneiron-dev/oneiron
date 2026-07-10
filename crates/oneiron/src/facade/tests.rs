@@ -128,7 +128,8 @@ fn witness_writes_turn_messages_edges_and_text() {
     assert_eq!(receipt.message_short_ids.len(), 3);
     assert!(receipt.receipt_ref.starts_with("witness:"));
 
-    // 1 TURN + 3 MESSAGEs + the CONVERSATION exist with the right kinds.
+    // One TURN + three MESSAGE entities + the CONVERSATION exist with the
+    // right kinds.
     let turn = facade
         .get_entity(&receipt.turn_short_id)
         .expect("get turn")
@@ -157,7 +158,10 @@ fn witness_writes_turn_messages_edges_and_text() {
         let id = EntityId::from_hex(&view.id_hex).expect("hex id");
         let edges = vault.edges_out(&id).expect("edges out");
         let kinds: Vec<EdgeKind> = edges.iter().map(|edge| edge.kind).collect();
-        assert!(kinds.contains(&EdgeKind::PartOf), "PartOf edge on {short_id}");
+        assert!(
+            kinds.contains(&EdgeKind::PartOf),
+            "PartOf edge on {short_id}"
+        );
         assert!(
             kinds.contains(&EdgeKind::BelongsTo),
             "BelongsTo edge on {short_id}"
@@ -175,7 +179,8 @@ fn witness_writes_turn_messages_edges_and_text() {
         .unwrap()
         .unwrap();
     assert!(
-        hits.iter().any(|hit| hit.id.to_hex() == first_message.id_hex),
+        hits.iter()
+            .any(|hit| hit.id.to_hex() == first_message.id_hex),
         "witnessed content must be BM25-findable"
     );
 }
@@ -197,6 +202,13 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             occurred_at: 600,
         })
         .expect("first witness");
+    let turn_id = EntityId::from_hex(&turn_hex).unwrap();
+    let conversation_id = EntityId::from_hex(&conversation_hex).unwrap();
+    let turn_raw_before = vault.get_raw(&turn_id).unwrap().expect("turn raw");
+    let conversation_raw_before = vault
+        .get_raw(&conversation_id)
+        .unwrap()
+        .expect("conversation raw");
     // Second call reuses BOTH containers (migration composes mixed-author
     // turns as multiple witness calls sharing the same turn id).
     let second = facade
@@ -214,7 +226,28 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
     let conversations = vault
         .entities_by_type(ENTITY_TYPE_CONVERSATION)
         .expect("conversations");
-    assert_eq!(conversations.len(), 1, "conversation must not be duplicated");
+    assert_eq!(
+        conversations.len(),
+        1,
+        "conversation must not be duplicated"
+    );
+
+    // Byte-identical container state across the second call: create-or-get
+    // never re-puts an existing container (idempotency-critical for the
+    // §3.5 hash checks — counts alone would not catch a body rewrite).
+    assert_eq!(
+        vault.get_raw(&turn_id).unwrap().expect("turn raw after"),
+        turn_raw_before,
+        "reused TURN must be byte-identical"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&conversation_id)
+            .unwrap()
+            .expect("conversation raw after"),
+        conversation_raw_before,
+        "reused CONVERSATION must be byte-identical"
+    );
 
     // System-authored rows get no AuthoredBy edge (design §2.1).
     let system_view = facade
@@ -299,7 +332,9 @@ fn commit_imported_lands_proposed_and_appears_in_pending_writes() {
     assert_eq!(pending.len(), 1);
     let receipts = facade.receipts(50).expect("receipts");
     assert!(
-        receipts.iter().any(|r| r.receipt_ref == receipt.receipt_ref),
+        receipts
+            .iter()
+            .any(|r| r.receipt_ref == receipt.receipt_ref),
         "receipt_ref must resolve via receipts()"
     );
     assert!(
@@ -425,17 +460,26 @@ fn multi_cardinality_supersede_matches_on_question_id() {
         input
     };
 
-    let answer_a = facade.claim_upsert(&answer("q-a", "1", 100)).expect("answer a");
-    let answer_b = facade.claim_upsert(&answer("q-b", "2", 101)).expect("answer b");
+    let answer_a = facade
+        .claim_upsert(&answer("q-a", "1", 100))
+        .expect("answer a");
+    let answer_b = facade
+        .claim_upsert(&answer("q-b", "2", 101))
+        .expect("answer b");
     assert!(answer_a.superseded_short_id.is_none());
     assert!(
         answer_b.superseded_short_id.is_none(),
         "answering question B must never supersede the answer to question A (B1c)"
     );
 
-    let re_answer_a = facade.claim_upsert(&answer("q-a", "3", 102)).expect("re-answer a");
+    let re_answer_a = facade
+        .claim_upsert(&answer("q-a", "3", 102))
+        .expect("re-answer a");
     assert_eq!(
-        re_answer_a.superseded_short_id.as_deref().map(short_id_part),
+        re_answer_a
+            .superseded_short_id
+            .as_deref()
+            .map(short_id_part),
         Some(short_id_part(&answer_a.claim_short_id)),
         "re-answer supersedes the same question's prior claim"
     );
@@ -982,4 +1026,232 @@ fn hydrate_round_trips_witness_short_ids() {
         .hydrate(&["zz999:ff".to_owned()])
         .expect_err("dangling short ref must be a typed error");
     assert_eq!(err.code, FACADE_CODE_NOT_FOUND);
+}
+
+// ── security regressions (codex review of #471) ─────────────────────────
+
+/// F5: the migrator pre-creates derived parents with the pinned
+/// `{convex_id}` bodies via put_structural; witness create-or-get REUSES
+/// them without any re-put, so the pinned bytes survive untouched.
+#[test]
+fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x43);
+    let facade = facade_for(&vault, actor);
+
+    let conversation_hex = EntityId::from_bytes([0x44; 16]).unwrap().to_hex();
+    let turn_hex = EntityId::from_bytes([0x45; 16]).unwrap().to_hex();
+    for (id_hex, kind, convex_id) in [
+        (&conversation_hex, "CONVERSATION", "conv-11"),
+        (&turn_hex, "TURN", "turn-77"),
+    ] {
+        facade
+            .put_structural(&StructuralPutInput {
+                id: Some(id_hex.clone()),
+                kind: kind.to_owned(),
+                body: serde_json::json!({"convex_id": convex_id}),
+                text_fields: None,
+                edges: None,
+                occurred_at: 650,
+                learned_at: None,
+            })
+            .expect("pinned parent put");
+    }
+    let turn_id = EntityId::from_hex(&turn_hex).unwrap();
+    let conversation_id = EntityId::from_hex(&conversation_hex).unwrap();
+    let turn_raw = vault.get_raw(&turn_id).unwrap().expect("turn raw");
+    let conversation_raw = vault
+        .get_raw(&conversation_id)
+        .unwrap()
+        .expect("conversation raw");
+
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn_hex),
+            messages: vec![witness_message(0, WitnessAuthor::User, "migrated row")],
+            occurred_at: 651,
+        })
+        .expect("witness over pinned parents");
+
+    assert_eq!(
+        vault.get_raw(&turn_id).unwrap().expect("turn after"),
+        turn_raw,
+        "pinned {{convex_id}} TURN body must be byte-identical after witness"
+    );
+    assert_eq!(
+        vault
+            .get_raw(&conversation_id)
+            .unwrap()
+            .expect("conversation after"),
+        conversation_raw,
+        "pinned {{convex_id}} CONVERSATION body must be byte-identical after witness"
+    );
+}
+
+/// F1: MACHINE is the system-actor class type; the facade refuses to mint
+/// one (actor-forgery door).
+#[test]
+fn put_structural_rejects_machine_actor_kind() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x46);
+    let facade = facade_for(&vault, actor);
+
+    let err = facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "MACHINE".to_owned(),
+            body: serde_json::json!({"name": "forged system actor"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 660,
+            learned_at: None,
+        })
+        .expect_err("MACHINE minting must be refused");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(!err.suggestions.is_empty());
+}
+
+/// F2: retraction authority — agents may retract only their own writes;
+/// deletion is an owner (human-class) verb outright.
+#[test]
+fn retract_and_delete_enforce_actor_authority() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x47);
+    let agent_person = put_person(&vault, 0x48);
+    let subject = put_person(&vault, 0x49);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
+
+    // Owner writes a claim; a foreign agent may NOT retract it.
+    let owner_claim = owner_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("owner claim");
+    let err = agent_facade
+        .claim_retract(&owner_claim.claim_short_id)
+        .expect_err("cross-actor retract must be denied");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(!err.suggestions.is_empty());
+
+    // The agent CAN retract its own write. The writer here is the
+    // first-party eiri agent (the one agent ref the default manifest
+    // grants an auto ceiling) so its claim lands auto — a proposed claim
+    // parks a pending consent, and the engine refuses body rewrites while
+    // consent is parked (GateConsentStale), which is consent-queue
+    // machinery, not retraction authority.
+    let eiri_agent = EntityId::from_hex(&crate::gate::first_party_eiri_connector_actor_ref())
+        .expect("first-party agent id");
+    vault
+        .put_entity(
+            &eiri_agent,
+            ENTITY_TYPE_PERSON,
+            test_time(1),
+            1,
+            b"eiri agent",
+        )
+        .expect("put eiri agent");
+    let eiri_facade = vault.memory_facade(eiri_agent, EdgeActorClass::Agent);
+    let mut agent_input = claim_input(
+        "profile.mood",
+        &subject,
+        "observed",
+        serde_json::json!("curious"),
+    );
+    agent_input.occurred_at = Some(120);
+    agent_input.learned_at = Some(120);
+    let agent_claim = eiri_facade.claim_upsert(&agent_input).expect("agent claim");
+    assert_eq!(agent_claim.approval, "auto");
+    let err = agent_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect_err("a DIFFERENT agent may not retract it");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    eiri_facade
+        .claim_retract(&agent_claim.claim_short_id)
+        .expect("agent retracts its own write");
+
+    // The human owner can retract anything (here: nothing left active from
+    // the agent, so retract the owner claim to prove the owner path).
+    owner_facade
+        .claim_retract(&owner_claim.claim_short_id)
+        .expect("owner retracts");
+
+    // Deletion is an owner verb: agents are denied regardless of target.
+    let target = put_person(&vault, 0x4A);
+    let err = agent_facade
+        .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
+        .expect_err("agent delete must be denied");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let receipt = owner_facade
+        .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("owner delete");
+    assert!(receipt.existed);
+}
+
+/// F3: the replacement write and the supersession are one transaction — a
+/// refused supersession (generated-origin claim over user-stated truth)
+/// rolls the replacement back instead of leaving an orphan revision.
+#[test]
+fn refused_supersession_rolls_back_the_replacement() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x4B);
+    let subject = put_person(&vault, 0x4C);
+    let facade = facade_for(&vault, actor);
+
+    let first = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("user-stated truth");
+
+    // A generated-origin revision may not supersede user-stated truth
+    // (engine source-trust supersession rights): the whole composed write
+    // must roll back.
+    let replacement_id = EntityId::from_bytes([0x4D; 16]).unwrap();
+    let mut generated = claim_input(
+        "profile.name",
+        &subject,
+        "generated",
+        serde_json::json!("Overwritten"),
+    );
+    generated.id = Some(replacement_id.to_hex());
+    generated.occurred_at = Some(200);
+    generated.learned_at = Some(200);
+    let err = facade
+        .claim_upsert(&generated)
+        .expect_err("generated must not supersede user-stated");
+    assert!(!err.suggestions.is_empty());
+
+    assert!(
+        vault
+            .get_claim(&replacement_id)
+            .expect("read back")
+            .is_none(),
+        "refused supersession must not leave the replacement persisted"
+    );
+    let survivors = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: Some("profile.name".to_owned()),
+            lifecycle: Some("active".to_owned()),
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(
+        survivors.len(),
+        1,
+        "the prior truth stays the only active claim"
+    );
+    assert_eq!(
+        short_id_part(&survivors[0].short_ref.clone().unwrap_or_default()),
+        short_id_part(&first.claim_short_id),
+        "prior claim untouched"
+    );
 }
