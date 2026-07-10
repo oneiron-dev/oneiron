@@ -1190,7 +1190,7 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
 }
 
 #[test]
-fn cap_and_rate_reject_wildcard_channel_but_never_keeps_it() -> Result<()> {
+fn cap_and_rate_reject_wildcard_channel_but_never_keeps_it() {
     // (a) The gate matches a cap row's `channel_class` by EXACT equality, so a
     // stored `"*"` never matches a real channel (slack/email) and would debit 0
     // forever. Every cap/rate arm must fail closed on the wildcard with a
@@ -1231,7 +1231,6 @@ fn cap_and_rate_reject_wildcard_channel_but_never_keeps_it() -> Result<()> {
         real.compiled.channel_caps[0].channel_class.as_deref(),
         Some("slack")
     );
-    Ok(())
 }
 
 #[test]
@@ -1387,7 +1386,7 @@ fn crlf_imported_charter_block_does_not_false_drift() -> Result<()> {
     );
 
     // Sanity: genuine text tampering with a stale stamp still drifts.
-    let mut tampered = block.clone();
+    let mut tampered = block;
     tampered.text = "never delete on slack\r\nnever send\r\n".to_owned();
     assert!(
         charter_block_drifted(&tampered)?,
