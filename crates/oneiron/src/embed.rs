@@ -62,6 +62,10 @@ pub enum EgressDecision {
 /// Host-supplied egress gate. The OneiroNER PII head's verdict lives
 /// host-side; the engine never knows what PII is. Consulted for EVERY
 /// claim routed to a non-OnDevice embedder.
+///
+/// Host trait impls invoked under a held txn/lock must be non-blocking
+/// cached lookups; hosts run arbitrary inference in the async phases the
+/// engine exposes for it.
 pub trait EgressPredicate: Send + Sync {
     /// Egress verdict for one pending claim. `Deny` and `NoVerdict` both
     /// route the claim to the local (OnDevice) embedder — fail-closed; a
@@ -245,8 +249,12 @@ impl PendingEmbeddingReconciler {
             .into_iter()
             .partition(|work| work.route == EmbedRoute::Remote);
 
-        self.embed_and_fill_local(&local_work, &mut report)?;
-
+        // Remote batch FIRST: remote-routed rows carry the long (120s)
+        // lease window, so a primary failure in the local batch — which
+        // aborts the pass, as it always has — must not strand
+        // never-attempted remote rows behind those leases. An aborted pass
+        // therefore only leaves never-attempted rows behind the SHORT
+        // local window.
         if !remote_work.is_empty() {
             let rung = self.remote_rung.as_ref().ok_or(Error::InvariantViolation(
                 "remote-routed work without a remote rung",
@@ -271,6 +279,8 @@ impl PendingEmbeddingReconciler {
                 }
             }
         }
+
+        self.embed_and_fill_local(&local_work, &mut report)?;
 
         Ok(report)
     }

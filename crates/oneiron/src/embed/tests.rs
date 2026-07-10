@@ -833,3 +833,81 @@ fn stale_completion_preserves_newer_pending_job() -> Result<()> {
     assert!(pending_token(&vault, &id)?.is_none());
     Ok(())
 }
+
+/// OnDevice primary that always fails `embed`, for the partition-order
+/// stall regression below.
+#[derive(Debug)]
+struct FailingLocalEmbedder {
+    model_id: String,
+    dimensions: usize,
+}
+
+impl Embedder for FailingLocalEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    fn locality(&self) -> EmbedderLocality {
+        EmbedderLocality::OnDevice
+    }
+
+    fn embed(&self, _inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
+        Err(Error::InvalidConfig("primary embedder offline".to_owned()))
+    }
+}
+
+/// Codex F1 regression (ONE-1338 respin): the remote batch runs BEFORE the
+/// local batch, so a primary failure — which aborts the pass, as it always
+/// has — cannot strand never-attempted remote-routed rows behind their
+/// long 120s leases. The remote claim must be attempted and filled even
+/// though the pass itself errors on the local batch.
+#[test]
+fn local_failure_does_not_strand_remote_work() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let remote_routed = entity_id(0x5F);
+    let local_routed = entity_id(0x60);
+    put_claim(&vault, remote_routed, "remote-first")?;
+    put_claim(&vault, local_routed, "local-after")?;
+
+    let failing_primary = Arc::new(FailingLocalEmbedder {
+        model_id: "test/embedder@v1".to_owned(),
+        dimensions: 4,
+    });
+    let remote = Arc::new(RemoteFixtureEmbedder::new(
+        "test/embedder@v1",
+        4,
+        EmbedderLocality::OwnerServer,
+    ));
+    let reconciler =
+        PendingEmbeddingReconciler::new(Arc::clone(&vault), failing_primary as Arc<dyn Embedder>)
+            .with_batch_size(8)
+            .with_remote_rung(RemoteRung::new(
+                remote.clone() as Arc<dyn Embedder>,
+                Arc::new(AllowOnly(remote_routed)),
+            ))?;
+
+    let err = reconciler.reconcile_once_at(10).unwrap_err();
+    assert!(
+        matches!(err, Error::InvalidConfig(ref msg) if msg == "primary embedder offline"),
+        "the local-batch primary failure still propagates (pinned behavior)"
+    );
+
+    assert_eq!(
+        remote.seen(),
+        vec![remote_routed],
+        "the remote batch must have been attempted before the local failure"
+    );
+    assert!(
+        pending_token(&vault, &remote_routed)?.is_none(),
+        "the remote-routed claim must be filled despite the aborted pass"
+    );
+    assert!(
+        pending_token(&vault, &local_routed)?.is_some(),
+        "the local claim stays pending behind its short lease"
+    );
+    Ok(())
+}
