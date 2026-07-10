@@ -1325,6 +1325,44 @@ fn malformed_never_list_entry_fails_closed_at_validation() {
 }
 
 #[test]
+fn never_list_entry_must_be_canonical_form() {
+    let policy = |entry: &str| CompiledConnectorPolicy {
+        never_list: vec![entry.to_owned()],
+        channel_caps: Vec::new(),
+    };
+
+    // A merely well-SHAPED but non-canonical entry passes a shape-only check
+    // yet at enforcement `charter_never_list_matches` compares the STORED
+    // channel/verb by EXACT string against the effect's normalized channel and
+    // lowercased verb — a non-canonical stored part never equals it, so the
+    // prohibition fails OPEN. Every such entry MUST fail closed at validation.
+    for entry in [
+        "Slack:send",  // mixed-case channel
+        "slack:SEND",  // mixed-case verb (parses to "send", but non-canonical)
+        "SLACK:SEND",  // both non-canonical
+        " slack:send", // leading-whitespace channel
+        "slack :send", // trailing-whitespace channel
+        "slack:send ", // trailing-whitespace verb
+    ] {
+        assert!(
+            matches!(
+                validate_compiled_policy(&policy(entry)),
+                Err(Error::InvalidConnectorKeyBody(_))
+            ),
+            "non-canonical never_list entry {entry:?} must fail closed"
+        );
+    }
+
+    // The canonical forms the compiler emits still validate.
+    for entry in ["slack:send", "*:send", "slack:*", "*:*"] {
+        assert!(
+            validate_compiled_policy(&policy(entry)).is_ok(),
+            "canonical never_list entry {entry:?} must validate"
+        );
+    }
+}
+
+#[test]
 fn crlf_imported_charter_block_does_not_false_drift() -> Result<()> {
     // The compiler stamps over the CRLF-normalized (LF) text. An imported block
     // that carries raw CRLF in `text` but whose stamp was computed over the LF
