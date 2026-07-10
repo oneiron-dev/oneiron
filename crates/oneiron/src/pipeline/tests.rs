@@ -4711,8 +4711,14 @@ fn rerank_reorders_block_with_score_ladder_reassignment() -> Result<()> {
     // Score-ladder reassignment: position i keeps the i-th highest ENGINE
     // score; the score vector is unchanged even though ids permuted.
     assert_eq!(
-        reranked.iter().map(|scored| scored.score).collect::<Vec<_>>(),
-        baseline.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+        reranked
+            .iter()
+            .map(|scored| scored.score)
+            .collect::<Vec<_>>(),
+        baseline
+            .iter()
+            .map(|scored| scored.score)
+            .collect::<Vec<_>>(),
     );
     assert!(
         reranked
@@ -4751,8 +4757,14 @@ fn rerank_top_n_two_reorders_only_top_block() -> Result<()> {
         "only the top-2 block may reorder"
     );
     assert_eq!(
-        reranked.iter().map(|scored| scored.score).collect::<Vec<_>>(),
-        baseline.iter().map(|scored| scored.score).collect::<Vec<_>>(),
+        reranked
+            .iter()
+            .map(|scored| scored.score)
+            .collect::<Vec<_>>(),
+        baseline
+            .iter()
+            .map(|scored| scored.score)
+            .collect::<Vec<_>>(),
         "tail scores and ladder positions must be untouched"
     );
     Ok(())
@@ -4880,13 +4892,7 @@ fn rerank_fork_hash_distinguishes_configurations() -> Result<()> {
             .limit(10);
         match top_n {
             None => builder,
-            Some(top_n) => builder.rerank(
-                &reranker,
-                RerankOptions {
-                    top_n,
-                    query: None,
-                },
-            ),
+            Some(top_n) => builder.rerank(&reranker, RerankOptions { top_n, query: None }),
         }
     };
 

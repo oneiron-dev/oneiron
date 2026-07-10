@@ -1670,9 +1670,7 @@ impl<'a> PipelineBuilder<'a> {
                     rerank_scores[right]
                         .partial_cmp(&rerank_scores[left])
                         .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| {
-                            block_ids[left].as_bytes().cmp(block_ids[right].as_bytes())
-                        })
+                        .then_with(|| block_ids[left].as_bytes().cmp(block_ids[right].as_bytes()))
                 });
                 let mut rerank_components =
                     HashMap::<EntityId, Vec<RetrievalScoreComponent>>::new();
