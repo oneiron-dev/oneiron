@@ -7994,9 +7994,7 @@ async fn core_context_pack_scoped_bearer_merges_principal_with_supplied_block() 
     assert_eq!(stamps[1]["speaker"], Value::from(principal_ref));
     assert_eq!(stamps[1]["class"], Value::from("unknown"));
     assert!(
-        stamps
-            .iter()
-            .all(|stamp| stamp["class"] != Value::from("owner")),
+        stamps.iter().all(|stamp| stamp["class"] != "owner"),
         "no owner entry on a scoped token"
     );
 }
