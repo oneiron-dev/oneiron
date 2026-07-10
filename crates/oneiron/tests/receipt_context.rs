@@ -58,6 +58,7 @@ fn assembled_board(vault: &Vault) -> Result<EiriMemoryBoard> {
         &pack,
         EiriMemoryBoardBudget::new(8, 2, 8, 8, 8, 8),
         None,
+        None,
     ))
 }
 

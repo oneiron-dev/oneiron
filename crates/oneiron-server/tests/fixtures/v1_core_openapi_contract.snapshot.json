@@ -2098,6 +2098,16 @@
               "null"
             ]
           },
+          "disclosure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CoreDisclosureAssembly"
+              }
+            ]
+          },
           "empty": {
             "type": [
               "object",
@@ -2401,6 +2411,35 @@
         },
         "required": [
           "body"
+        ],
+        "type": "object"
+      },
+      "CoreDisclosureAssembly": {
+        "properties": {
+          "clamped_out": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "interlocutors": {
+            "items": {
+              "$ref": "#/components/schemas/CoreInterlocutorStamp"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "notice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "interlocutors",
+          "clamped_out"
         ],
         "type": "object"
       },

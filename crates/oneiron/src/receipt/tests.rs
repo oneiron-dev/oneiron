@@ -1132,6 +1132,7 @@ fn test_memory_board(claim_score: f32) -> EiriMemoryBoard {
             row(2, 0x31, EiriMemoryBoardSlot::Summaries, 0.125),
         ],
         companion: None,
+        disclosure: None,
     }
 }
 
@@ -1343,4 +1344,48 @@ fn family_projections_never_carry_context_fields() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[test]
+fn disclosure_stamp_rides_emit_receipts_and_reads_optionally() {
+    let board = test_memory_board(0.5);
+    let context = ContextReceiptFields::from_assembly(&test_prompt_stamp(), &board)
+        .expect("assembled board stamps")
+        .disclosure_stamp("mode=supervised;interlocutors=owner:owner,known_contact:kenji");
+
+    let mut receipt = projected_receipt(
+        "outbound:intent:say-it",
+        ReceiptKind::Outbound,
+        100,
+        "delivered_to_channel",
+        Some("brief:party"),
+        Some("intent:say-it"),
+        &[("intent_ref", "intent:say-it")],
+    );
+    append_context_receipt_fields(&mut receipt, &context).expect("emit receipt accepts stamp");
+    assert_eq!(
+        receipt
+            .fields
+            .get(FIELD_DISCLOSURE_STAMP)
+            .map(String::as_str),
+        Some("mode=supervised;interlocutors=owner:owner,known_contact:kenji")
+    );
+    assert_eq!(receipt.context_receipt_fields(), Some(context));
+
+    // Receipts stamped before the disclosure clamp existed read back with
+    // the field absent; the three existing fields keep their required-ness.
+    let mut legacy = projected_receipt(
+        "outbound:intent:older",
+        ReceiptKind::Outbound,
+        100,
+        "delivered_to_channel",
+        Some("brief:party"),
+        Some("intent:older"),
+        &[("intent_ref", "intent:older")],
+    );
+    let legacy_context = ContextReceiptFields::from_assembly(&test_prompt_stamp(), &board)
+        .expect("assembled board stamps");
+    append_context_receipt_fields(&mut legacy, &legacy_context).expect("emit receipt");
+    let read_back = legacy.context_receipt_fields().expect("field-set reads");
+    assert_eq!(read_back.disclosure_stamp, None);
 }

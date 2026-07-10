@@ -177,6 +177,8 @@ pub enum ErrorKind {
     InvalidConnectorKeyBody,
     InvalidChannelIdentityBody,
     InvalidCounterpartyContactBody,
+    InvalidDisclosureScope,
+    DisclosureClampViolation,
     InvalidTaskBody,
     CorruptedIndex,
     ContextPackValidation,
@@ -861,6 +863,14 @@ pub enum Error {
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
     InvalidCounterpartyContactBody(&'static str),
+    /// A DisclosureScope body failed pinned structural validation. Nothing
+    /// was written.
+    #[error("invalid disclosure scope: {0}")]
+    InvalidDisclosureScope(&'static str),
+    /// A non-admitted entity survived into an assembled context pack. The
+    /// pack build FAILS rather than leaks (OF-365 fail-closed sweep).
+    #[error("disclosure clamp violation: {0}")]
+    DisclosureClampViolation(&'static str),
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -1428,6 +1438,8 @@ impl Error {
             Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,
             Self::InvalidChannelIdentityBody(_) => ErrorKind::InvalidChannelIdentityBody,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
+            Self::InvalidDisclosureScope(_) => ErrorKind::InvalidDisclosureScope,
+            Self::DisclosureClampViolation(_) => ErrorKind::DisclosureClampViolation,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::CorruptedIndex(_) => ErrorKind::CorruptedIndex,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,

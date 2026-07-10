@@ -29,6 +29,7 @@ pub mod counterparty_contact;
 pub mod critic;
 pub mod deletion;
 pub mod delivery_window;
+pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
@@ -306,6 +307,12 @@ pub use crate::delivery_window::{
     DeliveryWindowPolicyClaim, DeliveryWindowTimeWindow, DeliveryWindowVerbClass,
     PREDICATE_DELIVERY_WINDOW_CHANNEL, PREDICATE_DELIVERY_WINDOW_CONTEXT,
     PREDICATE_DELIVERY_WINDOW_QUIET, is_delivery_window_claim_predicate,
+};
+pub use crate::disclosure::{
+    DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION,
+    DisclosureAssembly, DisclosureContext, DisclosureMode, DisclosureScope, DisclosureScopeStatus,
+    DisclosureTier, decode_disclosure_scope_body, encode_disclosure_scope_body,
+    is_disclosure_claim_predicate, presence_discretion_notice,
 };
 pub use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
