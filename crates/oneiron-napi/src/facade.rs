@@ -18,9 +18,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, ClaimInput, ClaimListFilter, CompanionRecordInput,
-    EntityId, FacadeError, HabitCheckinInput, MemoryFacade, SafeDeleteReason, StructuralEdgeSpec,
-    StructuralPutInput, TextIndexField, Vault, VaultConfig, WitnessAuthor, WitnessMessage,
-    WitnessTurn, parse_actor_key,
+    Effort, EntityId, FacadeError, HabitCheckinInput, MemoryFacade, NeighborOpts, RecallScope,
+    SafeDeleteReason, StructuralEdgeSpec, StructuralPutInput, TextIndexField, Vault, VaultConfig,
+    WitnessAuthor, WitnessMessage, WitnessTurn, parse_actor_key,
 };
 
 type BoundaryResult<T> = std::result::Result<T, String>;
@@ -65,6 +65,14 @@ fn decode_blob_base64(input: &str) -> BoundaryResult<Vec<u8>> {
     BASE64_STANDARD
         .decode(input.as_bytes())
         .map_err(|_| "bytes_base64 is not valid standard base64".to_owned())
+}
+
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "f64→f32 narrowing at the N-API boundary is intentional"
+)]
+fn narrow_to_f32(value: f64) -> f32 {
+    value as f32
 }
 
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
@@ -403,6 +411,125 @@ pub struct NapiBlobVersionView {
     pub claim_ref: String,
     /// Unix seconds.
     pub created_at: i64,
+}
+
+/// Recall scoping (S5): narrowing only; unset = vault floor.
+#[napi(object)]
+pub struct NapiRecallScope {
+    /// WORLD entity ref; scopes to that world plus base reality.
+    pub world_ref: Option<String>,
+    /// Facet entity ref; strict facet narrowing when set.
+    pub facet: Option<String>,
+}
+
+/// One BM25 hit (engine index scores).
+#[napi(object)]
+pub struct NapiLexicalHit {
+    /// Short ref (hex fallback).
+    pub short_id: String,
+    /// Registry kind string.
+    pub kind: String,
+    /// Engine BM25F score.
+    pub score: f64,
+    /// Content preview, when available.
+    pub snippet: Option<String>,
+}
+
+/// Options for `neighbors`.
+#[napi(object)]
+pub struct NapiNeighborOpts {
+    /// Restrict to this snake_case EdgeKind name.
+    pub edge_kind: Option<String>,
+    /// Drop edges below this weight.
+    pub min_weight: Option<f64>,
+    /// Maximum hits.
+    pub limit: u32,
+}
+
+/// One graph neighbor.
+#[napi(object)]
+pub struct NapiNeighborHit {
+    /// Short ref of the neighbor.
+    pub short_id: String,
+    /// Registry kind string of the neighbor.
+    pub kind: String,
+    /// snake_case EdgeKind name.
+    pub edge_kind: String,
+    /// Stored edge weight.
+    pub weight: f64,
+    /// `out` | `in` relative to the anchor.
+    pub direction: String,
+}
+
+/// Item provenance (S6, default-on).
+#[napi(object)]
+pub struct NapiMemoryProvenance {
+    /// Claim source string, or `record` for structural records.
+    pub source: String,
+    /// This revision plus superseded ancestors.
+    pub source_revision_ids: Vec<String>,
+    /// Evidence TURN ids.
+    pub evidence_turn_ids: Vec<String>,
+}
+
+/// One memory pack item (S6).
+#[napi(object)]
+pub struct NapiMemoryItem {
+    /// Short ref, hydratable via `hydrate`.
+    pub short_id: String,
+    /// Registry kind string.
+    pub kind: String,
+    /// Predicate (claims only).
+    pub predicate: Option<String>,
+    /// Text rendering of the value/content.
+    pub value_text: String,
+    /// Calibrated-absolute confidence in [0, 1].
+    pub confidence: f64,
+    /// Hedge vocabulary bucket.
+    pub hedge_bucket: String,
+    /// Provenance.
+    pub provenance: NapiMemoryProvenance,
+    /// World hex, when world-scoped.
+    pub world: Option<String>,
+    /// Facet hex, when faceted.
+    pub facet: Option<String>,
+    /// Salience, when stamped.
+    pub salience: Option<f64>,
+}
+
+/// Scope honesty (S6).
+#[napi(object)]
+pub struct NapiScopeHonesty {
+    /// Worlds excluded by the requested scope.
+    pub out_of_scope_worlds: Vec<String>,
+}
+
+/// Retrieval accounting (S6).
+#[napi(object)]
+pub struct NapiRetrievalMeta {
+    /// True when only sparse signals ran.
+    pub sparse: Option<bool>,
+    /// Candidates considered.
+    pub total_candidates: i64,
+    /// CLAIM items returned.
+    pub claims_returned: i64,
+    /// Set when a leased deep call executed as standard.
+    pub deep_pending: Option<bool>,
+}
+
+/// The S6 memory pack (`packVersion: 1`).
+#[napi(object)]
+pub struct NapiMemoryPack {
+    /// Ranked items.
+    pub items: Vec<NapiMemoryItem>,
+    /// What the scope excluded.
+    pub scope_honesty: NapiScopeHonesty,
+    /// Retrieval accounting.
+    pub retrieval_meta: NapiRetrievalMeta,
+    /// Schema version.
+    pub pack_version: u32,
+    /// Text rendering in the requested format; absent = typed only.
+    pub rendered: Option<String>,
 }
 
 /// Selector for `forget`: a claim short ref, or `{subjectRef, predicate}`.
@@ -993,6 +1120,130 @@ impl ActorScopedVault {
             content_hash_hex: view.content_hash_hex,
             claim_ref: view.claim_ref,
             created_at: ts_from_engine(view.created_at, "created_at").map_err(boundary_error)?,
+        })
+    }
+
+    /// BM25 text query over the engine index.
+    #[napi]
+    pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<Vec<NapiLexicalHit>> {
+        let hits = self
+            .facade()?
+            .query_bm25(&query, limit as usize)
+            .map_err(|e| facade_error(&e))?;
+        Ok(hits
+            .into_iter()
+            .map(|hit| NapiLexicalHit {
+                short_id: hit.short_id,
+                kind: hit.kind,
+                score: f64::from(hit.score),
+                snippet: hit.snippet,
+            })
+            .collect())
+    }
+
+    /// Weighted-edge neighborhood, filtered engine-side.
+    #[napi]
+    pub fn neighbors(
+        &self,
+        entity_ref: String,
+        opts: NapiNeighborOpts,
+    ) -> napi::Result<Vec<NapiNeighborHit>> {
+        let hits = self
+            .facade()?
+            .neighbors(
+                &entity_ref,
+                &NeighborOpts {
+                    edge_kind: opts.edge_kind,
+                    min_weight: opts.min_weight.map(narrow_to_f32),
+                    limit: opts.limit as usize,
+                },
+            )
+            .map_err(|e| facade_error(&e))?;
+        Ok(hits
+            .into_iter()
+            .map(|hit| NapiNeighborHit {
+                short_id: hit.short_id,
+                kind: hit.kind,
+                edge_kind: hit.edge_kind,
+                weight: f64::from(hit.weight),
+                direction: hit.direction,
+            })
+            .collect())
+    }
+
+    /// Effort-dialed retrieval into an S6 memory pack. `effort` is
+    /// `minimal` | `standard` | `deep`; no lease handle exists on this
+    /// surface yet (OF-131), so `deep` returns the typed `LEASE_REQUIRED`
+    /// error until the LLMB chain lands the issuer.
+    #[napi]
+    pub fn recall(
+        &self,
+        query: String,
+        effort: String,
+        scope: Option<NapiRecallScope>,
+        limit: u32,
+        format: Option<String>,
+    ) -> napi::Result<NapiMemoryPack> {
+        let effort = Effort::parse(&effort).ok_or_else(|| {
+            boundary_error(format!(
+                "unknown effort {effort:?}; use minimal, standard, or deep"
+            ))
+        })?;
+        let scope = scope.map_or_else(RecallScope::default, |scope| RecallScope {
+            world_ref: scope.world_ref,
+            facet: scope.facet,
+        });
+        let pack = self
+            .facade()?
+            .recall(
+                &query,
+                effort,
+                &scope,
+                limit as usize,
+                format.as_deref(),
+                None,
+            )
+            .map_err(|e| facade_error(&e))?;
+        Ok(NapiMemoryPack {
+            items: pack
+                .items
+                .into_iter()
+                .map(|item| NapiMemoryItem {
+                    short_id: item.short_id,
+                    kind: item.kind,
+                    predicate: item.predicate,
+                    value_text: item.value_text,
+                    confidence: f64::from(item.confidence),
+                    hedge_bucket: item.hedge_bucket,
+                    provenance: NapiMemoryProvenance {
+                        source: item.provenance.source,
+                        source_revision_ids: item.provenance.source_revision_ids,
+                        evidence_turn_ids: item.provenance.evidence_turn_ids,
+                    },
+                    world: item.world,
+                    facet: item.facet,
+                    salience: item.salience.map(f64::from),
+                })
+                .collect(),
+            scope_honesty: NapiScopeHonesty {
+                out_of_scope_worlds: pack.scope_honesty.out_of_scope_worlds,
+            },
+            retrieval_meta: NapiRetrievalMeta {
+                sparse: pack.retrieval_meta.sparse,
+                total_candidates: ts_from_engine(
+                    pack.retrieval_meta.total_candidates,
+                    "total_candidates",
+                )
+                .map_err(boundary_error)?,
+                claims_returned: ts_from_engine(
+                    pack.retrieval_meta.claims_returned,
+                    "claims_returned",
+                )
+                .map_err(boundary_error)?,
+                deep_pending: pack.retrieval_meta.deep_pending,
+            },
+            pack_version: pack.pack_version,
+            rendered: pack.rendered,
         })
     }
 

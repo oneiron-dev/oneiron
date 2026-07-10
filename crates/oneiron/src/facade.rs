@@ -17,6 +17,7 @@
 //! (`GateWriteRejected`), the facade resubmits the same claim `proposed`, so
 //! writes park as pending consents instead of vanishing.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
 use rmpv::Value;
@@ -28,11 +29,13 @@ use crate::batch::{
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    claim_surfaceable,
 };
 use crate::companion::{
     CompanionExportClassification, CompanionProvenance, CompanionRecord, CompanionScope,
     companion_value_to_json,
 };
+use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::deletion::DeleteReason;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
@@ -42,10 +45,13 @@ use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
+use crate::llm::BudgetLease;
+use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
 };
+use crate::serialize::{SerializeConfig, serialize_pack};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WriteActor, WriteEnvelope, WriteProvenance,
@@ -62,6 +68,11 @@ pub const FACADE_CODE_FORBIDDEN: &str = "FORBIDDEN";
 pub const FACADE_CODE_INVALID_STATE: &str = "INVALID_STATE";
 /// See [`FACADE_CODE_BAD_REQUEST`].
 pub const FACADE_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
+/// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
+pub const FACADE_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
+
+/// The S6 `MemoryPack` schema version.
+pub const MEMORY_PACK_VERSION: u32 = 1;
 
 /// Predicates with declared multi-cardinality supersession keys (B1c,
 /// RATIFY-20260710 R0): the prior-claim match extends
@@ -71,6 +82,11 @@ pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["eiri.onboarding.answer"];
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 const SCOPE_SENSITIVITY_KEY: &str = "sensitivity";
 const GATE_RECEIPT_SCAN_LIMIT: usize = 512;
+const PPR_SEED_LIMIT: usize = 8;
+const SNIPPET_MAX_CHARS: usize = 160;
+/// Bounded claim scan behind scope-honesty world enumeration.
+const SCOPE_HONESTY_SCAN_CAP: usize = 512;
+const RECALL_TOKEN_BUDGET: usize = 4000;
 
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
@@ -616,6 +632,171 @@ pub struct BlobVersionView {
     pub claim_ref: String,
     /// Unix seconds.
     pub created_at: u64,
+}
+
+/// Retrieval effort dial (S6). Deliberately distinct from `llm.rs`
+/// `ReasoningEffort` (the LLM dial) and `context_pack.rs` `FieldProfile`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effort {
+    /// Pure lexical retrieval: text search only, no graph expansion, no
+    /// hydration, minimal fields. No LLM, no lease.
+    Minimal,
+    /// Text + PPR graph expansion, 1-hop edges, hydration, standard
+    /// fields, recency/salience/confidence boosts. No LLM, no lease.
+    Standard,
+    /// Lease-gated deep retrieval. No lease-issuer exists yet (OF-131
+    /// IN_BUILD): without a lease this is a typed `LEASE_REQUIRED` error;
+    /// with one it executes as `Standard` plus `deep_pending: true` until
+    /// the LLMB chain wires execution.
+    Deep,
+}
+
+impl Effort {
+    /// Stable string form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Standard => "standard",
+            Self::Deep => "deep",
+        }
+    }
+
+    /// Parses the stable string form.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "minimal" => Some(Self::Minimal),
+            "standard" => Some(Self::Standard),
+            "deep" => Some(Self::Deep),
+            _ => None,
+        }
+    }
+}
+
+/// Recall scoping (S5): world/facet narrowing only — unset means the vault
+/// floor; the scope never widens beyond it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecallScope {
+    /// WORLD entity ref; scopes to that world plus base reality.
+    pub world_ref: Option<String>,
+    /// Facet entity ref; strict facet narrowing when set.
+    pub facet: Option<String>,
+}
+
+/// One BM25 hit (engine index scores, never re-ranked app-side).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LexicalHit {
+    /// Short ref (hex fallback).
+    pub short_id: String,
+    /// Registry kind string.
+    pub kind: String,
+    /// Engine BM25F score.
+    pub score: f32,
+    /// Content preview, when the body carries a `content` field.
+    pub snippet: Option<String>,
+}
+
+/// Options for [`MemoryFacade::neighbors`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NeighborOpts {
+    /// Restrict to this snake_case `EdgeKind` name.
+    pub edge_kind: Option<String>,
+    /// Drop edges below this weight (engine-side filter).
+    pub min_weight: Option<f32>,
+    /// Maximum hits (required; no unbounded scans).
+    pub limit: usize,
+}
+
+/// One graph neighbor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NeighborHit {
+    /// Short ref of the neighboring entity (hex fallback).
+    pub short_id: String,
+    /// Registry kind string of the neighbor.
+    pub kind: String,
+    /// snake_case `EdgeKind` name.
+    pub edge_kind: String,
+    /// Stored edge weight.
+    pub weight: f32,
+    /// `out` (edge from the anchor) or `in` (edge into the anchor).
+    pub direction: String,
+}
+
+/// Item provenance (S6, default-on).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryProvenance {
+    /// Claim source string, or `record` for structural source records.
+    pub source: String,
+    /// This revision plus superseded ancestors (32-hex ids).
+    pub source_revision_ids: Vec<String>,
+    /// Evidence TURN ids. Populated structurally for MESSAGE items; claim
+    /// evidence stamping is the extraction pipeline's later job.
+    pub evidence_turn_ids: Vec<String>,
+}
+
+/// One memory pack item (S6 schema).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryItem {
+    /// Short ref, hydratable via [`MemoryFacade::hydrate`].
+    pub short_id: String,
+    /// Registry kind string.
+    pub kind: String,
+    /// Predicate (claims only).
+    pub predicate: Option<String>,
+    /// Text rendering of the item value/content (capped).
+    pub value_text: String,
+    /// Calibrated-absolute confidence in [0, 1] — NEVER set-relative:
+    /// read from the claim body, independent of the candidate set.
+    pub confidence: f32,
+    /// Hedge vocabulary bucket derived from `confidence`.
+    pub hedge_bucket: String,
+    /// Provenance (default-on).
+    pub provenance: MemoryProvenance,
+    /// World hex, when world-scoped.
+    pub world: Option<String>,
+    /// Facet hex, when faceted.
+    pub facet: Option<String>,
+    /// Salience, when stamped.
+    pub salience: Option<f32>,
+}
+
+/// Scope honesty (S6): what the scope excluded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeHonesty {
+    /// Worlds holding surfaceable claims outside the requested scope.
+    pub out_of_scope_worlds: Vec<String>,
+}
+
+/// Retrieval accounting (S6).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetrievalMeta {
+    /// True when only sparse (lexical/graph) signals ran — no dense
+    /// vector signal is available until the embedder lane lands.
+    pub sparse: Option<bool>,
+    /// Candidates considered by the retrieval pipeline.
+    pub total_candidates: u64,
+    /// CLAIM items in the returned pack.
+    pub claims_returned: u64,
+    /// Set when a leased `Deep` call executed as `Standard` (LLMB chain
+    /// not yet wired).
+    pub deep_pending: Option<bool>,
+}
+
+/// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryPack {
+    /// Ranked items.
+    pub items: Vec<MemoryItem>,
+    /// What the scope excluded.
+    pub scope_honesty: ScopeHonesty,
+    /// Retrieval accounting.
+    pub retrieval_meta: RetrievalMeta,
+    /// Schema version (always [`MEMORY_PACK_VERSION`]).
+    pub pack_version: u32,
+    /// Text rendering in the requested OF-096 format; `None` = typed only.
+    pub rendered: Option<String>,
 }
 
 /// Parses the pinned actor-key grammar `"<actor_class>:<entity_ref>"`
@@ -1759,7 +1940,388 @@ impl MemoryFacade<'_> {
             .collect())
     }
 
+    // ── query verbs (BRIDGE-02) ─────────────────────────────────────────
+
+    /// BM25 text query over the engine index (engine scores, never a
+    /// re-implementation).
+    pub fn query_bm25(&self, query: &str, limit: usize) -> FacadeResult<Vec<LexicalHit>> {
+        if limit == 0 {
+            return Err(FacadeError::bad_request(
+                "query_bm25 limit must be at least 1",
+            ));
+        }
+        let hits = self
+            .vault
+            .search_text(query, limit)
+            .map_err(FacadeError::from)?;
+        let mut out = Vec::with_capacity(hits.len());
+        for hit in hits {
+            let Some(entity_type) = self
+                .vault
+                .get_entity_type(&hit.id)
+                .map_err(FacadeError::from)?
+            else {
+                continue;
+            };
+            let snippet = self
+                .entity_view(&hit.id)?
+                .and_then(|view| view.body)
+                .and_then(|body| {
+                    body.get("content")
+                        .and_then(serde_json::Value::as_str)
+                        .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
+                });
+            out.push(LexicalHit {
+                short_id: self.short_ref_or_hex(&hit.id)?,
+                kind: kind_string_for_type(entity_type),
+                score: hit.score,
+                snippet,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Weighted-edge neighborhood of one entity, filtered engine-side by
+    /// edge kind and minimum weight.
+    pub fn neighbors(
+        &self,
+        entity_ref: &str,
+        opts: &NeighborOpts,
+    ) -> FacadeResult<Vec<NeighborHit>> {
+        if opts.limit == 0 {
+            return Err(FacadeError::bad_request(
+                "neighbors limit must be at least 1",
+            ));
+        }
+        let kind_filter = match opts.edge_kind.as_deref() {
+            Some(name) => Some(edge_kind_from_str(name).ok_or_else(|| {
+                FacadeError::bad_request_with(
+                    format!("unknown edge kind {name:?}"),
+                    &["Use a snake_case EdgeKind name such as belongs_to or attached."],
+                )
+            })?),
+            None => None,
+        };
+        let id = self.resolve_ref(entity_ref)?;
+        let outbound = self.vault.edges_out(&id).map_err(FacadeError::from)?;
+        let inbound = self.vault.edges_in(&id).map_err(FacadeError::from)?;
+        let mut hits = Vec::new();
+        for (direction, edges) in [("out", outbound), ("in", inbound)] {
+            for edge in edges {
+                if hits.len() >= opts.limit {
+                    return Ok(hits);
+                }
+                if let Some(kind) = kind_filter
+                    && edge.kind != kind
+                {
+                    continue;
+                }
+                if let Some(min_weight) = opts.min_weight
+                    && edge.weight < min_weight
+                {
+                    continue;
+                }
+                let kind = self
+                    .vault
+                    .get_entity_type(&edge.target)
+                    .map_err(FacadeError::from)?
+                    .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type);
+                hits.push(NeighborHit {
+                    short_id: self.short_ref_or_hex(&edge.target)?,
+                    kind,
+                    edge_kind: edge_kind_name(edge.kind).to_owned(),
+                    weight: edge.weight,
+                    direction: direction.to_owned(),
+                });
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Effort-dialed retrieval into an S6 `MemoryPack`.
+    ///
+    /// `Deep` requires a [`BudgetLease`] (W4/C4). No lease-issuer exists at
+    /// base (OF-131), so `Deep` without a lease is a typed
+    /// `LEASE_REQUIRED` error, and a leased `Deep` executes as `Standard`
+    /// with `retrieval_meta.deep_pending = true`.
+    ///
+    /// Retrieval is sparse-only today (`retrieval_meta.sparse = true`): the
+    /// engine takes caller-supplied query vectors and no embedder lane has
+    /// landed, so the vector signal joins later without a contract change.
+    pub fn recall(
+        &self,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&BudgetLease>,
+    ) -> FacadeResult<MemoryPack> {
+        if limit == 0 {
+            return Err(FacadeError::bad_request("recall limit must be at least 1"));
+        }
+        let mut deep_pending = None;
+        let effective = match effort {
+            Effort::Deep => {
+                if lease.is_none() {
+                    return Err(FacadeError::new(
+                        FACADE_CODE_LEASE_REQUIRED,
+                        "deep recall requires a budget lease and no lease was presented",
+                        &[
+                            "Use standard effort or present a budget lease.",
+                            "The lease issuer lands with the LLMB chain (OF-131).",
+                        ],
+                    ));
+                }
+                deep_pending = Some(true);
+                Effort::Standard
+            }
+            other => other,
+        };
+        let world_scope = match &scope.world_ref {
+            Some(world_ref) => WorldScope::World(self.resolve_ref(world_ref)?),
+            None => WorldScope::All,
+        };
+        let pack_format = format.map(parse_pack_format).transpose()?;
+
+        let (items, total_candidates, rendered) = match &scope.facet {
+            Some(facet_ref) => {
+                // Facet-strict narrowing rides the raw retrieval pipeline:
+                // ContextPackBuilder exposes no facet passthrough and
+                // pipeline.rs/context_pack.rs are consume-only for this
+                // chain. No pack rendering on this path.
+                let facet_id = self.resolve_ref(facet_ref)?;
+                let mut pipeline = self
+                    .vault
+                    .query()
+                    .search_text(query, limit)
+                    .facet(&facet_id, FacetMode::Strict)
+                    .world(world_scope);
+                if effective == Effort::Standard {
+                    pipeline = pipeline
+                        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                        .boost_salience()
+                        .boost_confidence();
+                }
+                let hits = pipeline.run().map_err(FacadeError::from)?;
+                let total = hits.len() as u64;
+                let mut items = Vec::new();
+                for hit in hits.into_iter().take(limit) {
+                    if let Some(item) = self.memory_item_for(&hit.id, Some(facet_id))? {
+                        items.push(item);
+                    }
+                }
+                (items, total, None)
+            }
+            None => {
+                let mut builder = self
+                    .vault
+                    .context_pack()
+                    .search_text(query, limit)
+                    .limit(limit)
+                    .world(world_scope);
+                match effective {
+                    Effort::Minimal => {
+                        builder = builder
+                            .hydrate(false)
+                            .include_edges(false)
+                            .field_profile(FieldProfile::Minimal);
+                    }
+                    Effort::Standard | Effort::Deep => {
+                        let seeds: Vec<EntityId> = self
+                            .vault
+                            .search_text(query, PPR_SEED_LIMIT)
+                            .map_err(FacadeError::from)?
+                            .into_iter()
+                            .map(|hit| hit.id)
+                            .collect();
+                        if !seeds.is_empty() {
+                            builder = builder.expand_ppr(&seeds, 1);
+                        }
+                        builder = builder
+                            .include_edges(true)
+                            .edge_hop(1)
+                            .hydrate(true)
+                            .field_profile(FieldProfile::Standard)
+                            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                            .boost_salience()
+                            .boost_confidence();
+                    }
+                }
+                let pack = builder.run().map_err(FacadeError::from)?;
+                let total = pack.stats.candidates_considered as u64;
+                let rendered = pack_format.map(|fmt| {
+                    let config = SerializeConfig {
+                        format: fmt,
+                        profile: match effective {
+                            Effort::Minimal => FieldProfile::Minimal,
+                            Effort::Standard | Effort::Deep => FieldProfile::Standard,
+                        },
+                        budget: RECALL_TOKEN_BUDGET,
+                        allocation: crate::context_pack::TokenAllocation::default(),
+                        include_stats: false,
+                        merge_neighbors: true,
+                        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+                        max_item_tokens: 0,
+                    };
+                    String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
+                });
+                let mut items = Vec::new();
+                for entity in pack.results.iter().take(limit) {
+                    if let Some(item) = self.memory_item_for(&entity.id, None)? {
+                        items.push(item);
+                    }
+                }
+                (items, total, rendered)
+            }
+        };
+
+        let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
+        Ok(MemoryPack {
+            scope_honesty: ScopeHonesty {
+                out_of_scope_worlds: self.out_of_scope_worlds(scope.world_ref.as_deref())?,
+            },
+            retrieval_meta: RetrievalMeta {
+                sparse: Some(true),
+                total_candidates,
+                claims_returned,
+                deep_pending,
+            },
+            items,
+            pack_version: MEMORY_PACK_VERSION,
+            rendered,
+        })
+    }
+
     // ── internals ───────────────────────────────────────────────────────
+
+    /// Builds one S6 memory item from an entity id. Returns `Ok(None)` for
+    /// missing entities and non-surfaceable claims (D19 admission).
+    fn memory_item_for(
+        &self,
+        id: &EntityId,
+        facet_hint: Option<EntityId>,
+    ) -> FacadeResult<Option<MemoryItem>> {
+        let Some(entity_type) = self.vault.get_entity_type(id).map_err(FacadeError::from)? else {
+            return Ok(None);
+        };
+        let edges = self.vault.edges_out(id).map_err(FacadeError::from)?;
+        let mut source_revision_ids = vec![id.to_hex()];
+        source_revision_ids.extend(
+            edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Supersedes)
+                .map(|edge| edge.target.to_hex()),
+        );
+        let facet = facet_hint.map(|facet| facet.to_hex()).or_else(|| {
+            edges
+                .iter()
+                .find(|edge| edge.kind == EdgeKind::HasFacet)
+                .map(|edge| edge.target.to_hex())
+        });
+        let short_id = self.short_ref_or_hex(id)?;
+        let kind = kind_string_for_type(entity_type);
+
+        if entity_type == ENTITY_TYPE_CLAIM {
+            let Some(body) = self.vault.get_claim(id).map_err(FacadeError::from)? else {
+                return Ok(None);
+            };
+            if !claim_surfaceable(&body) {
+                return Ok(None);
+            }
+            let value_json = companion_value_to_json(&body.value);
+            Ok(Some(MemoryItem {
+                short_id,
+                kind,
+                predicate: Some(body.predicate.clone()),
+                value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
+                confidence: body.confidence,
+                hedge_bucket: hedge_bucket_for(body.confidence).to_owned(),
+                provenance: MemoryProvenance {
+                    source: body
+                        .source
+                        .map_or_else(|| "unattributed".to_owned(), |s| s.as_str().to_owned()),
+                    source_revision_ids,
+                    evidence_turn_ids: Vec::new(),
+                },
+                world: body.world.map(|world| world.to_hex()),
+                facet,
+                salience: body.salience,
+            }))
+        } else {
+            let Some(view) = self.entity_view(id)? else {
+                return Ok(None);
+            };
+            let value_text = view
+                .body
+                .as_ref()
+                .and_then(|body| body.get("content"))
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(
+                    || {
+                        view.body
+                            .as_ref()
+                            .map(|body| serde_json::to_string(body).unwrap_or_default())
+                            .unwrap_or_default()
+                    },
+                    str::to_owned,
+                );
+            let evidence_turn_ids = if entity_type == ENTITY_TYPE_MESSAGE {
+                edges
+                    .iter()
+                    .filter(|edge| edge.kind == EdgeKind::PartOf)
+                    .map(|edge| edge.target.to_hex())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Ok(Some(MemoryItem {
+                short_id,
+                kind,
+                predicate: None,
+                value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
+                confidence: 1.0,
+                hedge_bucket: hedge_bucket_for(1.0).to_owned(),
+                provenance: MemoryProvenance {
+                    source: "record".to_owned(),
+                    source_revision_ids,
+                    evidence_turn_ids,
+                },
+                world: None,
+                facet,
+                salience: None,
+            }))
+        }
+    }
+
+    /// Scope honesty: worlds holding surfaceable claims outside the
+    /// requested world scope. Bounded scan (first
+    /// [`SCOPE_HONESTY_SCAN_CAP`] claims); unset scope excludes nothing.
+    fn out_of_scope_worlds(&self, scope_world_ref: Option<&str>) -> FacadeResult<Vec<String>> {
+        let Some(world_ref) = scope_world_ref else {
+            return Ok(Vec::new());
+        };
+        let scope_world = self.resolve_ref(world_ref)?;
+        let ids = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_CLAIM)
+            .map_err(FacadeError::from)?;
+        let mut worlds = BTreeSet::new();
+        for id in ids.into_iter().take(SCOPE_HONESTY_SCAN_CAP) {
+            let Some(body) = self.vault.get_claim(&id).map_err(FacadeError::from)? else {
+                continue;
+            };
+            if !claim_surfaceable(&body) {
+                continue;
+            }
+            if let Some(world) = body.world
+                && world != scope_world
+            {
+                worlds.insert(world.to_hex());
+            }
+        }
+        Ok(worlds.into_iter().collect())
+    }
 
     fn commit_one(&self, input: &ClaimInput, auto_supersede: bool) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
@@ -2160,6 +2722,79 @@ fn hard_deleted_refusal(id: &EntityId) -> FacadeError {
             "Recreation at a purged id would resurrect erased data or retype an actor.",
         ],
     )
+}
+
+/// Hedge vocabulary over calibrated-absolute confidence (scour:A176 —
+/// never rank-relative).
+fn hedge_bucket_for(confidence: f32) -> &'static str {
+    if confidence >= 0.9 {
+        "confident"
+    } else if confidence >= 0.7 {
+        "likely"
+    } else if confidence >= 0.4 {
+        "tentative"
+    } else {
+        "uncertain"
+    }
+}
+
+/// snake_case name of an `EdgeKind` (inverse of `edge_kind_from_str`).
+const fn edge_kind_name(kind: EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::AuthoredBy => "authored_by",
+        EdgeKind::ScopedTo => "scoped_to",
+        EdgeKind::PartOf => "part_of",
+        EdgeKind::Supersedes => "supersedes",
+        EdgeKind::BelongsTo => "belongs_to",
+        EdgeKind::ClaimOf => "claim_of",
+        EdgeKind::ChildOf => "child_of",
+        EdgeKind::AssignedTo => "assigned_to",
+        EdgeKind::DerivedFrom => "derived_from",
+        EdgeKind::Mentions => "mentions",
+        EdgeKind::About => "about",
+        EdgeKind::Supports => "supports",
+        EdgeKind::Opposes => "opposes",
+        EdgeKind::ParticipatesIn => "participates_in",
+        EdgeKind::Attached => "attached",
+        EdgeKind::EmployedBy => "employed_by",
+        EdgeKind::HasFacet => "has_facet",
+        EdgeKind::FacetOf => "facet_of",
+        EdgeKind::InWorld => "in_world",
+        EdgeKind::SetIn => "set_in",
+    }
+}
+
+/// Maps the OF-096 format strings (`toon|md|json|yaml|txt`) to the pack
+/// serializer formats.
+fn parse_pack_format(format: &str) -> FacadeResult<PackFormat> {
+    match format {
+        "json" => Ok(PackFormat::Json),
+        "yaml" => Ok(PackFormat::Yaml),
+        "toon" => Ok(PackFormat::Toon),
+        "md" => Ok(PackFormat::Markdown),
+        "txt" => Ok(PackFormat::Plaintext),
+        other => Err(FacadeError::bad_request_with(
+            format!("unknown pack format {other:?}"),
+            &["Use one of: toon, md, json, yaml, txt."],
+        )),
+    }
+}
+
+fn value_text_of(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_owned()
+    } else {
+        let mut out: String = text.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
 }
 
 fn hex_string(bytes: &[u8]) -> String {
