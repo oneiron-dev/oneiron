@@ -124,6 +124,14 @@ impl CoreAuth {
         self.principal_ref.as_deref()
     }
 
+    /// Returns whether this auth is an un-narrowed owner-grade session.
+    ///
+    /// `principal_ref` is the third-party narrowing key: a bearer carrying it
+    /// is scoped to that principal and is never owner-grade (OF-365 ILD-1).
+    pub(crate) fn is_owner_session(&self) -> bool {
+        self.principal_ref.is_none()
+    }
+
     pub(crate) fn idempotency_principal(&self) -> String {
         let scopes = if self.implicit_all_scopes {
             IMPLICIT_ALL_IDEMPOTENCY_SCOPES.to_owned()

@@ -52,6 +52,7 @@ pub(crate) mod identity;
 pub mod identity_reputation;
 pub mod inbox;
 pub mod ingest;
+pub mod interlocutor;
 pub mod job_queue;
 pub mod lens;
 pub(crate) mod limits;
@@ -441,6 +442,10 @@ pub use crate::ingest::{
     IngestTrustCeiling, JSONL_TRANSCRIPT_SOURCE_ID, JsonlTranscriptSource,
     KNOWN_INGEST_HARNESS_CONFIG, NormalizedIngestBatch, NormalizedIngestClaim,
     NormalizedIngestRecord,
+};
+pub use crate::interlocutor::{
+    Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput,
+    InterlocutorSet, InterlocutorStamp, PresenceEvidence, validate_interlocutor_stamp_value,
 };
 pub use crate::job_queue::{
     ClaimJob, ClaimOutcome, CleanupJobLeases, CompleteJob, CompleteOutcome, EnqueueJob,

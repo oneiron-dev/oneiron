@@ -108,7 +108,11 @@ pub const PREDICATE_COUNTERPARTY_CONTACT_PROMO_CONSENT: &str = "counterparty_con
 pub const PREDICATE_COUNTERPARTY_CONTACT_NOTES: &str = "counterparty_contact.notes";
 
 /// How the counterparty first became reachable through this identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// The serde derive is wire-only (interlocutor echo, ILD-1); the on-disk
+/// MessagePack body encoding stays `as_str()` based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CounterpartyFirstTouch {
     UserIntroduction,
