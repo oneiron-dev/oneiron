@@ -399,8 +399,8 @@ fn cosine_ghost_is_gravity_signal_not_multiplier() {
 
 #[test]
 fn threshold_boundary() {
-    let boundary = entity_id(0xA1);
-    let above = entity_id(0xA2);
+    let boundary = entity_id(0x91);
+    let above = entity_id(0x92);
     let vector = vec![scored(boundary, 0.30), scored(above, 0.31)];
     let text = Vec::new();
     let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
@@ -412,7 +412,7 @@ fn threshold_boundary() {
 
 #[test]
 fn lexical_overlap_protects() {
-    let protected = entity_id(0xA3);
+    let protected = entity_id(0x93);
     let vector = vec![scored(protected, 0.6)];
     let text = vec![scored(protected, 9.0)];
     let ghosts = cosine_ghost_set(&[vector, text], Some(0), Some(1));
@@ -422,7 +422,7 @@ fn lexical_overlap_protects() {
 
 #[test]
 fn single_channel_noop() {
-    let ghost = entity_id(0xA4);
+    let ghost = entity_id(0x94);
     let vector = vec![scored(ghost, 0.6)];
     let ghosts = cosine_ghost_set(std::slice::from_ref(&vector), Some(0), None);
 
@@ -432,7 +432,7 @@ fn single_channel_noop() {
 #[test]
 fn metric_counts_dampened() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let ghost_a = entity_id(0xA5);
+    let ghost_a = entity_id(0x95);
     let ghost_b = entity_id(0xA6);
     let lexical = entity_id(0xA7);
     let low_similarity = entity_id(0xA8);
@@ -2437,7 +2437,7 @@ fn unsupported_last_subday_quantity_query_fails_closed() -> Result<()> {
 #[test]
 fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let facet_active = entity_id(0xA1);
+    let facet_active = entity_id(0x91);
     let facet_other = entity_id(0xB1);
     let other_facet_exact = entity_id(0x10);
     let active_facet_prefix = entity_id(0x20);
@@ -2481,7 +2481,7 @@ fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<
 #[test]
 fn exact_other_world_text_hit_does_not_suppress_world_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_active = entity_id(0xA2);
+    let world_active = entity_id(0x92);
     let world_other = entity_id(0xB2);
     let other_world_exact = entity_id(0x11);
     let active_world_prefix = entity_id(0x21);
@@ -2508,7 +2508,7 @@ fn exact_other_world_text_hit_does_not_suppress_world_prefix() -> Result<()> {
 #[test]
 fn prefix_probe_claim_gate_runs_before_world_scope_decode() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let world_active = entity_id(0xA3);
+    let world_active = entity_id(0x93);
     let malformed_probe_only = entity_id(0x13);
     let active_world_prefix = entity_id(0x23);
 
@@ -3524,7 +3524,7 @@ fn put_claim_with_vector_world(
 /// baseline is exactly `[claim_other R0, claim_active R1, claim_core R2,
 /// event_faceted R3]`.
 fn setup_facet_fixture(vault: &Vault) -> Result<FacetFixture> {
-    let facet_a = entity_id(0xA1);
+    let facet_a = entity_id(0x91);
     let facet_b = entity_id(0xB1);
     put_entity(vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
     put_entity(vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
@@ -3714,7 +3714,7 @@ fn facet_unfaceted_claim_passes_all_three_modes_unchanged() -> Result<()> {
 #[test]
 fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let facet_a = entity_id(0xA1);
+    let facet_a = entity_id(0x91);
     let facet_b = entity_id(0xB1);
     let facet_c = entity_id(0xC1);
     put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
@@ -3772,7 +3772,7 @@ fn facet_multi_scoped_claim_matches_any_of_its_facets() -> Result<()> {
 #[test]
 fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let facet_a = entity_id(0xA1);
+    let facet_a = entity_id(0x91);
     let facet_b = entity_id(0xB1);
     put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
     put_entity(&vault, facet_b, ENTITY_TYPE_FACET, 1, 1, 1)?;
@@ -3825,7 +3825,7 @@ fn facet_filter_reads_only_facet_of_edges() -> Result<()> {
 #[test]
 fn facet_filter_never_rescores_non_claim_entities() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let facet_a = entity_id(0xA1);
+    let facet_a = entity_id(0x91);
     put_entity(&vault, facet_a, ENTITY_TYPE_FACET, 1, 1, 1)?;
 
     let event_active = entity_id(0x51);

@@ -195,7 +195,7 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
 
     write_dreamer_proposal(
         &vault,
-        entity(0xA1),
+        entity(0x61),
         entity(0xB1),
         entity(0xC1),
         "profile.diet",
@@ -206,7 +206,7 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
     )?;
     write_dreamer_proposal(
         &vault,
-        entity(0xA2),
+        entity(0x62),
         entity(0xB2),
         entity(0xC2),
         "profile.hobby",
@@ -226,7 +226,7 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
     assert_eq!(group.headline, "Your Antevon week: 2 new claims");
     assert_eq!(group.created_at, 30);
     assert_eq!(group.members.len(), 2);
-    assert_eq!(group.members[0].claim_id, entity(0xA1).to_hex());
+    assert_eq!(group.members[0].claim_id, entity(0x61).to_hex());
     assert_eq!(group.members[0].age_secs, 70);
     assert_eq!(group.members[0].verb_class, "new_claim");
     assert_eq!(group.held_member_count, 0);
@@ -238,8 +238,8 @@ fn inbox_group_key_is_the_run_tree_root_id() -> Result<()> {
 fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-b";
-    let first = entity(0xA1);
-    let second = entity(0xA2);
+    let first = entity(0x61);
+    let second = entity(0x62);
     write_dreamer_proposal(
         &vault,
         first,
@@ -339,8 +339,8 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
 fn reject_all_emits_per_item_receipts_and_keeps_proposal_history() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-reject";
-    let first = entity(0xA1);
-    let second = entity(0xA2);
+    let first = entity(0x61);
+    let second = entity(0x62);
     write_dreamer_proposal(
         &vault,
         first,
@@ -392,9 +392,9 @@ fn reject_all_emits_per_item_receipts_and_keeps_proposal_history() -> Result<()>
 fn cross_run_same_claim_hash_dups_collapse_into_earliest_open_group() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let subject = entity(0xC1);
-    let original = entity(0xA1);
-    let duplicate = entity(0xA2);
-    let distinct = entity(0xA3);
+    let original = entity(0x61);
+    let duplicate = entity(0x62);
+    let distinct = entity(0x63);
     write_dreamer_proposal(
         &vault,
         original,
@@ -480,9 +480,9 @@ fn cross_run_same_claim_hash_dups_collapse_into_earliest_open_group() -> Result<
 fn approve_all_dial_still_surfaces_manifest_critical() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-dial";
-    let critical = entity(0xA1);
-    let plain = entity(0xA2);
-    let hedged = entity(0xA3);
+    let critical = entity(0x61);
+    let plain = entity(0x62);
+    let hedged = entity(0x63);
     write_dreamer_proposal(
         &vault,
         critical,
@@ -563,8 +563,8 @@ fn approve_all_dial_still_surfaces_manifest_critical() -> Result<()> {
 fn per_item_lapse_never_drops_siblings() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-lapse";
-    let lapsing = entity(0xA1);
-    let sibling = entity(0xA2);
+    let lapsing = entity(0x61);
+    let sibling = entity(0x62);
     write_dreamer_proposal(
         &vault,
         lapsing,
@@ -636,7 +636,7 @@ fn supersede_of_user_stated_and_conflict_rows_surface_as_exceptions() -> Result<
         .claim_candidate(&truth, candidate, &envelope, time(5), 5)
         .commit()?;
 
-    let update = entity(0xA1);
+    let update = entity(0x61);
     write_dreamer_proposal(
         &vault,
         update,
@@ -648,7 +648,7 @@ fn supersede_of_user_stated_and_conflict_rows_surface_as_exceptions() -> Result<
         10,
         &[REASON_CEILING],
     )?;
-    let conflict = entity(0xA2);
+    let conflict = entity(0x62);
     write_dreamer_proposal(
         &vault,
         conflict,
@@ -660,7 +660,7 @@ fn supersede_of_user_stated_and_conflict_rows_surface_as_exceptions() -> Result<
         20,
         &[REASON_CEILING],
     )?;
-    let plain = entity(0xA3);
+    let plain = entity(0x63);
     write_dreamer_proposal(
         &vault,
         plain,
@@ -734,7 +734,7 @@ fn many_item_runs_sub_cluster_by_entity() -> Result<()> {
         let offset = u8::try_from(index).expect("small index");
         write_dreamer_proposal(
             &vault,
-            entity(0xA1 + offset),
+            entity(0x61 + offset),
             entity(0xB1 + offset),
             first_subject,
             "profile.note",
@@ -804,7 +804,7 @@ fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
 
     write_dreamer_proposal(
         &vault,
-        entity(0xA1),
+        entity(0x61),
         entity(0xB1),
         entity(0xC1),
         "profile.diet",
@@ -850,7 +850,7 @@ fn run_root_climbs_parent_links_for_branch_run_ids() -> Result<()> {
     // still be the OF-193 root reached through parent links.
     write_dreamer_proposal(
         &vault,
-        entity(0xA1),
+        entity(0x61),
         entity(0xB1),
         entity(0xC1),
         "profile.diet",
@@ -902,7 +902,7 @@ fn stale_truth_does_not_classify_updates() -> Result<()> {
 
     write_dreamer_proposal(
         &vault,
-        entity(0xA1),
+        entity(0x61),
         entity(0xB1),
         subject,
         "profile.diet",
@@ -931,8 +931,8 @@ fn stale_truth_does_not_classify_updates() -> Result<()> {
 fn duplicate_rows_keep_exception_surfacing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let subject = entity(0xC1);
-    let original = entity(0xA1);
-    let duplicate = entity(0xA2);
+    let original = entity(0x61);
+    let duplicate = entity(0x62);
     // The owner row is a plain non-exception ask; the later duplicate is
     // manifest-critical. The collapse must not hide the exception.
     write_dreamer_proposal(

@@ -512,8 +512,17 @@ fn three_trigger_doors_converge_into_one_intent_shape() {
 fn dispatch_pipeline_resolves_gates_executes_and_emits_receipt()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA1);
+    let agent = entity(0x51);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD0,
@@ -611,8 +620,17 @@ fn dispatch_pipeline_resolves_gates_executes_and_emits_receipt()
 fn dispatch_pipeline_records_context_receipt_field_set()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA1);
+    let agent = entity(0x51);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD0,
@@ -682,6 +700,15 @@ fn dispatch_pipeline_executes_deliverable_apns_cap()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xA8);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD8,
@@ -759,8 +786,17 @@ fn dispatch_pipeline_executes_deliverable_apns_cap()
 fn dispatch_pipeline_records_typed_failed_execution()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA5);
+    let agent = entity(0x55);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD3,
@@ -803,6 +839,15 @@ fn linkedin_send_dm_receipt_is_delivered_only_after_content_observation()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB1));
+    vault
+        .put_entity(
+            &entity(0xB1),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -885,6 +930,15 @@ fn linkedin_kill_switch_suppresses_before_mcp_transport()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xC1));
+    vault
+        .put_entity(
+            &entity(0xC1),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let policy = active_linkedin_policy()?;
@@ -956,6 +1010,15 @@ fn linkedin_daily_dm_cap_holds_before_mcp_transport()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xC2));
+    vault
+        .put_entity(
+            &entity(0xC2),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
     let policy = active_linkedin_policy()?
         .with_state(LinkedInSeatDispatchState::active().with_dm_sends_today(15));
@@ -1004,6 +1067,15 @@ fn linkedin_cadence_holds_before_mcp_transport()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xC3));
+    vault
+        .put_entity(
+            &entity(0xC3),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
     let policy = active_linkedin_policy()?
         .with_state(LinkedInSeatDispatchState::active().with_next_send_not_before(1_500));
@@ -1048,6 +1120,15 @@ fn linkedin_sweeps_are_suppressed_before_mcp_transport()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xC4));
+    vault
+        .put_entity(
+            &entity(0xC4),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
     let policy =
         active_linkedin_policy()?.with_state(LinkedInSeatDispatchState::active().as_sweep());
@@ -1092,6 +1173,15 @@ fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB7));
+    vault
+        .put_entity(
+            &entity(0xB7),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let plan = LinkedInVerifiedSendPlan::new(
@@ -1153,6 +1243,15 @@ fn linkedin_send_dm_verifies_metadata_light_conversation_with_requested_thread()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB8));
+    vault
+        .put_entity(
+            &entity(0xB8),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -1200,6 +1299,15 @@ fn linkedin_send_dm_send_failure_fails_without_verification()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB4));
+    vault
+        .put_entity(
+            &entity(0xB4),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -1265,6 +1373,15 @@ fn linkedin_send_dm_observed_absent_produces_failed_receipt_without_phantom_succ
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB2));
+    vault
+        .put_entity(
+            &entity(0xB2),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let plan = LinkedInVerifiedSendPlan::new(
@@ -1330,6 +1447,15 @@ fn linkedin_send_dm_does_not_verify_older_matching_transcript_line()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB5));
+    vault
+        .put_entity(
+            &entity(0xB5),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -1381,6 +1507,15 @@ fn linkedin_send_dm_requires_new_post_send_occurrence()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB9));
+    vault
+        .put_entity(
+            &entity(0xB9),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -1441,6 +1576,15 @@ fn linkedin_send_dm_successful_absent_read_clears_prior_get_error()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB6));
+    vault
+        .put_entity(
+            &entity(0xB6),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let plan = LinkedInVerifiedSendPlan::new(
@@ -1500,6 +1644,15 @@ fn linkedin_retry_guard_observes_existing_message_without_duplicate_send()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
     let actor = OutboundDispatchActor::agent(entity(0xB3));
+    vault
+        .put_entity(
+            &entity(0xB3),
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
 
     let message = "Happy to share more details.";
@@ -1554,8 +1707,17 @@ fn linkedin_retry_guard_observes_existing_message_without_duplicate_send()
 fn dispatch_pipeline_holds_gate_pending_without_executing()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA2);
+    let agent = entity(0x52);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD1,
@@ -1615,6 +1777,15 @@ fn dispatch_pipeline_preserves_gate_hold_reason_when_window_also_holds()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xA7);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD7,
@@ -1682,6 +1853,15 @@ fn dispatch_pipeline_suppresses_gate_denied_without_executing()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xA6);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD4,
@@ -1756,8 +1936,17 @@ fn dispatch_pipeline_suppresses_gate_denied_without_executing()
 #[test]
 fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA3);
+    let agent = entity(0x53);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new("agent-alpha", "edit", "line", "line:user:kenji"),
         OutboundIntentTrigger::agent_immediate("session:edit"),
@@ -1791,8 +1980,17 @@ fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
 fn dispatch_pipeline_window_hold_skips_execution_after_gate_allow()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA4);
+    let agent = entity(0x54);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD2,
@@ -1855,6 +2053,15 @@ fn dispatch_door_defers_call_inside_stored_quiet_hours()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB1);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xE2,
@@ -1917,6 +2124,15 @@ fn dispatch_door_allows_chat_send_inside_stored_quiet_hours()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB2);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xE5,
@@ -1978,6 +2194,15 @@ fn dispatch_door_defers_interruption_when_calendar_busy_is_active()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB3);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xE8,
@@ -2032,6 +2257,15 @@ fn dispatch_door_ignores_delivery_window_claims_for_other_subjects()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB4);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xEC,
@@ -2080,6 +2314,15 @@ fn dispatch_door_uses_supplied_local_minute_for_user_local_quiet_hours()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB5);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xEE,
@@ -2132,6 +2375,15 @@ fn dispatch_door_holds_interrupt_when_local_minute_missing_for_time_window()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB6);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xF0,
@@ -2180,6 +2432,15 @@ fn dispatch_door_preserves_connector_channel_for_channel_window_claim()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB7);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xF2,
@@ -2232,6 +2493,15 @@ fn dispatch_door_enforces_manifest_interrupt_for_email_send()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB8);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xF4,
@@ -2278,6 +2548,15 @@ fn dispatch_door_preserves_passive_apns_window_context()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xB9);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xF6,
@@ -2327,6 +2606,15 @@ fn dispatch_door_preserves_request_degrade_target_for_stored_quiet_policy()
     let (_tmp, vault) = temp_vault();
     let agent = entity(0xBA);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xF8,
@@ -2409,8 +2697,17 @@ fn most_restrictive_delivery_window_decision_merges_same_rank_holds() {
 fn dispatch_request_evaluates_delivery_window_policy_before_execution()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
-    let agent = entity(0xA5);
+    let agent = entity(0x55);
     let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     put_policy_manifest(
         &vault,
         0xD3,
@@ -2909,7 +3206,17 @@ fn parked_and_seat_suppressed_dispatches_never_debit_budgets()
     // A seat-policy-suppressed dispatch (kill switch engaged) also passes
     // the gate but never becomes an effect: no debit.
     let (_tmp, vault) = temp_vault();
-    let actor = OutboundDispatchActor::agent(entity(0xB1));
+    let agent = entity(0xB1);
+    let actor = OutboundDispatchActor::agent(agent);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
     allow_linkedin_send(&vault, &actor)?;
     let key_id = entity(0xB9);
     vault.register_connector_key(

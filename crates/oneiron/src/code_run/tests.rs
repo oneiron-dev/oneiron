@@ -547,7 +547,7 @@ fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
 #[test]
 fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA1);
+    let actor = seed_person(&vault, 0x61);
     let memory = EntityId::from_bytes([0xB1; 16]).expect("memory id");
     vault
         .batch()
@@ -575,7 +575,7 @@ fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
 #[test]
 fn code_run_memory_search_caps_guest_limit() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA3);
+    let actor = seed_person(&vault, 0x63);
     for index in 0..(SELF_MEMORY_SEARCH_MAX_RESULTS + 4) {
         let byte = 0xB0_u8 + u8::try_from(index).expect("test index fits in u8");
         let timestamp = 2 + u64::try_from(index).expect("test index fits in u64");
@@ -614,7 +614,7 @@ fn code_run_memory_search_caps_guest_limit() -> Result<()> {
 #[test]
 fn code_run_fixture_write_stamps_actor_source_and_approval() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA2);
+    let actor = seed_person(&vault, 0x62);
     let subject = seed_person(&vault, 0xB2);
     let claim = EntityId::from_bytes([0xC2; 16]).expect("claim id");
     let candidate = ClaimCandidate::new(
@@ -693,7 +693,7 @@ fn code_run_fixture_write_stamps_actor_source_and_approval() -> Result<()> {
 #[test]
 fn code_run_public_put_claim_trap_stamps_host_fields() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA4);
+    let actor = seed_person(&vault, 0x64);
     let subject = seed_person(&vault, 0xB4);
     let claim = EntityId::from_bytes([0xC4; 16]).expect("claim id");
     let candidate = ClaimCandidate::new(
@@ -1136,7 +1136,7 @@ fn code_run_write_gate_denial_persists_decision() -> Result<()> {
 #[test]
 fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    let actor = seed_person(&vault, 0xA3);
+    let actor = seed_person(&vault, 0x63);
     let dispatcher = HostSelfDispatcher::new(
         &vault,
         WriteActor::new(actor, EdgeActorClass::Agent),

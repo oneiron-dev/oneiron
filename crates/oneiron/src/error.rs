@@ -201,6 +201,7 @@ pub enum ErrorKind {
     SettleNotAuthorized,
     InvalidSkillBody,
     InvalidAgentDefBody,
+    SystemAgentDisabled,
     InvalidRecoveryArtifact,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
@@ -843,6 +844,10 @@ pub enum Error {
     /// or the update-immutability gate. Nothing was written.
     #[error("invalid AGENT_DEF body: {0}")]
     InvalidAgentDefBody(&'static str),
+    /// A fork or dispatch targeted a system-agent preset that is toggled off
+    /// on this vault. Nothing was written.
+    #[error("system agent preset disabled: {0}")]
+    SystemAgentDisabled(&'static str),
     /// An AccessGrant control-plane record failed pinned structural
     /// validation. Nothing was written.
     #[error("invalid access grant body: {0}")]
@@ -1462,6 +1467,7 @@ impl Error {
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
             Self::InvalidSkillBody(_) => ErrorKind::InvalidSkillBody,
             Self::InvalidAgentDefBody(_) => ErrorKind::InvalidAgentDefBody,
+            Self::SystemAgentDisabled(_) => ErrorKind::SystemAgentDisabled,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
