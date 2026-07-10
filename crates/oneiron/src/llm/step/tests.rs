@@ -281,6 +281,43 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
 }
 
 #[test]
+fn persistence_error_after_response_releases_lease() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    // Same job/subject, but override the envelope actor with a deliberately
+    // absent entity so the terminal claim write inside `log_terminal_step`
+    // fails AFTER the provider answered and the lease was reserved. Cloning the
+    // helper ctx (rather than an inline literal) keeps this test compiling as
+    // later stack commits add fields to DurableStepContext.
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.envelope_actor = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("answered then failed"))]);
+    let guard = guard_with_limit(10_000);
+
+    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("terminal claim write must fail on the missing actor");
+    assert!(matches!(
+        error,
+        DurableStepError::Engine(Error::EntityNotFound)
+    ));
+    // The provider was actually called: the tokens were spent.
+    assert_eq!(backend.calls(), 1);
+
+    // The reservation MUST be released despite the persistence error (#478-1);
+    // otherwise the leaked units throttle every later admit_for_request.
+    let read = guard.read();
+    assert_eq!(
+        read.reserved_units, 0,
+        "reserved lease must not leak on a post-response persistence error"
+    );
+    assert_eq!(
+        read.used_units, 150,
+        "the real spend is settled (not aborted) so it is not undercounted"
+    );
+    Ok(())
+}
+
+#[test]
 fn retry_does_not_double_count() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;

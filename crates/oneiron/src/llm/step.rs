@@ -362,6 +362,16 @@ pub async fn call_as_step(
         }
     };
 
+    // The provider answered, so the tokens were really spent: the reserved
+    // lease MUST settle on EVERY exit from the post-response persistence block.
+    // A `?` out of `serde_json::to_vec` / `step_state_write` /
+    // `log_terminal_step` returns BEFORE the explicit settle below, which would
+    // leak the reserved units for the guard's lifetime and throttle later
+    // admissions (#478-1). This RAII guard settles on drop; `settle_absolute`
+    // is idempotent on an already-settled lease, so the happy-path settle stays
+    // a no-op once the guard is disarmed.
+    let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
+
     let payload = serde_json::to_vec(&response)?;
     step_state_write(
         ctx.vault,
@@ -374,9 +384,7 @@ pub async fn call_as_step(
 
     log_terminal_step(ctx, &step_hash, &request, &response)?;
 
-    guard
-        .settle_terminal(&admission.lease, &response.usage)
-        .map_err(LlmError::from)?;
+    lease_settle.settle().map_err(LlmError::from)?;
     step_state_delete(ctx.vault, ctx.job_id, &step_hash)?;
 
     Ok(StepOutcome::Finished {
@@ -395,6 +403,45 @@ fn step_call_failure(request: &LlmRequest, error: LlmError) -> DurableStepError 
         };
     }
     DurableStepError::Llm(error)
+}
+
+/// RAII settlement for a durable step's reserved lease once the provider has
+/// answered. The spend is real from that point, so the lease must settle on
+/// every exit from the post-response persistence block — otherwise a
+/// persistence error leaks the reservation for the guard's lifetime (#478-1).
+/// The happy path calls [`LeaseSettleOnDrop::settle`], which disarms the guard
+/// and surfaces the settlement result; any early return drops the guard, which
+/// settles best-effort. `used_units` mirrors `settle_terminal` (absolute
+/// input+output totals), so both paths count the SAME spend — no undercount.
+struct LeaseSettleOnDrop<'a> {
+    guard: &'a BudgetGuard,
+    lease: &'a super::BudgetLease,
+    used_units: u64,
+    armed: bool,
+}
+
+impl<'a> LeaseSettleOnDrop<'a> {
+    fn new(guard: &'a BudgetGuard, lease: &'a super::BudgetLease, usage: &super::LlmUsage) -> Self {
+        Self {
+            guard,
+            lease,
+            used_units: usage.input.total.saturating_add(usage.output.total),
+            armed: true,
+        }
+    }
+
+    fn settle(mut self) -> std::result::Result<super::BudgetSettlement, BudgetDenied> {
+        self.armed = false;
+        self.guard.settle_absolute(self.lease, self.used_units)
+    }
+}
+
+impl Drop for LeaseSettleOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.guard.settle_absolute(self.lease, self.used_units);
+        }
+    }
 }
 
 async fn generate_with_retry(
