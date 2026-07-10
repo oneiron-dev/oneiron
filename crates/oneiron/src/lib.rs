@@ -131,11 +131,16 @@ pub use crate::authority::{
     AuthorityFold, AuthorityFoldIssue, AuthorityFork, AuthorityForkAlarm, AuthorityForkStatus,
     AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityPendingWiden, AuthoritySignature,
     AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    DeviceAuthority, FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS,
+    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
+    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
+    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
+    FoldedDevice, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
     MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
     ROLE_RECOVERY, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, fold_authority_log, fold_authority_log_with_seen_times,
-    genesis_vault_id, validate_authority_log_entry_body_bytes, verify_authority_signature,
+    encode_authority_log_entry_body, federation_grant_activation, federation_pact_transcript,
+    federation_scope_digest, fold_authority_log, fold_authority_log_with_seen_times,
+    genesis_vault_id, sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 pub use crate::batch::{BatchBuilder, TxnBatchBuilder};
 pub use crate::blob_artifact::{
@@ -382,9 +387,12 @@ pub use crate::extraction_eval::{
     of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
 };
 pub use crate::federation::{
-    FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
-    FederationGrantPreset, FederationGrantRole, FederationGrantScope, decode_federation_grant_body,
-    encode_federation_grant_body,
+    FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
+    FEDERATION_PACT_SCOPE_SCHEMA_VERSION, FederationDirectionScope, FederationGrant,
+    FederationGrantPreset, FederationGrantRole, FederationGrantScope, FederationPactScope,
+    FederationScopeBands, FederationScopeFacets, FederationScopeWorlds,
+    decode_federation_grant_body, decode_federation_pact_scope, encode_federation_grant_body,
+    encode_federation_pact_scope,
 };
 pub use crate::genui::{
     BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentActionDecision,

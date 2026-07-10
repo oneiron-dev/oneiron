@@ -1224,3 +1224,286 @@ fn selector_treats_malformed_facet_of_value_as_denied_scope() {
         "malformed FacetOf value must fail closed, not behave as absent"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Pact activation gate (ONE-1408)
+// ---------------------------------------------------------------------------
+
+use crate::authority::{
+    AuthorityEntryHash, AuthorityVaultId, FederationLifecycleAction, FederationLifecycleKind,
+    authority_entry_hash, federation_scope_digest, sign_federation_pact_gesture,
+};
+use crate::federation::{
+    FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
+    FederationScopeWorlds, encode_federation_pact_scope,
+};
+
+fn all_direction_scope() -> FederationDirectionScope {
+    FederationDirectionScope {
+        worlds: FederationScopeWorlds::All,
+        facets: FederationScopeFacets::All,
+        bands: FederationScopeBands::All,
+    }
+}
+
+fn selector_pact_scope(facets: FederationScopeFacets) -> FederationPactScope {
+    let mut half = all_direction_scope();
+    half.facets = facets;
+    FederationPactScope {
+        lo_to_hi: half.clone(),
+        hi_to_lo: half,
+    }
+}
+
+fn signed_lifecycle_entry(
+    signing: &SigningKey,
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parent: AuthorityEntryHash,
+    action: FederationLifecycleAction,
+) -> AuthorityLogEntry {
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(vault_id),
+        seq,
+        parent_hashes: vec![parent],
+        op: AuthorityOp::FederationLifecycle(action),
+        signer: AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 9,
+    };
+    let transcript = authority_transcript(&entry).unwrap();
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+#[derive(Clone, Copy)]
+enum PactSeedStatus {
+    Active,
+    Suspended,
+    Promoted,
+    Disconnected,
+    Dissolved,
+}
+
+/// Seeds a fold-derived pact binding `grant_id` with the requested status
+/// through the ordinary type-122 write door.
+fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus) {
+    let owner = SigningKey::from_bytes(&[0x61; 32]);
+    let genesis = authority_genesis_entry(0x61);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let peer = SigningKey::from_bytes(&[0x62; 32]);
+    let peer_key = AuthorityKey::Ed25519(peer.verifying_key().to_bytes());
+    let peer_vault_id = genesis_vault_id(&authority_genesis_entry(0x62)).unwrap();
+    let pact_id = [0x63; 32];
+    let nonce = [0x64; 16];
+    let scope = selector_pact_scope(FederationScopeFacets::All);
+    let digest = federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+    let connect_gesture = sign_federation_pact_gesture(
+        FederationLifecycleKind::Connect,
+        &pact_id,
+        &vault_id,
+        &peer_vault_id,
+        1,
+        &digest,
+        None,
+        &nonce,
+        peer_key.clone(),
+        |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+    )
+    .unwrap();
+    let connect = signed_lifecycle_entry(
+        &owner,
+        vault_id,
+        1,
+        authority_entry_hash(&genesis).unwrap(),
+        FederationLifecycleAction {
+            kind: FederationLifecycleKind::Connect,
+            pact_id,
+            grant_ref: grant_id,
+            peer_vault_id,
+            pact_epoch: 1,
+            pact_scope: Some(scope),
+            effective_scope: None,
+            scope_digest: Some(digest),
+            gesture: Some(connect_gesture),
+            successor_vault_id: None,
+            pact_nonce: nonce,
+        },
+    );
+    let connect_hash = authority_entry_hash(&connect).unwrap();
+    vault
+        .put_authority_log_entry(
+            &entity_id(0xE1),
+            &genesis,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+    vault
+        .put_authority_log_entry(
+            &entity_id(0xE2),
+            &connect,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .unwrap();
+
+    let unilateral = |kind: FederationLifecycleKind, seq: u64| {
+        signed_lifecycle_entry(
+            &owner,
+            vault_id,
+            seq,
+            connect_hash,
+            FederationLifecycleAction {
+                kind,
+                pact_id,
+                grant_ref: grant_id,
+                peer_vault_id,
+                pact_epoch: 1,
+                pact_scope: None,
+                effective_scope: None,
+                scope_digest: None,
+                gesture: None,
+                successor_vault_id: None,
+                pact_nonce: nonce,
+            },
+        )
+    };
+    let repact = |seq: u64, facet_byte: u8, nonce_byte: u8| {
+        let scope = selector_pact_scope(FederationScopeFacets::Some(vec![entity_id(facet_byte)]));
+        let nonce = [nonce_byte; 16];
+        let digest =
+            federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
+        let gesture = sign_federation_pact_gesture(
+            FederationLifecycleKind::Rescope,
+            &pact_id,
+            &vault_id,
+            &peer_vault_id,
+            2,
+            &digest,
+            None,
+            &nonce,
+            peer_key.clone(),
+            |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+        )
+        .unwrap();
+        signed_lifecycle_entry(
+            &owner,
+            vault_id,
+            seq,
+            connect_hash,
+            FederationLifecycleAction {
+                kind: FederationLifecycleKind::Rescope,
+                pact_id,
+                grant_ref: grant_id,
+                peer_vault_id,
+                pact_epoch: 2,
+                pact_scope: Some(scope),
+                effective_scope: None,
+                scope_digest: Some(digest),
+                gesture: Some(gesture),
+                successor_vault_id: None,
+                pact_nonce: nonce,
+            },
+        )
+    };
+
+    let extras: Vec<AuthorityLogEntry> = match status {
+        PactSeedStatus::Active => Vec::new(),
+        PactSeedStatus::Disconnected => vec![unilateral(FederationLifecycleKind::Disconnect, 2)],
+        PactSeedStatus::Dissolved => vec![unilateral(FederationLifecycleKind::Dissolve, 2)],
+        PactSeedStatus::Promoted => {
+            let successor = [0x65; 32];
+            let gesture = sign_federation_pact_gesture(
+                FederationLifecycleKind::Promote,
+                &pact_id,
+                &vault_id,
+                &peer_vault_id,
+                2,
+                &digest,
+                Some(&successor),
+                &nonce,
+                peer_key.clone(),
+                |transcript| Ok(peer.sign(transcript).to_bytes().to_vec()),
+            )
+            .unwrap();
+            vec![signed_lifecycle_entry(
+                &owner,
+                vault_id,
+                2,
+                connect_hash,
+                FederationLifecycleAction {
+                    kind: FederationLifecycleKind::Promote,
+                    pact_id,
+                    grant_ref: grant_id,
+                    peer_vault_id,
+                    pact_epoch: 2,
+                    pact_scope: None,
+                    effective_scope: None,
+                    scope_digest: Some(digest),
+                    gesture: Some(gesture),
+                    successor_vault_id: Some(successor),
+                    pact_nonce: nonce,
+                },
+            )]
+        }
+        // Two concurrent equal-epoch repacts with divergent digests.
+        PactSeedStatus::Suspended => vec![repact(2, 0x21, 0x66), repact(3, 0x22, 0x67)],
+    };
+    for (index, entry) in extras.into_iter().enumerate() {
+        let row = entity_id(0xE3 + u8::try_from(index).unwrap());
+        vault
+            .put_authority_log_entry(&row, &entry, TimeRange { start: 3, end: 3 }, 3)
+            .unwrap();
+    }
+}
+
+#[test]
+fn selector_authorization_gates_on_pact_activation() {
+    let member = entity_id(0x34);
+
+    // A grant with no lifecycle entries (Unpacted) authorizes exactly as
+    // today: legacy-allow.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("unpacted grant keeps legacy-allow");
+
+    // A pact-bound grant with status Active authorizes.
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Active);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("active pact-bound grant authorizes");
+
+    // Suspended/Promoted/Disconnected/Dissolved pacts deny with GrantInactive.
+    for (name, status) in [
+        ("suspended", PactSeedStatus::Suspended),
+        ("promoted", PactSeedStatus::Promoted),
+        ("disconnected", PactSeedStatus::Disconnected),
+        ("dissolved", PactSeedStatus::Dissolved),
+    ] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(member);
+        seed_pact_for_grant(&vault, grant_id, status);
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let err = authorize_sync_selector(&vault, test_selector_scope(), &selector)
+            .expect_err("non-active pact-bound grant must deny");
+        assert!(
+            matches!(
+                err,
+                Error::SyncProtocolError {
+                    context: SyncProtocolValidation::Selector {
+                        reason: SelectorError::GrantInactive
+                    }
+                }
+            ),
+            "{name}: wrong denial: {err:?}"
+        );
+    }
+}
