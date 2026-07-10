@@ -696,24 +696,40 @@ fn spend_settle_ledgers_on_the_engine_clock_and_records_cost_time() -> Result<()
     // current state echoes back.
     let replay = vault.settle_connector_spend(&id, 0, 100, 5, "settle:first-touch-ancient")?;
     assert_eq!(replay.used, expected_used, "replay settles nothing");
-    // A replayed event id with ANY differing field fails closed — a
-    // pre-claimed event_ref cannot force a silent no-op for a different
-    // settlement.
-    for (row, amount, declared) in [(1_u16, 100_u64, 5_u64), (0, 999, 5), (0, 100, 6)] {
+    // An honest retry whose DECLARED cost time drifted between attempts is
+    // still the same settlement: idempotent, no second debit, and the first
+    // write's recorded time stands (first-writer-wins).
+    let drifted = vault.settle_connector_spend(&id, 0, 100, 6, "settle:first-touch-ancient")?;
+    assert_eq!(
+        drifted.used, expected_used,
+        "drifted-time retry settles nothing"
+    );
+    let event_key = connector_key_settle_event_key(&id, "settle:first-touch-ancient");
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let stored = vault
+            .store
+            .vault_meta
+            .get(&rtxn, &event_key)?
+            .expect("settlement event row");
+        assert_eq!(
+            &stored[stored.len() - 8..],
+            &5_u64.to_be_bytes(),
+            "first recorded cost time kept"
+        );
+    }
+    // A replayed event id with different CONTENT (row or amount) fails
+    // closed — a pre-claimed event_ref cannot force a silent no-op for a
+    // different settlement.
+    for (row, amount) in [(1_u16, 100_u64), (0, 999)] {
         assert!(
             matches!(
-                vault.settle_connector_spend(
-                    &id,
-                    row,
-                    amount,
-                    declared,
-                    "settle:first-touch-ancient"
-                ),
+                vault.settle_connector_spend(&id, row, amount, 5, "settle:first-touch-ancient"),
                 Err(Error::InvalidConnectorKeyBody(
                     "settle event replay with different settlement"
                 ))
             ),
-            "mismatched replay (row {row}, amount {amount}, declared {declared}) must fail closed"
+            "content-mismatched replay (row {row}, amount {amount}) must fail closed"
         );
     }
     Ok(())

@@ -103,10 +103,13 @@ pub(crate) const CONNECTOR_KEY_USAGE_PREFIX: &[u8] = b"connector_key/usage/v1\0"
 
 /// vault_meta spend-settlement idempotency rows: prefix ++ key id (16 bytes)
 /// ++ event_ref bytes -> row_index u16 BE ++ minor_units u64 BE ++
-/// cost_occurred_at u64 BE. One row per settlement event id, binding the
-/// WHOLE declared settlement: a replayed event id settles nothing when every
-/// field matches and fails closed when any field differs (a pre-claimed
-/// event_ref cannot force a silent no-op for a different settlement).
+/// cost_occurred_at u64 BE. One row per settlement event id. Replay
+/// IDENTITY is the (row_index, minor_units) prefix — the settlement's
+/// actual content; the trailing declared cost time is first-writer-wins
+/// recorded data. A matching replay settles nothing (even with a drifted
+/// declared time between honest retries); a same-id replay with different
+/// content fails closed (a pre-claimed event_ref cannot force a silent
+/// no-op for a different settlement).
 pub(crate) const CONNECTOR_KEY_SETTLE_EVENT_PREFIX: &[u8] = b"connector_key/settle_event/v1\0";
 
 const CONNECTOR_KEY_SETTLE_EVENT_REF_MAX_LEN: usize = 128;
@@ -1227,10 +1230,18 @@ pub(crate) fn connector_key_index_entity_id(key: &[u8], connector: &str) -> Resu
         .map_err(|_| Error::CorruptedIndex("connector key connector index key"))
 }
 
-/// The stored settlement-event value: the whole declared settlement, so a
-/// replay is idempotent only for the SAME settlement.
+/// Length of the settlement-event IDENTITY prefix (row_index ++ minor_units
+/// — the settlement's actual content). The declared `cost_occurred_at`
+/// trails as first-writer-wins RECORDED data and is deliberately NOT part
+/// of the identity: an honest retry whose declared cost time drifted
+/// between attempts must stay idempotent, never fail closed into a
+/// fresh-event_ref retry that double-debits.
+const SETTLE_EVENT_IDENTITY_LEN: usize = size_of::<u16>() + size_of::<u64>();
+
+/// The stored settlement-event value: identity prefix, then the declared
+/// cost time from the FIRST successful write.
 fn settle_event_value(row_index: u16, minor_units: u64, cost_occurred_at: u64) -> Vec<u8> {
-    let mut value = Vec::with_capacity(size_of::<u16>() + 2 * size_of::<u64>());
+    let mut value = Vec::with_capacity(SETTLE_EVENT_IDENTITY_LEN + size_of::<u64>());
     value.extend_from_slice(&row_index.to_be_bytes());
     value.extend_from_slice(&minor_units.to_be_bytes());
     value.extend_from_slice(&cost_occurred_at.to_be_bytes());
@@ -1797,8 +1808,8 @@ impl Vault {
     ///
     /// Two different times are deliberately kept apart. `cost_occurred_at`
     /// is the DECLARED fact — when the provider cost happened, legitimately
-    /// lagging, recorded faithfully in the settlement-event row and never
-    /// consulted for accounting. Which budget window the debit lands in, the
+    /// lagging, recorded first-writer-wins in the settlement-event row and
+    /// never consulted for accounting (nor for replay identity). Which budget window the debit lands in, the
     /// usage-entry chronology, and any suspension stamp all take the ENGINE
     /// clock at settle time, unconditionally: the record says when the cost
     /// happened; the ledger says when we learned of it. A caller-picked
@@ -1848,15 +1859,18 @@ impl Vault {
             None => ConnectorKeyUsage::default(),
         };
 
-        // Idempotency bound to the WHOLE declared settlement: a replayed
-        // event id settles nothing when (row, amount, cost time) all match
-        // (a retry after a timeout must not double-debit or falsely
-        // suspend) and fails closed when any field differs — a pre-claimed
+        // Idempotency keyed on the settlement's CONTENT (row, amount): a
+        // replayed event id with the same content settles nothing — even
+        // when the declared cost time drifted between honest retry attempts
+        // (the first write's recorded time stands) — while the same event id
+        // with a DIFFERENT (row, amount) fails closed, so a pre-claimed
         // event_ref cannot force a silent no-op for a different settlement.
         let event_key = connector_key_settle_event_key(id, event_ref);
         let event_value = settle_event_value(row_index, minor_units, cost_occurred_at);
         if let Some(stored) = self.store.vault_meta.get(&wtxn, &event_key)? {
-            if stored != event_value {
+            if stored.len() < SETTLE_EVENT_IDENTITY_LEN
+                || stored[..SETTLE_EVENT_IDENTITY_LEN] != event_value[..SETTLE_EVENT_IDENTITY_LEN]
+            {
                 return Err(invalid_body(
                     "settle event replay with different settlement",
                 ));
