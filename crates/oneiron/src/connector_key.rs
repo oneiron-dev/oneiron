@@ -367,7 +367,7 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
                 let limit = charter_spend_limit(major_units, unit)?;
                 let period = parse_calendar_period(tokens[5])
                     .ok_or_else(|| "invalid calendar period".to_owned())?;
-                let channel = parse_charter_channel(tokens[7])?;
+                let channel = parse_charter_cap_channel(tokens[7])?;
                 Ok(CharterDirective::Cap(EffectorBudget {
                     dimension: EffectorBudgetDimension::Spend,
                     channel_class: Some(channel),
@@ -383,7 +383,7 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
                 }
                 let limit = parse_charter_number(tokens[1], "invalid sends cap limit")?;
                 let window = parse_charter_window(tokens[4])?;
-                let channel = parse_charter_channel(tokens[6])?;
+                let channel = parse_charter_cap_channel(tokens[6])?;
                 Ok(CharterDirective::Cap(EffectorBudget {
                     dimension: EffectorBudgetDimension::Sends,
                     channel_class: Some(channel),
@@ -407,7 +407,7 @@ fn parse_charter_directive(line: &str) -> std::result::Result<CharterDirective, 
             }
             let limit = parse_charter_number(tokens[1], "invalid rate limit")?;
             let duration_s = parse_rolling_duration(tokens[3])?;
-            let channel = parse_charter_channel(tokens[5])?;
+            let channel = parse_charter_cap_channel(tokens[5])?;
             Ok(CharterDirective::Cap(EffectorBudget {
                 dimension: EffectorBudgetDimension::Rate,
                 channel_class: Some(channel),
@@ -442,6 +442,20 @@ fn parse_charter_channel(token: &str) -> std::result::Result<String, String> {
     let channel = normalize_connector_key(token);
     if channel.is_empty() {
         return Err("invalid channel".to_owned());
+    }
+    Ok(channel)
+}
+
+/// Cap/rate channel narrowing. The gate matches a cap row's `channel_class`
+/// by EXACT equality (`load_budget_row_states`), so a stored `"*"` would never
+/// match a real channel (slack/email) — a `cap 10 sends per day on *` would
+/// compile into a row that debits 0 forever (fail-OPEN). Reject the wildcard
+/// here. `never <verb> on <channel>` keeps `"*"` as a legitimate wildcard via
+/// `parse_charter_channel`, so this narrowing is cap/rate-only.
+fn parse_charter_cap_channel(token: &str) -> std::result::Result<String, String> {
+    let channel = parse_charter_channel(token)?;
+    if channel == "*" {
+        return Err("cap channel must not be the wildcard '*'".to_owned());
     }
     Ok(channel)
 }

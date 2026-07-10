@@ -1188,3 +1188,48 @@ fn charter_propose_approve_discard_lifecycle() -> Result<()> {
     ));
     Ok(())
 }
+
+#[test]
+fn cap_and_rate_reject_wildcard_channel_but_never_keeps_it() -> Result<()> {
+    // (a) The gate matches a cap row's `channel_class` by EXACT equality, so a
+    // stored `"*"` never matches a real channel (slack/email) and would debit 0
+    // forever. Every cap/rate arm must fail closed on the wildcard with a
+    // line-numbered compile error.
+    for line in [
+        "cap 10 sends per day on *",
+        "cap spend 100 USD per month on *",
+        "rate 10 per 60s on *",
+    ] {
+        let issue = compile_connector_charter(line).expect_err("wildcard cap fails closed");
+        assert_eq!(issue.line_number, 1, "{line}");
+        assert_eq!(
+            issue.message, "cap channel must not be the wildcard '*'",
+            "{line}"
+        );
+    }
+
+    // (b) `never <verb> on *` STILL compiles — "*" is a legitimate wildcard on
+    // the never arm — and matches every real channel.
+    let never_wild = compile_connector_charter("never send on *").expect("never wildcard compiles");
+    assert_eq!(never_wild.compiled.never_list, vec!["*:send".to_owned()]);
+    let block = ConnectorCharterBlock {
+        text: "never send on *".to_owned(),
+        text_hash: [0; 32],
+        compiled: never_wild.compiled,
+        compiled_hash: [0; 32],
+        stamped_aggregate: [0; 32],
+        stamped_by: "owner".to_owned(),
+        stamped_at: 1,
+    };
+    assert!(charter_never_list_matches(&block, "slack", "send"));
+    assert!(charter_never_list_matches(&block, "email", "send"));
+
+    // (c) A real-channel cap still compiles and narrows to that channel.
+    let real =
+        compile_connector_charter("cap 10 sends per day on slack").expect("real channel compiles");
+    assert_eq!(
+        real.compiled.channel_caps[0].channel_class.as_deref(),
+        Some("slack")
+    );
+    Ok(())
+}
