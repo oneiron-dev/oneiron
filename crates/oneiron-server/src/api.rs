@@ -637,6 +637,7 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidTimeRange
         | ErrorKind::InvalidClaimBody
         | ErrorKind::InvalidAccessGrantBody
+        | ErrorKind::InvalidCounterpartyContactBody
         | ErrorKind::InvalidTaskBody
         | ErrorKind::InvalidCodeArtifactBody
         | ErrorKind::InvalidBlobArtifactBody

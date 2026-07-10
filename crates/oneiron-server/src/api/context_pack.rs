@@ -53,6 +53,11 @@ pub(crate) const MAX_INTERLOCUTOR_THIRD_PARTIES: usize = 32;
 /// instead of an engine error.
 pub(crate) const MAX_INTERLOCUTOR_COUNTERPARTY_BYTES: usize = 512;
 
+/// Display labels ride stamps, notices, and receipts; bounded to the same
+/// scale as the counterparty key so up to [`MAX_INTERLOCUTOR_THIRD_PARTIES`]
+/// labels stay a bounded echo/work cost.
+pub(crate) const MAX_INTERLOCUTOR_LABEL_BYTES: usize = 512;
+
 pub(crate) static EIRI_SESSION_RAG_STATE: OnceLock<Mutex<EiriSessionRagStore>> = OnceLock::new();
 
 #[derive(Default)]
@@ -1089,6 +1094,12 @@ pub(crate) fn core_interlocutor_party_input(
             if label.trim().is_empty() {
                 return Err(ApiError::bad_request(
                     "label must be non-empty",
+                    Some(&field_path("label")),
+                ));
+            }
+            if label.len() > MAX_INTERLOCUTOR_LABEL_BYTES {
+                return Err(ApiError::bad_request(
+                    format!("label must be at most {MAX_INTERLOCUTOR_LABEL_BYTES} bytes"),
                     Some(&field_path("label")),
                 ));
             }

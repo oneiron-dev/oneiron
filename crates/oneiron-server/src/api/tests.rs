@@ -7586,6 +7586,23 @@ fn vad_annotation_core_error_maps_gate_rejection_to_invalid_state() {
 }
 
 #[test]
+fn core_engine_error_maps_invalid_counterparty_contact_body_to_bad_request() {
+    let error = core_engine_error(
+        "core context-pack failed",
+        oneiron::Error::InvalidCounterpartyContactBody("body failed validation"),
+    );
+
+    assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error.code(), ErrorCode::BadRequest);
+    assert!(
+        error
+            .message()
+            .contains("invalid counterparty contact body"),
+        "message should expose the counterparty validation failure"
+    );
+}
+
+#[test]
 fn core_engine_error_maps_temporal_parse_errors_to_bad_request() {
     let error = core_engine_error(
         "core query failed",
@@ -8032,6 +8049,10 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
         ),
         (
             json!({ "label": "   " }),
+            "interlocutors.third_parties[0].label",
+        ),
+        (
+            json!({ "label": "l".repeat(513) }),
             "interlocutors.third_parties[0].label",
         ),
         (
