@@ -977,6 +977,29 @@ fn validate_compiled_policy(compiled: &CompiledConnectorPolicy) -> Result<()> {
         if entry.trim().is_empty() {
             return Err(invalid_body("never_list entry must not be blank"));
         }
+        validate_never_list_entry(entry)?;
+    }
+    Ok(())
+}
+
+/// A compiled never-list entry MUST be a well-formed `"{channel}:{verb}"` pair
+/// — the shape the compiler emits. Enforcement (`charter_never_list_matches`)
+/// silently returns `false` for an entry lacking a ':' and never re-normalizes
+/// its channel/verb, so a malformed or hand-forged entry would fail OPEN (deny
+/// nothing). Reject it here so a corrupted charter fails closed at decode:
+/// exactly one ':', a channel part that is `"*"` or normalizes non-empty, and
+/// a verb part that is `"*"` or a valid `parse_charter_verb` token.
+fn validate_never_list_entry(entry: &str) -> Result<()> {
+    let mut parts = entry.split(':');
+    let (Some(channel_part), Some(verb_part), None) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(invalid_body("never_list entry must be channel:verb"));
+    };
+    if channel_part != "*" && normalize_connector_key(channel_part).is_empty() {
+        return Err(invalid_body("never_list entry channel invalid"));
+    }
+    if verb_part != "*" && parse_charter_verb(verb_part).is_err() {
+        return Err(invalid_body("never_list entry verb invalid"));
     }
     Ok(())
 }

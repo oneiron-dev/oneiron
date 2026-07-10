@@ -1269,3 +1269,57 @@ fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()>
     ));
     Ok(())
 }
+
+#[test]
+fn malformed_never_list_entry_fails_closed_at_validation() {
+    let charter = |never: Vec<String>| ConnectorKeyRecord {
+        charter: Some(ConnectorCharterBlock {
+            text: "fixture".to_owned(),
+            text_hash: [0; 32],
+            compiled: CompiledConnectorPolicy {
+                never_list: never,
+                channel_caps: Vec::new(),
+            },
+            compiled_hash: [0; 32],
+            stamped_aggregate: [0; 32],
+            stamped_by: "owner".to_owned(),
+            stamped_at: 1,
+        }),
+        ..ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000)
+    };
+
+    // No ':' — `charter_never_list_matches` silently skips it, so a stored
+    // entry lacking a separator would fail OPEN (deny nothing).
+    assert!(matches!(
+        encode_connector_key_body(&charter(vec!["delete".to_owned()])),
+        Err(Error::InvalidConnectorKeyBody(
+            "never_list entry must be channel:verb"
+        ))
+    ));
+    // More than one ':'.
+    assert!(matches!(
+        encode_connector_key_body(&charter(vec!["slack:call:x".to_owned()])),
+        Err(Error::InvalidConnectorKeyBody(
+            "never_list entry must be channel:verb"
+        ))
+    ));
+    // Empty channel part.
+    assert!(matches!(
+        encode_connector_key_body(&charter(vec![":delete".to_owned()])),
+        Err(Error::InvalidConnectorKeyBody(
+            "never_list entry channel invalid"
+        ))
+    ));
+    // Verb part carries a byte outside `[a-z0-9_]`.
+    assert!(matches!(
+        encode_connector_key_body(&charter(vec!["slack:call!".to_owned()])),
+        Err(Error::InvalidConnectorKeyBody(
+            "never_list entry verb invalid"
+        ))
+    ));
+    // Well-formed entries (both wildcards) still validate.
+    assert!(
+        encode_connector_key_body(&charter(vec!["*:delete".to_owned(), "slack:*".to_owned()]))
+            .is_ok()
+    );
+}
