@@ -7670,6 +7670,29 @@ fn core_engine_error_maps_invalid_skill_body_to_bad_request() {
 }
 
 #[test]
+fn core_engine_error_maps_agent_dispatch_failures_to_bad_request() {
+    for error in [
+        oneiron::Error::AgentNotDispatchable("agent definition not found"),
+        oneiron::Error::InvalidAgentDispatchInput("input must decode as an agent dispatch map"),
+        oneiron::Error::SystemAgentDisabled("preset is toggled off on this vault"),
+    ] {
+        let detail = error.to_string();
+        let mapped = core_engine_error("core dispatch failed", error);
+
+        assert_eq!(
+            mapped.status(),
+            StatusCode::BAD_REQUEST,
+            "{detail}: dispatch validation/precondition failures are client-correctable"
+        );
+        assert_eq!(mapped.code(), ErrorCode::BadRequest, "{detail}");
+        assert!(
+            mapped.message().contains(&detail),
+            "message should expose the dispatch failure detail: {detail}"
+        );
+    }
+}
+
+#[test]
 fn core_engine_error_maps_invalid_task_body_to_bad_request() {
     let error = core_engine_error(
         "core batch commit failed",
