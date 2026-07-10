@@ -5026,10 +5026,8 @@ fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
     put_text_and_vector(&vault, id, "funnel forkhash fixture", [1.0, 0.0, 0.0, 0.0])?;
     let query = [1.0_f32, 0.0, 0.0, 0.0];
 
-    let rescored = captured_retrieval_trace(
-        &vault,
-        vault.query().search_vector(&query, 10).limit(10),
-    )?;
+    let rescored =
+        captured_retrieval_trace(&vault, vault.query().search_vector(&query, 10).limit(10))?;
     let hot_lane = captured_retrieval_trace(
         &vault,
         vault
@@ -5044,7 +5042,12 @@ fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
     );
 
     let (_dir_plain, plain_vault) = open_test_vault();
-    put_text_and_vector(&plain_vault, id, "funnel forkhash fixture", [1.0, 0.0, 0.0, 0.0])?;
+    put_text_and_vector(
+        &plain_vault,
+        id,
+        "funnel forkhash fixture",
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
     let plain = captured_retrieval_trace(
         &plain_vault,
         plain_vault.query().search_vector(&query, 10).limit(10),

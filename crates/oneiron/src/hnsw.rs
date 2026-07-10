@@ -969,9 +969,8 @@ pub(crate) fn hnsw_search(
         &mut 0,
     )?;
 
-    let rescore_active = config.fast_dims.is_some()
-        && query_vector.len() == config.dimensions
-        && !skip_rescore;
+    let rescore_active =
+        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
     if rescore_active {
         let mut vector_buffer = Vec::with_capacity(query_vector.len());
         for entry in &mut nearest {

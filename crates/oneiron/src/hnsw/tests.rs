@@ -1839,7 +1839,10 @@ fn funnel_dim_mismatch_rejected_on_vault_and_pipeline() -> Result<()> {
     let err = plain.search_vector(&prefix_query, 10).unwrap_err();
     assert_matches!(
         err,
-        Error::DimensionMismatch { expected: DIMS, got: FAST }
+        Error::DimensionMismatch {
+            expected: DIMS,
+            got: FAST
+        }
     );
     let err = plain
         .query()
@@ -1848,7 +1851,10 @@ fn funnel_dim_mismatch_rejected_on_vault_and_pipeline() -> Result<()> {
         .unwrap_err();
     assert_matches!(
         err,
-        Error::DimensionMismatch { expected: DIMS, got: FAST }
+        Error::DimensionMismatch {
+            expected: DIMS,
+            got: FAST
+        }
     );
     Ok(())
 }
