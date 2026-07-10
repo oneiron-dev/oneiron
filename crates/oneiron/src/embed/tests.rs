@@ -423,12 +423,9 @@ fn routed_reconciler(
     remote: Arc<dyn Embedder>,
     decision: EgressDecision,
 ) -> Result<PendingEmbeddingReconciler> {
-    PendingEmbeddingReconciler::new(
-        Arc::clone(vault),
-        Arc::clone(local) as Arc<dyn Embedder>,
-    )
-    .with_batch_size(8)
-    .with_remote_rung(RemoteRung::new(remote, Arc::new(FixedDecision(decision))))
+    PendingEmbeddingReconciler::new(Arc::clone(vault), Arc::clone(local) as Arc<dyn Embedder>)
+        .with_batch_size(8)
+        .with_remote_rung(RemoteRung::new(remote, Arc::new(FixedDecision(decision))))
 }
 
 #[test]
@@ -677,11 +674,10 @@ fn with_remote_rung_validates_configuration() -> Result<()> {
             EmbedderLocality::ThirdParty,
         )) as Arc<dyn Embedder>
     };
-    let Err(err) = PendingEmbeddingReconciler::new(
-        Arc::clone(&vault),
-        remote_primary as Arc<dyn Embedder>,
-    )
-    .with_remote_rung(RemoteRung::new(remote(), allow())) else {
+    let Err(err) =
+        PendingEmbeddingReconciler::new(Arc::clone(&vault), remote_primary as Arc<dyn Embedder>)
+            .with_remote_rung(RemoteRung::new(remote(), allow()))
+    else {
         panic!("non-OnDevice primary must be rejected");
     };
     assert!(
