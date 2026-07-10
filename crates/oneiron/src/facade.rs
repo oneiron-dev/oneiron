@@ -23,7 +23,9 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode, parse_short_id_value};
+use crate::batch::{
+    ApplyOpsGateMode, BatchOp, apply_ops, apply_ops_with_gate_mode, parse_short_id_value,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -41,8 +43,8 @@ use crate::ingest::{
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
@@ -679,9 +681,13 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// (`apply_claim_candidate`). Within the window:
 /// * in-place retype is impossible (`apply_put` rejects type changes with
 ///   `EntityTypeImmutable`), and the two-step retype — hard delete, then
-///   recreate under a different type — is refused facade-side
-///   ([`MemoryFacade::refuse_hard_deleted_id`] on every id-accepting
-///   create verb);
+///   recreate under a different type — is refused facade-side on every
+///   id-accepting create verb, with the marker consulted INSIDE the same
+///   write transaction as the guarded put wherever the facade owns that
+///   transaction (witness, structural, checkin, blob artifact, and both
+///   claim doors' composed txn); companion-create and ingest admission
+///   check pre-transaction because the engine owns their transactions
+///   internally ([`MemoryFacade::refuse_hard_deleted_id`]);
 /// * a soft `user_delete` leaves a 25-byte shell that KEEPS its type, so
 ///   a soft-deleted PERSON still passes this check — the meaningful
 ///   deleted-actor residual is specifically a HARD purge landing between
@@ -941,54 +947,102 @@ impl MemoryFacade<'_> {
             None => (EntityId::now(), true),
         };
 
-        if conversation_is_new {
-            self.refuse_hard_deleted_id(&conversation_id)?;
-        }
-        if turn_is_new {
-            self.refuse_hard_deleted_id(&turn_id)?;
-        }
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
         let mut message_ids = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
-            let message_id = id_from_optional_hex(message.id.as_deref())?;
-            self.refuse_hard_deleted_id(&message_id)?;
-            message_ids.push(message_id);
+            message_ids.push(id_from_optional_hex(message.id.as_deref())?);
             bodies.push(encode_witness_message_body(message)?);
         }
-
-        let mut batch = self.vault.batch();
+        // Ids created by this call must be marker-free; checked INSIDE the
+        // write transaction below so a concurrent hard delete cannot land
+        // between check and commit (A1 atomicity).
+        let mut created_ids = message_ids.clone();
         if conversation_is_new {
-            batch = batch.put(
-                &conversation_id,
-                ENTITY_TYPE_CONVERSATION,
-                occurred,
-                learned_at,
-                &container_body,
-            );
+            created_ids.push(conversation_id);
         }
         if turn_is_new {
-            batch = batch.put(
-                &turn_id,
-                ENTITY_TYPE_TURN,
-                occurred,
-                learned_at,
-                &container_body,
-            );
+            created_ids.push(turn_id);
         }
-        for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
-            batch = batch
-                .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
-                .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
-                .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
-            if message.author != WitnessAuthor::System {
-                batch = batch.edge(id, EdgeKind::AuthoredBy, &self.actor, 1.0);
-            }
-            if !message.content.is_empty() {
-                batch = batch.text(id, &[("content", message.content.as_str())]);
-            }
+        let text_ops: Vec<BatchOp> = turn
+            .messages
+            .iter()
+            .zip(&message_ids)
+            .filter(|(message, _)| !message.content.is_empty())
+            .map(|(message, id)| BatchOp::Text {
+                id: *id,
+                fields: vec![("content".to_owned(), message.content.clone())],
+            })
+            .collect();
+        let text_index_trusted = if text_ops.is_empty() {
+            self.vault.text_index_trusted.load(Ordering::Acquire)
+        } else {
+            self.vault
+                .ensure_text_index_trusted()
+                .map_err(FacadeError::from)?;
+            true
+        };
+
+        let refused = self
+            .vault
+            .with_write_txn(|wtxn| {
+                for id in &created_ids {
+                    if self
+                        .vault
+                        .local_hard_delete_marker_exists_in_txn(wtxn, id)?
+                    {
+                        return Ok(Some(*id));
+                    }
+                }
+                let mut batch = self.vault.batch_in();
+                if conversation_is_new {
+                    batch = batch.put(
+                        &conversation_id,
+                        ENTITY_TYPE_CONVERSATION,
+                        occurred,
+                        learned_at,
+                        &container_body,
+                    );
+                }
+                if turn_is_new {
+                    batch = batch.put(
+                        &turn_id,
+                        ENTITY_TYPE_TURN,
+                        occurred,
+                        learned_at,
+                        &container_body,
+                    );
+                }
+                for (message, (id, body)) in
+                    turn.messages.iter().zip(message_ids.iter().zip(&bodies))
+                {
+                    batch = batch
+                        .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
+                        .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
+                        .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
+                    if message.author != WitnessAuthor::System {
+                        batch = batch.edge(id, EdgeKind::AuthoredBy, &self.actor, 1.0);
+                    }
+                }
+                batch.apply(wtxn)?;
+                if !text_ops.is_empty() {
+                    apply_ops(
+                        &self.vault.store,
+                        &self.vault.config,
+                        &self.vault.analyzer,
+                        wtxn,
+                        text_ops,
+                        text_index_trusted,
+                        false,
+                        true,
+                    )?;
+                }
+                Ok(None)
+            })
+            .map_err(FacadeError::from)?;
+        if let Some(id) = refused {
+            return Err(hard_deleted_refusal(&id));
         }
-        batch.commit().map_err(FacadeError::from)?;
 
         let mut message_short_ids = Vec::with_capacity(message_ids.len());
         for id in &message_ids {
@@ -1197,7 +1251,6 @@ impl MemoryFacade<'_> {
             ));
         }
         let id = id_from_optional_hex(input.id.as_deref())?;
-        self.refuse_hard_deleted_id(&id)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
@@ -1205,10 +1258,7 @@ impl MemoryFacade<'_> {
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
         let data = encode_rmpv(&json_to_rmpv(&input.body))?;
 
-        let mut batch = self
-            .vault
-            .batch()
-            .put(&id, type_byte, occurred, learned_at, &data);
+        let mut resolved_edges = Vec::new();
         if let Some(edges) = &input.edges {
             for spec in edges {
                 let kind = edge_kind_from_str(&spec.edge_kind).ok_or_else(|| {
@@ -1219,20 +1269,66 @@ impl MemoryFacade<'_> {
                 })?;
                 let target = self.resolve_ref(&spec.target_ref)?;
                 let weight = spec.weight.or_else(|| kind.default_weight()).unwrap_or(1.0);
-                batch = batch.edge(&id, kind, &target, weight);
+                resolved_edges.push((kind, target, weight));
             }
         }
-        let pairs: Vec<(&str, &str)> = input
+        let text_fields: Vec<(String, String)> = input
             .text_fields
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .map(|field| (field.field.as_str(), field.value.as_str()))
+            .map(|field| (field.field.clone(), field.value.clone()))
             .collect();
-        if !pairs.is_empty() {
-            batch = batch.text(&id, &pairs);
+        let text_index_trusted = if text_fields.is_empty() {
+            self.vault.text_index_trusted.load(Ordering::Acquire)
+        } else {
+            self.vault
+                .ensure_text_index_trusted()
+                .map_err(FacadeError::from)?;
+            true
+        };
+
+        // Marker check and put share ONE write transaction (A1): a
+        // concurrent hard delete either commits first (refused here) or
+        // after this txn (its purge then erases what we wrote).
+        let refused = self
+            .vault
+            .with_write_txn(|wtxn| {
+                if self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+                {
+                    return Ok(true);
+                }
+                let mut batch = self
+                    .vault
+                    .batch_in()
+                    .put(&id, type_byte, occurred, learned_at, &data);
+                for (kind, target, weight) in &resolved_edges {
+                    batch = batch.edge(&id, *kind, target, *weight);
+                }
+                batch.apply(wtxn)?;
+                if !text_fields.is_empty() {
+                    apply_ops(
+                        &self.vault.store,
+                        &self.vault.config,
+                        &self.vault.analyzer,
+                        wtxn,
+                        vec![BatchOp::Text {
+                            id,
+                            fields: text_fields.clone(),
+                        }],
+                        text_index_trusted,
+                        false,
+                        true,
+                    )?;
+                }
+                Ok(false)
+            })
+            .map_err(FacadeError::from)?;
+        if refused {
+            return Err(hard_deleted_refusal(&id));
         }
-        batch.commit().map_err(FacadeError::from)?;
         self.entity_ref_receipt(&id)
     }
 
@@ -1242,7 +1338,6 @@ impl MemoryFacade<'_> {
         self.verified_actor_class()?;
         let habit_id = self.resolve_ref(&input.habit_ref)?;
         let checkin_id = id_from_optional_hex(input.id.as_deref())?;
-        self.refuse_hard_deleted_id(&checkin_id)?;
         let mut entries = vec![(
             Value::from("role"),
             Value::from(u64::from(TaskRole::HabitCheckin.role_byte())),
@@ -1269,9 +1364,26 @@ impl MemoryFacade<'_> {
             end: input.occurred_at,
         };
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
-        self.vault
-            .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
+        // Marker check and checkin put share one write transaction (A1).
+        let refused = self
+            .vault
+            .with_write_txn(|wtxn| {
+                if self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &checkin_id)?
+                {
+                    return Ok(true);
+                }
+                self.vault
+                    .batch_in()
+                    .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
+                    .apply(wtxn)?;
+                Ok(false)
+            })
             .map_err(FacadeError::from)?;
+        if refused {
+            return Err(hard_deleted_refusal(&checkin_id));
+        }
         self.entity_ref_receipt(&checkin_id)
     }
 
@@ -1407,25 +1519,52 @@ impl MemoryFacade<'_> {
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> FacadeResult<EntityRefReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
-        self.refuse_hard_deleted_id(&id)?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
             input.media_type.clone(),
         );
+        let data =
+            crate::blob_artifact::encode_blob_artifact_body(&body).map_err(FacadeError::from)?;
         let occurred = TimeRange {
             start: input.occurred_at,
             end: input.occurred_at,
         };
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
-        self.vault
-            .put_blob_artifact(&id, &body, occurred, learned_at)
+        // Marker check and artifact put share one write transaction (A1);
+        // the encoded body matches Vault::put_blob_artifact exactly.
+        let refused = self
+            .vault
+            .with_write_txn(|wtxn| {
+                if self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+                {
+                    return Ok(true);
+                }
+                self.vault
+                    .batch_in()
+                    .put(&id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
+                    .apply(wtxn)?;
+                Ok(false)
+            })
             .map_err(FacadeError::from)?;
+        if refused {
+            return Err(hard_deleted_refusal(&id));
+        }
         self.entity_ref_receipt(&id)
     }
 
     /// Appends one content-addressed version to a blob artifact. The whole
     /// append (ASSET bytes + `blob.version` LEDGER claim + version chain)
     /// is one engine transaction; re-appending head bytes is a dedupe no-op.
+    ///
+    /// Exempt from the hard-delete recreation refusal BY CONSTRUCTION: no
+    /// caller-supplied id is written here — the ASSET id is content-derived
+    /// inside the engine (module-private derivation) and the LEDGER claim
+    /// id is a fresh `EntityId::now()`. The inherent edge of erasure
+    /// integrity for content-addressed storage remains: a hard-deleted
+    /// ASSET can be re-materialized by re-supplying identical bytes to a
+    /// live artifact.
     pub fn append_blob_version(
         &self,
         artifact_ref: &str,
@@ -1625,7 +1764,6 @@ impl MemoryFacade<'_> {
     fn commit_one(&self, input: &ClaimInput, auto_supersede: bool) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
-        self.refuse_hard_deleted_id(&id)?;
         let subject = self.resolve_ref(&input.subject_ref)?;
         if self
             .vault
@@ -1662,7 +1800,7 @@ impl MemoryFacade<'_> {
         // outlive a write that failed later validation) and no orphan
         // revisions behind a rejected receipt. The fail-closed trade: a
         // rolled-back write also drops its gate decision.
-        let write = |approval: ClaimApprovalStatus| -> Result<(), Error> {
+        let write = |approval: ClaimApprovalStatus| -> Result<bool, Error> {
             let mut candidate = ClaimCandidate::new(
                 input.predicate.clone(),
                 ClaimSubject::Entity(subject),
@@ -1690,6 +1828,12 @@ impl MemoryFacade<'_> {
                 end: occurred_at,
             };
             self.vault.with_write_txn(|wtxn| {
+                if self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+                {
+                    return Ok(true);
+                }
                 apply_ops_with_gate_mode(
                     &self.vault.store,
                     &self.vault.config,
@@ -1706,24 +1850,26 @@ impl MemoryFacade<'_> {
                     self.vault.text_index_trusted.load(Ordering::Acquire),
                     ApplyOpsGateMode::new(true, true),
                 )?;
-                match prior {
-                    Some(old_id) => self
-                        .vault
-                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at),
-                    None => Ok(()),
+                if let Some(old_id) = prior {
+                    self.vault
+                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)?;
                 }
+                Ok(false)
             })
         };
-        match write(approval) {
-            Ok(()) => {}
+        let refused = match write(approval) {
+            Ok(refused) => refused,
             Err(err)
                 if approval == ClaimApprovalStatus::Auto
                     && err.kind() == ErrorKind::GateWriteRejected =>
             {
                 approval = ClaimApprovalStatus::Proposed;
-                write(approval).map_err(FacadeError::from)?;
+                write(approval).map_err(FacadeError::from)?
             }
             Err(err) => return Err(err.into()),
+        };
+        if refused {
+            return Err(hard_deleted_refusal(&id));
         }
 
         let superseded_short_id = match prior {
@@ -1836,13 +1982,14 @@ impl MemoryFacade<'_> {
         resolve_entity_ref(self.vault, reference)
     }
 
-    /// Refuses creation at an id carrying the durable `dt:` hard-delete
-    /// marker (hard-once-seen — the same presence-only marker the sync
-    /// replay path consults). Without this, a delete-authorized caller
-    /// could two-step retype an entity (hard delete, then recreate under a
-    /// different type), and a migration re-run could resurrect data the
-    /// user erased. Applied to every facade verb that accepts a
-    /// caller-supplied id.
+    /// PRE-TRANSACTION variant of the hard-delete refusal, used ONLY where
+    /// the engine owns the write transaction internally (companion create,
+    /// ingest admission) and the marker check cannot ride it. Residual for
+    /// those two verbs: a hard delete landing between this check and the
+    /// engine's commit recreates at the purged id; closing it needs in-txn
+    /// engine seams (`create_companion_record_in_txn`, ingest). Every other
+    /// id-accepting verb checks the marker INSIDE its own write
+    /// transaction (A1).
     fn refuse_hard_deleted_id(&self, id: &EntityId) -> FacadeResult<()> {
         let rtxn = self
             .vault
@@ -1855,17 +2002,7 @@ impl MemoryFacade<'_> {
             .local_hard_delete_marker_exists_in_txn(&rtxn, id)
             .map_err(FacadeError::from)?
         {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
-                format!(
-                    "id {} was hard-deleted and cannot be recreated through the facade",
-                    id.to_hex()
-                ),
-                &[
-                    "Hard-deleted ids are permanent (hard-once-seen); use a fresh id.",
-                    "Recreation at a purged id would resurrect erased data or retype an actor.",
-                ],
-            ));
+            return Err(hard_deleted_refusal(id));
         }
         Ok(())
     }
@@ -2003,6 +2140,26 @@ fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
         }
     }
     None
+}
+
+/// Typed refusal for creation at an id carrying the durable `dt:`
+/// hard-delete marker (hard-once-seen — the same presence-only marker the
+/// sync replay path consults). Without this refusal a delete-authorized
+/// caller could two-step retype an entity (hard delete, then recreate
+/// under a different type), and a migration re-run could resurrect data
+/// the user erased.
+fn hard_deleted_refusal(id: &EntityId) -> FacadeError {
+    FacadeError::new(
+        FACADE_CODE_FORBIDDEN,
+        format!(
+            "id {} was hard-deleted and cannot be recreated through the facade",
+            id.to_hex()
+        ),
+        &[
+            "Hard-deleted ids are permanent (hard-once-seen); use a fresh id.",
+            "Recreation at a purged id would resurrect erased data or retype an actor.",
+        ],
+    )
 }
 
 fn hex_string(bytes: &[u8]) -> String {

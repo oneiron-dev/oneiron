@@ -1433,6 +1433,29 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
     let err = facade.claim_upsert(&claim).expect_err("claim at purged id");
     assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
 
+    // ... and the witness door (message ids) and the blob-artifact door.
+    let mut ghost_message = witness_message(0, WitnessAuthor::User, "revenant");
+    ghost_message.id = Some(victim.to_hex());
+    let err = facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x66; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![ghost_message],
+            occurred_at: 707,
+        })
+        .expect_err("witness message at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let err = facade
+        .put_blob_artifact(&BlobArtifactInput {
+            id: Some(victim.to_hex()),
+            name: "revenant.m4a".to_owned(),
+            media_type: "audio/mp4".to_owned(),
+            occurred_at: 708,
+            learned_at: None,
+        })
+        .expect_err("blob artifact at purged id");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+
     // GDPR (hard reason) marks the id permanent the same way.
     let gdpr_victim = EntityId::from_bytes([0x64; 16]).unwrap();
     put_kind("EVENT", &gdpr_victim.to_hex(), 702).expect("create gdpr victim");
@@ -1458,4 +1481,10 @@ fn hard_deleted_ids_cannot_be_recreated_through_the_facade() {
         "soft delete must not use the hard marker: {}",
         err.message
     );
+    // A3 positive case: a SAME-TYPE re-put at a soft-deleted id stays
+    // legal — guards against a future over-broadened refusal that would
+    // start blocking legitimate soft re-puts.
+    let recreated = put_kind("EVENT", &soft_victim.to_hex(), 706)
+        .expect("same-type re-put after soft delete must succeed");
+    assert_eq!(recreated.id_hex, soft_victim.to_hex());
 }
