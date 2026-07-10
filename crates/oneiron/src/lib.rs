@@ -43,6 +43,7 @@ pub mod engine_executor;
 pub mod entity_id;
 pub mod error;
 pub mod extraction_eval;
+pub mod facade;
 pub mod federation;
 pub(crate) mod fusion;
 pub(crate) mod gate;
@@ -414,6 +415,15 @@ pub use crate::extraction_eval::{
     Of360Speaker, evaluate_of360_extraction, generate_of360_seeded_gold_subset,
     of360_ar3_metric_tier, of360_builtin_ar3_metric_tier, of360_gold_subset,
     of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
+};
+pub use crate::facade::{
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter,
+    ClaimView, CommitReceipt, CompanionRecordInput, DeleteReceipt, EntityRefReceipt, EntityView,
+    FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
+    FACADE_CODE_INVALID_STATE, FACADE_CODE_NOT_FOUND, FacadeError, FacadeReceipt, FacadeResult,
+    HabitCheckinInput, MULTI_CARDINALITY_PREDICATES, MemoryFacade, PendingWrite, SafeDeleteReason,
+    StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn, parse_actor_key, resolve_entity_ref,
 };
 pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,
