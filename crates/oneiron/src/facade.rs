@@ -42,7 +42,7 @@ use crate::ingest::{
 };
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE,
-    ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_REGISTRY, ENTITY_TYPE_TURN,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
@@ -639,6 +639,7 @@ pub fn parse_actor_key(vault: &Vault, key: &str) -> FacadeResult<(EntityId, Edge
         }
     };
     let actor = resolve_entity_ref(vault, entity_ref)?;
+    verify_actor_binding(vault, actor, actor_class)?;
     Ok((actor, actor_class))
 }
 
@@ -665,6 +666,40 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
         format!("entity ref {reference:?} is neither a 32-hex id nor a short ref"),
         &["Pass a 32-character hex entity id or a short ref like \"ms1:a3\"."],
     ))
+}
+
+/// Store-truth check behind every actor binding: the entity must exist
+/// and its stored type must permit the asserted class.
+fn verify_actor_binding(
+    vault: &Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> FacadeResult<()> {
+    let Some(entity_type) = vault.get_entity_type(&actor).map_err(FacadeError::from)? else {
+        return Err(FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            format!(
+                "bound actor {} does not exist in this vault",
+                actor.to_hex()
+            ),
+            &[
+                "Provision the actor entity before binding its key.",
+                "Actor keys assert identity; the store decides whether it holds.",
+            ],
+        ));
+    };
+    crate::provenance::validate_actor_class(entity_type, actor_class).map_err(|_| {
+        FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            format!(
+                "bound actor {} is a {} entity and cannot act as class {}",
+                actor.to_hex(),
+                kind_string_for_type(entity_type),
+                actor_class.gate_actor_class(),
+            ),
+            &["Bind an actor key whose entity type matches its asserted class."],
+        )
+    })
 }
 
 fn parse_short_ref(reference: &str) -> Option<(String, u8)> {
@@ -871,6 +906,7 @@ impl MemoryFacade<'_> {
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
     pub fn witness(&self, turn: &WitnessTurn) -> FacadeResult<WitnessReceipt> {
+        self.verified_actor_class()?;
         if turn.messages.is_empty() {
             return Err(FacadeError::bad_request("witness turn carries no messages"));
         }
@@ -968,14 +1004,18 @@ impl MemoryFacade<'_> {
 
     /// Retracts an active claim (deliberate withdrawal; record preserved).
     ///
-    /// Authority (fail-closed): a `human`-class actor holds the vault
-    /// owner's memory authority and may retract any claim; `agent`/`system`
-    /// actors may retract ONLY claims whose write-envelope evidence names
-    /// them as the writing actor. Everything else is a typed denial —
-    /// binding an actor key is not authority (W3).
+    /// Authority (fail-closed): the asserted actor is first RESOLVED
+    /// against the store ([`Self::verified_actor_class`] — it must exist
+    /// and its stored type must match the asserted class). A verified
+    /// `human`-class actor holds the vault owner's memory authority and
+    /// may retract any claim; `agent`/`system` actors may retract ONLY
+    /// claims whose write-envelope evidence names them as the writing
+    /// actor. Everything else is a typed denial — binding an actor key is
+    /// not authority (W3).
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
+        let actor_class = self.verified_actor_class()?;
         let id = self.resolve_ref(claim_ref)?;
-        if self.actor_class != EdgeActorClass::Human {
+        if actor_class != EdgeActorClass::Human {
             let authored = self
                 .vault
                 .get_claim(&id)
@@ -1025,15 +1065,18 @@ impl MemoryFacade<'_> {
     /// tombstone path; the other three run the redaction-audit machinery.
     ///
     /// Authority (fail-closed): deletion is an OWNER verb — the named
-    /// reasons are `user_*`/compliance erasures. Only a `human`-class
-    /// actor may delete; `agent`/`system` actors get a typed denial
-    /// (agents withdraw their own claims via [`Self::claim_retract`]).
+    /// reasons are `user_*`/compliance erasures. Only a VERIFIED
+    /// `human`-class actor may delete ([`Self::verified_actor_class`]:
+    /// the asserted actor must exist and be a PERSON — asserted class
+    /// strings are never trusted); `agent`/`system` actors get a typed
+    /// denial (agents withdraw their own claims via
+    /// [`Self::claim_retract`]).
     pub fn safe_delete(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
     ) -> FacadeResult<DeleteReceipt> {
-        if self.actor_class != EdgeActorClass::Human {
+        if self.verified_actor_class()? != EdgeActorClass::Human {
             return Err(FacadeError::new(
                 FACADE_CODE_FORBIDDEN,
                 format!(
@@ -1064,14 +1107,19 @@ impl MemoryFacade<'_> {
 
     /// Structural put carrying text-index fields and outgoing edges, in one
     /// atomic batch. CLAIM-kind writes are rejected — claims go through
-    /// [`Self::commit`] so the gate always sees them. MACHINE-kind writes
-    /// are rejected: MACHINE is the system-actor class type
-    /// (`validate_actor_class`), and minting one would let a bound actor
-    /// forge a rebindable `system` actor — the facade is not an
-    /// actor-provisioning door. (PERSON stays writable: companion-persona
-    /// and owner PERSON creation through this door is design-pinned,
-    /// §2.3/§2.8, and person actors remain gate-ceilinged per class.)
+    /// [`Self::commit`] so the gate always sees them.
+    ///
+    /// Actor-capable kinds are provisioning-gated (the facade is not an
+    /// actor-forgery door): MACHINE (the `system` class type) is never
+    /// writable here — system actors are provisioned by the engine host —
+    /// and PERSON (rebindable as `human`/`agent`, where the default
+    /// manifest grants the human class an auto ceiling) may be minted
+    /// only by a VERIFIED human-class owner actor. Companion-persona and
+    /// owner PERSON creation stays available to the owner-bound migrator
+    /// (design §2.3/§2.8); no non-owner actor can create an entity that
+    /// binds to any actor class.
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
+        let actor_class = self.verified_actor_class()?;
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
             return Err(FacadeError::bad_request_with(
@@ -1086,6 +1134,19 @@ impl MemoryFacade<'_> {
                 &[
                     "MACHINE is the system-actor class type; minting one would forge an actor.",
                     "System actors are provisioned by the engine host, not the bridge.",
+                ],
+            ));
+        }
+        if type_byte == ENTITY_TYPE_PERSON && actor_class != EdgeActorClass::Human {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} may not mint PERSON entities; PERSON is actor-capable",
+                    actor_class.gate_actor_class(),
+                ),
+                &[
+                    "PERSON entities rebind as human/agent actors; only the owner mints them.",
+                    "Bind a verified human-class owner actor key to create people.",
                 ],
             ));
         }
@@ -1136,6 +1197,7 @@ impl MemoryFacade<'_> {
     /// Appends one immutable habit check-in child (`ChildOf` edge written by
     /// the pack contract). The pinned `role` body key is facade-injected.
     pub fn put_habit_checkin(&self, input: &HabitCheckinInput) -> FacadeResult<EntityRefReceipt> {
+        self.verified_actor_class()?;
         let habit_id = self.resolve_ref(&input.habit_ref)?;
         let checkin_id = id_from_optional_hex(input.id.as_deref())?;
         let mut entries = vec![(
@@ -1176,6 +1238,7 @@ impl MemoryFacade<'_> {
         &self,
         input: &CompanionRecordInput,
     ) -> FacadeResult<EntityRefReceipt> {
+        self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let owner = self.resolve_ref(&input.owner_ref)?;
         let persona = self.resolve_ref(&input.persona_ref)?;
@@ -1217,6 +1280,7 @@ impl MemoryFacade<'_> {
         &self,
         input: &AdmitImportedClaimInput,
     ) -> FacadeResult<CommitReceipt> {
+        self.verified_actor_class()?;
         let Some(config) = INGEST_SOURCE_REGISTRY.get_config(&input.source_id) else {
             return Err(FacadeError::bad_request_with(
                 format!("unknown ingest source {:?}", input.source_id),
@@ -1225,6 +1289,17 @@ impl MemoryFacade<'_> {
         };
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
+        if self
+            .vault
+            .get_entity_type(&subject)
+            .map_err(FacadeError::from)?
+            .is_none()
+        {
+            return Err(FacadeError::not_found(format!(
+                "claim subject {} does not exist",
+                subject.to_hex()
+            )));
+        }
         let claim = NormalizedIngestClaim {
             source_record_id: input.source_record_id.clone(),
             predicate: input.predicate.clone(),
@@ -1285,6 +1360,7 @@ impl MemoryFacade<'_> {
     /// Registers a blob artifact (B8 blob door; bytes ride
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> FacadeResult<EntityRefReceipt> {
+        self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
@@ -1312,6 +1388,7 @@ impl MemoryFacade<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> FacadeResult<BlobVersionView> {
+        self.verified_actor_class()?;
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -1500,8 +1577,20 @@ impl MemoryFacade<'_> {
     // ── internals ───────────────────────────────────────────────────────
 
     fn commit_one(&self, input: &ClaimInput, auto_supersede: bool) -> FacadeResult<CommitReceipt> {
+        self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
+        if self
+            .vault
+            .get_entity_type(&subject)
+            .map_err(FacadeError::from)?
+            .is_none()
+        {
+            return Err(FacadeError::not_found(format!(
+                "claim subject {} does not exist",
+                subject.to_hex()
+            )));
+        }
         let source = parse_claim_source(&input.source)?;
         let value = json_to_rmpv(&input.value);
         let world = match &input.world_ref {
@@ -1520,12 +1609,12 @@ impl MemoryFacade<'_> {
         };
 
         let mut approval = requested_approval(source, input.scope.as_ref());
-        // With a prior revision, the replacement write and the supersession
-        // compose into ONE engine transaction: a refused supersession rolls
-        // the replacement back too, so no orphan revision can persist
-        // behind a rejected receipt. (The atomic path records its gate
-        // decision inside the same txn, so a rollback also drops the
-        // decision — the fail-closed trade for atomicity.)
+        // Every commit is ONE engine transaction: gate decision, claim
+        // write, and (with a prior revision) the supersession commit or
+        // roll back together. No phantom receipts (a decision can never
+        // outlive a write that failed later validation) and no orphan
+        // revisions behind a rejected receipt. The fail-closed trade: a
+        // rolled-back write also drops its gate decision.
         let write = |approval: ClaimApprovalStatus| -> Result<(), Error> {
             let mut candidate = ClaimCandidate::new(
                 input.predicate.clone(),
@@ -1553,33 +1642,30 @@ impl MemoryFacade<'_> {
                 start: occurred_at,
                 end: occurred_at,
             };
-            match prior {
-                None => self
-                    .vault
-                    .batch()
-                    .claim_candidate(&id, candidate, &envelope, occurred, learned_at)
-                    .commit(),
-                Some(old_id) => self.vault.with_write_txn(|wtxn| {
-                    apply_ops_with_gate_mode(
-                        &self.vault.store,
-                        &self.vault.config,
-                        &self.vault.analyzer,
-                        wtxn,
-                        vec![BatchOp::ClaimCandidate {
-                            id,
-                            candidate: Box::new(candidate),
-                            envelope,
-                            occurred,
-                            learned_at,
-                            internal_lexical_query_hint: false,
-                        }],
-                        self.vault.text_index_trusted.load(Ordering::Acquire),
-                        ApplyOpsGateMode::new(true, true),
-                    )?;
-                    self.vault
-                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at)
-                }),
-            }
+            self.vault.with_write_txn(|wtxn| {
+                apply_ops_with_gate_mode(
+                    &self.vault.store,
+                    &self.vault.config,
+                    &self.vault.analyzer,
+                    wtxn,
+                    vec![BatchOp::ClaimCandidate {
+                        id,
+                        candidate: Box::new(candidate),
+                        envelope,
+                        occurred,
+                        learned_at,
+                        internal_lexical_query_hint: false,
+                    }],
+                    self.vault.text_index_trusted.load(Ordering::Acquire),
+                    ApplyOpsGateMode::new(true, true),
+                )?;
+                match prior {
+                    Some(old_id) => self
+                        .vault
+                        .supersede_claim_in_txn(wtxn, &id, &old_id, learned_at),
+                    None => Ok(()),
+                }
+            })
         };
         match write(approval) {
             Ok(()) => {}
@@ -1701,6 +1787,18 @@ impl MemoryFacade<'_> {
 
     fn resolve_ref(&self, reference: &str) -> FacadeResult<EntityId> {
         resolve_entity_ref(self.vault, reference)
+    }
+
+    /// Resolves the caller-asserted actor against the STORE before any
+    /// authority is granted (asserted class strings are never trusted):
+    /// the actor entity must exist, and its stored type must match the
+    /// asserted class (PERSON ⇒ human/agent, MACHINE ⇒ system — the same
+    /// rule the gated write path enforces via
+    /// `provenance::validate_actor_class`). Anything unresolvable fails
+    /// closed with a typed denial.
+    fn verified_actor_class(&self) -> FacadeResult<EdgeActorClass> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        Ok(self.actor_class)
     }
 
     fn entity_view(&self, id: &EntityId) -> FacadeResult<Option<EntityView>> {

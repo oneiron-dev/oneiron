@@ -1089,27 +1089,157 @@ fn witness_reuses_migrator_pinned_parent_bodies_byte_identically() {
     );
 }
 
-/// F1: MACHINE is the system-actor class type; the facade refuses to mint
-/// one (actor-forgery door).
+/// F1: no non-owner actor can mint an actor-capable entity type. MACHINE
+/// (the `system` class type) is never facade-writable; PERSON (rebindable
+/// as human/agent) requires a verified human-class owner actor.
 #[test]
-fn put_structural_rejects_machine_actor_kind() {
+fn put_structural_gates_actor_capable_kinds() {
     let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x46);
-    let facade = facade_for(&vault, actor);
+    let owner = put_person(&vault, 0x46);
+    let agent_person = put_person(&vault, 0x4E);
+    let owner_facade = facade_for(&vault, owner);
+    let agent_facade = vault.memory_facade(agent_person, EdgeActorClass::Agent);
 
-    let err = facade
-        .put_structural(&StructuralPutInput {
+    let mint = |facade: &MemoryFacade<'_>, kind: &str| {
+        facade.put_structural(&StructuralPutInput {
             id: None,
-            kind: "MACHINE".to_owned(),
-            body: serde_json::json!({"name": "forged system actor"}),
+            kind: kind.to_owned(),
+            body: serde_json::json!({"name": "candidate actor"}),
             text_fields: None,
             edges: None,
             occurred_at: 660,
             learned_at: None,
         })
-        .expect_err("MACHINE minting must be refused");
+    };
+
+    // Every actor-capable kind is refused for an agent-bound actor.
+    for kind in ["PERSON", "MACHINE"] {
+        let err = mint(&agent_facade, kind)
+            .expect_err("agent-bound actors must not mint actor-capable kinds");
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN, "kind {kind}");
+        assert!(!err.suggestions.is_empty());
+    }
+    // MACHINE is refused even for the owner (engine-host provisioning).
+    let err = mint(&owner_facade, "MACHINE").expect_err("MACHINE never facade-writable");
     assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
-    assert!(!err.suggestions.is_empty());
+    // The verified owner may mint PERSON (design §2.3/§2.8 migrator door).
+    mint(&owner_facade, "PERSON").expect("owner mints companion persona");
+    // Non-actor kinds stay open to agents.
+    mint(&agent_facade, "EVENT").expect("agents may write non-actor structural kinds");
+}
+
+/// F2: caller-asserted actor keys are resolved against the store before
+/// any authority is granted — nonexistent ids and class/type mismatches
+/// fail closed on every authority-bearing verb.
+#[test]
+fn asserted_actor_bindings_resolve_against_the_store() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x5A);
+    let subject = put_person(&vault, 0x5B);
+    let owner_facade = facade_for(&vault, owner);
+    let claim = owner_facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("owner claim");
+    let event = owner_facade
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "EVENT".to_owned(),
+            body: serde_json::json!({"name": "hanami"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 670,
+            learned_at: None,
+        })
+        .expect("event");
+
+    // A nonexistent actor id gets NO authority from its asserted class.
+    let ghost = EntityId::from_bytes([0x77; 16]).unwrap();
+    let ghost_facade = facade_for(&vault, ghost);
+    for err in [
+        ghost_facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("ghost retract"),
+        ghost_facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("ghost delete"),
+        ghost_facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0x78; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, "x")],
+                occurred_at: 671,
+            })
+            .expect_err("ghost witness"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert!(err.message.contains("does not exist"), "{}", err.message);
+    }
+
+    // An existing NON-PERSON entity asserted as human is a type mismatch.
+    let event_id = EntityId::from_hex(&event.id_hex).unwrap();
+    let mismatch_facade = facade_for(&vault, event_id);
+    for err in [
+        mismatch_facade
+            .claim_retract(&claim.claim_short_id)
+            .expect_err("mismatch retract"),
+        mismatch_facade
+            .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+            .expect_err("mismatch delete"),
+    ] {
+        assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+        assert!(
+            err.message.contains("cannot act as class"),
+            "{}",
+            err.message
+        );
+    }
+
+    // Bind-time verification: asActor keys hit the same store truth.
+    let err =
+        parse_actor_key(&vault, &format!("human:{}", ghost.to_hex())).expect_err("ghost bind");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let err = parse_actor_key(&vault, &format!("system:{}", owner.to_hex()))
+        .expect_err("PERSON cannot bind as system");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+}
+
+/// F3: a commit is one transaction — a write that fails validation after
+/// the gate leaves NO phantom decision behind.
+#[test]
+fn failed_commit_leaves_no_phantom_gate_decision() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x5C);
+    let facade = facade_for(&vault, actor);
+
+    let claim_id = EntityId::from_bytes([0x5D; 16]).unwrap();
+    let missing_subject = EntityId::from_bytes([0x5E; 16]).unwrap();
+    let mut input = claim_input(
+        "profile.name",
+        &missing_subject,
+        "user_stated",
+        serde_json::json!("Nobody"),
+    );
+    input.id = Some(claim_id.to_hex());
+    let receipts = facade.commit(&[input]).expect("commit batch");
+    assert_eq!(receipts[0].approval, "rejected");
+
+    assert!(
+        vault.get_claim(&claim_id).expect("read back").is_none(),
+        "rejected element must not persist"
+    );
+    assert!(
+        !facade
+            .receipts(100)
+            .expect("receipts")
+            .iter()
+            .any(|r| r.claim_ref.as_deref() == Some(claim_id.to_hex().as_str())),
+        "no phantom gate decision for a write that never happened"
+    );
 }
 
 /// F2: retraction authority — agents may retract only their own writes;

@@ -45,6 +45,23 @@ fn ts_from_engine(value: u64, field: &str) -> BoundaryResult<i64> {
     i64::try_from(value).map_err(|_| format!("{field} does not fit a signed 64-bit integer"))
 }
 
+/// Blob content ceiling for the N-API boundary: 32 MiB raw (double the
+/// B8-validated 16 MiB probe). The base64 length is bounded BEFORE any
+/// decode allocation, so oversized inputs cannot exhaust process memory.
+const MAX_NAPI_BLOB_CONTENT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_NAPI_BLOB_BASE64_LEN: usize = MAX_NAPI_BLOB_CONTENT_BYTES / 3 * 4 + 4;
+
+fn decode_blob_base64(input: &str) -> BoundaryResult<Vec<u8>> {
+    if input.len() > MAX_NAPI_BLOB_BASE64_LEN {
+        return Err(format!(
+            "bytes_base64 exceeds the {MAX_NAPI_BLOB_CONTENT_BYTES}-byte blob content ceiling"
+        ));
+    }
+    BASE64_STANDARD
+        .decode(input.as_bytes())
+        .map_err(|_| "bytes_base64 is not valid standard base64".to_owned())
+}
+
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 
 /// One message inside a witnessed turn.
@@ -936,9 +953,7 @@ impl ActorScopedVault {
         occurred_at: i64,
         learned_at: Option<i64>,
     ) -> napi::Result<NapiBlobVersionView> {
-        let bytes = BASE64_STANDARD
-            .decode(bytes_base64.as_bytes())
-            .map_err(|_| boundary_error("bytes_base64 is not valid standard base64".to_owned()))?;
+        let bytes = decode_blob_base64(&bytes_base64).map_err(boundary_error)?;
         let view = self
             .facade()?
             .append_blob_version(
@@ -1014,6 +1029,19 @@ mod tests {
             !source.contains(needle),
             "facade.rs must not reference {needle} (S1 no-buffer ABI)"
         );
+    }
+
+    /// F4: the blob base64 input is length-bounded BEFORE decode
+    /// allocation; an oversized input is rejected without allocating the
+    /// output vector.
+    #[test]
+    fn boundary_rejects_oversized_blob_base64_before_decoding() {
+        let oversized = "A".repeat(MAX_NAPI_BLOB_BASE64_LEN + 8);
+        let err = reason(decode_blob_base64(&oversized));
+        assert!(err.contains("ceiling"), "got: {err}");
+
+        assert_eq!(decode_blob_base64("aGVsbG8=").unwrap(), b"hello");
+        assert!(decode_blob_base64("not base64!").is_err());
     }
 
     #[test]
