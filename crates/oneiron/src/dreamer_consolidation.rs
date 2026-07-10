@@ -54,6 +54,8 @@ pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
 /// candidate's id is a pure function of its identity + the owning job so an
 /// at-least-once re-run of the same durable step re-mints the SAME id.
 pub const DREAMER_CLAIM_ID_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-claim-id:v1";
+/// Domain for swarm evidence content hashes (pinned, design D10).
+pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
 /// A gap not re-observed within this window decays and is never re-surfaced
 /// (escalate-or-let-go, never re-nag nightly).
 pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;
@@ -807,9 +809,11 @@ pub fn plan_candidate_buckets(
 // Phase 3 — mechanical evidence collapse + deterministic conflict trigger
 // ---------------------------------------------------------------------------
 
-/// Minimal swarm evidence reference (hash-only). ONE-1385 hardens the
-/// return-contract boundary, the trust meet, and the conformance pin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Swarm evidence reference — the HASH-ONLY boundary (GATE-05): a child
+/// return structurally cannot carry source bytes; identity is
+/// `(source_id, content_hash)` and comparisons use exactly those two
+/// fields (trust ties resolve to the most restrictive at collapse time).
+#[derive(Debug, Clone, Copy)]
 pub struct SwarmEvidenceRef {
     pub source_id: EntityId,
     pub content_hash: [u8; 32],
@@ -817,10 +821,18 @@ pub struct SwarmEvidenceRef {
 }
 
 impl SwarmEvidenceRef {
-    fn dedupe_key(&self) -> (EntityId, [u8; 32], &'static str) {
-        (self.source_id, self.content_hash, self.trust_class.as_str())
+    const fn identity(&self) -> (EntityId, [u8; 32]) {
+        (self.source_id, self.content_hash)
     }
 }
+
+impl PartialEq for SwarmEvidenceRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for SwarmEvidenceRef {}
 
 impl PartialOrd for SwarmEvidenceRef {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -830,39 +842,113 @@ impl PartialOrd for SwarmEvidenceRef {
 
 impl Ord for SwarmEvidenceRef {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.dedupe_key().cmp(&other.dedupe_key())
+        self.identity().cmp(&other.identity())
     }
 }
 
-/// Mechanically collapsed evidence: dedupe by `(source_id, content_hash)` —
-/// N siblings citing one source are ONE independent signal.
+/// One swarm child's return: evidence hashes ONLY (raw content never
+/// crosses the boundary — no field can carry it), candidate claims AS
+/// DATA, and the weave's read pin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwarmChildReturn {
+    pub evidence: BTreeSet<SwarmEvidenceRef>,
+    pub candidates: Vec<PromotionCandidate>,
+    /// The max `learned_at` watermark captured ONCE at weave start and
+    /// stamped into every child payload.
+    pub read_pin: u64,
+}
+
+/// Mechanically collapsed evidence: N siblings citing one
+/// `(source_id, content_hash)` are ONE independent signal.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CollapsedEvidence {
-    pub refs: BTreeSet<SwarmEvidenceRef>,
+    pub independent: Vec<SwarmEvidenceRef>,
+    pub duplicates_collapsed: u32,
 }
 
-impl CollapsedEvidence {
-    /// Independent corroboration signals after the collapse.
-    #[must_use]
-    pub fn independent_signals(&self) -> usize {
-        self.refs
-            .iter()
-            .map(|entry| (entry.source_id, entry.content_hash))
-            .collect::<BTreeSet<_>>()
-            .len()
-    }
+/// Content hash over the entity's stored body bytes AFTER the metadata
+/// header (`raw[ENTITY_METADATA_HEADER_LEN..]`) — byte-identical across
+/// devices by storage construction. Domain-separated BLAKE3.
+#[must_use]
+pub fn swarm_evidence_content_hash(entity_body_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(DREAMER_EVIDENCE_HASH_DOMAIN);
+    hasher.update(entity_body_bytes);
+    *hasher.finalize().as_bytes()
 }
 
-/// BLAKE3 identity collapse across sibling children (design D10, minimal
-/// form for ONE-1289; full return contract in ONE-1385).
-pub fn collapse_sibling_evidence(children: &[Vec<SwarmEvidenceRef>]) -> Result<CollapsedEvidence> {
-    let mut collapsed = CollapsedEvidence::default();
+/// BLAKE3 identity collapse across sibling children (GATE-05): dedupe by
+/// `(source_id, content_hash)`; trust ties on one identity resolve to the
+/// MOST restrictive class.
+pub fn collapse_sibling_evidence(children: &[SwarmChildReturn]) -> Result<CollapsedEvidence> {
+    let mut independent: BTreeMap<(EntityId, [u8; 32]), SwarmEvidenceRef> = BTreeMap::new();
+    let mut duplicates_collapsed = 0_u32;
     for child in children {
-        for entry in child {
-            collapsed.refs.insert(*entry);
+        for entry in &child.evidence {
+            match independent.entry(entry.identity()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(*entry);
+                }
+                std::collections::btree_map::Entry::Occupied(mut slot) => {
+                    duplicates_collapsed += 1;
+                    let kept = slot.get_mut();
+                    kept.trust_class = source_meet(kept.trust_class, entry.trust_class);
+                }
+            }
         }
     }
-    Ok(collapsed)
+    Ok(CollapsedEvidence {
+        independent: independent.into_values().collect(),
+        duplicates_collapsed,
+    })
+}
+
+/// Most-restrictive trust meet over every source read (GATE-05). Lattice
+/// order, high→low: `UserStated > Observed > Inferred = Generated >
+/// ToolOutput > Imported`. Empty input = `Generated`, the Dreamer's own
+/// floor. Feeds `PromotionCandidate::evidence_meet` (ONE-1290 consumes:
+/// meet at/below ToolOutput forces Proposed + `scope.evidence_taint`).
+#[allow(single_use_lifetimes)] // pinned public signature (brief ONE-1385); anonymous impl-Trait lifetimes are unstable on this toolchain
+pub fn evidence_trust_meet<'a>(refs: impl Iterator<Item = &'a SwarmEvidenceRef>) -> ClaimSource {
+    refs.fold(ClaimSource::Generated, |meet, entry| {
+        source_meet(meet, entry.trust_class)
+    })
+}
+
+/// Rejects a child return whose `read_pin` differs from the weave's pin —
+/// the result is discarded and counted by the caller, never merged.
+pub fn validate_child_read_pin(expected: u64, child: &SwarmChildReturn) -> Result<()> {
+    if child.read_pin != expected {
+        return Err(invalid_consolidation(
+            "dreamer swarm child read pin mismatch",
+        ));
+    }
+    Ok(())
+}
+
+/// Turn → trust_class derivation (DESIGN-PIN Part B1, ratified R4):
+/// native User → `UserStated`; native Assistant → `Generated` (never
+/// Observed — two assistant turns must not corroborate each other above
+/// the Proposed-forcing floor); imported-transcript turns → `Imported`
+/// regardless of role; every other role is never classified (GATE-10
+/// excludes it). The reachable working-set meet space is therefore
+/// {UserStated, Generated, Imported}.
+#[must_use]
+pub const fn turn_trust_class(
+    role: DreamerTurnRole,
+    imported_transcript: bool,
+) -> Option<ClaimSource> {
+    if !dreamer_extraction_role_admissible(role) {
+        return None;
+    }
+    if imported_transcript {
+        return Some(ClaimSource::Imported);
+    }
+    match role {
+        DreamerTurnRole::User => Some(ClaimSource::UserStated),
+        DreamerTurnRole::Assistant => Some(ClaimSource::Generated),
+        _ => None,
+    }
 }
 
 /// A prior head consulted as merge context. Admission REQUIRES
@@ -1046,7 +1132,7 @@ pub fn corroboration_count(collapsed: &CollapsedEvidence, prior_heads: &[PriorHe
         .iter()
         .filter(|prior| claim_evidence_admissible(&prior.body))
         .count();
-    collapsed.independent_signals() + prior_signals
+    collapsed.independent.len() + prior_signals
 }
 
 // ---------------------------------------------------------------------------
