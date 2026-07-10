@@ -1257,3 +1257,91 @@ fn text_message(message: &LlmMessage) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// ONE-1305: composes guest response JSON for every dispatched bridge call
+/// and captures it, mirroring what a real runtime returns to the guest.
+struct BudgetCapturingRuntime {
+    calls: Vec<SelfCall>,
+    captured: std::sync::Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl JsCodeModeRuntime for BudgetCapturingRuntime {
+    fn run_step(
+        &mut self,
+        _step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        for call in self.calls.drain(..) {
+            let response = host.dispatch_self(call)?;
+            let guest_json = guest_response_with_budget(
+                serde_json::json!({"ok": true}),
+                response.budget.as_ref(),
+            );
+            self.captured
+                .lock()
+                .expect("captured lock")
+                .push(guest_json);
+        }
+        Ok(JsCodeModeStepOutcome::complete("done"))
+    }
+}
+
+#[test]
+fn every_host_call_response_carries_budget() {
+    let (_dir, vault) = open_test_vault();
+    let backend = FixtureBackend::new(["const a = 1;"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        10_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = crate::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 30_000));
+    let captured = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let mut runtime = BudgetCapturingRuntime {
+        calls: vec![
+            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("status", 3)),
+            SelfCall::MemorySearch(crate::SelfMemorySearchCall::new("plans", 2)),
+            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
+        ],
+        captured: std::sync::Arc::clone(&captured),
+    };
+    let gated_write = gated_actor_write(&vault, "run-budget-envelope");
+    let config = executor_config(entity(0x8B), EngineExecutorLimits::default());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write)
+            .with_legibility(ExecutorLegibility {
+                guard: &guard,
+                deadline: &deadline,
+            });
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+    assert!(matches!(
+        outcome.status,
+        EngineExecutorStatus::Waiting(_) | EngineExecutorStatus::Complete
+    ));
+
+    let captured = captured.lock().expect("captured lock");
+    assert_eq!(captured.len(), 3, "one response per bridge call");
+    for response in captured.iter() {
+        let budget = response
+            .get(GUEST_BUDGET_RESPONSE_KEY)
+            .unwrap_or_else(|| panic!("response missing budget key: {response}"));
+        let object = budget.as_object().expect("budget must be a JSON object");
+        for key in [
+            "remaining_units",
+            "limit_units",
+            "remaining_ms",
+            "wrap_up",
+            "finalize_by_ms",
+        ] {
+            assert!(object.contains_key(key), "budget missing {key}: {budget}");
+        }
+        assert_eq!(object.len(), 5, "exactly the five pinned keys");
+        assert_eq!(object["limit_units"], serde_json::json!(10_000));
+        assert_eq!(object["remaining_ms"], serde_json::json!(150_000));
+        assert_eq!(object["wrap_up"], serde_json::json!(false));
+        assert_eq!(object["finalize_by_ms"], serde_json::Value::Null);
+    }
+}

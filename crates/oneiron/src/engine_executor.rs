@@ -15,6 +15,8 @@ use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayGeneration,
     CodeRunReplayRecord, CodeRunStepCheckpoint, encode_code_run_replay_value,
 };
+use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
+use crate::llm::BudgetGuard;
 use crate::{
     BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error,
     FinishReason, GatedActorWrite, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
@@ -131,10 +133,66 @@ impl EngineExecutorConfig {
     }
 }
 
+/// Reserved guest response key carrying the budget legibility envelope
+/// (ONE-1305; guest-visible contract — the key name is pinned).
+pub const GUEST_BUDGET_RESPONSE_KEY: &str = "budget";
+
+/// Guest-visible response for one dispatched `self.*` bridge call: the
+/// typed outcome plus the wake-pass budget legibility envelope (Some inside
+/// wake passes). The runtime serializing outcomes for the guest MUST attach
+/// the envelope under [`GUEST_BUDGET_RESPONSE_KEY`] —
+/// [`guest_response_with_budget`] is the composition helper.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfDispatchResponse {
+    pub outcome: SelfDispatchOutcome,
+    pub budget: Option<BudgetLegibilityEnvelope>,
+}
+
+/// Inserts the budget envelope into a guest response JSON object under the
+/// reserved `"budget"` key:
+/// `{"remaining_units":u64,"limit_units":u64,"remaining_ms":u64,"wrap_up":bool,"finalize_by_ms":u64|null}`.
+/// A non-object body is wrapped as `{"result": body}` first.
+#[must_use]
+pub fn guest_response_with_budget(
+    body: serde_json::Value,
+    budget: Option<&BudgetLegibilityEnvelope>,
+) -> serde_json::Value {
+    let mut object = match body {
+        serde_json::Value::Object(object) => object,
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("result".to_owned(), other);
+            object
+        }
+    };
+    if let Some(envelope) = budget {
+        let encoded = serde_json::to_value(envelope)
+            .unwrap_or_else(|error| unreachable!("budget envelope is plain data: {error}"));
+        object.insert(GUEST_BUDGET_RESPONSE_KEY.to_owned(), encoded);
+    }
+    serde_json::Value::Object(object)
+}
+
+/// Wake-pass legibility context for the executor: the ONE wake-budget
+/// counter plus the pass deadline (ONE-1305).
+#[derive(Clone, Copy)]
+pub struct ExecutorLegibility<'a> {
+    pub guard: &'a BudgetGuard,
+    pub deadline: &'a WakePassDeadline,
+}
+
+impl ExecutorLegibility<'_> {
+    fn envelope(&self) -> BudgetLegibilityEnvelope {
+        current_legibility(&self.guard.read(), self.deadline)
+    }
+}
+
 /// Host import bridge exposed to a JS runtime component.
 pub trait JsCodeModeHost {
     /// Dispatches one typed `self.*` call through the host-owned traps.
-    fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchOutcome>;
+    /// Every response carries the budget legibility envelope inside a wake
+    /// pass (design D5: attached to EVERY host-call response).
+    fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse>;
 }
 
 /// Runtime seam for the CODE-1 plain-JS guest component.
@@ -256,6 +314,7 @@ pub struct EngineNativeExecutor<'a> {
     lease: &'a BudgetLease,
     runtime: &'a mut dyn JsCodeModeRuntime,
     gated_write: &'a GatedActorWrite<'a>,
+    legibility: Option<ExecutorLegibility<'a>>,
 }
 
 impl<'a> EngineNativeExecutor<'a> {
@@ -273,7 +332,16 @@ impl<'a> EngineNativeExecutor<'a> {
             lease,
             runtime,
             gated_write,
+            legibility: None,
         }
+    }
+
+    /// Configures the wake-pass legibility context: every subsequent
+    /// bridge-call response carries the budget envelope (ONE-1305).
+    #[must_use]
+    pub fn with_legibility(mut self, legibility: ExecutorLegibility<'a>) -> Self {
+        self.legibility = Some(legibility);
+        self
     }
 
     pub async fn run(
@@ -325,8 +393,12 @@ impl<'a> EngineNativeExecutor<'a> {
             )?;
 
             let bridge_start = record.bridge_calls.len();
-            let mut host =
-                RecordingJsHost::new(self.gated_write, bridge_start as u64, config.determinism);
+            let mut host = RecordingJsHost::new(
+                self.gated_write,
+                bridge_start as u64,
+                config.determinism,
+                self.legibility,
+            );
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -622,6 +694,7 @@ struct RecordingJsHost<'a> {
     gated_write: &'a GatedActorWrite<'a>,
     next_seq: u64,
     determinism: CodeRunDeterminism,
+    legibility: Option<ExecutorLegibility<'a>>,
     bridge_calls: Vec<CodeRunBridgeCall>,
     durable_wait: Option<SelfDurableWait>,
 }
@@ -631,19 +704,25 @@ impl<'a> RecordingJsHost<'a> {
         gated_write: &'a GatedActorWrite<'a>,
         next_seq: u64,
         determinism: CodeRunDeterminism,
+        legibility: Option<ExecutorLegibility<'a>>,
     ) -> Self {
         Self {
             gated_write,
             next_seq,
             determinism,
+            legibility,
             bridge_calls: Vec::new(),
             durable_wait: None,
         }
     }
+
+    fn budget(&self) -> Option<BudgetLegibilityEnvelope> {
+        self.legibility.as_ref().map(ExecutorLegibility::envelope)
+    }
 }
 
 impl JsCodeModeHost for RecordingJsHost<'_> {
-    fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchOutcome> {
+    fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
         let seq = self.next_seq;
         self.next_seq += 1;
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
@@ -652,7 +731,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
             self.bridge_calls.push(row);
-            return Ok(outcome);
+            return Ok(SelfDispatchResponse {
+                outcome,
+                budget: self.budget(),
+            });
         }
         let outcome = match self.gated_write.dispatch(call.clone()) {
             Ok(outcome) => outcome,
@@ -678,7 +760,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.durable_wait = Some(wait.clone());
         }
         self.bridge_calls.push(row);
-        Ok(outcome)
+        Ok(SelfDispatchResponse {
+            outcome,
+            budget: self.budget(),
+        })
     }
 }
 

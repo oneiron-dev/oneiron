@@ -91,6 +91,7 @@ fn ctx<'a>(vault: &'a Vault, fixture: &StepFixture, now_ms: u64) -> DurableStepC
         run_id: Some("run-test".to_owned()),
         envelope_actor: fixture.actor,
         subject: fixture.subject,
+        deadline: None,
         now_ms,
     }
 }
@@ -209,7 +210,10 @@ fn kill_and_resume_no_respend() -> Result<()> {
 
     let outcome =
         block_on(call_as_step(&ctx, &backend, &guard, request_fixture())).expect("first execution");
-    let StepOutcome::Finished { response, memoized } = outcome else {
+    let StepOutcome::Finished {
+        response, memoized, ..
+    } = outcome
+    else {
         panic!("expected finished step");
     };
     assert!(!memoized);
@@ -224,6 +228,7 @@ fn kill_and_resume_no_respend() -> Result<()> {
     let StepOutcome::Finished {
         response: replayed,
         memoized,
+        ..
     } = outcome
     else {
         panic!("expected finished step");
@@ -264,6 +269,7 @@ fn death_after_response_before_log_recovers_without_respend() -> Result<()> {
     let StepOutcome::Finished {
         response: recovered,
         memoized,
+        ..
     } = outcome
     else {
         panic!("expected finished step");
@@ -903,6 +909,7 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
     let StepOutcome::Finished {
         response: replayed,
         memoized,
+        ..
     } = outcome
     else {
         panic!("expected finished step");
@@ -924,4 +931,143 @@ fn trap_for_durable_wait_always_consent() {
         trap_for_durable_wait(&wait, [0x99; 32]),
         DreamerTrapKind::Consent
     );
+}
+
+struct HungBackend;
+
+impl LlmBackend for HungBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        Box::pin(std::future::pending())
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::Unsupported(
+            UnsupportedCapability {
+                capability: LlmCapability::Streaming,
+                model: None,
+                reason: None,
+            },
+        )))
+    }
+}
+
+fn injected_deadline(
+    start_elapsed_ms: u64,
+    ceiling_ms: u64,
+) -> (Arc<std::sync::atomic::AtomicU64>, crate::WakePassDeadline) {
+    let elapsed = Arc::new(std::sync::atomic::AtomicU64::new(start_elapsed_ms));
+    let clock = Arc::clone(&elapsed);
+    let deadline = crate::WakePassDeadline::with_clock(
+        ceiling_ms,
+        Arc::new(move || clock.load(Ordering::SeqCst)),
+    );
+    (elapsed, deadline)
+}
+
+#[test]
+fn deadline_race_aborts_hung_generate() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    // Not yet in the finalize window (elapsed 1s of 180s), so the step is
+    // admitted; the clock jumps past the ceiling while the call hangs.
+    let (elapsed, deadline) = injected_deadline(1_000, 180_000);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.deadline = Some(&deadline);
+    let guard = guard_with_limit(10_000);
+
+    let advancer = {
+        let elapsed = Arc::clone(&elapsed);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            elapsed.store(180_001, Ordering::SeqCst);
+        })
+    };
+    let error = block_on(call_as_step(&ctx, &HungBackend, &guard, request_fixture()))
+        .expect_err("hung generate must lose the deadline race");
+    advancer.join().expect("advancer thread");
+
+    assert!(matches!(error, DurableStepError::DeadlineHardCut));
+    let read = guard.read();
+    assert_eq!(read.reserved_units, 0, "lease aborted with settled spend");
+    assert_eq!(read.used_units, 0);
+    let runner = DreamerRunnerStore::new(&vault);
+    let parked = runner.parked_job(fixture.job_id)?.expect("job parked");
+    assert_eq!(parked.reason, crate::DREAMER_HARD_CUT_PARK_REASON);
+    let step_hash = request_fixture().canonical_hash().expect("hash");
+    assert!(step_state_read(&vault, fixture.job_id, &step_hash)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn finalize_window_refuses_new_steps_serves_memoized() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let guard = guard_with_limit(10_000);
+
+    // Memoize the step OUTSIDE any wake pass first.
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("memoized answer"))]);
+    let outside = ctx(&vault, &fixture, 10_000);
+    let outcome = block_on(call_as_step(&outside, &backend, &guard, request_fixture()))
+        .expect("first execution");
+    let StepOutcome::Finished { legibility, .. } = outcome else {
+        panic!("expected finished step");
+    };
+    assert!(legibility.is_none(), "no envelope outside a wake pass");
+
+    // Inside the finalize window: memoized hit still served, WITH envelope.
+    let (_elapsed, deadline) = injected_deadline(170_000, 180_000);
+    let mut inside = ctx(&vault, &fixture, 11_000);
+    inside.deadline = Some(&deadline);
+    let backend = ScriptedBackend::new(Vec::new());
+    let outcome = block_on(call_as_step(&inside, &backend, &guard, request_fixture()))
+        .expect("memoized hit in finalize window");
+    let StepOutcome::Finished {
+        memoized,
+        legibility,
+        ..
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(memoized);
+    let envelope = legibility.expect("envelope inside wake pass");
+    assert!(envelope.wrap_up, "94% elapsed is past the 80% notice");
+    assert_eq!(envelope.finalize_by_ms, Some(10_000));
+    assert_eq!(envelope.remaining_ms, 10_000);
+
+    // A NEW step (different request) is refused fail-closed.
+    let mut fresh = request_fixture();
+    fresh.params.insert("novel".to_owned(), json!(true));
+    let error = block_on(call_as_step(&inside, &backend, &guard, fresh))
+        .expect_err("new steps are refused in the finalize window");
+    assert!(matches!(error, DurableStepError::FinalizeRefused));
+    Ok(())
+}
+
+#[test]
+fn finished_outcome_carries_legibility_inside_wake_pass() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let (_elapsed, deadline) = injected_deadline(0, 180_000);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.deadline = Some(&deadline);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture("fresh answer"))]);
+    let guard = guard_with_limit(10_000);
+
+    let outcome =
+        block_on(call_as_step(&ctx, &backend, &guard, request_fixture())).expect("fresh execution");
+    let StepOutcome::Finished { legibility, .. } = outcome else {
+        panic!("expected finished step");
+    };
+    let envelope = legibility.expect("envelope inside wake pass");
+    assert_eq!(envelope.limit_units, 10_000);
+    assert_eq!(envelope.remaining_units, 10_000 - 150);
+    assert_eq!(envelope.remaining_ms, 180_000);
+    assert!(!envelope.wrap_up);
+    assert_eq!(envelope.finalize_by_ms, None);
+    Ok(())
 }
