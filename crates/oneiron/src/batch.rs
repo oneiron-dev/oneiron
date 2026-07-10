@@ -2470,6 +2470,13 @@ fn apply_put(
     // (public raw puts, typed puts, claim candidates, sync replay). The ids
     // stay constructible via `EntityId::from_bytes` so they can serve as
     // actor-provenance identities.
+    //
+    // The same choke point censuses a LEGACY occupant of those ids (only
+    // reachable in a pre-reservation vault) before it can be deleted: a
+    // deleted occupant would otherwise leave the reserved id
+    // byte-indistinguishable from a pristine one and resurrect the preset's
+    // compiled Auto.
+    crate::agent_def::scan_reserved_actor_ids_once(store, wtxn)?;
     if crate::agent_def::SystemAgentPreset::from_actor_entity_id(&id).is_some() {
         return Err(Error::InvalidKey);
     }

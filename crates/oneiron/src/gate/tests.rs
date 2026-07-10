@@ -6007,3 +6007,126 @@ fn deleted_reserved_id_occupant_does_not_resurrect_preset_auto() -> Result<()> {
     }
     Ok(())
 }
+
+// AGENT-2 F3 (delete-to-widen, round 2): a legacy occupant that is NEVER used
+// as an actor is still censused by ordinary vault activity — any entity put or
+// any gate actor resolution — so deleting it cannot resurrect preset Auto.
+// (Round 1 only marked the id being resolved, which an unused occupant never
+// triggered; this test fails against that implementation.)
+#[test]
+fn unobserved_reserved_id_occupant_is_censused_before_deletion() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let store = &vault.store;
+    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
+
+    // A pre-reservation vault carrying an occupant nobody ever resolves. The
+    // occupant predates this code, so the one-time census has never run —
+    // model that by clearing the scan flag that opening a fresh vault set (in
+    // production the occupant is on disk before open, and open's first
+    // apply_put censuses it).
+    let mut payload = vec![ENTITY_TYPE_PERSON];
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(b"legacy occupant");
+    vault.with_write_txn(|wtxn| {
+        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
+        store
+            .vault_meta
+            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+        Ok(())
+    })?;
+
+    // Ordinary, unrelated vault activity: one entity put through apply_put.
+    // The census runs there — the occupant is never resolved as an actor.
+    vault.put_entity(
+        &test_id(0x59),
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"unrelated",
+    )?;
+
+    // The occupant is hard-deleted without ever having been an actor.
+    vault.with_write_txn(|wtxn| {
+        store.entities.delete(wtxn, scout_id.as_bytes())?;
+        Ok(())
+    })?;
+    assert!(vault.get_raw(&scout_id)?.is_none());
+
+    let mut wtxn = store.env.write_txn()?;
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &mut wtxn,
+            WriteActor::new(scout_id, EdgeActorClass::Agent),
+        ),
+        Some(PolicyApprovalCeiling::Proposed),
+        "an unobserved occupant must be censused before deletion can widen the id"
+    );
+    // A never-occupied sibling stays pristine.
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &mut wtxn,
+            WriteActor::new(
+                SystemAgentPreset::Keeper.actor_entity_id(),
+                EdgeActorClass::Agent,
+            ),
+        ),
+        Some(PolicyApprovalCeiling::Auto)
+    );
+    wtxn.commit()?;
+    Ok(())
+}
+
+// The census also runs from the gate door, so a vault whose first activity is
+// a gate resolution (no entity put at all) is covered too.
+#[test]
+fn gate_resolution_censuses_reserved_ids_before_deletion() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let store = &vault.store;
+    let scout_id = SystemAgentPreset::Scout.actor_entity_id();
+
+    let mut payload = vec![ENTITY_TYPE_PERSON];
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(b"legacy occupant");
+    vault.with_write_txn(|wtxn| {
+        store.entities.put(wtxn, scout_id.as_bytes(), &payload)?;
+        store
+            .vault_meta
+            .delete(wtxn, b"agent_def:reserved_actor_scan:v1")?;
+        Ok(())
+    })?;
+
+    // First vault activity is a gate resolution of an UNRELATED actor.
+    {
+        let mut wtxn = store.env.write_txn()?;
+        let _ = agent_definition_ceiling_for_actor(
+            store,
+            &mut wtxn,
+            WriteActor::new(test_id(0x5A), EdgeActorClass::Agent),
+        );
+        wtxn.commit()?;
+    }
+
+    vault.with_write_txn(|wtxn| {
+        store.entities.delete(wtxn, scout_id.as_bytes())?;
+        Ok(())
+    })?;
+
+    let mut wtxn = store.env.write_txn()?;
+    assert_eq!(
+        agent_definition_ceiling_for_actor(
+            store,
+            &mut wtxn,
+            WriteActor::new(scout_id, EdgeActorClass::Agent),
+        ),
+        Some(PolicyApprovalCeiling::Proposed),
+        "the gate door censuses reserved ids too"
+    );
+    wtxn.commit()?;
+    Ok(())
+}

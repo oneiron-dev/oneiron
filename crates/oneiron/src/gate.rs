@@ -1860,13 +1860,22 @@ enum AgentBearing {
     NonAgent,
 }
 
-/// Classifies a governing entity id, recording the durable reserved-id
-/// occupancy marker when it first observes a legacy occupant (F3).
+/// Classifies a governing entity id, censusing the durable reserved-id
+/// occupancy markers before any preset id can be resolved (F3).
 fn agent_bearing_for_entity(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     entity_ref: EntityId,
 ) -> AgentBearing {
+    // Census the reserved ids first: occupancy is only observable while the
+    // occupant is stored, so this must precede any resolution (or deletion).
+    if let Err(error) = crate::agent_def::scan_reserved_actor_ids_once(store, wtxn) {
+        tracing::warn!(
+            %error,
+            "reserved system agent occupancy census failed; \
+             preset authority stays subject to the per-id marker",
+        );
+    }
     let occupied = match store.entities.get(wtxn, entity_ref.as_bytes()) {
         Ok(raw) => raw.is_some(),
         Err(error) => {
