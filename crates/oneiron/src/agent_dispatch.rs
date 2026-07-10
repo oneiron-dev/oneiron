@@ -29,7 +29,8 @@ use crate::agent_def::{
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::dreamer_runner::{
-    DreamerJobStatus, DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome,
+    DreamerJobPayload, DreamerJobStatus, DreamerRunnerStore, EnqueueDreamerJob,
+    EnqueueDreamerJobOutcome,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -40,6 +41,12 @@ use crate::write_envelope::WriteActor;
 /// Payload-level job type carried inside the `"dreamer"` queue kind —
 /// invisible to existing dreamer consumers, which match on their own types.
 pub const AGENT_DISPATCH_JOB_TYPE: &str = "agent.dispatch";
+/// Envelope-provenance key carrying the dispatched agent's label on
+/// milestone claims (the B1 attribution home). The milestone machinery
+/// STAMPS this key from the job payload at the admission door and the
+/// durable index refuses milestones whose stamped value disagrees with the
+/// payload — attribution cannot be forged to another agent.
+pub const AGENT_DISPATCH_MILESTONE_AGENT_KEY: &str = "agent";
 /// Pinned schema version of the dispatch input map; decode rejects others.
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
@@ -86,6 +93,17 @@ pub struct DispatchAgent {
     /// Caller dedupe key; namespaced at the queue level as
     /// `"agent.dispatch:" + key` so `Existing` always names an agent-dispatch
     /// row (M6 resolution 2026-07-10).
+    ///
+    /// ACCEPTED RESIDUAL: the prefix is forgeable — any caller of the open
+    /// `DreamerRunnerStore::enqueue` API can preclaim a namespaced key with a
+    /// non-dispatch payload, failing later dispatches on that one key
+    /// (targeted dedupe DoS). Closing it would require hashing the job type
+    /// into the queue-level dedupe key inside `job_queue.rs`, which is
+    /// deliberately untouched (hypnos coordination wall). The residual is
+    /// bounded: enqueue requires vault-local access — the same trust domain
+    /// as dispatch itself per the D13 non-boundary ruling — and a preclaimed
+    /// key surfaces as a typed `InvalidAgentDispatchInput` error, never a
+    /// silent wrong-job reuse.
     pub dedupe_key: Option<String>,
     /// Pass-through run id; dispatch never mints one (host concern).
     pub run_id: Option<String>,
@@ -263,6 +281,20 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     };
 
     Ok(AgentDispatchInput { target, definition })
+}
+
+/// Extracts the dispatched agent's label from a dreamer job payload when
+/// (and only when) it carries an agent-dispatch input. `None` for non-agent
+/// payloads AND for an agent-dispatch payload whose input fails the pinned
+/// codec — callers treat the latter as unattributable and fail closed.
+#[must_use]
+pub fn agent_dispatch_payload_agent_id(payload: &DreamerJobPayload) -> Option<String> {
+    if payload.job_type != AGENT_DISPATCH_JOB_TYPE {
+        return None;
+    }
+    decode_agent_dispatch_input(&payload.input)
+        .ok()
+        .map(|input| input.definition.agent_id)
 }
 
 /// Derives the dispatched agent's write actor: the AGENT_DEF entity id for
