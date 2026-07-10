@@ -5686,21 +5686,23 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
 
     // Control: the bound pair on the Auto identity is auto-eligible.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for(Some(auto_id.to_hex()), Some(auto_id)),
         &policy,
+        true,
     )?;
     assert_eq!(decision.outcome(), GateOutcome::Allow, "bound Auto pair");
 
     // Borrow attempt: the Proposed identity's provenance under the Auto
     // identity's actor_ref must NOT reach execution.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for(Some(auto_id.to_hex()), Some(herald_id)),
         &policy,
+        true,
     )?;
     assert_eq!(
         decision.outcome(),
@@ -5709,11 +5711,12 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
     );
 
     // Reverse mismatch fails closed the same way.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for(Some(herald_id.to_hex()), Some(auto_id)),
         &policy,
+        true,
     )?;
     assert_eq!(
         decision.outcome(),
@@ -5722,11 +5725,12 @@ fn effect_actor_identity_binding_fails_closed() -> Result<()> {
     );
 
     // An unparsable actor_ref with a real identity is a disagreement.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for(Some("not-an-entity-id".to_owned()), Some(auto_id)),
         &policy,
+        true,
     )?;
     assert_eq!(
         decision.outcome(),
@@ -5873,11 +5877,12 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
         "system",
         "",
     ] {
-        let (_, decision) = check_external_effect_policy(
+        let (_, decision, _) = check_external_effect_policy(
             &vault.store,
             &mut wtxn,
             &effect_for(spoof, herald_id),
             &policy,
+            true,
         )?;
         assert_ne!(
             decision.outcome(),
@@ -5888,11 +5893,12 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
 
     // An unrecognized class over a NON-agent entity also fails closed rather
     // than skipping the clamp.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for("person", person_id),
         &policy,
+        true,
     )?;
     assert_ne!(
         decision.outcome(),
@@ -5903,11 +5909,12 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
     // Control: a RECOGNIZED non-agent principal over a non-agent entity keeps
     // today's semantics — the clamp does not over-reach, so the identical
     // request that class "person" fails closed on is auto-allowed here.
-    let (_, decision) = check_external_effect_policy(
+    let (_, decision, _) = check_external_effect_policy(
         &vault.store,
         &mut wtxn,
         &effect_for("first_party", person_id),
         &policy,
+        true,
     )?;
     assert_eq!(
         decision.outcome(),
