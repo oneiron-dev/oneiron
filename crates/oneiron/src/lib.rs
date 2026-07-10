@@ -33,6 +33,7 @@ pub mod delivery_window;
 pub mod disclosure;
 pub(crate) mod distance;
 pub mod dreamer_consolidation;
+pub mod dreamer_promotion;
 pub mod dreamer_runner;
 pub mod dreamer_tournament;
 pub mod dreamer_wake;
@@ -343,6 +344,9 @@ pub use crate::dreamer_consolidation::{
     plan_candidate_buckets, plan_partitions, read_cursor, read_watermark, scan_dirty_turns,
     scan_reflection_gaps, swarm_evidence_content_hash, turn_trust_class, upsert_gap_queue,
     validate_child_read_pin, write_cursor,
+};
+pub use crate::dreamer_promotion::{
+    DreamerRunContext, PromotionOutcome, PromotionWriterSink, promote_consolidated_claims,
 };
 pub use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
