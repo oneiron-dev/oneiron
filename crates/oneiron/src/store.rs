@@ -175,10 +175,15 @@ const PENDING_EMBEDDING_MARKER_PREFIX: &str = "pe:";
 const PENDING_EMBEDDING_MARKER_VERSION: u8 = 1;
 const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 const ENTITY_BODY_OFFSET: usize = 25;
-const HNSW_COMPATIBILITY_VERSION: u8 = 2;
+const HNSW_COMPATIBILITY_VERSION: u8 = 3;
 const HNSW_COMPATIBILITY_V0_LEN: usize = 24;
 const HNSW_COMPATIBILITY_V1_LEN: usize = 25;
-const HNSW_COMPATIBILITY_LEN: usize = 27;
+const HNSW_COMPATIBILITY_V2_LEN: usize = 27;
+/// v3 layout = v2 layout (version u8, dimensions u64le, m_max_0 u64le,
+/// ef_construction u64le, distance_metric u8, index_structure u8) +
+/// `fast_dims` u16le at bytes 27..29 (wire `0` = None).
+const HNSW_COMPATIBILITY_LEN: usize = 29;
+const HNSW_COMPATIBILITY_V2_VERSION: u8 = 2;
 const HNSW_DISTANCE_METRIC_MISSING: u8 = 0;
 const HNSW_DISTANCE_METRIC_COSINE: u8 = 1;
 const HNSW_INDEX_STRUCTURE_MISSING: u8 = 0;
@@ -977,6 +982,10 @@ pub(crate) struct PersistedHnswCompatibility {
     pub(crate) ef_construction: usize,
     pub(crate) distance_metric: u8,
     pub(crate) index_structure: u8,
+    /// MRL fast-lane prefix (EMB-2). Part of persisted graph shape: the NSW
+    /// graph is built over this prefix, so changing it on a populated vault
+    /// fails `HnswConfigChanged` like any other shape field.
+    pub(crate) fast_dims: Option<u16>,
 }
 
 impl PersistedHnswCompatibility {
@@ -990,6 +999,7 @@ impl PersistedHnswCompatibility {
             // or vector scoring semantics.
             distance_metric: HNSW_DISTANCE_METRIC_COSINE,
             index_structure: HNSW_INDEX_STRUCTURE_FLAT_NSW,
+            fast_dims: config.fast_dims,
         }
     }
 }
@@ -1172,6 +1182,16 @@ impl Store {
         drop(db_open_guard);
 
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta)?);
+
+        // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
+        // fails closed before the HNSW compat check below can compare it.
+        if let Some(fd) = config.fast_dims
+            && (fd == 0 || usize::from(fd) >= config.dimensions)
+        {
+            return Err(Error::InvalidConfig(
+                "fast_dims must be greater than zero and less than dimensions".to_owned(),
+            ));
+        }
 
         let should_persist_hnsw_config =
             preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
@@ -3839,6 +3859,7 @@ fn encode_hnsw_config(config: &PersistedHnswCompatibility) -> Result<[u8; HNSW_C
     encoded[17..25].copy_from_slice(&ef_construction.to_le_bytes());
     encoded[25] = config.distance_metric;
     encoded[26] = config.index_structure;
+    encoded[27..29].copy_from_slice(&config.fast_dims.unwrap_or(0).to_le_bytes());
     Ok(encoded)
 }
 
@@ -3854,6 +3875,14 @@ pub(crate) fn read_hnsw_compatibility(
         HNSW_COMPATIBILITY_LEN => {
             decode_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
         }
+        // v2 records decode as CURRENT with `fast_dims: None`, never Legacy:
+        // `preflight_hnsw_config` hard-errors Legacy on populated vaults, so
+        // classifying v2 as legacy would brick every existing populated
+        // vault. A v2 vault opens under `fast_dims: None` (struct equality
+        // holds) and correctly fails `HnswConfigChanged` under `Some(_)`.
+        HNSW_COMPATIBILITY_V2_LEN => {
+            decode_v2_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
+        }
         HNSW_COMPATIBILITY_V1_LEN | HNSW_COMPATIBILITY_V0_LEN => {
             decode_legacy_hnsw_compatibility(raw).map(HnswCompatibilityState::Legacy)
         }
@@ -3866,6 +3895,24 @@ fn decode_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
         return Err(Error::InvalidKey);
     }
 
+    let decoded = decode_hnsw_compatibility_common_fields(raw)?;
+    let fast_dims_raw = u16::from_le_bytes(raw[27..29].try_into().map_err(|_| Error::InvalidKey)?);
+    Ok(PersistedHnswCompatibility {
+        fast_dims: (fast_dims_raw != 0).then_some(fast_dims_raw),
+        ..decoded
+    })
+}
+
+fn decode_v2_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
+    if raw.len() != HNSW_COMPATIBILITY_V2_LEN || raw[0] != HNSW_COMPATIBILITY_V2_VERSION {
+        return Err(Error::InvalidKey);
+    }
+    decode_hnsw_compatibility_common_fields(raw)
+}
+
+/// Decodes the shared v2/v3 field layout (bytes 0..27); `fast_dims` comes
+/// back `None` and v3's decoder overlays it from bytes 27..29.
+fn decode_hnsw_compatibility_common_fields(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
     let dimensions = usize::try_from(u64::from_le_bytes(
         raw[1..9].try_into().map_err(|_| Error::InvalidKey)?,
     ))
@@ -3887,6 +3934,7 @@ fn decode_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibility> {
         ef_construction,
         distance_metric,
         index_structure,
+        fast_dims: None,
     })
 }
 
@@ -3901,6 +3949,8 @@ fn decode_legacy_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibi
         HNSW_COMPATIBILITY_V0_LEN => 0,
         _ => return Err(Error::InvalidKey),
     };
+    // Legacy (v0/v1) records predate the metric/structure tags AND
+    // fast_dims; both stay "missing"/None below.
 
     let dimensions = usize::try_from(u64::from_le_bytes(
         raw[field_offset..field_offset + 8]
@@ -3927,17 +3977,22 @@ fn decode_legacy_hnsw_compatibility(raw: &[u8]) -> Result<PersistedHnswCompatibi
         ef_construction,
         distance_metric: HNSW_DISTANCE_METRIC_MISSING,
         index_structure: HNSW_INDEX_STRUCTURE_MISSING,
+        fast_dims: None,
     })
 }
 
 fn format_hnsw_compatibility(config: &PersistedHnswCompatibility) -> String {
     format!(
-        "dimensions={},m_max_0={},ef_construction={},distance_metric={},index_structure={}",
+        "dimensions={},m_max_0={},ef_construction={},distance_metric={},index_structure={},fast_dims={}",
         config.dimensions,
         config.m_max_0,
         config.ef_construction,
         format_hnsw_distance_metric(config.distance_metric),
-        format_hnsw_index_structure(config.index_structure)
+        format_hnsw_index_structure(config.index_structure),
+        match config.fast_dims {
+            None => "none".to_owned(),
+            Some(fd) => fd.to_string(),
+        }
     )
 }
 
