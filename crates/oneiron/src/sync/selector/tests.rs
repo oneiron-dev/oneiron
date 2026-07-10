@@ -1338,10 +1338,20 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     );
     let connect_hash = authority_entry_hash(&connect).unwrap();
     vault
-        .put_authority_log_entry(&entity_id(0xE1), &genesis, TimeRange { start: 1, end: 1 }, 1)
+        .put_authority_log_entry(
+            &entity_id(0xE1),
+            &genesis,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
         .unwrap();
     vault
-        .put_authority_log_entry(&entity_id(0xE2), &connect, TimeRange { start: 2, end: 2 }, 2)
+        .put_authority_log_entry(
+            &entity_id(0xE2),
+            &connect,
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
         .unwrap();
 
     let unilateral = |kind: FederationLifecycleKind, seq: u64| {

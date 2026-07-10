@@ -641,9 +641,7 @@ impl FederationScopeWorlds {
             (Self::All, _) => false,
             (Self::Base, _) => true,
             (Self::Worlds(_), Self::Base) => false,
-            (Self::Worlds(narrow), Self::Worlds(wide)) => {
-                narrow.iter().all(|id| wide.contains(id))
-            }
+            (Self::Worlds(narrow), Self::Worlds(wide)) => narrow.iter().all(|id| wide.contains(id)),
         }
     }
 
@@ -716,7 +714,11 @@ impl FederationScopeBands {
                 let ascending = bands
                     .windows(2)
                     .all(|pair| band_order_index(pair[0]) < band_order_index(pair[1]));
-                if ascending { Ok(()) } else { Err(invalid_pact_scope()) }
+                if ascending {
+                    Ok(())
+                } else {
+                    Err(invalid_pact_scope())
+                }
             }
         }
     }
@@ -727,9 +729,7 @@ impl FederationScopeBands {
             (Self::Bottom, _) => true,
             (Self::All, _) => false,
             (Self::Some(_), Self::Bottom) => false,
-            (Self::Some(narrow), Self::Some(wide)) => {
-                narrow.iter().all(|band| wide.contains(band))
-            }
+            (Self::Some(narrow), Self::Some(wide)) => narrow.iter().all(|band| wide.contains(band)),
         }
     }
 
@@ -946,10 +946,7 @@ fn bands_axis_value(bands: &FederationScopeBands) -> Value {
 }
 
 fn axis_kind_value(kind: &str) -> Value {
-    Value::Map(vec![(
-        Value::from(KEY_SCOPE_AXIS_KIND),
-        Value::from(kind),
-    )])
+    Value::Map(vec![(Value::from(KEY_SCOPE_AXIS_KIND), Value::from(kind))])
 }
 
 fn decode_worlds_axis(value: &Value) -> Result<FederationScopeWorlds> {
@@ -1023,8 +1020,8 @@ fn decode_axis_map(value: &Value) -> Result<(&str, Option<&[Value]>)> {
         .as_str()
         .ok_or_else(invalid_pact_scope)?;
     let ids = if seen[1] {
-        let Value::Array(values) = required_value(entries, KEY_SCOPE_AXIS_IDS)
-            .map_err(|_| invalid_pact_scope())?
+        let Value::Array(values) =
+            required_value(entries, KEY_SCOPE_AXIS_IDS).map_err(|_| invalid_pact_scope())?
         else {
             return Err(invalid_pact_scope());
         };

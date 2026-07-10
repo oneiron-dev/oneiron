@@ -3629,7 +3629,10 @@ fn federation_connect_activates_pact_on_both_sides() {
         .get(&fixture.pact_id)
         .expect("symmetric connect must activate on B");
     assert_eq!(peer_pact.status, FederationPactStatus::Active);
-    assert_eq!(peer_pact.peer_owner_key, authority_key_from_ed(&fixture.owner));
+    assert_eq!(
+        peer_pact.peer_owner_key,
+        authority_key_from_ed(&fixture.owner)
+    );
     let expected_peer_half = if fixture.peer_vault_id <= fixture.vault_id {
         fixture.scope.lo_to_hi.clone()
     } else {
@@ -3984,11 +3987,8 @@ fn federation_connect_rejects_rebinding_an_actively_bound_grant() {
     );
     let rebind_hash = authority_entry_hash(&rebind).unwrap();
 
-    let fold = fold_authority_log_without_seen_time_delay(&[
-        fixture.genesis.clone(),
-        connect,
-        rebind,
-    ]);
+    let fold =
+        fold_authority_log_without_seen_time_delay(&[fixture.genesis.clone(), connect, rebind]);
     assert_eq!(
         lifecycle_rejection(&fold, rebind_hash),
         Some(FederationLifecycleRejection::GrantAlreadyBound)
@@ -4277,7 +4277,10 @@ fn federation_suspended_pact_heals_via_fresh_repact() {
     assert_eq!(pact.status, FederationPactStatus::Active);
     assert_eq!(pact.pact_epoch, 3);
     assert_eq!(pact.pact_scope, heal_scope);
-    assert_eq!(pact.scope_digest, scope_digest_for(&heal_scope, &heal_nonce));
+    assert_eq!(
+        pact.scope_digest,
+        scope_digest_for(&heal_scope, &heal_nonce)
+    );
     assert_eq!(
         federation_grant_activation(&fold, &fixture.grant_ref),
         FederationGrantActivation::Active
@@ -4306,10 +4309,7 @@ fn pact_state_with_status(
     }
 }
 
-fn fold_state_with_pact(
-    fixture: &PactFixture,
-    status: Option<FederationPactStatus>,
-) -> FoldState {
+fn fold_state_with_pact(fixture: &PactFixture, status: Option<FederationPactStatus>) -> FoldState {
     let owner_key = authority_key_from_ed(&fixture.owner);
     let mut state = FoldState {
         vault_id: fixture.vault_id,
@@ -4440,8 +4440,7 @@ fn federation_lifecycle_transition_table_is_total() {
                 Ok(next) => {
                     assert_eq!(result, Ok(()), "({status:?}, {name}) must apply");
                     assert_eq!(
-                        state.federation_pacts[&fixture.pact_id].status,
-                        next,
+                        state.federation_pacts[&fixture.pact_id].status, next,
                         "({status:?}, {name}) next status"
                     );
                 }
@@ -4525,7 +4524,14 @@ fn lifecycle_dag() -> LifecycleDag {
             },
         ),
     );
-    let enroll = enroll_entry(fixture.vault_id, &fixture.genesis, &fixture.owner, 210, 4, 50);
+    let enroll = enroll_entry(
+        fixture.vault_id,
+        &fixture.genesis,
+        &fixture.owner,
+        210,
+        4,
+        50,
+    );
 
     let pact_two = [0xB2; 32];
     let grant_two = scope_entity(0x32);
@@ -4643,9 +4649,16 @@ fn lifecycle_dag() -> LifecycleDag {
 fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     let dag = lifecycle_dag();
     let fold = fold_authority_log_without_seen_time_delay(&dag.entries);
-    assert!(fold.issues.is_empty(), "unexpected issues: {:?}", fold.issues);
+    assert!(
+        fold.issues.is_empty(),
+        "unexpected issues: {:?}",
+        fold.issues
+    );
     assert_eq!(fold.valid_entries.len(), dag.entries.len());
-    assert!(fold.roster.contains_key(&authority_key_from_ed(&ed_key(210))));
+    assert!(
+        fold.roster
+            .contains_key(&authority_key_from_ed(&ed_key(210)))
+    );
 
     // P1: concurrent unilateral narrows merge to the INTERSECTION; the
     // disjoint band sets meet at the kind-tagged ⊥, never at all-bands.

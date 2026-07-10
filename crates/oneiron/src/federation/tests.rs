@@ -278,19 +278,11 @@ fn federation_pact_scope_decode_fails_closed() {
         direction_value(all(), all(), all()),
     );
     let unsorted_ids = pact_value(
-        direction_value(
-            all(),
-            axis("some", Some(vec![hex(0x22), hex(0x21)])),
-            all(),
-        ),
+        direction_value(all(), axis("some", Some(vec![hex(0x22), hex(0x21)])), all()),
         direction_value(all(), all(), all()),
     );
     let duplicate_ids = pact_value(
-        direction_value(
-            all(),
-            axis("some", Some(vec![hex(0x21), hex(0x21)])),
-            all(),
-        ),
+        direction_value(all(), axis("some", Some(vec![hex(0x21), hex(0x21)])), all()),
         direction_value(all(), all(), all()),
     );
     let foreign_world = pact_value(
@@ -325,7 +317,11 @@ fn federation_pact_scope_decode_fails_closed() {
         direction_value(all(), all(), all()),
     );
     let unknown_band = pact_value(
-        direction_value(all(), all(), axis("some", Some(vec![Value::from("everything")]))),
+        direction_value(
+            all(),
+            all(),
+            axis("some", Some(vec![Value::from("everything")])),
+        ),
         direction_value(all(), all(), all()),
     );
     let bad_version = encode_value(&Value::Map(vec![
@@ -409,8 +405,7 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
 
     // Worlds: Base ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All.
     let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x11)]);
-    let two_worlds =
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x11), scope_entity(0x12)]);
+    let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x11), scope_entity(0x12)]);
     assert!(FederationScopeWorlds::Base.is_narrowing_of(&one_world));
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
@@ -455,7 +450,10 @@ fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
         FederationScopeFacets::Bottom,
         FederationScopeBands::Bottom,
     );
-    assert_eq!(bottom.intersect(&left).facets, FederationScopeFacets::Bottom);
+    assert_eq!(
+        bottom.intersect(&left).facets,
+        FederationScopeFacets::Bottom
+    );
     assert_eq!(bottom.intersect(&left).bands, FederationScopeBands::Bottom);
 }
 

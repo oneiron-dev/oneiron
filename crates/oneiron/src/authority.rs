@@ -2707,7 +2707,10 @@ fn apply_federation_lifecycle(
 /// resolve by max epoch; equal-epoch divergent digests suspend fail-closed;
 /// equal-epoch equal-digest Actives intersect their effective scopes.
 /// Determinism-only picks use the lexicographic-min scope digest / peer key.
-fn merge_pact_states(left: &FederationPactState, right: &FederationPactState) -> FederationPactState {
+fn merge_pact_states(
+    left: &FederationPactState,
+    right: &FederationPactState,
+) -> FederationPactState {
     let left_terminal = left.status.is_terminal();
     let right_terminal = right.status.is_terminal();
     if left_terminal != right_terminal {
@@ -3159,7 +3162,10 @@ fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool) ->
                     binary_value(action.peer_vault_id),
                 ),
                 (Value::from("pact_epoch"), Value::from(action.pact_epoch)),
-                (Value::from("pact_nonce"), binary_value_16(action.pact_nonce)),
+                (
+                    Value::from("pact_nonce"),
+                    binary_value_16(action.pact_nonce),
+                ),
             ];
             if let Some(scope) = &action.pact_scope {
                 fields.push((
@@ -3513,25 +3519,29 @@ fn decode_federation_lifecycle_op(entries: &[(Value, Value)]) -> Result<Authorit
     let scope_digest = optional(entries, "scope_digest")
         .map(decode_hash)
         .transpose()?;
-    let gesture = optional(entries, "gesture").map(decode_gesture).transpose()?;
+    let gesture = optional(entries, "gesture")
+        .map(decode_gesture)
+        .transpose()?;
     let successor_vault_id = optional(entries, "successor_vault_id")
         .map(decode_hash)
         .transpose()?;
-    Ok(AuthorityOp::FederationLifecycle(FederationLifecycleAction {
-        kind,
-        pact_id: decode_hash(required(entries, "pact_id")?)?,
-        grant_ref,
-        peer_vault_id: decode_hash(required(entries, "peer_vault_id")?)?,
-        pact_epoch: required(entries, "pact_epoch")?
-            .as_u64()
-            .ok_or_else(invalid_authority)?,
-        pact_scope,
-        effective_scope,
-        scope_digest,
-        gesture,
-        successor_vault_id,
-        pact_nonce: decode_16(required(entries, "pact_nonce")?)?,
-    }))
+    Ok(AuthorityOp::FederationLifecycle(
+        FederationLifecycleAction {
+            kind,
+            pact_id: decode_hash(required(entries, "pact_id")?)?,
+            grant_ref,
+            peer_vault_id: decode_hash(required(entries, "peer_vault_id")?)?,
+            pact_epoch: required(entries, "pact_epoch")?
+                .as_u64()
+                .ok_or_else(invalid_authority)?,
+            pact_scope,
+            effective_scope,
+            scope_digest,
+            gesture,
+            successor_vault_id,
+            pact_nonce: decode_16(required(entries, "pact_nonce")?)?,
+        },
+    ))
 }
 
 fn decode_gesture(value: &Value) -> Result<FederationPactGesture> {
