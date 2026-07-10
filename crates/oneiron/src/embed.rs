@@ -202,9 +202,11 @@ impl PendingEmbeddingReconciler {
 
     /// Attaches a remote rung (rung 1 = `OwnerServer`, rung 2 = `ThirdParty`;
     /// the rung is `embedder.locality()`). Requires: remote locality !=
-    /// `OnDevice`, and the PRIMARY embedder locality == `OnDevice`
-    /// (fail-closed-to-local needs a local target). At most one remote rung
-    /// per reconciler.
+    /// `OnDevice`, the PRIMARY embedder locality == `OnDevice`
+    /// (fail-closed-to-local needs a local target), and a non-zero lease
+    /// window (`lease_duration_ms` is public and feeds expiry math
+    /// directly: a 0ms lease is born expired, so every pass re-leases and
+    /// re-embeds the same rows). At most one remote rung per reconciler.
     pub fn with_remote_rung(mut self, rung: RemoteRung) -> Result<Self> {
         if rung.embedder.locality() == EmbedderLocality::OnDevice {
             return Err(Error::InvalidConfig(
@@ -214,6 +216,11 @@ impl PendingEmbeddingReconciler {
         if self.embedder.locality() != EmbedderLocality::OnDevice {
             return Err(Error::InvalidConfig(
                 "remote rung requires an OnDevice primary embedder".to_owned(),
+            ));
+        }
+        if rung.lease_duration_ms == 0 {
+            return Err(Error::InvalidConfig(
+                "remote rung lease duration must be greater than zero".to_owned(),
             ));
         }
         if self.remote_rung.is_some() {
@@ -280,7 +287,24 @@ impl PendingEmbeddingReconciler {
             }
         }
 
-        self.embed_and_fill_local(&local_work, &mut report)?;
+        if let Err(error) = self.embed_and_fill_local(&local_work, &mut report) {
+            // The pass still fails (pinned: primary errors propagate), but
+            // remote work that already completed above must not vanish from
+            // observability with the dropped report. Pure-local failures
+            // stay silent, exactly as EMB-1 always propagated them.
+            if report.routed_remote > 0 || report.remote_failed_fallback_local > 0 {
+                tracing::warn!(
+                    ?error,
+                    routed_remote = report.routed_remote,
+                    remote_failed_fallback_local = report.remote_failed_fallback_local,
+                    embedded = report.embedded,
+                    filled = report.filled,
+                    stale_fills = report.stale_fills,
+                    "local batch failed after remote work completed; reconcile report dropped"
+                );
+            }
+            return Err(error);
+        }
 
         Ok(report)
     }
