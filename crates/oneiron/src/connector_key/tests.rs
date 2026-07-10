@@ -1233,3 +1233,39 @@ fn cap_and_rate_reject_wildcard_channel_but_never_keeps_it() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn revoked_key_charter_ops_fail_closed_and_revoke_clears_pending() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xCA);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("slack", None, Vec::new(), 1_000),
+    )?;
+    let pending = vault.propose_connector_charter(&id, "never delete on slack", 1_001)?;
+
+    // Revoke drops any staged pending_charter — a revoked key carries no
+    // mutable charter state.
+    let revoked = vault.revoke_connector_key(&id, 1_002)?;
+    assert_eq!(revoked.status, ConnectorKeyStatus::Revoked);
+    assert!(revoked.pending_charter.is_none());
+    assert!(
+        vault
+            .get_connector_key(&id)?
+            .expect("record")
+            .pending_charter
+            .is_none()
+    );
+
+    // Approve on a revoked key now errors (propose -> revoke -> approve).
+    assert!(matches!(
+        vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_003),
+        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+    ));
+    // Discard on a revoked key errors too.
+    assert!(matches!(
+        vault.discard_connector_charter(&id, 1_004),
+        Err(Error::InvalidConnectorKeyBody("charter op on revoked key"))
+    ));
+    Ok(())
+}

@@ -2419,6 +2419,10 @@ impl Vault {
             status: ConnectorKeyStatus::Revoked,
             status_changed_at: Some(at),
             suspended_reason: None,
+            // Revocation is terminal: drop any staged proposal so a revoked
+            // key carries no mutable charter state (approve/discard also gate
+            // on Revoked below).
+            pending_charter: None,
             ..record
         };
         rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &revoked)?;
@@ -2628,6 +2632,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("charter op on revoked key"));
+        }
         let Some(pending) = record.pending_charter.clone() else {
             return Err(Error::ConnectorCharterMissing);
         };
@@ -2672,6 +2679,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status == ConnectorKeyStatus::Revoked {
+            return Err(invalid_body("charter op on revoked key"));
+        }
         if record.pending_charter.is_none() {
             return Err(Error::ConnectorCharterMissing);
         }
