@@ -417,15 +417,17 @@ pub use crate::extraction_eval::{
     of360_gold_subset_json, of360_metric_definitions, of360_metric_definitions_json,
 };
 pub use crate::facade::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter,
-    ClaimView, CommitReceipt, CompanionRecordInput, DeleteReceipt, Effort, EntityRefReceipt,
+    AdmitImportedClaimInput, BRIDGE_OUTBOUND_JOB_KIND, BlobArtifactInput, BlobVersionView,
+    ClaimInput, ClaimListFilter, ClaimView, CommitReceipt, CompanionRecordInput,
+    ConsolidationJobInput, DeleteReceipt, DreamerJobRef, DreamerJobView, Effort, EntityRefReceipt,
     EntityView, FACADE_CODE_BAD_REQUEST, FACADE_CODE_FORBIDDEN, FACADE_CODE_INTERNAL,
     FACADE_CODE_INVALID_STATE, FACADE_CODE_LEASE_REQUIRED, FACADE_CODE_NOT_FOUND, FacadeError,
     FacadeReceipt, FacadeResult, HabitCheckinInput, LexicalHit, MEMORY_PACK_VERSION,
     MULTI_CARDINALITY_PREDICATES, MemoryFacade, MemoryItem, MemoryPack, MemoryProvenance,
-    NeighborHit, NeighborOpts, PendingWrite, RecallScope, RetrievalMeta, SafeDeleteReason,
-    ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TextIndexField, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn, parse_actor_key, resolve_entity_ref,
+    NeighborHit, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite,
+    RecallScope, RetrievalMeta, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
+    StructuralPutInput, TextIndexField, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    parse_actor_key, resolve_entity_ref,
 };
 pub use crate::federation::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION,

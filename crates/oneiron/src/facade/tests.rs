@@ -2109,3 +2109,314 @@ fn neighbors_stays_bounded_on_a_high_degree_node() {
     assert_eq!(hits.len(), 5, "bounded by limit, not the full edge set");
     assert!(hits.iter().all(|hit| hit.direction == "out"));
 }
+
+// ═══ BRIDGE-03 (ONE-1456): Dreamer + seed + outbound wiring ═════════════
+
+#[test]
+fn consolidation_queue_round_trip_with_facade_writeback() {
+    use crate::dreamer_runner::{
+        AdmitDreamerConsolidationJob, AdmitDreamerJob, CompleteDreamerJob,
+        CompleteDreamerJobOutcome, DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission,
+        DreamerClaimAuthoringBatchTier, DreamerConsolidationAdmissionOutcome,
+        DreamerConsolidationScope, DreamerRunnerStore,
+    };
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x51);
+    let subject = put_person(&vault, 0x52);
+    let facade = facade_for(&vault, actor);
+
+    // Enqueue through the bridge verb; advisory dedupe coalesces re-enqueues.
+    let job = facade
+        .enqueue_consolidation(&ConsolidationJobInput {
+            scope: "micro".to_owned(),
+            input: serde_json::json!({"window": "w-1"}),
+            run_id: Some("run-bridge-1".to_owned()),
+            dedupe_key: Some("bridge-dedupe-1".to_owned()),
+            now: Some(2000),
+        })
+        .expect("enqueue");
+    assert_eq!(job.state, "queued");
+    assert!(!job.existing);
+    let again = facade
+        .enqueue_consolidation(&ConsolidationJobInput {
+            scope: "micro".to_owned(),
+            input: serde_json::json!({"window": "w-1"}),
+            run_id: Some("run-bridge-1".to_owned()),
+            dedupe_key: Some("bridge-dedupe-1".to_owned()),
+            now: Some(2001),
+        })
+        .expect("re-enqueue");
+    assert!(again.existing, "advisory dedupe coalesces");
+    assert_eq!(again.job_ref, job.job_ref);
+
+    // Poll model: queued → (admit engine-side) → leased → completed.
+    let status = facade
+        .dreamer_job_status(&job.job_ref)
+        .expect("status")
+        .expect("job exists");
+    assert_eq!(status.state, "queued");
+    assert_eq!(status.run_id.as_deref(), Some("run-bridge-1"));
+
+    let store = DreamerRunnerStore::new(&vault);
+    let admitted = store
+        .admit_next_consolidation(AdmitDreamerConsolidationJob {
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 7,
+            claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+            claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+            admission: AdmitDreamerJob {
+                lease_owner: "bridge-test-worker".to_owned(),
+                now: 2002,
+                budget_id: "wake:micro".to_owned(),
+                budget_total_units: 10,
+                reserve_units: 1,
+                started_milestone: None,
+            },
+        })
+        .expect("admit");
+    let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+        admitted_job,
+    )) = admitted
+    else {
+        panic!("expected admitted consolidation job, got {admitted:?}");
+    };
+    let leased = facade
+        .dreamer_job_status(&job.job_ref)
+        .expect("status")
+        .expect("job exists");
+    assert_eq!(leased.state, "leased");
+    assert_eq!(leased.lease_owner.as_deref(), Some("bridge-test-worker"));
+
+    // AC-5 (W3 non-contention): an interactive witness during the running
+    // consolidation succeeds without waiting on the job.
+    facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x53; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "mid-consolidation note",
+            )],
+            occurred_at: 2003,
+        })
+        .expect("source write never queues behind derived work");
+
+    // Writeback rides the SAME facade commit path: generated source lands
+    // proposed (requires_explicit_auto_permit; no generated auto-permit
+    // policy exists at base) with a per-write receipt.
+    let writeback = facade
+        .commit(&[{
+            let mut input = claim_input(
+                "eiri.summary.window",
+                &subject,
+                "generated",
+                serde_json::json!({"summary": "moss gardens dominate the week"}),
+            );
+            input.occurred_at = Some(2004);
+            input.learned_at = Some(2004);
+            input
+        }])
+        .expect("writeback commit");
+    assert_eq!(writeback.len(), 1);
+    assert_eq!(
+        writeback[0].approval, "proposed",
+        "generated writeback never lands auto"
+    );
+    assert!(writeback[0].receipt_ref.starts_with("gate:"));
+    let receipts = facade.receipts(50).expect("receipts");
+    assert!(
+        receipts
+            .iter()
+            .any(|r| r.receipt_ref == writeback[0].receipt_ref),
+        "writeback receipt resolvable via receipts()"
+    );
+    assert!(
+        !facade.pending_writes(50).expect("pending").is_empty(),
+        "proposed writeback parks for consent"
+    );
+
+    // Writeback is retrievable through the ungated claim reads; the D19
+    // admission keeps PROPOSED claims out of recall packs until consent
+    // resolves (asserted as non-leakage).
+    let listed = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: Some("eiri.summary.window".to_owned()),
+            lifecycle: Some("active".to_owned()),
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].source.as_deref(), Some("generated"));
+    let pack = facade
+        .recall(
+            "moss gardens",
+            Effort::Standard,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    assert!(
+        !pack.items.iter().any(|item| item.kind == "CLAIM"),
+        "proposed writeback must NOT surface in packs before consent"
+    );
+
+    // Complete the lease; the bridge polls the terminal state.
+    let completed = store
+        .complete(CompleteDreamerJob {
+            id: admitted_job.status.job.id,
+            lease_owner: "bridge-test-worker".to_owned(),
+            attempt_count: admitted_job.status.job.attempt_count,
+            now: 2005,
+        })
+        .expect("complete");
+    assert!(matches!(completed, CompleteDreamerJobOutcome::Completed(_)));
+    let done = facade
+        .dreamer_job_status(&job.job_ref)
+        .expect("status")
+        .expect("job exists");
+    assert_eq!(done.state, "completed");
+
+    // Unknown scope fails closed.
+    let err = facade
+        .enqueue_consolidation(&ConsolidationJobInput {
+            scope: "giga".to_owned(),
+            input: serde_json::json!({}),
+            run_id: None,
+            dedupe_key: None,
+            now: Some(2006),
+        })
+        .expect_err("unknown scope");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn seed_claims_force_proposed_with_per_element_receipts() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x54);
+    let subject = put_person(&vault, 0x55);
+    let facade = facade_for(&vault, actor);
+
+    // AC-3: a user_stated seed — auto-eligible through commit — is FORCED
+    // proposed on the seed path, parks for consent, and emits a receipt.
+    // eiri.* predicates carry the default manifest's critical criticality,
+    // so the forced-proposed seed parks as a pending consent (profile.*
+    // seeds land proposed with gate outcome allow and do not park).
+    let receipts = facade
+        .seed_claims(&[
+            claim_input(
+                "eiri.profile.name",
+                &subject,
+                "user_stated",
+                serde_json::json!("Cold Start"),
+            ),
+            // Violating element: rejected while the others land (C3).
+            claim_input(
+                "BadPredicate",
+                &subject,
+                "user_stated",
+                serde_json::json!("x"),
+            ),
+            claim_input(
+                "eiri.onboarding.answer",
+                &subject,
+                "imported",
+                serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),
+            ),
+        ])
+        .expect("seed");
+    assert_eq!(receipts.len(), 3);
+    assert_eq!(receipts[0].approval, "proposed", "seed forces proposed");
+    assert!(receipts[0].receipt_ref.starts_with("gate:"));
+    assert_eq!(receipts[1].approval, "rejected");
+    assert_eq!(receipts[2].approval, "proposed");
+
+    let pending = facade.pending_writes(50).expect("pending");
+    assert_eq!(pending.len(), 2, "both landed seeds park for consent");
+    let listed = facade
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: Some("active".to_owned()),
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|claim| claim.approval == "proposed"));
+}
+
+#[test]
+fn schedule_outbound_holds_gate_checks_and_dedupes() {
+    use crate::job_queue::JobQueue;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x56);
+    let facade = facade_for(&vault, actor);
+
+    let draft = OutboundDraftInput {
+        verb: "send".to_owned(),
+        channel: "email".to_owned(),
+        target: "kenji@example.com".to_owned(),
+        on_behalf_of: Some("owner".to_owned()),
+        content_ref: Some("content:invite".to_owned()),
+        idempotency_key: Some("idem-invite-1".to_owned()),
+        dedupe_key: Some("dedupe-invite-1".to_owned()),
+        trigger: "agent_immediate".to_owned(),
+        trigger_ref: "session:send-now".to_owned(),
+        job_ref: Some("brief:party".to_owned()),
+        occurred_at: Some(3000),
+    };
+    let receipt = facade.schedule_outbound(&draft).expect("schedule");
+    assert!(receipt.intent_ref.starts_with("intent:"));
+    assert!(!receipt.deduped);
+    // Schedule-only surface: the sink is never reached — under the default
+    // manifest the external-effect gate pends (no policy grant) and the
+    // Hold window keeps delivery with the delivery-window machinery.
+    // Receipts, not admission, are the contract (GOV-compatible).
+    assert!(
+        matches!(receipt.outcome.as_str(), "held" | "suppressed" | "let_go"),
+        "schedule-only dispatch must not deliver; got {}",
+        receipt.outcome
+    );
+    let gate_ref = receipt
+        .gate_decision_ref
+        .clone()
+        .expect("gate decision persisted");
+    let receipts = facade.receipts(50).expect("receipts");
+    assert!(
+        receipts.iter().any(|r| r.receipt_ref == gate_ref),
+        "intent's gate receipt queryable via receipts()"
+    );
+
+    // AC-4 idempotency: a second call with the same idempotency_key does
+    // not double-enqueue and produces no second gate decision.
+    let decisions_before = facade.receipts(100).expect("receipts").len();
+    let replay = facade.schedule_outbound(&draft).expect("replay");
+    assert!(replay.deduped);
+    assert_eq!(replay.outcome, "already_scheduled");
+    assert_eq!(replay.intent_ref, receipt.intent_ref);
+    assert_eq!(
+        facade.receipts(100).expect("receipts").len(),
+        decisions_before,
+        "no second gate decision on dedupe"
+    );
+    let queue = JobQueue::new(&vault);
+    let scheduled: Vec<_> = queue
+        .list()
+        .expect("list jobs")
+        .into_iter()
+        .filter(|job| job.kind == BRIDGE_OUTBOUND_JOB_KIND)
+        .collect();
+    assert_eq!(scheduled.len(), 1, "one durable schedule row");
+
+    // Unknown trigger fails closed.
+    let mut bad = draft;
+    bad.idempotency_key = Some("idem-invite-2".to_owned());
+    bad.trigger = "vibes".to_owned();
+    let err = facade.schedule_outbound(&bad).expect_err("unknown trigger");
+    assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}

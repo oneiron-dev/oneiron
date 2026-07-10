@@ -37,6 +37,10 @@ use crate::companion::{
 };
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::deletion::DeleteReason;
+use crate::dreamer_runner::{
+    DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerConsolidationJob,
+    EnqueueDreamerJobOutcome,
+};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind};
@@ -45,7 +49,14 @@ use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim, admit_imported_evidence_claim,
 };
+use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId, JobQueue, JobRecord, JobState};
 use crate::llm::BudgetLease;
+use crate::outbound::{
+    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
+    OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
+    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
+    OutboundIntentDraft, OutboundIntentTrigger,
+};
 use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
 use crate::registry::{
     ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE,
@@ -87,6 +98,9 @@ const SNIPPET_MAX_CHARS: usize = 160;
 /// Bounded claim scan behind scope-honesty world enumeration.
 const SCOPE_HONESTY_SCAN_CAP: usize = 512;
 const RECALL_TOKEN_BUDGET: usize = 4000;
+/// Job-queue kind for bridge-scheduled outbound intents (facade-level
+/// idempotency rides the queue's kind-scoped dedupe index).
+pub const BRIDGE_OUTBOUND_JOB_KIND: &str = "bridge.outbound.schedule";
 
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
@@ -799,6 +813,104 @@ pub struct MemoryPack {
     pub rendered: Option<String>,
 }
 
+/// One Dreamer consolidation enqueue (BRIDGE-03).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsolidationJobInput {
+    /// Consolidation scope: `micro` | `meso` | `macro`.
+    pub scope: String,
+    /// Opaque job input (stored as MessagePack in the queue payload).
+    pub input: serde_json::Value,
+    /// Optional run correlation id.
+    pub run_id: Option<String>,
+    /// Optional advisory dedupe key (cost coalescer, not a lock).
+    pub dedupe_key: Option<String>,
+    /// Unix seconds; `None` ⇒ now.
+    pub now: Option<u64>,
+}
+
+/// Reference to one queued Dreamer job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DreamerJobRef {
+    /// 32-hex job id (poll via [`MemoryFacade::dreamer_job_status`]).
+    pub job_ref: String,
+    /// Queue state at enqueue time.
+    pub state: String,
+    /// True when the advisory dedupe key coalesced onto an existing job.
+    pub existing: bool,
+}
+
+/// Poll-model view of one Dreamer job (W2: long work returns job ids).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DreamerJobView {
+    /// 32-hex job id.
+    pub job_ref: String,
+    /// `queued` | `leased` | `paused` | `completed` | `failed` | `cancelled`.
+    pub state: String,
+    /// Queue job kind.
+    pub kind: String,
+    /// Worker label holding the lease, if leased.
+    pub lease_owner: Option<String>,
+    /// Admission attempts so far.
+    pub attempt_count: u32,
+    /// Run correlation id, if any.
+    pub run_id: Option<String>,
+    /// Last failure message, if any.
+    pub last_error: Option<String>,
+    /// Unix seconds.
+    pub created_at: u64,
+    /// Unix seconds.
+    pub updated_at: u64,
+}
+
+/// One outbound schedule request (BRIDGE-03; rides OF-327 — the bridge
+/// never implements delivery).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundDraftInput {
+    /// Verb (e.g. `send`).
+    pub verb: String,
+    /// Channel (e.g. `email`).
+    pub channel: String,
+    /// Delivery target (address/handle).
+    pub target: String,
+    /// Principal the send acts for, if delegated.
+    pub on_behalf_of: Option<String>,
+    /// Reference to the content entity to send.
+    pub content_ref: Option<String>,
+    /// Facade-enforced idempotency key: a second schedule with the same
+    /// key coalesces instead of double-enqueueing.
+    pub idempotency_key: Option<String>,
+    /// Advisory dedupe key carried onto the receipt.
+    pub dedupe_key: Option<String>,
+    /// Trigger source: `commitment_timer_wake` | `gap_queue` |
+    /// `agent_immediate`.
+    pub trigger: String,
+    /// What fired the trigger (commitment/session/queue ref).
+    pub trigger_ref: String,
+    /// Owning job/brief ref, if any.
+    pub job_ref: Option<String>,
+    /// Unix seconds; `None` ⇒ now.
+    pub occurred_at: Option<u64>,
+}
+
+/// Receipt for one scheduled outbound intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboundIntentReceipt {
+    /// Stable intent ref (`intent:<job-hex>`).
+    pub intent_ref: String,
+    /// Dispatch outcome (`held` expected on this schedule-only surface;
+    /// `suppressed` on gate denial; `already_scheduled` on dedupe).
+    pub outcome: String,
+    /// Gate outcome (`allow`/`pending`/`deny`), absent on dedupe.
+    pub gate_outcome: Option<String>,
+    /// Persisted gate decision ref (`gate:<hex>`), queryable via
+    /// [`MemoryFacade::receipts`]; absent on dedupe.
+    pub gate_decision_ref: Option<String>,
+    /// Gate reason codes.
+    pub gate_reason_codes: Vec<String>,
+    /// True when the idempotency key coalesced onto an existing schedule.
+    pub deduped: bool,
+}
+
 /// Parses the pinned actor-key grammar `"<actor_class>:<entity_ref>"`
 /// (design §4.3): `actor_class ∈ human|agent|system`, `entity_ref` a
 /// short-id ref or 32-hex id. Malformed keys are typed errors, never a
@@ -1241,19 +1353,7 @@ impl MemoryFacade<'_> {
     /// never sinks the others). Rejected elements come back with approval
     /// `rejected` and do not persist.
     pub fn commit(&self, claims: &[ClaimInput]) -> FacadeResult<Vec<CommitReceipt>> {
-        let mut receipts = Vec::with_capacity(claims.len());
-        for input in claims {
-            match self.commit_one(input, true) {
-                Ok(receipt) => receipts.push(receipt),
-                Err(err) => receipts.push(CommitReceipt {
-                    claim_short_id: input.id.clone().unwrap_or_default(),
-                    approval: "rejected".to_owned(),
-                    superseded_short_id: None,
-                    receipt_ref: format!("rejected:{}", err.code),
-                }),
-            }
-        }
-        Ok(receipts)
+        Ok(self.commit_all(claims, true, None))
     }
 
     /// Commits one claim with single-cardinality auto-supersede (S3):
@@ -1261,7 +1361,7 @@ impl MemoryFacade<'_> {
     /// `value.question_id` for declared multi-cardinality predicates, B1c)
     /// is superseded by the new revision.
     pub fn claim_upsert(&self, input: &ClaimInput) -> FacadeResult<CommitReceipt> {
-        self.commit_one(input, true)
+        self.commit_one(input, true, None)
     }
 
     /// Retracts an active claim (deliberate withdrawal; record preserved).
@@ -2190,7 +2290,205 @@ impl MemoryFacade<'_> {
         })
     }
 
+    // ── BRIDGE-03: Dreamer + seed + outbound wiring ─────────────────────
+
+    /// Enqueues one Dreamer consolidation job (expose, don't rebuild: the
+    /// queue verbs and leases stay engine-side; long work returns a job
+    /// ref to poll, W2).
+    pub fn enqueue_consolidation(
+        &self,
+        input: &ConsolidationJobInput,
+    ) -> FacadeResult<DreamerJobRef> {
+        let scope = match input.scope.as_str() {
+            "micro" => DreamerConsolidationScope::Micro,
+            "meso" => DreamerConsolidationScope::Meso,
+            "macro" => DreamerConsolidationScope::Macro,
+            other => {
+                return Err(FacadeError::bad_request_with(
+                    format!("unknown consolidation scope {other:?}"),
+                    &["Use one of: micro, meso, macro."],
+                ));
+            }
+        };
+        let store = DreamerRunnerStore::new(self.vault);
+        let outcome = store
+            .enqueue_consolidation(EnqueueDreamerConsolidationJob {
+                scope,
+                input: json_to_rmpv(&input.input),
+                parent_job: None,
+                dedupe_key: input.dedupe_key.clone(),
+                run_id: input.run_id.clone(),
+                now: input.now.unwrap_or_else(crate::unix_seconds_now),
+            })
+            .map_err(FacadeError::from)?;
+        let (status, existing) = match outcome {
+            EnqueueDreamerJobOutcome::Enqueued(status) => (status, false),
+            EnqueueDreamerJobOutcome::Existing(status) => (status, true),
+        };
+        Ok(DreamerJobRef {
+            job_ref: hex_string(status.job.id.as_bytes()),
+            state: job_state_str(status.job.state).to_owned(),
+            existing,
+        })
+    }
+
+    /// Polls one Dreamer job's status (poll model, no FFI await).
+    pub fn dreamer_job_status(&self, job_ref: &str) -> FacadeResult<Option<DreamerJobView>> {
+        let id = parse_job_ref(job_ref)?;
+        let store = DreamerRunnerStore::new(self.vault);
+        let Some(status) = store.status(id).map_err(FacadeError::from)? else {
+            return Ok(None);
+        };
+        Ok(Some(job_view_from_record(&status.job)))
+    }
+
+    /// Seed-write entry point (EF-301 consumer): every element is FORCED
+    /// `proposed` regardless of source — cold-start claims land below the
+    /// auto-approve line, individually gated, each with a receipt.
+    pub fn seed_claims(&self, claims: &[ClaimInput]) -> FacadeResult<Vec<CommitReceipt>> {
+        Ok(self.commit_all(claims, false, Some(ClaimApprovalStatus::Proposed)))
+    }
+
+    /// Schedules one outbound intent through the OF-327 chokepoint. The
+    /// bridge never delivers: the intent is durably enqueued (facade-level
+    /// idempotency over the generic job queue's dedupe index) and then
+    /// gate-checked via `dispatch_outbound_intent` under a `Hold` window,
+    /// so the gate decision persists as the queryable receipt while no
+    /// channel adapter is ever invoked from this surface.
+    pub fn schedule_outbound(
+        &self,
+        draft: &OutboundDraftInput,
+    ) -> FacadeResult<OutboundIntentReceipt> {
+        self.verified_actor_class()?;
+        let trigger = match draft.trigger.as_str() {
+            "commitment" | "commitment_timer_wake" => {
+                OutboundIntentTrigger::commitment_timer_wake(draft.trigger_ref.clone())
+            }
+            "gap_queue" => OutboundIntentTrigger::gap_queue(draft.trigger_ref.clone()),
+            "agent_immediate" => OutboundIntentTrigger::agent_immediate(draft.trigger_ref.clone()),
+            other => {
+                return Err(FacadeError::bad_request_with(
+                    format!("unknown outbound trigger {other:?}"),
+                    &["Use one of: commitment_timer_wake, gap_queue, agent_immediate."],
+                ));
+            }
+        };
+        let trigger = match &draft.job_ref {
+            Some(job_ref) => trigger.job_ref(job_ref.clone()),
+            None => trigger,
+        };
+        let now = draft.occurred_at.unwrap_or_else(crate::unix_seconds_now);
+
+        // Durable idempotency: the dispatch chokepoint performs no dedupe,
+        // so the schedule rides the job queue's kind-scoped dedupe index.
+        let queue = JobQueue::new(self.vault);
+        let payload = serde_json::to_vec(draft)
+            .map_err(|_| FacadeError::bad_request("outbound draft is not serializable"))?;
+        let outcome = queue
+            .enqueue(EnqueueJob {
+                kind: BRIDGE_OUTBOUND_JOB_KIND.to_owned(),
+                payload,
+                dedupe_key: draft.idempotency_key.clone(),
+                run_id: draft.job_ref.clone(),
+                now,
+            })
+            .map_err(FacadeError::from)?;
+        let job = match outcome {
+            EnqueueOutcome::Enqueued(job) => job,
+            EnqueueOutcome::Existing(job) => {
+                return Ok(OutboundIntentReceipt {
+                    intent_ref: outbound_intent_ref(job.id),
+                    outcome: "already_scheduled".to_owned(),
+                    gate_outcome: None,
+                    gate_decision_ref: None,
+                    gate_reason_codes: Vec::new(),
+                    deduped: true,
+                });
+            }
+        };
+        let intent_ref = outbound_intent_ref(job.id);
+
+        let mut intent_draft = OutboundIntentDraft::new(
+            self.actor.to_hex(),
+            draft.verb.clone(),
+            draft.channel.clone(),
+            draft.target.clone(),
+        );
+        if let Some(on_behalf_of) = &draft.on_behalf_of {
+            intent_draft = intent_draft.on_behalf_of(on_behalf_of.clone());
+        }
+        if let Some(content_ref) = &draft.content_ref {
+            intent_draft = intent_draft.content_ref(content_ref.clone());
+        }
+        if let Some(idempotency_key) = &draft.idempotency_key {
+            intent_draft = intent_draft.idempotency_key(idempotency_key.clone());
+        }
+        if let Some(dedupe_key) = &draft.dedupe_key {
+            intent_draft = intent_draft.dedupe_key(dedupe_key.clone());
+        }
+        let intent = OutboundIntent::from_trigger(intent_draft, trigger);
+        let actor = OutboundDispatchActor {
+            actor_class: self.actor_class.gate_actor_class().to_owned(),
+            actor_ref: Some(self.actor.to_hex()),
+            actor_entity_ref: Some(self.actor),
+        };
+        let request = OutboundDispatchRequest::new(
+            format!("outbound:{intent_ref}"),
+            intent_ref.clone(),
+            intent,
+            actor,
+            OutboundDispatchGate::allow_when_policy_grants(),
+            now,
+            OutboundDeliveryWindowDecision::Hold {
+                reason: "bridge_scheduled".to_owned(),
+                retry_at: None,
+            },
+        );
+        let mut sink = ScheduleOnlySink;
+        let result = self
+            .vault
+            .dispatch_outbound_intent(request, &mut sink)
+            .map_err(|err| match err {
+                OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
+                OutboundDispatchError::UnsupportedCapability(capability) => {
+                    FacadeError::bad_request_with(
+                        format!("unsupported outbound capability: {capability}"),
+                        &["Use a registered channel/verb pair from the connector manifest."],
+                    )
+                }
+            })?;
+        Ok(OutboundIntentReceipt {
+            intent_ref,
+            outcome: dispatch_outcome_str(&result.outcome).to_owned(),
+            gate_outcome: Some(result.gate_outcome),
+            gate_decision_ref: result.gate_decision_id,
+            gate_reason_codes: result.gate_reason_codes,
+            deduped: false,
+        })
+    }
+
     // ── internals ───────────────────────────────────────────────────────
+
+    fn commit_all(
+        &self,
+        claims: &[ClaimInput],
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+    ) -> Vec<CommitReceipt> {
+        let mut receipts = Vec::with_capacity(claims.len());
+        for input in claims {
+            match self.commit_one(input, auto_supersede, forced_approval) {
+                Ok(receipt) => receipts.push(receipt),
+                Err(err) => receipts.push(CommitReceipt {
+                    claim_short_id: input.id.clone().unwrap_or_default(),
+                    approval: "rejected".to_owned(),
+                    superseded_short_id: None,
+                    receipt_ref: format!("rejected:{}", err.code),
+                }),
+            }
+        }
+        receipts
+    }
 
     /// Builds one S6 memory item from an entity id. Returns `Ok(None)` for
     /// missing entities and non-surfaceable claims (D19 admission).
@@ -2324,7 +2622,12 @@ impl MemoryFacade<'_> {
         Ok(worlds.into_iter().collect())
     }
 
-    fn commit_one(&self, input: &ClaimInput, auto_supersede: bool) -> FacadeResult<CommitReceipt> {
+    fn commit_one(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+    ) -> FacadeResult<CommitReceipt> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let subject = self.resolve_ref(&input.subject_ref)?;
@@ -2356,7 +2659,8 @@ impl MemoryFacade<'_> {
             None
         };
 
-        let mut approval = requested_approval(source, input.scope.as_ref());
+        let mut approval =
+            forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
         // write, and (with a prior revision) the supersession commit or
         // roll back together. No phantom receipts (a decision can never
@@ -2723,6 +3027,76 @@ fn hard_deleted_refusal(id: &EntityId) -> FacadeError {
             "Recreation at a purged id would resurrect erased data or retype an actor.",
         ],
     )
+}
+
+/// Schedule-only execution sink: unreachable under the `Hold` window this
+/// facade always dispatches with; fails closed if a future path ever
+/// reaches it — the bridge carries no channel adapters (OF-327).
+struct ScheduleOnlySink;
+
+impl OutboundExecutionSink for ScheduleOnlySink {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        OutboundExecutionOutcome::failed("bridge schedule-only surface has no channel adapter")
+    }
+}
+
+fn outbound_intent_ref(job_id: JobId) -> String {
+    format!("intent:{}", hex_string(job_id.as_bytes()))
+}
+
+fn parse_job_ref(job_ref: &str) -> FacadeResult<JobId> {
+    let reference = job_ref
+        .trim()
+        .strip_prefix("job:")
+        .unwrap_or_else(|| job_ref.trim());
+    if reference.len() != 32 || !reference.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(FacadeError::bad_request(format!(
+            "job ref {job_ref:?} is not a 32-hex job id"
+        )));
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&reference[index * 2..index * 2 + 2], 16)
+            .map_err(|_| FacadeError::bad_request(format!("job ref {job_ref:?} is not hex")))?;
+    }
+    JobId::from_bytes(&bytes)
+        .map_err(|_| FacadeError::bad_request(format!("job ref {job_ref:?} is not a job id")))
+}
+
+const fn job_state_str(state: JobState) -> &'static str {
+    match state {
+        JobState::Queued => "queued",
+        JobState::Leased => "leased",
+        JobState::Paused => "paused",
+        JobState::Completed => "completed",
+        JobState::Failed => "failed",
+        JobState::Cancelled => "cancelled",
+    }
+}
+
+fn job_view_from_record(job: &JobRecord) -> DreamerJobView {
+    DreamerJobView {
+        job_ref: hex_string(job.id.as_bytes()),
+        state: job_state_str(job.state).to_owned(),
+        kind: job.kind.clone(),
+        lease_owner: job.lease_owner.clone(),
+        attempt_count: job.attempt_count,
+        run_id: job.run_id.clone(),
+        last_error: job.last_error.clone(),
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+    }
+}
+
+const fn dispatch_outcome_str(outcome: &OutboundDispatchOutcome) -> &'static str {
+    match outcome {
+        OutboundDispatchOutcome::DeliveredToChannel => "delivered_to_channel",
+        OutboundDispatchOutcome::Held => "held",
+        OutboundDispatchOutcome::Degraded => "degraded",
+        OutboundDispatchOutcome::Suppressed => "suppressed",
+        OutboundDispatchOutcome::LetGo => "let_go",
+        OutboundDispatchOutcome::Failed => "failed",
+    }
 }
 
 /// Hedge vocabulary over calibrated-absolute confidence (scour:A176 —
