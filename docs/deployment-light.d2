@@ -1,6 +1,10 @@
 direction: right
 
-core: Oneiron\n(Rust) {
+# --- Oneiron palette (light) ---
+# accent:  #E63E2A · ink: #1a1a1a · surface: #F4F0E6
+# success: #4A7C59 · muted: #6B7280 · brown: #8B5A2B
+
+core: "Oneiron\n(Rust)" {
   style.fill: "#E63E2A"
   style.font-color: "#ffffff"
   style.stroke: "#c4321f"
@@ -10,7 +14,7 @@ core: Oneiron\n(Rust) {
   style.shadow: true
 }
 
-ffi: C FFI {
+ffi: "C FFI · N-API" {
   style.fill: "#1a1a1a"
   style.font-color: "#F4F0E6"
   style.stroke: "#1a1a1a"
@@ -20,7 +24,17 @@ ffi: C FFI {
   style.shadow: true
 }
 
-ios: iOS\naarch64 · NEON {
+daemon: oneiron-server {
+  style.fill: "#1a1a1a"
+  style.font-color: "#F4F0E6"
+  style.stroke: "#1a1a1a"
+  style.border-radius: 8
+  style.font-size: 13
+  style.bold: true
+  style.shadow: true
+}
+
+ios: "iOS\naarch64 · NEON" {
   style.fill: "#F4F0E6"
   style.font-color: "#1a1a1a"
   style.stroke: "#1a1a1a"
@@ -29,7 +43,7 @@ ios: iOS\naarch64 · NEON {
   style.shadow: true
 }
 
-android: Android\naarch64 · NEON {
+android: "Android\naarch64 · NEON" {
   style.fill: "#F4F0E6"
   style.font-color: "#1a1a1a"
   style.stroke: "#1a1a1a"
@@ -38,7 +52,7 @@ android: Android\naarch64 · NEON {
   style.shadow: true
 }
 
-desktop: Desktop\nAVX2 · NEON {
+desktop: "Desktop\nAVX2 · NEON" {
   style.fill: "#F4F0E6"
   style.font-color: "#1a1a1a"
   style.stroke: "#1a1a1a"
@@ -47,7 +61,7 @@ desktop: Desktop\nAVX2 · NEON {
   style.shadow: true
 }
 
-server: Server\nx86_64 · AVX2 {
+node: "Node.js\nnative addon" {
   style.fill: "#F4F0E6"
   style.font-color: "#1a1a1a"
   style.stroke: "#1a1a1a"
@@ -56,9 +70,31 @@ server: Server\nx86_64 · AVX2 {
   style.shadow: true
 }
 
-core -> ffi: {style.stroke: "#E63E2A"; style.stroke-width: 2}
+local: "Local daemon\nHTTP · WS" {
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#8B5A2B"
+  style.border-radius: 8
+  style.font-size: 12
+  style.shadow: true
+}
+
+hosted: "Hosted vault\nmanaged · wakes on demand" {
+  style.fill: "#F4F0E6"
+  style.font-color: "#1a1a1a"
+  style.stroke: "#4A7C59"
+  style.border-radius: 8
+  style.font-size: 12
+  style.shadow: true
+}
+
+core -> ffi: embed {style.stroke: "#E63E2A"; style.stroke-width: 2}
+core -> daemon: run {style.stroke: "#E63E2A"; style.stroke-width: 2}
 
 ffi -> ios: {style.stroke: "#6B7280"; style.stroke-width: 2}
 ffi -> android: {style.stroke: "#6B7280"; style.stroke-width: 2}
 ffi -> desktop: {style.stroke: "#6B7280"; style.stroke-width: 2}
-ffi -> server: {style.stroke: "#6B7280"; style.stroke-width: 2}
+ffi -> node: {style.stroke: "#6B7280"; style.stroke-width: 2}
+
+daemon -> local: {style.stroke: "#8B5A2B"; style.stroke-width: 2}
+daemon -> hosted: {style.stroke: "#4A7C59"; style.stroke-width: 2}
