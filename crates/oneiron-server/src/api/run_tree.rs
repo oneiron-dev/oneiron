@@ -124,6 +124,11 @@ pub(crate) struct CoreRunTreeNode {
     #[serde(rename = "worker_kind")]
     #[schema(example = "orchestrator")]
     worker_kind: String,
+    /// The dispatched agent's label for `agent.dispatch` jobs, when the
+    /// payload snapshot decodes. Elided when absent.
+    #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+    #[schema(example = "eiri.agent.summarizer")]
+    agent_id: Option<String>,
     /// Surface lifecycle state.
     status: CoreRunTreeStatus,
     /// Queue row timestamps.
@@ -386,6 +391,7 @@ pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode 
         run_id: node.run_id,
         parent_id: node.parent_id,
         worker_kind: node.worker_kind,
+        agent_id: node.agent_id,
         status: core_run_tree_status(node.status),
         timestamps: CoreRunTreeTimestamps {
             created_at: node.timestamps.created_at,

@@ -529,3 +529,95 @@ fn fixed_job_id(byte: u8) -> crate::JobId {
 fn hex(id: crate::JobId) -> String {
     crate::entity_id::bytes_to_hex_lower(id.as_bytes())
 }
+
+// AGENT-3 (ONE-1445) AC test 8: an agent dispatch renders as a child node of
+// its parent with `worker_kind == "agent.dispatch"` and the definition's
+// agent_id; a malformed inner input degrades to `agent_id: None` without
+// killing the tree render.
+#[test]
+fn run_tree_renders_agent_branch() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let parent = enqueue(&runner, "orchestrator", None, 10, "run-agent")?;
+
+    let def_id = crate::EntityId::from_bytes([0x31; 16]).expect("non-reserved test id");
+    let def = crate::AgentDefinition::new(
+        "eiri.agent.tree",
+        "Run-tree dispatch fixture",
+        "1.0.0",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        crate::AgentScope::All,
+        crate::AgentCeiling::Proposed,
+        None,
+        crate::ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+        crate::ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![(Value::from("definedVia"), Value::from("test"))]),
+    );
+    vault.put_agent_definition(&def_id, &def, crate::TimeRange { start: 1, end: 1 }, 1)?;
+
+    let dispatcher = crate::AgentDispatcher::new(&vault);
+    let crate::AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch(crate::DispatchAgent {
+            target: crate::AgentDispatchTarget::Custom(def_id),
+            parent_job: Some(parent.job.id),
+            dedupe_key: None,
+            run_id: Some("run-agent".to_owned()),
+            now: 20,
+        })?
+    else {
+        panic!("expected fresh dispatch");
+    };
+
+    // A malformed inner input on the same payload job type (hand-enqueued
+    // around the dispatch layer — the queue is deliberately open).
+    let EnqueueDreamerJobOutcome::Enqueued(malformed) = runner.enqueue(EnqueueDreamerJob {
+        job_type: crate::AGENT_DISPATCH_JOB_TYPE.to_owned(),
+        input: Value::from("not an agent dispatch input"),
+        parent_job: Some(parent.job.id),
+        dedupe_key: None,
+        run_id: Some("run-agent".to_owned()),
+        now: 30,
+    })?
+    else {
+        panic!("expected fresh enqueue");
+    };
+
+    let tree = RunTreeAdapter::new(&vault).read_run("run-agent")?;
+    assert!(tree.repairs.is_empty());
+    assert_eq!(tree.roots.len(), 1);
+    let root = &tree.roots[0];
+    assert_eq!(root.agent_id, None, "non-agent jobs carry no agent_id");
+    assert_eq!(root.children.len(), 2);
+
+    let agent_node = root
+        .children
+        .iter()
+        .find(|child| child.job_id == hex(dispatched.job.id))
+        .expect("dispatched agent child node");
+    assert_eq!(agent_node.worker_kind, "agent.dispatch");
+    assert_eq!(
+        agent_node.parent_id.as_deref(),
+        Some(hex(parent.job.id).as_str())
+    );
+    assert_eq!(agent_node.agent_id.as_deref(), Some("eiri.agent.tree"));
+
+    let malformed_node = root
+        .children
+        .iter()
+        .find(|child| child.job_id == hex(malformed.job.id))
+        .expect("malformed child node renders");
+    assert_eq!(malformed_node.worker_kind, "agent.dispatch");
+    assert_eq!(
+        malformed_node.agent_id, None,
+        "a malformed inner input is a tolerant None, not an error"
+    );
+    Ok(())
+}
