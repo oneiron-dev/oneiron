@@ -779,3 +779,320 @@ fn milestone_attribution_cannot_be_forged() -> Result<()> {
     );
     Ok(())
 }
+
+/// A system/Dreamer bookkeeping envelope with the given agent attribution.
+fn dreamer_envelope(actor: EntityId, agent_id: &str) -> Result<WriteEnvelope> {
+    Ok(WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(actor, EdgeActorClass::System),
+        crate::claim::ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("runner"), Value::from("dreamer")),
+            (
+                Value::from(AGENT_DISPATCH_MILESTONE_AGENT_KEY),
+                Value::from(agent_id),
+            ),
+        ]))?,
+        crate::claim::ClaimApprovalStatus::Approved,
+    ))
+}
+
+fn write_milestone_claim(
+    vault: &Vault,
+    claim_id: &EntityId,
+    subject: EntityId,
+    job_id: crate::job_queue::JobId,
+    kind: DreamerMilestoneKind,
+    at: u64,
+    envelope: &WriteEnvelope,
+) -> Result<()> {
+    vault
+        .batch()
+        .claim_candidate(
+            claim_id,
+            ClaimCandidate::new(
+                DREAMER_MILESTONE_PREDICATE,
+                ClaimSubject::Entity(subject),
+                dreamer_milestone_value(job_id, kind, at),
+                1.0,
+            ),
+            envelope,
+            t(at),
+            at,
+        )
+        .commit()
+}
+
+// Security hardening F4 round 2: EVERY milestone kind is verified at the
+// durable-index door, and all three bindings are enforced — subject, envelope
+// actor, and attribution. A forged claim of any kind commits as an ordinary
+// claim but never becomes resume-visible.
+#[test]
+fn milestone_forgery_rejected_for_every_kind_and_binding() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest(
+        &vault,
+        0x10,
+        vec![
+            actor_ceiling_row("system", "auto"),
+            actor_ceiling_row("agent", "auto"),
+        ],
+    )?;
+
+    let def_id = test_id(0x4C);
+    let def = custom_agent("1.0.0");
+    vault.put_agent_definition(&def_id, &def, t(1), 1)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let AgentDispatchOutcome::Dispatched(status) = dispatch_custom(&dispatcher, def_id, None, 10)?
+    else {
+        panic!("expected fresh dispatch");
+    };
+    let job_id = status.job.id;
+    let agent_id = status.input.definition.agent_id;
+
+    let dreamer_actor = test_id(0x2D);
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+    let decoy_subject = test_id(0x2E);
+    vault.put_entity(&decoy_subject, ENTITY_TYPE_PERSON, t(1), 1, b"decoy")?;
+    // An Auto-ceiling agent actor, so an agent-envelope milestone still lands
+    // Approved and the envelope-actor binding is what rejects it.
+    let scout_fork = test_id(0x2F);
+    vault.fork_system_agent(
+        &scout_fork,
+        SystemAgentPreset::Scout,
+        "eiri.scout.fork",
+        t(1),
+        1,
+    )?;
+
+    let bound = dreamer_envelope(dreamer_actor, &agent_id)?;
+    let runner = DreamerRunnerStore::new(&vault);
+
+    // Seed one legitimately bound milestone so a rejected forgery is visible
+    // as "the durable milestone did not move".
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        subject,
+        job_id,
+        DreamerMilestoneKind::Started,
+        20,
+        &bound,
+    )?;
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("started")
+            .kind,
+        DreamerMilestoneKind::Started
+    );
+
+    // (a) Attribution forgery, on EVERY milestone kind — not just the
+    // admission/started kind.
+    let forged_attribution = dreamer_envelope(dreamer_actor, "mallory.other.agent")?;
+    for (offset, kind) in [
+        DreamerMilestoneKind::CheckpointReached,
+        DreamerMilestoneKind::Done,
+        DreamerMilestoneKind::Failed,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = 30 + u64::try_from(offset).expect("small offset");
+        let claim_id = EntityId::now();
+        write_milestone_claim(
+            &vault,
+            &claim_id,
+            subject,
+            job_id,
+            kind,
+            at,
+            &forged_attribution,
+        )?;
+        assert!(
+            vault.get_claim(&claim_id)?.is_some(),
+            "the forged claim still commits as an ordinary claim"
+        );
+        assert_eq!(
+            runner
+                .latest_durable_milestone(job_id)?
+                .expect("milestone")
+                .kind,
+            DreamerMilestoneKind::Started,
+            "a forged {kind:?} milestone must never become resume-visible"
+        );
+    }
+
+    // (b) Subject forgery: correct attribution, wrong subject.
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        decoy_subject,
+        job_id,
+        DreamerMilestoneKind::Done,
+        40,
+        &bound,
+    )?;
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone")
+            .kind,
+        DreamerMilestoneKind::Started,
+        "a milestone whose subject is not the job id must not index"
+    );
+
+    // (c) Envelope-actor forgery: correct attribution and subject, but the
+    // claim rides the AGENT's own envelope rather than the Dreamer's.
+    let agent_envelope = WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(scout_fork, EdgeActorClass::Agent),
+        crate::claim::ClaimSource::UserStated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("runner"), Value::from("dreamer")),
+            (
+                Value::from(AGENT_DISPATCH_MILESTONE_AGENT_KEY),
+                Value::from(agent_id.as_str()),
+            ),
+        ]))?,
+        crate::claim::ClaimApprovalStatus::Approved,
+    );
+    let agent_claim = EntityId::now();
+    write_milestone_claim(
+        &vault,
+        &agent_claim,
+        subject,
+        job_id,
+        DreamerMilestoneKind::Done,
+        50,
+        &agent_envelope,
+    )?;
+    assert_eq!(
+        vault.get_claim(&agent_claim)?.expect("claim").approval,
+        crate::claim::ClaimApprovalStatus::Approved,
+        "the agent-envelope claim is Approved — only the envelope binding rejects it"
+    );
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone")
+            .kind,
+        DreamerMilestoneKind::Started,
+        "an agent-envelope milestone is not runner bookkeeping and must not index"
+    );
+
+    // Control: a fully bound later milestone still advances the frontier.
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        subject,
+        job_id,
+        DreamerMilestoneKind::CheckpointReached,
+        60,
+        &bound,
+    )?;
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone")
+            .kind,
+        DreamerMilestoneKind::CheckpointReached
+    );
+    Ok(())
+}
+
+// Security hardening F4 round 2: the one-time index BACKFILL is an indexing
+// door and runs the same binding check — a forgery written before the index
+// existed must not be admitted by the rebuild.
+#[test]
+fn milestone_forgery_rejected_through_backfill() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest(&vault, 0x11, vec![actor_ceiling_row("system", "auto")])?;
+
+    let def_id = test_id(0x4D);
+    vault.put_agent_definition(&def_id, &custom_agent("1.0.0"), t(1), 1)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let AgentDispatchOutcome::Dispatched(status) = dispatch_custom(&dispatcher, def_id, None, 10)?
+    else {
+        panic!("expected fresh dispatch");
+    };
+    let job_id = status.job.id;
+    let agent_id = status.input.definition.agent_id;
+
+    let dreamer_actor = test_id(0x3A);
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    let subject = EntityId::from_bytes(*job_id.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"job anchor")?;
+
+    // Both claims are written BEFORE any read initializes the index, so the
+    // backfill scan — not the put hook — is what must reject the forgery.
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        subject,
+        job_id,
+        DreamerMilestoneKind::Started,
+        20,
+        &dreamer_envelope(dreamer_actor, &agent_id)?,
+    )?;
+    write_milestone_claim(
+        &vault,
+        &EntityId::now(),
+        subject,
+        job_id,
+        DreamerMilestoneKind::Done,
+        30,
+        &dreamer_envelope(dreamer_actor, "mallory.other.agent")?,
+    )?;
+
+    // First read triggers the backfill rebuild.
+    let runner = DreamerRunnerStore::new(&vault);
+    assert_eq!(
+        runner
+            .latest_durable_milestone(job_id)?
+            .expect("milestone")
+            .kind,
+        DreamerMilestoneKind::Started,
+        "backfill must not admit the forged Done milestone"
+    );
+    Ok(())
+}
+
+// Security hardening F4 round 2: a milestone claim naming a job with NO local
+// queue row (the cross-device replay shape — queue rows are private per-device
+// runner state and never sync) fails closed: it commits, but never indexes.
+#[test]
+fn milestone_with_absent_job_row_does_not_index() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest(&vault, 0x12, vec![actor_ceiling_row("system", "auto")])?;
+
+    let dreamer_actor = test_id(0x3B);
+    vault.put_entity(&dreamer_actor, ENTITY_TYPE_MACHINE, t(1), 1, b"dreamer")?;
+    // A job id that exists on some other device only.
+    let foreign_job = crate::job_queue::JobId::now();
+    let subject = EntityId::from_bytes(*foreign_job.as_bytes())?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, t(1), 1, b"foreign job anchor")?;
+
+    let claim_id = EntityId::now();
+    write_milestone_claim(
+        &vault,
+        &claim_id,
+        subject,
+        foreign_job,
+        DreamerMilestoneKind::Done,
+        20,
+        &dreamer_envelope(dreamer_actor, "eiri.agent.custom")?,
+    )?;
+
+    assert!(
+        vault.get_claim(&claim_id)?.is_some(),
+        "the replicated claim still commits"
+    );
+    let runner = DreamerRunnerStore::new(&vault);
+    assert_eq!(
+        runner.latest_durable_milestone(foreign_job)?,
+        None,
+        "a milestone with no local job row must not decide this device's resume point"
+    );
+    Ok(())
+}
