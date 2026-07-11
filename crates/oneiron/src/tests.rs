@@ -3724,12 +3724,12 @@ fn open_rejects_abi_v9_vault_after_agent_def_type_registration() -> Result<()> {
     Ok(())
 }
 
-/// A fence-bearing vault must not be serviceable by the pre-fence ABI. This
-/// simulates a v10 reader by downgrading the persisted handshake row before
-/// reopening: the fence-aware reader rejects the state instead of allowing a
-/// fence-unaware implementation to serve fenced content.
+/// Both public and internal open paths must traverse the same strict ABI gate.
+/// The newer stored value exercises the anti-downgrade direction: an older
+/// reader whose `current` version is lower rejects a newer vault by the same
+/// equality rule tested exhaustively in `store::tests`.
 #[test]
-fn open_rejects_legacy_abi_for_fence_bearing_vault() -> Result<()> {
+fn storage_abi_gate_runs_on_store_and_vault_open_paths() -> Result<()> {
     assert_eq!(
         STORAGE_ABI_VERSION, 11,
         "fence-aware readers must advertise ABI 11",
@@ -3737,31 +3737,34 @@ fn open_rejects_legacy_abi_for_fence_bearing_vault() -> Result<()> {
 
     let temp_dir = tempfile::tempdir()?;
     let path = temp_dir.path();
-    let phantom_turn = EntityId::now();
     {
-        let vault = Vault::open(path, test_config())?;
-        vault.enter_off_record_session(
-            "sess-abi-fence",
-            crate::off_record::OffRecordBackendClass::Local,
-        )?;
-        vault.tag_turn_off_record("sess-abi-fence", &phantom_turn)?;
-        assert!(vault.is_turn_off_record_fenced(&phantom_turn)?);
+        let _vault = Vault::open(path, test_config())?;
     }
+    let newer_abi = STORAGE_ABI_VERSION + 1;
+    set_raw_storage_abi_version(path, Some(newer_abi))?;
 
-    // ABI v10 predates the fence contract. A reader at that version must
-    // refuse rather than open the vault and treat `offrecord_fence:*` rows as
-    // unknown metadata.
-    set_raw_storage_abi_version(path, Some(10))?;
-    let err = match Vault::open(path, test_config()) {
-        Ok(_) => panic!("legacy ABI must fail closed"),
+    let store_err = match Store::open(path, &test_config()) {
+        Ok(_) => panic!("Store::open must run the ABI gate"),
         Err(err) => err,
     };
     assert!(matches!(
-        err,
+        store_err,
         Error::StorageAbiVersionChanged {
-            stored: Some(10),
+            stored: Some(stored),
             current: STORAGE_ABI_VERSION,
-        }
+        } if stored == newer_abi
+    ));
+
+    let vault_err = match Vault::open(path, test_config()) {
+        Ok(_) => panic!("Vault::open must run the ABI gate through Store::open"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        vault_err,
+        Error::StorageAbiVersionChanged {
+            stored: Some(stored),
+            current: STORAGE_ABI_VERSION,
+        } if stored == newer_abi
     ));
     Ok(())
 }

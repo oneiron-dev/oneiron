@@ -3635,27 +3635,12 @@ fn gate_storage_versions(
         STORAGE_ABI_VERSION_KEY,
         "storage ABI version",
     )?;
-    match stored_abi {
-        Some(STORAGE_ABI_VERSION) => {}
-        Some(stored) => {
-            return Err(Error::StorageAbiVersionChanged {
-                stored: Some(stored),
-                current: STORAGE_ABI_VERSION,
-            });
-        }
-        None if new_vault => {
-            vault_meta.put(
-                wtxn,
-                STORAGE_ABI_VERSION_KEY,
-                &STORAGE_ABI_VERSION.to_le_bytes(),
-            )?;
-        }
-        None => {
-            return Err(Error::StorageAbiVersionChanged {
-                stored: None,
-                current: STORAGE_ABI_VERSION,
-            });
-        }
+    if gate_storage_abi_value(stored_abi, STORAGE_ABI_VERSION, new_vault)? {
+        vault_meta.put(
+            wtxn,
+            STORAGE_ABI_VERSION_KEY,
+            &STORAGE_ABI_VERSION.to_le_bytes(),
+        )?;
     }
 
     let stored_schema = read_vault_meta_u16(
@@ -3682,6 +3667,25 @@ fn gate_storage_versions(
     }
 
     Ok(())
+}
+
+/// Applies the strict-equality storage-ABI handshake used by every
+/// [`Store::open`] call. `Ok(true)` means a genuinely new vault must stamp the
+/// current version; every existing-vault mismatch fails closed in both
+/// directions, including a prior-version reader opening a newer vault.
+fn gate_storage_abi_value(stored: Option<u16>, current: u16, new_vault: bool) -> Result<bool> {
+    match stored {
+        Some(stored) if stored == current => Ok(false),
+        Some(stored) => Err(Error::StorageAbiVersionChanged {
+            stored: Some(stored),
+            current,
+        }),
+        None if new_vault => Ok(true),
+        None => Err(Error::StorageAbiVersionChanged {
+            stored: None,
+            current,
+        }),
+    }
 }
 
 pub(crate) fn read_vault_meta_u16(

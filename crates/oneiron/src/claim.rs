@@ -1046,7 +1046,7 @@ impl ClaimBody {
 
 /// Grouping unit of a dotted predicate: every segment EXCEPT the last
 /// ("drop the leaf" — DESIGN-PIN A0). The grammar guarantees ≥2 segments
-/// ([`validate_predicate`]), so the root is always non-empty on valid
+/// (`validate_predicate`), so the root is always non-empty on valid
 /// predicates. Total on arbitrary namespaces (the wild has `oneiron.*`,
 /// `user.*`, …); never panics; no registry or layer-list lookup — an
 /// explicit per-predicate family field supersedes this formula when the
