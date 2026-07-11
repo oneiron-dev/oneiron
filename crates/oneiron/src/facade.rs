@@ -1427,10 +1427,12 @@ impl MemoryFacade<'_> {
             );
             Ok((approval, consent_receipt.map(|record| record.decision_id)))
         })?;
-        let receipt_ref = consent_decision_id.map_or_else(
-            || format!("retract:{}", id.to_hex()),
-            |decision_id| format!("gate:{}", decision_id.to_hex()),
-        );
+        let receipt_ref = match consent_decision_id {
+            Some(decision_id) => format!("gate:{}", decision_id.to_hex()),
+            None => self
+                .latest_decision_ref_for(&id)?
+                .unwrap_or_else(|| format!("retract:{}", id.to_hex())),
+        };
         Ok(CommitReceipt {
             claim_short_id: self.short_ref_or_hex(&id)?,
             approval,
