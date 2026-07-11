@@ -1843,12 +1843,17 @@ fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
     put_text_at(&vault, old, "limitrecencyneedle", 1)?;
     put_text_at(&vault, fresh, "limitrecencyneedle", now)?;
 
-    let baseline = vault.query().search_text("limitrecencyneedle", 1).run()?;
+    let baseline = vault
+        .query()
+        .search_text("limitrecencyneedle", 1)
+        .filter_types(&[1])
+        .run()?;
     assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
 
     let boosted = vault
         .query()
         .search_text("limitrecencyneedle", 1)
+        .filter_types(&[1])
         .boost_recency(0.01)
         .run()?;
     assert_eq!(
