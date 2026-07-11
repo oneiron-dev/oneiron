@@ -590,7 +590,7 @@ impl Vault {
         turn_id: &EntityId,
     ) -> Result<OffRecordPromoteReceipt> {
         vet_off_record_session_ref(session_ref)?;
-        self.with_write_txn(|wtxn| {
+        let receipt = self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             let position = record
                 .fenced_turns
@@ -623,7 +623,56 @@ impl Vault {
                 &encode_off_record_session(&record)?,
             )?;
             Ok(receipt)
-        })
+        })?;
+
+        // A window that was already open deferred this turn's `pm:` marker
+        // while its fence was active. Refresh that registry-owned doc after
+        // the durable fence lift so the explicit promotion is visible to sync
+        // immediately, rather than only after the window is unloaded and
+        // opened again. The receipt/fence transaction is authoritative and
+        // already committed here; a refresh failure leaves the `pm:` marker
+        // durable for normal open-time recovery, so it must not turn a
+        // completed user promotion into an ambiguous error response.
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
+            tracing::warn!(
+                turn = %turn_id.to_hex(),
+                error = %error,
+                "off-record promotion committed but live-window sync refresh deferred to recovery"
+            );
+        }
+
+        Ok(receipt)
+    }
+
+    /// Catches a promoted turn up in its already-loaded sync window, if any.
+    ///
+    /// The live window is a registry lookup only: promotion must never fault
+    /// an older month into memory. `pm:` replay comes before reverse
+    /// re-materialization, matching the pinned open-time recovery order.
+    #[cfg(feature = "sync")]
+    fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
+        use crate::sync::WindowKey;
+        use crate::sync::window::{replay_pending_mirrors, reverse_rematerialize};
+
+        let Some(header) = self.read_entity_header(turn_id)? else {
+            return Ok(());
+        };
+        let window_key = WindowKey::from_timestamp(header.learned_at);
+        let Some((window, _materializer)) = self.live_window(&window_key) else {
+            return Ok(());
+        };
+
+        let replayed = replay_pending_mirrors(self, &window.doc, &window_key)?;
+        let mirrored = reverse_rematerialize(self, &window.doc, &window_key)?;
+        tracing::debug!(
+            turn = %turn_id.to_hex(),
+            window = %window_key,
+            replayed,
+            mirrored,
+            "off-record promotion refreshed live sync window"
+        );
+        Ok(())
     }
 
     /// Reads the durable promote receipt for `turn_id`, if the turn was ever
