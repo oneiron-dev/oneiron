@@ -72,6 +72,7 @@ pub struct WriteEnvelope {
     source: ClaimSource,
     provenance: WriteProvenance,
     approval: ClaimApprovalStatus,
+    session_tag: Option<String>,
 }
 
 impl WriteEnvelope {
@@ -88,6 +89,7 @@ impl WriteEnvelope {
             source,
             provenance,
             approval,
+            session_tag: None,
         }
     }
 
@@ -141,6 +143,16 @@ impl WriteEnvelope {
     #[must_use]
     pub const fn approval(&self) -> ClaimApprovalStatus {
         self.approval
+    }
+
+    /// Tags every emitted claim with the agent session that produced it.
+    ///
+    /// The tag is validated by the claim write door and becomes the durable
+    /// data-native session-bundle association on proposed claims.
+    #[must_use]
+    pub fn with_session_tag(mut self, session_tag: impl Into<String>) -> Self {
+        self.session_tag = Some(session_tag.into());
+        self
     }
 }
 
@@ -252,6 +264,7 @@ impl ClaimCandidate {
         body.source = Some(envelope.source());
         body.world = self.world;
         body.scope = self.scope;
+        body.session_tag = envelope.session_tag.clone();
         body.stale = self.stale;
         body
     }

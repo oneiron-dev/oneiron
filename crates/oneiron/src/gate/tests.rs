@@ -3675,6 +3675,130 @@ fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
 }
 
 #[test]
+fn session_bundle_review_merge() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xC2, &encode_policy_manifest(vec![]))?;
+
+    let session_tag = "agent:alpha/session:42";
+    let first = test_id(0xC3);
+    let second = test_id(0xC4);
+    for (id, learned_at) in [(first, 3), (second, 4)] {
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope.with_session_tag(session_tag),
+                test_time(learned_at),
+                learned_at,
+            )
+            .commit()?;
+    }
+
+    let review = vault.review_session_bundle(session_tag)?;
+    assert_eq!(review.session_tag, session_tag);
+    assert_eq!(
+        review
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    assert!(
+        review
+            .claims
+            .iter()
+            .all(|claim| claim.body.approval == ClaimApprovalStatus::Proposed)
+    );
+
+    let merged = vault.merge_session_bundle(session_tag)?;
+    assert!(
+        merged
+            .claims
+            .iter()
+            .all(|claim| claim.body.approval == ClaimApprovalStatus::Approved)
+    );
+    assert!(
+        merged
+            .claims
+            .iter()
+            .all(|claim| claim.body.session_tag.as_deref() == Some(session_tag))
+    );
+    assert_eq!(
+        vault
+            .get_claim(&first)?
+            .expect("first merged claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(
+        vault
+            .get_claim(&second)?
+            .expect("second merged claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(!has_pending_gate_consent(&vault, &first)?);
+    assert!(!has_pending_gate_consent(&vault, &second)?);
+    assert!(vault.review_session_bundle(session_tag)?.claims.is_empty());
+    Ok(())
+}
+
+#[test]
+fn atomic_bundle_commit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0xC5, &encode_policy_manifest(vec![]))?;
+
+    let session_tag = "agent:alpha/session:atomic";
+    let first = test_id(0xC6);
+    let second = test_id(0xC7);
+    for (id, learned_at) in [(first, 3), (second, 4)] {
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope.with_session_tag(session_tag),
+                test_time(learned_at),
+                learned_at,
+            )
+            .commit()?;
+    }
+
+    vault.with_write_txn(|wtxn| {
+        let mut pending = vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &second)?
+            .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+        pending.diff_handle = vec![0xFF];
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let err = vault
+        .merge_session_bundle(session_tag)
+        .expect_err("a stale member must abort the whole session bundle");
+    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == second));
+    assert_eq!(
+        vault.get_claim(&first)?.expect("first proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        vault.get_claim(&second)?.expect("second proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(has_pending_gate_consent(&vault, &first)?);
+    assert!(has_pending_gate_consent(&vault, &second)?);
+    Ok(())
+}
+
+#[test]
 fn same_batch_proposed_then_approved_rejects_without_pending_consent() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, 0x98, &encode_policy_manifest(vec![]))?;

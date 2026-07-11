@@ -817,9 +817,9 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
         CLAIM_BODY_KEYS,
         [
             "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-            "appr", "life", "stale",
+            "appr", "life", "stale", "sess",
         ],
-        "PsychProfile snapshots must not extend the pinned Claim body ABI"
+        "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
 }
 
@@ -925,6 +925,34 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
         !claim_consolidatable(&body),
         "consolidation preserves surfaceability's stale exclusion"
     );
+}
+
+#[test]
+fn self_unconfirmed_not_consolidatable() -> Result<()> {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x18; 16]).expect("valid id"));
+    let mut body = ClaimBody::new(
+        "profile.preference",
+        subject,
+        Value::from("night owl"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(ClaimSource::Generated);
+    body.session_tag = Some("agent:alpha/session:42".to_owned());
+
+    let encoded = encode_claim_body(&body)?;
+    let decoded = decode_claim_body(&encoded, false)?;
+
+    assert_eq!(
+        decoded.session_tag.as_deref(),
+        Some("agent:alpha/session:42")
+    );
+    assert!(
+        !claim_consolidatable(&decoded),
+        "an agent's own unconfirmed session proposal must stay outside consolidation"
+    );
+    Ok(())
 }
 
 /// GATE-11 (ONE-1391): generated origin is evidence-inadmissible regardless

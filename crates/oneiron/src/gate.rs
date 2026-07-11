@@ -13,9 +13,10 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ScopedReadActorKey,
+    SessionClaimBundle, SessionClaimBundleClaim, claim_sensitivity_band, encode_claim_body,
     sensitivity_band_from_value,
 };
 use crate::connector_key::{
@@ -39,10 +40,11 @@ use crate::outbound_grant::{
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
+use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -2558,6 +2560,87 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     }
 
     check_claim_source_trust(body, policy)
+}
+
+impl Vault {
+    /// Returns the active proposed claims tagged to one agent session.
+    ///
+    /// This is a targeted consent-review door, so it intentionally returns
+    /// proposed claims that ordinary retrieval excludes. The returned bundle
+    /// is a projection over CLAIM data, not a separately persisted branch.
+    pub fn review_session_bundle(&self, session_tag: &str) -> Result<SessionClaimBundle> {
+        let rtxn = self.store.env.read_txn()?;
+        let members = self.session_claim_bundle_members_in_txn(&rtxn, session_tag)?;
+        Ok(session_claim_bundle(session_tag, members))
+    }
+
+    /// Replays every active proposed claim in a session bundle through the
+    /// ordinary gate and commits all resulting approvals atomically.
+    ///
+    /// Any gate denial or stale pending-consent binding aborts the enclosing
+    /// write transaction, leaving every member of the session bundle unchanged.
+    pub fn merge_session_bundle(&self, session_tag: &str) -> Result<SessionClaimBundle> {
+        self.with_write_txn(|wtxn| {
+            let members = self.session_claim_bundle_members_in_txn(&*wtxn, session_tag)?;
+            if members.is_empty() {
+                return Ok(session_claim_bundle(session_tag, members));
+            }
+
+            let mut merged = Vec::with_capacity(members.len());
+            let mut ops = Vec::with_capacity(members.len());
+            for member in members {
+                let mut body = member.body;
+                body.approval = ClaimApprovalStatus::Approved;
+                let data = encode_claim_body(&body)?;
+                merged.push(SessionClaimBundleClaim {
+                    id: member.id,
+                    body,
+                });
+                ops.push(BatchOp::Put {
+                    id: member.id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: member.occurred,
+                    learned_at: member.learned_at,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                });
+            }
+
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                true,
+                true,
+            )?;
+
+            Ok(SessionClaimBundle {
+                session_tag: session_tag.to_owned(),
+                claims: merged,
+            })
+        })
+    }
+}
+
+fn session_claim_bundle(
+    session_tag: &str,
+    members: Vec<crate::claim::SessionClaimBundleMember>,
+) -> SessionClaimBundle {
+    SessionClaimBundle {
+        session_tag: session_tag.to_owned(),
+        claims: members
+            .into_iter()
+            .map(|member| SessionClaimBundleClaim {
+                id: member.id,
+                body: member.body,
+            })
+            .collect(),
+    }
 }
 
 /// `admit_for_execution` tells the connector-key budget stage whether an

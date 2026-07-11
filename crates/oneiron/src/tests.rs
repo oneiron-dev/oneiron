@@ -11586,7 +11586,7 @@ fn claim_body_keys_pin_d11_vocabulary() {
         CLAIM_BODY_KEYS,
         [
             "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-            "appr", "life", "stale",
+            "appr", "life", "stale", "sess",
         ]
     );
     // fusion.rs consumes the SAME constants — pinned to the short keys.

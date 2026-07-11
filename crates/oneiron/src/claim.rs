@@ -96,12 +96,11 @@ pub(crate) fn claim_body_decode_count() -> usize {
 /// Order is canonical: the engine's encoder emits present fields in this
 /// order, and the context-pack field profiles are prefixes of this list
 /// (Minimal = first 2, Standard = first 5, Full = first 11; the lifecycle
-/// keys `appr`/`life`/`stale` drive the D19 read-path status gate
-/// (`claim_surfaceable`) and are excluded from every serialization
-/// profile).
-pub const CLAIM_BODY_KEYS: [&str; 14] = [
+/// keys `appr`/`life`/`stale` and optional session tag `sess` are excluded
+/// from every serialization profile).
+pub const CLAIM_BODY_KEYS: [&str; 15] = [
     "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope", "appr",
-    "life", "stale",
+    "life", "stale", "sess",
 ];
 
 pub(crate) const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
@@ -118,6 +117,7 @@ pub(crate) const KEY_SCOPE: &str = CLAIM_BODY_KEYS[10];
 pub(crate) const KEY_APPR: &str = CLAIM_BODY_KEYS[11];
 pub(crate) const KEY_LIFE: &str = CLAIM_BODY_KEYS[12];
 pub(crate) const KEY_STALE: &str = CLAIM_BODY_KEYS[13];
+pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[14];
 
 /// Predicate namespace for productizable memory-API records.
 pub const PREDICATE_NAMESPACE_CORE: &str = "core";
@@ -1010,8 +1010,40 @@ pub struct ClaimBody {
     pub world: Option<EntityId>,
     /// `scope` — optional relationship/facet scope (opaque MessagePack).
     pub scope: Option<Value>,
+    /// `sess` — optional agent-session tag. Proposed claims sharing a tag
+    /// form a review bundle; the tag remains as provenance after approval.
+    pub session_tag: Option<String>,
     /// `stale` — derived-data staleness marker; absent on disk means `false`.
     pub stale: bool,
+}
+
+/// One session-tagged claim returned for bundle review or merge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionClaimBundleClaim {
+    /// Durable CLAIM entity id.
+    pub id: EntityId,
+    /// Current typed claim body.
+    pub body: ClaimBody,
+}
+
+/// Coherent proposed-claim bundle for one agent session.
+///
+/// A bundle is a data-native projection over CLAIM rows sharing `sess`; it
+/// does not introduce an independent branch record or storage table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionClaimBundle {
+    /// Stable tag supplied by the writing agent session.
+    pub session_tag: String,
+    /// Active proposed claims currently belonging to the session.
+    pub claims: Vec<SessionClaimBundleClaim>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionClaimBundleMember {
+    pub(crate) id: EntityId,
+    pub(crate) body: ClaimBody,
+    pub(crate) occurred: TimeRange,
+    pub(crate) learned_at: u64,
 }
 
 impl ClaimBody {
@@ -1040,6 +1072,7 @@ impl ClaimBody {
             source: None,
             world: None,
             scope: None,
+            session_tag: None,
             stale: false,
         }
     }
@@ -1127,6 +1160,15 @@ fn valid_predicate_segment(segment: &str) -> bool {
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
+pub(crate) fn validate_session_tag(session_tag: &str) -> Result<()> {
+    if session_tag.trim().is_empty() {
+        return Err(Error::InvalidClaimBody(
+            "sess must be a non-empty, non-whitespace string",
+        ));
+    }
+    Ok(())
+}
+
 /// Encodes a [`ClaimBody`] into the pinned MessagePack ABI: a map carrying
 /// the present [`CLAIM_BODY_KEYS`] in canonical order. `stale == false` is
 /// omitted (absent means `false` on decode). Encoding performs no
@@ -1166,6 +1208,9 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
     entries.push((Value::from(KEY_LIFE), Value::from(body.lifecycle.as_str())));
     if body.stale {
         entries.push((Value::from(KEY_STALE), Value::Boolean(true)));
+    }
+    if let Some(session_tag) = &body.session_tag {
+        entries.push((Value::from(KEY_SESSION), Value::from(session_tag.as_str())));
     }
 
     let mut out = Vec::new();
@@ -1218,6 +1263,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
     let mut source: Option<ClaimSource> = None;
     let mut world: Option<EntityId> = None;
     let mut scope: Option<Value> = None;
+    let mut session_tag: Option<String> = None;
     let mut stale: Option<bool> = None;
 
     let mut seen = [false; CLAIM_BODY_KEYS.len()];
@@ -1321,6 +1367,13 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
                 };
                 stale = Some(flag);
             }
+            "sess" => {
+                let Some(tag) = value.as_str() else {
+                    return Err(Error::InvalidClaimBody("sess must be a string"));
+                };
+                validate_session_tag(tag)?;
+                session_tag = Some(tag.to_owned());
+            }
             _ => unreachable!("index resolved from CLAIM_BODY_KEYS"),
         }
     }
@@ -1347,6 +1400,7 @@ pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> 
         source,
         world,
         scope,
+        session_tag,
         stale: stale.unwrap_or(false),
     })
 }
@@ -2169,6 +2223,51 @@ impl Vault {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
+    }
+
+    pub(crate) fn session_claim_bundle_members_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        session_tag: &str,
+    ) -> Result<Vec<SessionClaimBundleMember>> {
+        validate_session_tag(session_tag)?;
+
+        let mut members = Vec::new();
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
+        {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(key)?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("claim type index"))?;
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("claim type index"));
+            }
+            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            if body.session_tag.as_deref() != Some(session_tag)
+                || body.approval != ClaimApprovalStatus::Proposed
+                || body.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            members.push(SessionClaimBundleMember {
+                id,
+                body,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                learned_at: header.learned_at,
+            });
+        }
+        Ok(members)
     }
 
     /// Returns the CLAIM entity ids attached to `subject` via inbound
