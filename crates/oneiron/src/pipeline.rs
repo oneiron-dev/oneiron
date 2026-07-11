@@ -143,6 +143,14 @@ const ADAPTIVE_ROUNDS: usize = 3;
 const PER_SCAN_CAP_FACTOR: usize = 4;
 const MAX_TEMPORAL_SEEK_BUFFER: usize = 8_192;
 const COSINE_GHOST_VECTOR_THRESHOLD: f32 = 0.3;
+// RET-01 only gates context-pack assembly. These are deliberately
+// conservative: the vector floor needs an absent keyword signal too, while
+// the score-gap check only compares raw cosine scores from the same channel.
+const CONTEXT_PACK_MIN_VECTOR_SIMILARITY: f32 = 0.3;
+const CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY: f32 = 0.5;
+const CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO: f32 = 0.1;
+const CONTEXT_PACK_SCORE_GAP_EPSILON: f32 = f32::EPSILON;
+const CONTEXT_PACK_ANOMALOUS_REPEAT_RUN: usize = 32;
 
 #[derive(Debug, Clone)]
 struct TemporalSearchConfig {
@@ -1841,6 +1849,24 @@ impl<'a> PipelineBuilder<'a> {
                     reranked_trace_scores =
                         Some(retrieval_trace_top_scores(&scores, trace_candidate_limit));
                 }
+            }
+
+            // RET-01: abstention is a context-pack assembly decision, never a
+            // mutation of stored memory or a behavior change for direct
+            // retrieval. Clear the candidate list structurally so hydration
+            // cannot surface weak evidence; `BelowThreshold` is carried to
+            // the public `ContextPack.empty` response as the typed confidence
+            // adjustment.
+            if self.context_pack_budget.is_some()
+                && context_pack_evidence_abstains(
+                    &scores,
+                    &signal_components,
+                    self.text_search.as_ref().map(|(query, _)| query.as_str()),
+                    self.vector_search.is_some(),
+                )
+            {
+                scores.clear();
+                empty_reason = Some(EmptyReason::BelowThreshold);
             }
 
             if let Some(context_pack_budget) = self.context_pack_budget {
@@ -4059,6 +4085,103 @@ fn apply_context_pack_retrieval_budget(
 
     *scores = kept;
     Ok(())
+}
+
+/// Returns whether a context pack must withhold every candidate before
+/// hydration. The predicate intentionally reads raw per-channel evidence,
+/// rather than the blended score: blend dimensions can be incomparable or
+/// flat, while cosine scores have a stable similarity meaning.
+fn context_pack_evidence_abstains(
+    scores: &[ScoredEntity],
+    signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    text_query: Option<&str>,
+    has_vector_query: bool,
+) -> bool {
+    if text_query.is_some_and(context_pack_text_is_anomalous) {
+        return true;
+    }
+    if scores.is_empty() {
+        return false;
+    }
+
+    let mut has_keyword_hit = false;
+    let mut vector_scores = Vec::new();
+    for scored in scores {
+        let Some(components) = signal_components.get(&scored.id) else {
+            continue;
+        };
+        for component in components {
+            match component.signal {
+                RetrievalSignal::Text => has_keyword_hit = true,
+                RetrievalSignal::Vector => vector_scores.push(component.score),
+                _ => {}
+            }
+        }
+    }
+
+    // A semantic-only result is not rejected merely for being below the
+    // floor: this branch requires both caller-supplied channels and no
+    // surviving keyword evidence, matching the RET-01 dual-signal rule.
+    let absent_keyword_and_low_vector = text_query.is_some()
+        && has_vector_query
+        && !has_keyword_hit
+        && vector_scores
+            .iter()
+            .all(|score| !score.is_finite() || *score < CONTEXT_PACK_MIN_VECTOR_SIMILARITY);
+
+    absent_keyword_and_low_vector || context_pack_vector_score_gap_is_poor(&mut vector_scores)
+}
+
+/// RET-01 pack hygiene for malformed or degenerate text input. Newlines and
+/// tabs remain legitimate natural-language formatting; other controls and a
+/// long non-whitespace character run are treated as anomalous evidence.
+fn context_pack_text_is_anomalous(text: &str) -> bool {
+    let mut previous = None;
+    let mut repeated = 0_usize;
+
+    for character in text.chars() {
+        if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+            return true;
+        }
+        if character.is_whitespace() {
+            previous = None;
+            repeated = 0;
+            continue;
+        }
+        if previous == Some(character) {
+            repeated += 1;
+            if repeated >= CONTEXT_PACK_ANOMALOUS_REPEAT_RUN {
+                return true;
+            }
+        } else {
+            previous = Some(character);
+            repeated = 1;
+        }
+    }
+
+    false
+}
+
+/// Score-gap evidence is meaningful only within the same raw vector channel.
+/// The ratio follows `(top1 - top2) / max(top1, epsilon)`; it suppresses
+/// uniformly mediocre results, not a close cluster of strong matches.
+fn context_pack_vector_score_gap_is_poor(vector_scores: &mut [f32]) -> bool {
+    if vector_scores.len() < 2 {
+        return false;
+    }
+
+    vector_scores.sort_unstable_by(|left, right| right.total_cmp(left));
+    let top = vector_scores[0];
+    let next = vector_scores[1];
+    if !top.is_finite() || !next.is_finite() || top <= 0.0 {
+        return true;
+    }
+    if top >= CONTEXT_PACK_MEDIOCRE_VECTOR_SIMILARITY {
+        return false;
+    }
+
+    let gap_ratio = (top - next) / top.max(CONTEXT_PACK_SCORE_GAP_EPSILON);
+    gap_ratio < CONTEXT_PACK_MIN_VECTOR_SCORE_GAP_RATIO
 }
 
 fn redistribute_context_pack_budget(
