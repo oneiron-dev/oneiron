@@ -183,13 +183,16 @@ impl TokenHex {
     /// unequal. Decode cost depends only on the caller's own inputs, never
     /// on where the first differing byte sits; length is not secret.
     pub fn ct_eq(&self, other: &TokenHex) -> bool {
-        let (Some(mut a), Some(mut b)) = (from_hex(&self.0), from_hex(&other.0)) else {
-            return false;
-        };
-        let eq = bool::from(subtle::ConstantTimeEq::ct_eq(a.as_slice(), b.as_slice()));
-        a.zeroize();
-        b.zeroize();
-        eq
+        // Zeroizing: decoded token bytes are wiped on every path, including
+        // when only one side parses (malformed probe against a valid token).
+        let a = from_hex(&self.0).map(zeroize::Zeroizing::new);
+        let b = from_hex(&other.0).map(zeroize::Zeroizing::new);
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                bool::from(subtle::ConstantTimeEq::ct_eq(a.as_slice(), b.as_slice()))
+            }
+            _ => false,
+        }
     }
 }
 
