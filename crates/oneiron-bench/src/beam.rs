@@ -21,6 +21,20 @@ const SCHEMA_VERSION: u32 = 2;
 const BEAM_CONTEXT_PACK_FORMAT: PackFormat = PackFormat::Yaml;
 const BEAM_SCORER_VERSION: &str = "beam-fixed-scorer-v1";
 const BEAM_COMPARATOR_VERSION: &str = "beam-comparator-card-v1";
+const JUDGE_VOTE_COUNT: usize = 3;
+const JUDGE_AGGREGATION: &str = "majority_of_three";
+// The fixture binary has no judge transport; these seams are consumed by the caller-owned
+// evaluation sidecar when it supplies the model calls.
+#[allow(dead_code)]
+pub(crate) const BEAM_NUGGET_JUDGE_MODEL: &str = "gpt-4.1-mini";
+#[allow(dead_code)]
+pub(crate) const LONGMEMEVAL_S_JUDGE_MODEL: &str = "gpt-4o";
+const PINNED_ANSWER_PROMPT_VERSION: &str = "beam-answer-v1";
+const PINNED_ANSWER_PROMPT: &str = concat!(
+    "Based on the supplied context, answer the question with a concise, evidence-grounded ",
+    "response. If the context does not support an answer, say so.\nQuestion: {question}\n",
+    "Short answer:"
+);
 const COST_USD_SCALE: f64 = 1_000_000.0;
 const MAX_NORMALIZABLE_COST_USD: f64 = f64::MAX / COST_USD_SCALE;
 const LOW_CONFIDENCE_RETRIEVAL_LIMIT: usize = 1;
@@ -324,6 +338,140 @@ struct JudgeMetadata {
     judge_id: String,
     version: String,
     notes: String,
+    #[serde(default = "default_judge_vote_count")]
+    vote_count: usize,
+    #[serde(default = "default_judge_aggregation")]
+    aggregation: String,
+    #[serde(default = "default_answer_prompt_version")]
+    answer_prompt_version: String,
+    #[serde(default = "default_answer_prompt")]
+    answer_prompt: String,
+    #[serde(default = "default_answer_prompt_sha256")]
+    answer_prompt_sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) enum JudgeTarget {
+    BeamNugget,
+    LongMemEvalS,
+}
+
+impl JudgeTarget {
+    #[allow(dead_code)]
+    pub(crate) const fn model_id(self) -> &'static str {
+        match self {
+            Self::BeamNugget => BEAM_NUGGET_JUDGE_MODEL,
+            Self::LongMemEvalS => LONGMEMEVAL_S_JUDGE_MODEL,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct JudgeCallSpec {
+    model_id: &'static str,
+    vote_index: usize,
+    answer_prompt_version: &'static str,
+    answer_prompt: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct JudgeAggregation {
+    target: JudgeTarget,
+    votes: [bool; JUDGE_VOTE_COUNT],
+    verdict: bool,
+}
+
+impl JudgeMetadata {
+    #[allow(dead_code)]
+    pub(crate) fn for_target(target: JudgeTarget) -> Self {
+        Self {
+            judge_id: target.model_id().to_owned(),
+            version: "v1".to_owned(),
+            notes: format!(
+                "{} independent judge calls aggregated by majority; answer prompt is pinned and disclosed.",
+                JUDGE_VOTE_COUNT
+            ),
+            vote_count: JUDGE_VOTE_COUNT,
+            aggregation: JUDGE_AGGREGATION.to_owned(),
+            answer_prompt_version: PINNED_ANSWER_PROMPT_VERSION.to_owned(),
+            answer_prompt: PINNED_ANSWER_PROMPT.to_owned(),
+            answer_prompt_sha256: default_answer_prompt_sha256(),
+        }
+    }
+}
+
+fn default_judge_vote_count() -> usize {
+    JUDGE_VOTE_COUNT
+}
+
+fn default_judge_aggregation() -> String {
+    JUDGE_AGGREGATION.to_owned()
+}
+
+fn default_answer_prompt_version() -> String {
+    PINNED_ANSWER_PROMPT_VERSION.to_owned()
+}
+
+fn default_answer_prompt() -> String {
+    PINNED_ANSWER_PROMPT.to_owned()
+}
+
+fn answer_prompt_sha256(prompt: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(prompt.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn default_answer_prompt_sha256() -> String {
+    answer_prompt_sha256(PINNED_ANSWER_PROMPT)
+}
+
+#[allow(dead_code)]
+pub(crate) fn majority_of_three(votes: [bool; JUDGE_VOTE_COUNT]) -> bool {
+    votes.into_iter().filter(|vote| *vote).count() >= 2
+}
+
+/// Execute exactly three independent judge calls and return their majority verdict.
+///
+/// The transport stays caller-owned: the closure receives the pinned model and answer
+/// prompt metadata, so the bench crate does not invent credentials or an HTTP client.
+#[allow(dead_code)]
+pub(crate) fn run_majority_judge<E, F>(
+    target: JudgeTarget,
+    mut call: F,
+) -> Result<JudgeAggregation, E>
+where
+    F: FnMut(JudgeCallSpec) -> Result<bool, E>,
+{
+    let votes = [
+        call(JudgeCallSpec {
+            model_id: target.model_id(),
+            vote_index: 0,
+            answer_prompt_version: PINNED_ANSWER_PROMPT_VERSION,
+            answer_prompt: PINNED_ANSWER_PROMPT,
+        })?,
+        call(JudgeCallSpec {
+            model_id: target.model_id(),
+            vote_index: 1,
+            answer_prompt_version: PINNED_ANSWER_PROMPT_VERSION,
+            answer_prompt: PINNED_ANSWER_PROMPT,
+        })?,
+        call(JudgeCallSpec {
+            model_id: target.model_id(),
+            vote_index: 2,
+            answer_prompt_version: PINNED_ANSWER_PROMPT_VERSION,
+            answer_prompt: PINNED_ANSWER_PROMPT,
+        })?,
+    ];
+
+    Ok(JudgeAggregation {
+        target,
+        verdict: majority_of_three(votes),
+        votes,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -1686,6 +1834,36 @@ fn validate_competitor_card(
         return Err(invalid_manifest(
             manifest,
             "competitor card judge versions must not be empty",
+        ));
+    }
+    if card.judge.vote_count != JUDGE_VOTE_COUNT {
+        return Err(invalid_manifest(
+            manifest,
+            format!("competitor card judge vote count must be {JUDGE_VOTE_COUNT}"),
+        ));
+    }
+    if card.judge.aggregation != JUDGE_AGGREGATION {
+        return Err(invalid_manifest(
+            manifest,
+            format!("competitor card judge aggregation must be {JUDGE_AGGREGATION}"),
+        ));
+    }
+    if card.judge.answer_prompt_version != PINNED_ANSWER_PROMPT_VERSION {
+        return Err(invalid_manifest(
+            manifest,
+            format!("competitor card answer prompt version must be {PINNED_ANSWER_PROMPT_VERSION}"),
+        ));
+    }
+    if card.judge.answer_prompt != PINNED_ANSWER_PROMPT {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card answer prompt must match the pinned benchmark prompt",
+        ));
+    }
+    if card.judge.answer_prompt_sha256 != answer_prompt_sha256(&card.judge.answer_prompt) {
+        return Err(invalid_manifest(
+            manifest,
+            "competitor card answer prompt digest does not match the disclosed prompt",
         ));
     }
     let token_accounting = card.token_accounting.as_ref();
@@ -3276,6 +3454,62 @@ mod tests {
                 ArmKind::Agentic,
                 ArmKind::Chat
             ]
+        );
+    }
+
+    #[test]
+    fn majority_of_three() {
+        let mut calls = Vec::new();
+        let aggregation = run_majority_judge(JudgeTarget::BeamNugget, |spec| {
+            calls.push(spec);
+            Ok::<_, std::convert::Infallible>(calls.len() != 2)
+        })
+        .expect("all three judge calls succeed");
+
+        assert_eq!(aggregation.votes, [true, false, true]);
+        assert!(aggregation.verdict);
+        assert_eq!(aggregation.target, JudgeTarget::BeamNugget);
+        assert_eq!(calls.len(), JUDGE_VOTE_COUNT);
+        assert!(calls.iter().all(|call| {
+            call.model_id == BEAM_NUGGET_JUDGE_MODEL
+                && call.answer_prompt_version == PINNED_ANSWER_PROMPT_VERSION
+                && call.answer_prompt == PINNED_ANSWER_PROMPT
+        }));
+        assert_eq!(
+            JudgeMetadata::for_target(JudgeTarget::LongMemEvalS).judge_id,
+            LONGMEMEVAL_S_JUDGE_MODEL
+        );
+    }
+
+    #[test]
+    fn answer_prompt_pinned_on_card() {
+        let report = run_builtin_smoke().expect("BEAM smoke report");
+        let report_json = serde_json::to_value(&report).expect("report serializes");
+        let judge = &report_json["cases"][0]["competitors"][0]["card"]["judge"];
+
+        assert_eq!(judge["voteCount"], JUDGE_VOTE_COUNT);
+        assert_eq!(judge["aggregation"], JUDGE_AGGREGATION);
+        assert_eq!(judge["answerPromptVersion"], PINNED_ANSWER_PROMPT_VERSION);
+        assert_eq!(judge["answerPrompt"], PINNED_ANSWER_PROMPT);
+        assert_eq!(
+            judge["answerPromptSha256"],
+            answer_prompt_sha256(PINNED_ANSWER_PROMPT)
+        );
+    }
+
+    #[test]
+    fn dial481_confound_regression() {
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]["judge"]["answerPrompt"] =
+            serde_json::json!("answer with a seven-step chain of thought");
+
+        let err = parse_manifest_json(&manifest_json.to_string())
+            .expect_err("answer-prompt changes must invalidate the benchmark card");
+
+        assert!(
+            err.to_string()
+                .contains("answer prompt must match the pinned benchmark prompt")
         );
     }
 
