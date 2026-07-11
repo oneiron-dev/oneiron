@@ -2078,13 +2078,21 @@ fn fenced_recency_text_rows_do_not_exhaust_overfetch_window() -> Result<()> {
         entity_id(0x03),
         entity_id(0x04),
     ];
-    let live = entity_id(0x10);
+    let live = [
+        entity_id(0x10),
+        entity_id(0x11),
+        entity_id(0x12),
+        entity_id(0x13),
+        entity_id(0x14),
+    ];
     let now = crate::unix_seconds_now();
 
     for id in fenced {
         put_text_at(&vault, id, "fencedrecencywindow", now)?;
     }
-    put_text_at(&vault, live, "fencedrecencywindow", now)?;
+    for id in live {
+        put_text_at(&vault, id, "fencedrecencywindow", now)?;
+    }
 
     vault.enter_off_record_session(
         "text-recency-fence",
@@ -2098,10 +2106,22 @@ fn fenced_recency_text_rows_do_not_exhaust_overfetch_window() -> Result<()> {
         .query()
         .search_text("fencedrecencywindow", 1)
         .boost_recency(0.01)
+        .limit(1)
         .run()?;
 
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, live);
+    assert_eq!(results[0].id, live[0]);
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut widened = std::iter::once(fenced[0])
+        .chain(live)
+        .map(|id| ScoredEntity { id, score: 1.0 })
+        .collect();
+    apply_off_record_fence_with_cap(&mut widened, &vault.store, &rtxn, 4)?;
+    assert_eq!(
+        widened.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        live[..4]
+    );
     Ok(())
 }
 
@@ -2149,6 +2169,13 @@ fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
         vec![live_a, live_b]
     );
     Ok(())
+}
+
+#[test]
+fn vector_fence_widening_advances_only_by_missing_slots() {
+    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10_000), 11);
+    assert_eq!(next_vector_fence_search_limit(10, 0, 10, 10_000), 20);
+    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10), 10);
 }
 
 #[test]
@@ -2909,6 +2936,64 @@ fn fenced_temporal_candidates_do_not_stop_adaptive_widening() -> Result<()> {
 }
 
 #[test]
+fn unrelated_temporal_fence_does_not_expand_candidate_window() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let old_learned_at = 1;
+    let close = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let outside_cap = entity_id(0x10);
+    let unrelated = entity_id(0x20);
+
+    for id in close {
+        put_entity(&vault, id, 1, anchor, anchor, old_learned_at)?;
+    }
+    put_entity(
+        &vault,
+        outside_cap,
+        1,
+        anchor + 86_400,
+        anchor + 86_400,
+        anchor,
+    )?;
+    put_entity(
+        &vault,
+        unrelated,
+        1,
+        anchor + 30 * 86_400,
+        anchor + 30 * 86_400,
+        anchor,
+    )?;
+
+    let before = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    vault.enter_off_record_session(
+        "unrelated-temporal-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("unrelated-temporal-fence", &unrelated)?;
+
+    let after = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    assert_eq!(before, after);
+    assert_eq!(after.len(), 1);
+    assert_ne!(after[0].id, outside_cap);
+    Ok(())
+}
+
+#[test]
 fn three_index_scan_discovers_end_only_candidate() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
@@ -3009,6 +3094,7 @@ fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
         TemporalCandidateCollectionContext {
             radius: window,
             per_scan_cap: PER_SCAN_CAP_FACTOR,
+            off_record_fences_present: false,
         },
         &mut metadata_cache,
         &scoring,
@@ -3109,6 +3195,7 @@ fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
         TemporalCandidateCollectionContext {
             radius: 86_400,
             per_scan_cap: PER_SCAN_CAP_FACTOR,
+            off_record_fences_present: false,
         },
         &mut metadata_cache,
         &scoring,
@@ -3133,11 +3220,15 @@ fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
     let mut out = HashSet::new();
     collect_index_candidates(
         &vault.store.temporal_occurred_start,
+        &vault.store,
         &rtxn,
-        0,
-        timestamp,
-        100,
-        4,
+        TemporalIndexCollectionContext {
+            window_start: 0,
+            window_end: timestamp,
+            anchor_mid: 100,
+            cap: 4,
+            off_record_fences_present: false,
+        },
         &mut out,
     )?;
 
@@ -3172,7 +3263,14 @@ fn future_events_are_scored() -> Result<()> {
     };
     let rtxn = vault.store.env.read_txn()?;
     let mut metadata_cache = EntityMetadataCache::default();
-    let results = execute_temporal(&vault.store, &rtxn, &config, 0, now, &mut metadata_cache)?;
+    let results = execute_temporal(
+        &vault.store,
+        &rtxn,
+        &config,
+        false,
+        now,
+        &mut metadata_cache,
+    )?;
 
     let scored = results
         .iter()
@@ -3311,10 +3409,22 @@ fn granularity_sigma_ordering() -> Result<()> {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let results_a =
-            execute_temporal(&vault.store, &rtxn, &cfg_a, 0, anchor, &mut metadata_cache)?;
-        let results_b =
-            execute_temporal(&vault.store, &rtxn, &cfg_b, 0, anchor, &mut metadata_cache)?;
+        let results_a = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_a,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
+        let results_b = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_b,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
 
         let score_a = results_a
             .iter()
