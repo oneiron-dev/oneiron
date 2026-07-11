@@ -1324,11 +1324,16 @@ impl<'a> PipelineBuilder<'a> {
                 // before truncation. For an otherwise exact text limit,
                 // widen only after a fenced hit is observed.
                 if text_channel_limit > *limit && text_scope_widening_active {
+                    let scoped_result_limit = if recency.is_some() {
+                        text_channel_limit
+                    } else {
+                        *limit
+                    };
                     truncate_widened_channel_results_to_scope(
                         &mut text_results,
                         &self.vault.store,
                         &rtxn,
-                        *limit,
+                        scoped_result_limit,
                         filter_config,
                         &mut metadata_cache,
                         &mut prefix_probe_claim_gate,
