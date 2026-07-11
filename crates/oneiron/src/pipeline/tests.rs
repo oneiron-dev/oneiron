@@ -2172,6 +2172,97 @@ fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
 }
 
 #[test]
+fn unrelated_vector_fence_preserves_scoped_overfetch() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let in_scope_a = entity_id(0x10);
+    let in_scope_b = entity_id(0x11);
+    let repo_a =
+        RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")?;
+    let repo_b =
+        RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+
+    put_codebase_vector(
+        &vault,
+        fenced,
+        "project.alpha",
+        repo_a,
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+    put_codebase_vector(
+        &vault,
+        in_scope_a,
+        "project.beta",
+        repo_b.clone(),
+        [0.9, 0.1, 0.0, 0.0],
+    )?;
+    put_codebase_vector(
+        &vault,
+        in_scope_b,
+        "project.beta",
+        repo_b,
+        [0.8, 0.2, 0.0, 0.0],
+    )?;
+
+    vault.enter_off_record_session(
+        "unrelated-vector-scope-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("unrelated-vector-scope-fence", &fenced)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_project_id("project.beta")
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![in_scope_a, in_scope_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn vector_fence_replacement_does_not_apply_post_fusion_type_filter() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let wrong_type = entity_id(0x10);
+    let deeper_match = entity_id(0x20);
+
+    put_vector(&vault, fenced, [1.0, 0.0, 0.0, 0.0])?;
+    vault
+        .batch()
+        .put(
+            &wrong_type,
+            2,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"payload",
+        )
+        .vector(&wrong_type, &[0.99, 0.01, 0.0, 0.0])
+        .commit()?;
+    put_vector(&vault, deeper_match, [0.98, 0.02, 0.0, 0.0])?;
+
+    vault.enter_off_record_session(
+        "vector-post-filter-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-post-filter-fence", &fenced)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_types(&[1])
+        .limit(1)
+        .run()?;
+
+    assert!(results.is_empty());
+    Ok(())
+}
+
+#[test]
 fn vector_fence_widening_grows_in_bounded_batches() {
     assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10_000), 20);
     assert_eq!(next_vector_fence_search_limit(10, 0, 10, 10_000), 20);
@@ -3247,6 +3338,49 @@ fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
     assert!(out.contains(&entity_id(42)));
     assert!(out.contains(&entity_id(43)));
     assert!(!out.contains(&entity_id(44)));
+    Ok(())
+}
+
+#[test]
+fn backward_boundary_replay_keeps_live_row_behind_fences() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let timestamp = 99;
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let live = entity_id(0x10);
+
+    for id in fenced.into_iter().chain(std::iter::once(live)) {
+        put_entity(&vault, id, 1, timestamp, timestamp, timestamp)?;
+    }
+    vault.enter_off_record_session(
+        "backward-boundary-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    for id in fenced {
+        vault.tag_turn_off_record("backward-boundary-fence", &id)?;
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = HashSet::new();
+    collect_index_candidates(
+        &vault.store.temporal_occurred_start,
+        &vault.store,
+        &rtxn,
+        TemporalIndexCollectionContext {
+            window_start: 0,
+            window_end: timestamp,
+            anchor_mid: 100,
+            cap: 1,
+            off_record_fences_present: true,
+        },
+        &mut out,
+    )?;
+
+    assert_eq!(out, HashSet::from([live]));
     Ok(())
 }
 

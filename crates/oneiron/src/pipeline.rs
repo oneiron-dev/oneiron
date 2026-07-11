@@ -1209,15 +1209,7 @@ impl<'a> PipelineBuilder<'a> {
                     && contains_off_record_fence(&vector_results, &self.vault.store, &rtxn)?
                 {
                     if channel_limit > *limit {
-                        truncate_widened_channel_results_to_scope(
-                            &mut vector_results,
-                            &self.vault.store,
-                            &rtxn,
-                            *limit,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut vector_probe_claim_gate,
-                        )?;
+                        apply_off_record_fence(&mut vector_results, &self.vault.store, &rtxn)?;
                     } else {
                         let entity_count =
                             crate::hnsw::hnsw_entity_count(&self.vault.store, &rtxn)?;
@@ -1225,12 +1217,11 @@ impl<'a> PipelineBuilder<'a> {
                         loop {
                             let mut filtered_results = vector_results;
                             let mut filtered_claim_gate = ClaimStatusGateCache::default();
-                            truncate_widened_channel_results_to_scope(
+                            truncate_vector_fence_replacements(
                                 &mut filtered_results,
                                 &self.vault.store,
                                 &rtxn,
                                 *limit,
-                                filter_config,
                                 &mut metadata_cache,
                                 &mut filtered_claim_gate,
                             )?;
@@ -2695,6 +2686,32 @@ fn contains_off_record_fence(
     Ok(false)
 }
 
+fn truncate_vector_fence_replacements(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+) -> Result<()> {
+    let mut filtered = Vec::with_capacity(requested.min(scores.len()));
+    for scored in scores.iter().copied() {
+        if crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            continue;
+        }
+        if !claim_status_gate_allows(store, rtxn, &scored.id, metadata_cache, claim_gate)? {
+            continue;
+        }
+        filtered.push(scored);
+        if filtered.len() == requested {
+            break;
+        }
+    }
+
+    *scores = filtered;
+    Ok(())
+}
+
 fn next_vector_fence_search_limit(
     current: usize,
     filtered: usize,
@@ -3632,7 +3649,7 @@ fn normalize_backward_boundary_bucket(
         return Ok(());
     }
 
-    rows.truncate(rows.len().saturating_sub(boundary_count));
+    let original_boundary_rows = rows.split_off(rows.len().saturating_sub(boundary_count));
 
     let boundary_start_key = temporal_key_bound(boundary_timestamp, 0x00);
     let boundary_end_key = temporal_key_bound(boundary_timestamp, 0xFF);
@@ -3658,6 +3675,13 @@ fn normalize_backward_boundary_bucket(
         }
         boundary_rows.push(row);
     }
+    for row in original_boundary_rows {
+        if !boundary_rows.iter().any(|candidate| candidate.id == row.id) {
+            boundary_rows.push(row);
+        }
+    }
+    boundary_rows.sort_unstable_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
+    boundary_rows.truncate(boundary_count);
     rows.extend(boundary_rows);
     Ok(())
 }
