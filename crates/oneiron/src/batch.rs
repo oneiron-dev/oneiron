@@ -819,7 +819,7 @@ impl<'a> BatchBuilder<'a> {
             &mut wtxn,
             self.ops,
             text_index_trusted,
-            true,
+            false,
             true,
         )?;
         wtxn.commit()?;
@@ -853,7 +853,7 @@ fn preflight_gate_decisions_in_txn(
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
             _ => continue,
         };
-        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id)?;
+        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false)?;
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {

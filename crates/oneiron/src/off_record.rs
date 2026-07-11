@@ -838,6 +838,14 @@ impl Vault {
                 if missing_turns.contains(bytes) {
                     // Keep the write-door denial without retaining the
                     // session ref after close (session metadata evaporates).
+                    // A standalone claim preflight can have recorded a gate
+                    // decision while this fence was live, before close won
+                    // the race and prevented the actual entity write. That
+                    // receipt names a turn which never entered the vault, so
+                    // delete it with the closed-fence marker rather than
+                    // leaking an off-record artifact.
+                    self.store
+                        .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &id)?;
                     self.store.vault_meta.put(
                         wtxn,
                         &off_record_fence_key(&id),
