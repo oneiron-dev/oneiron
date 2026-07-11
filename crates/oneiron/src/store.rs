@@ -1435,6 +1435,24 @@ impl Store {
         Ok(())
     }
 
+    /// Removes the run sidecar for a test fixture's intentionally deleted
+    /// primary job row in the same transaction. Readers remain fail-closed
+    /// when a dangling sidecar is observed.
+    #[cfg(test)]
+    pub(crate) fn delete_job_run_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: Option<&str>,
+        job_id: &[u8; 16],
+    ) -> Result<()> {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        self.vault_meta
+            .delete(wtxn, &job_run_index_key(run_id, job_id))?;
+        Ok(())
+    }
+
     pub(crate) fn job_ids_for_run_in_txn(
         &self,
         txn: &RoTxn<'_>,
