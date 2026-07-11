@@ -100,6 +100,21 @@ static REPO_MUTATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static REPO_MUTATION_WORKTREE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum RepoMutationCrashPoint {
+    #[default]
+    None,
+    AfterPreparedBeforeAction,
+    AfterActionBeforeApplied,
+}
+
+#[cfg(test)]
+thread_local! {
+    static INJECT_REPO_MUTATION_CRASH: std::cell::Cell<RepoMutationCrashPoint> =
+        const { std::cell::Cell::new(RepoMutationCrashPoint::None) };
+}
+
 #[cfg(unix)]
 struct RepoMutationFileLock {
     file: fs::File,
@@ -258,6 +273,7 @@ pub struct RepoMutationOplogEntry {
     pub started_at_ms: u64,
     pub finished_at_ms: Option<u64>,
     pub pre_action_fork_hash: RepoForkHash,
+    pub expected_post_action_fork_hash: Option<RepoForkHash>,
     pub status: RepoMutationStatus,
     pub failure: Option<String>,
 }
@@ -319,6 +335,55 @@ struct PreparedRepoMutation {
     seq: u64,
 }
 
+#[derive(Debug)]
+struct PreparedRepoMutationAction {
+    oplog: PreparedRepoMutation,
+    execution: PreparedRepoMutationExecution,
+}
+
+#[derive(Debug)]
+enum PreparedRepoMutationExecution {
+    Direct,
+    CommitFile(PreparedCommitFile),
+}
+
+#[derive(Debug)]
+struct PreparedCommitFile {
+    worktree_path: PathBuf,
+    base_head: String,
+    new_head: String,
+}
+
+impl PreparedRepoMutationExecution {
+    fn commit_file(&self) -> Result<&PreparedCommitFile> {
+        let Self::CommitFile(prepared) = self else {
+            return Err(Error::InvariantViolation(
+                "commit-producing repo mutation missing prepared commit",
+            ));
+        };
+        Ok(prepared)
+    }
+
+    fn cleanup(&self, repo_root: &Path) -> Result<()> {
+        match self {
+            Self::Direct => Ok(()),
+            Self::CommitFile(prepared) => remove_queue_worktree(repo_root, &prepared.worktree_path),
+        }
+    }
+}
+
+#[cfg(test)]
+fn take_repo_mutation_crash(point: RepoMutationCrashPoint) -> bool {
+    INJECT_REPO_MUTATION_CRASH.with(|cell| {
+        if cell.get() == point {
+            cell.set(RepoMutationCrashPoint::None);
+            true
+        } else {
+            false
+        }
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredRepoMutationOplogEntry {
     schema_version: u8,
@@ -331,6 +396,8 @@ struct StoredRepoMutationOplogEntry {
     started_at_ms: u64,
     finished_at_ms: Option<u64>,
     pre_action_fork_hash: RepoForkHash,
+    #[serde(default)]
+    expected_post_action_fork_hash: Option<RepoForkHash>,
     status: String,
     failure: Option<String>,
 }
@@ -395,10 +462,36 @@ impl Vault {
         }
 
         let prepared = self.prepare_repo_mutation(&repo_ref, &request, &repo_root)?;
-        match execute_repo_mutation(self, &repo_ref, &repo_root, &request) {
+        #[cfg(test)]
+        if take_repo_mutation_crash(RepoMutationCrashPoint::AfterPreparedBeforeAction) {
+            let _ = prepared.execution.cleanup(&repo_root);
+            return Err(Error::InvariantViolation(
+                "test: injected repo mutation crash after Prepared before action",
+            ));
+        }
+
+        let execution =
+            execute_repo_mutation(self, &repo_ref, &repo_root, &request, &prepared.execution);
+        let cleanup = prepared.execution.cleanup(&repo_root);
+        let execution = match (execution, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(repo_conflict_claim_id), Ok(())) => Ok(repo_conflict_claim_id),
+        };
+
+        #[cfg(test)]
+        if execution.is_ok()
+            && take_repo_mutation_crash(RepoMutationCrashPoint::AfterActionBeforeApplied)
+        {
+            return Err(Error::InvariantViolation(
+                "test: injected repo mutation crash after action before Applied",
+            ));
+        }
+
+        match execution {
             Ok(repo_conflict_claim_id) => {
                 let entry = self.finish_repo_mutation(
-                    &prepared,
+                    &prepared.oplog,
                     RepoMutationStatus::Applied,
                     None,
                     now_millis(),
@@ -411,7 +504,7 @@ impl Vault {
             Err(error) => {
                 let failure = truncate_failure(&error.to_string());
                 let _ = self.finish_repo_mutation(
-                    &prepared,
+                    &prepared.oplog,
                     RepoMutationStatus::Failed,
                     Some(failure),
                     now_millis(),
@@ -434,12 +527,13 @@ impl Vault {
         ))
     }
 
-    /// Detects prepared repo mutation oplog rows and remounts each recorded
-    /// pre-action forkHash through the same queue.
+    /// Detects prepared repo mutation oplog rows and compares the current repo
+    /// state with each row's write-ahead intent.
     ///
-    /// Successfully recovered prepared rows are marked `failed` with a recovery
-    /// note, and each remount also receives its own applied `recover_snapshot`
-    /// oplog row.
+    /// A repo already at the expected post-state is rolled forward to
+    /// `applied`. A repo still at the pre-state is remounted from the recorded
+    /// snapshot and the interrupted row is marked `failed`. Any other state is
+    /// left untouched for manual resolution.
     pub fn recover_prepared_repo_mutations(
         &self,
         repo_ref: &RepoRef,
@@ -565,6 +659,40 @@ impl Vault {
             .collect::<Vec<_>>();
         let mut outcomes = Vec::new();
         for stale in prepared_entries {
+            let (actual_fork_hash, _) = capture_repo_snapshot(repo_root)?;
+            if stale
+                .expected_post_action_fork_hash
+                .is_some_and(|expected| {
+                    expected != stale.pre_action_fork_hash && actual_fork_hash == expected
+                })
+            {
+                let entry = self.finish_repo_mutation(
+                    &PreparedRepoMutation {
+                        repo_key_hash: repo_mutation_repo_key_hash(repo_ref),
+                        seq: stale.seq,
+                    },
+                    RepoMutationStatus::Applied,
+                    None,
+                    now_millis(),
+                )?;
+                outcomes.push(RepoMutationOutcome {
+                    entry,
+                    repo_conflict_claim_id: None,
+                });
+                continue;
+            }
+
+            if actual_fork_hash != stale.pre_action_fork_hash {
+                return Err(Error::RepoMutationRecoveryDiverged {
+                    seq: stale.seq,
+                    pre_action_fork_hash: Box::new(stale.pre_action_fork_hash),
+                    expected_post_action_fork_hash: stale
+                        .expected_post_action_fork_hash
+                        .map(Box::new),
+                    actual_fork_hash: Box::new(actual_fork_hash),
+                });
+            }
+
             let request = RepoMutationRequest {
                 repo_ref: repo_ref.clone(),
                 actor_id: stale.actor_id,
@@ -575,10 +703,18 @@ impl Vault {
                 },
             };
             let recovery = self.prepare_repo_mutation(repo_ref, &request, repo_root)?;
-            match execute_repo_mutation(self, repo_ref, repo_root, &request) {
+            let execution =
+                execute_repo_mutation(self, repo_ref, repo_root, &request, &recovery.execution);
+            let cleanup = recovery.execution.cleanup(repo_root);
+            let execution = match (execution, cleanup) {
+                (Err(error), _) => Err(error),
+                (Ok(_), Err(error)) => Err(error),
+                (Ok(repo_conflict_claim_id), Ok(())) => Ok(repo_conflict_claim_id),
+            };
+            match execution {
                 Ok(_) => {
                     let entry = self.finish_repo_mutation(
-                        &recovery,
+                        &recovery.oplog,
                         RepoMutationStatus::Applied,
                         None,
                         now_millis(),
@@ -600,7 +736,7 @@ impl Vault {
                 Err(error) => {
                     let failure = truncate_failure(&error.to_string());
                     let _ = self.finish_repo_mutation(
-                        &recovery,
+                        &recovery.oplog,
                         RepoMutationStatus::Failed,
                         Some(failure),
                         now_millis(),
@@ -617,35 +753,53 @@ impl Vault {
         repo_ref: &RepoRef,
         request: &RepoMutationRequest,
         repo_root: &Path,
-    ) -> Result<PreparedRepoMutation> {
+    ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
-        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
-        let started_at_ms = now_millis();
-        let mut wtxn = self.store.env.write_txn()?;
-        store_snapshot_if_absent(self, &mut wtxn, fork_hash, &snapshot_bytes)?;
-        let seq = allocate_next_repo_mutation_seq(self, &mut wtxn, &repo_key_hash)?;
-        let stored = StoredRepoMutationOplogEntry {
-            schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
-            repo_ref: repo_ref.canonical(),
-            seq,
-            operation_kind: request.operation.kind().to_owned(),
-            operation_subject: Some(operation_subject(&request.operation)),
-            actor_id: request.actor_id.map(|id| *id.as_bytes()),
-            session_id: request.session_id.map(|id| *id.as_bytes()),
-            started_at_ms,
-            finished_at_ms: None,
-            pre_action_fork_hash: fork_hash,
-            status: RepoMutationStatus::Prepared.as_str().to_owned(),
-            failure: None,
-        };
-        let encoded = encode_oplog_entry(&stored)?;
-        self.store.vault_meta.put(
-            &mut wtxn,
-            &repo_mutation_oplog_key(&repo_key_hash, seq),
-            &encoded,
-        )?;
-        wtxn.commit()?;
-        Ok(PreparedRepoMutation { repo_key_hash, seq })
+        let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
+        let execution = prepare_repo_mutation_execution(repo_root, request)?;
+        let prepared = (|| -> Result<PreparedRepoMutation> {
+            let expected_post_action_fork_hash = expected_post_action_fork_hash(
+                &request.operation,
+                &pre_action_snapshot,
+                fork_hash,
+                &execution,
+            )?;
+            let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
+            let started_at_ms = now_millis();
+            let mut wtxn = self.store.env.write_txn()?;
+            store_snapshot_if_absent(self, &mut wtxn, fork_hash, &snapshot_bytes)?;
+            let seq = allocate_next_repo_mutation_seq(self, &mut wtxn, &repo_key_hash)?;
+            let stored = StoredRepoMutationOplogEntry {
+                schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
+                repo_ref: repo_ref.canonical(),
+                seq,
+                operation_kind: request.operation.kind().to_owned(),
+                operation_subject: Some(operation_subject(&request.operation)),
+                actor_id: request.actor_id.map(|id| *id.as_bytes()),
+                session_id: request.session_id.map(|id| *id.as_bytes()),
+                started_at_ms,
+                finished_at_ms: None,
+                pre_action_fork_hash: fork_hash,
+                expected_post_action_fork_hash: Some(expected_post_action_fork_hash),
+                status: RepoMutationStatus::Prepared.as_str().to_owned(),
+                failure: None,
+            };
+            let encoded = encode_oplog_entry(&stored)?;
+            self.store.vault_meta.put(
+                &mut wtxn,
+                &repo_mutation_oplog_key(&repo_key_hash, seq),
+                &encoded,
+            )?;
+            wtxn.commit()?;
+            Ok(PreparedRepoMutation { repo_key_hash, seq })
+        })();
+        match prepared {
+            Ok(oplog) => Ok(PreparedRepoMutationAction { oplog, execution }),
+            Err(error) => {
+                let _ = execution.cleanup(repo_root);
+                Err(error)
+            }
+        }
     }
 
     fn finish_repo_mutation(
@@ -675,11 +829,83 @@ impl Vault {
     }
 }
 
+fn prepare_repo_mutation_execution(
+    repo_root: &Path,
+    request: &RepoMutationRequest,
+) -> Result<PreparedRepoMutationExecution> {
+    let commit = match &request.operation {
+        RepoMutationOperation::CommitFile {
+            path,
+            content,
+            message,
+        }
+        | RepoMutationOperation::ResolveConflictFile {
+            path,
+            content,
+            message,
+            ..
+        } => Some((path.as_str(), content.as_slice(), message.as_str())),
+        _ => None,
+    };
+    let Some((path, content, message)) = commit else {
+        return Ok(PreparedRepoMutationExecution::Direct);
+    };
+    let message = commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
+    prepare_commit_file_through_queue_worktree(repo_root, path, content, &message)
+        .map(PreparedRepoMutationExecution::CommitFile)
+}
+
+fn expected_post_action_fork_hash(
+    operation: &RepoMutationOperation,
+    pre_action_snapshot: &StoredRepoSnapshot,
+    pre_action_fork_hash: RepoForkHash,
+    execution: &PreparedRepoMutationExecution,
+) -> Result<RepoForkHash> {
+    let (path, content) = match operation {
+        RepoMutationOperation::CommitFile { path, content, .. }
+        | RepoMutationOperation::ResolveConflictFile { path, content, .. } => {
+            (path.as_str(), content.as_slice())
+        }
+        RepoMutationOperation::RecoverSnapshot { fork_hash } => return Ok(*fork_hash),
+        RepoMutationOperation::CreateWorktree { .. }
+        | RepoMutationOperation::RecordConflict { .. }
+        | RepoMutationOperation::RemoveWorktree { .. } => return Ok(pre_action_fork_hash),
+    };
+    let prepared = execution.commit_file()?;
+    if pre_action_snapshot.head.as_deref() != Some(prepared.base_head.as_str()) {
+        return Err(Error::ConcurrentWrite(
+            "repo HEAD changed while preparing write-ahead intent",
+        ));
+    }
+    let mut post_action_snapshot = pre_action_snapshot.clone();
+    post_action_snapshot.head = Some(prepared.new_head.clone());
+    let executable = post_action_snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::File)
+        .is_some_and(|entry| entry.executable);
+    post_action_snapshot
+        .entries
+        .retain(|entry| entry.path != path);
+    post_action_snapshot.entries.push(StoredRepoSnapshotEntry {
+        path: path.to_owned(),
+        kind: StoredRepoSnapshotEntryKind::File,
+        executable,
+        content: content.to_vec(),
+        symlink_target: None,
+    });
+    post_action_snapshot
+        .entries
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(sha256_bytes(&encode_snapshot(&post_action_snapshot)?))
+}
+
 fn execute_repo_mutation(
     vault: &Vault,
     repo_ref: &RepoRef,
     repo_root: &Path,
     request: &RepoMutationRequest,
+    execution: &PreparedRepoMutationExecution,
 ) -> Result<Option<EntityId>> {
     match &request.operation {
         RepoMutationOperation::CommitFile {
@@ -688,9 +914,8 @@ fn execute_repo_mutation(
             message,
         } => {
             validate_relative_repo_path(path)?;
-            let message =
-                commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
-            commit_file_through_queue_worktree(repo_root, path, content, &message)?;
+            let _ = commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
+            apply_prepared_commit_file(repo_root, path, content, execution.commit_file()?)?;
             Ok(None)
         }
         RepoMutationOperation::CreateWorktree {
@@ -766,6 +991,7 @@ fn execute_repo_mutation(
                 content,
                 message,
                 request.provenance_claim_id,
+                execution.commit_file()?,
             )?;
             Ok(Some(claim_id))
         }
@@ -934,6 +1160,7 @@ fn resolve_repo_conflict_file(
     content: &[u8],
     message: &str,
     provenance_claim_id: Option<EntityId>,
+    prepared_commit: &PreparedCommitFile,
 ) -> Result<EntityId> {
     validate_git_ref_label(branch_name)?;
     validate_relative_repo_path(path)?;
@@ -960,8 +1187,8 @@ fn resolve_repo_conflict_file(
         ));
     }
 
-    let message = commit_message_with_provenance_trailer(message, provenance_claim_id)?;
-    commit_file_through_queue_worktree(repo_root, path, content, &message)?;
+    let _ = commit_message_with_provenance_trailer(message, provenance_claim_id)?;
+    apply_prepared_commit_file(repo_root, path, content, prepared_commit)?;
     let resolved_tree = tree_hash_for_ref(repo_root, "HEAD")?;
     let claim_id = EntityId::now();
     put_repo_conflict_resolution_claim(
@@ -1733,12 +1960,12 @@ fn canonical_commit_sha(repo_root: &Path, commit_sha: &str) -> Result<String> {
     Ok(commit_sha.to_ascii_lowercase())
 }
 
-fn commit_file_through_queue_worktree(
+fn prepare_commit_file_through_queue_worktree(
     repo_root: &Path,
     path: &str,
     content: &[u8],
     message: &str,
-) -> Result<()> {
+) -> Result<PreparedCommitFile> {
     let base_head = utf8_trimmed(
         run_git(
             repo_root,
@@ -1751,7 +1978,7 @@ fn commit_file_through_queue_worktree(
         "git HEAD must be UTF-8",
     )?;
     let worktree_path = create_queue_worktree(repo_root)?;
-    let mutation = (|| -> Result<()> {
+    let preparation = (|| -> Result<PreparedCommitFile> {
         write_repo_file_no_symlink(&worktree_path, path, content)?;
         run_git(
             &worktree_path,
@@ -1783,28 +2010,42 @@ fn commit_file_through_queue_worktree(
             )?,
             "git HEAD must be UTF-8",
         )?;
-        write_repo_file_no_symlink(repo_root, path, content)?;
-        run_git(
-            repo_root,
-            &[
-                "update-ref".to_owned(),
-                "HEAD".to_owned(),
-                new_head,
-                base_head,
-            ],
-        )?;
-        run_git(
-            repo_root,
-            &["add".to_owned(), "--".to_owned(), path.to_owned()],
-        )?;
-        Ok(())
+        Ok(PreparedCommitFile {
+            worktree_path: worktree_path.clone(),
+            base_head,
+            new_head,
+        })
     })();
-    let cleanup = remove_queue_worktree(repo_root, &worktree_path);
-    match (mutation, cleanup) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
+    match preparation {
+        Ok(prepared) => Ok(prepared),
+        Err(error) => {
+            let _ = remove_queue_worktree(repo_root, &worktree_path);
+            Err(error)
+        }
     }
+}
+
+fn apply_prepared_commit_file(
+    repo_root: &Path,
+    path: &str,
+    content: &[u8],
+    prepared: &PreparedCommitFile,
+) -> Result<()> {
+    write_repo_file_no_symlink(repo_root, path, content)?;
+    run_git(
+        repo_root,
+        &[
+            "update-ref".to_owned(),
+            "HEAD".to_owned(),
+            prepared.new_head.clone(),
+            prepared.base_head.clone(),
+        ],
+    )?;
+    run_git(
+        repo_root,
+        &["add".to_owned(), "--".to_owned(), path.to_owned()],
+    )?;
+    Ok(())
 }
 
 fn merge_base_commit(repo_root: &Path, ours_ref: &str, theirs_ref: &str) -> Result<String> {
@@ -2453,6 +2694,7 @@ fn public_oplog_entry(stored: StoredRepoMutationOplogEntry) -> Result<RepoMutati
         started_at_ms: stored.started_at_ms,
         finished_at_ms: stored.finished_at_ms,
         pre_action_fork_hash: stored.pre_action_fork_hash,
+        expected_post_action_fork_hash: stored.expected_post_action_fork_hash,
         status: RepoMutationStatus::parse(&stored.status)?,
         failure: stored.failure,
     })

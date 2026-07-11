@@ -650,26 +650,187 @@ fn repo_mutation_recovery_remounts_pre_action_snapshot() {
 }
 
 #[test]
+fn repo_mutation_prepared_recovery_rolls_forward_after_action_crash() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let tracked = repo.path().join("README.md");
+    let input_ref = repo_ref(&repo);
+    let before_head = current_head_commit(repo.path()).expect("head before mutation");
+
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    let error = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect_err("injected crash after git action");
+    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
+    let applied_head = current_head_commit(repo.path()).expect("applied head");
+    assert_ne!(applied_head, before_head);
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("read applied content"),
+        "mutated\n"
+    );
+
+    let prepared = vault.repo_mutation_oplog(&input_ref).expect("prepared row");
+    assert_eq!(prepared.len(), 1);
+    assert_eq!(prepared[0].status, RepoMutationStatus::Prepared);
+    assert_ne!(
+        prepared[0].expected_post_action_fork_hash,
+        Some(prepared[0].pre_action_fork_hash)
+    );
+
+    let recovered = vault
+        .recover_prepared_repo_mutations(&input_ref)
+        .expect("roll forward prepared mutation");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].entry.seq, prepared[0].seq);
+    assert_eq!(recovered[0].entry.operation_kind, "commit_file");
+    assert_eq!(recovered[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        current_head_commit(repo.path()).expect("head after recovery"),
+        applied_head
+    );
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("read recovered content"),
+        "mutated\n"
+    );
+    let log = vault.repo_mutation_oplog(&input_ref).expect("oplog");
+    assert_eq!(log.len(), 1, "roll-forward must not create a restore row");
+    assert_eq!(log[0].status, RepoMutationStatus::Applied);
+}
+
+#[test]
+fn repo_mutation_prepared_recovery_restores_after_pre_action_crash() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let tracked = repo.path().join("README.md");
+    fs::write(&tracked, "dirty before\n").expect("dirty pre-action worktree");
+    let before = fs::read_to_string(&tracked).expect("read before");
+    let input_ref = repo_ref(&repo);
+    let before_head = current_head_commit(repo.path()).expect("head before mutation");
+
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterPreparedBeforeAction));
+    let error = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect_err("injected crash before git action");
+    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
+    assert_eq!(
+        current_head_commit(repo.path()).expect("head after crash"),
+        before_head
+    );
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("read after crash"),
+        before
+    );
+
+    let recovered = vault
+        .recover_prepared_repo_mutations(&input_ref)
+        .expect("restore pre-action snapshot");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].entry.operation_kind, "recover_snapshot");
+    assert_eq!(recovered[0].entry.status, RepoMutationStatus::Applied);
+    assert_eq!(
+        current_head_commit(repo.path()).expect("head after recovery"),
+        before_head
+    );
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("read recovered"),
+        before
+    );
+    let log = vault.repo_mutation_oplog(&input_ref).expect("oplog");
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].status, RepoMutationStatus::Failed);
+    assert_eq!(log[1].operation_kind, "recover_snapshot");
+    assert_eq!(log[1].status, RepoMutationStatus::Applied);
+}
+
+#[test]
+fn repo_mutation_prepared_recovery_halts_on_diverged_repo_state() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let tracked = repo.path().join("README.md");
+    let input_ref = repo_ref(&repo);
+
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    let error = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect_err("injected crash after git action");
+    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
+    let applied_head = current_head_commit(repo.path()).expect("applied head");
+    fs::write(&tracked, "foreign touch\n").expect("foreign worktree touch");
+
+    let error = vault
+        .recover_prepared_repo_mutations(&input_ref)
+        .expect_err("diverged state must halt recovery");
+    assert_eq!(error.kind(), ErrorKind::RepoMutationRecoveryDiverged);
+    let Error::RepoMutationRecoveryDiverged {
+        pre_action_fork_hash,
+        expected_post_action_fork_hash,
+        actual_fork_hash,
+        ..
+    } = error
+    else {
+        unreachable!("error kind checked above")
+    };
+    assert!(expected_post_action_fork_hash.is_some());
+    assert_ne!(actual_fork_hash, pre_action_fork_hash);
+    assert_ne!(Some(actual_fork_hash), expected_post_action_fork_hash);
+    assert_eq!(
+        current_head_commit(repo.path()).expect("head after halted recovery"),
+        applied_head
+    );
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("foreign content remains"),
+        "foreign touch\n"
+    );
+    let log = vault.repo_mutation_oplog(&input_ref).expect("oplog");
+    assert_eq!(log.len(), 1, "halt must not add a recovery row");
+    assert_eq!(log[0].status, RepoMutationStatus::Prepared);
+    assert!(log[0].finished_at_ms.is_none());
+}
+
+#[test]
 fn repo_mutation_auto_recovers_prepared_rows() {
     let (_vault_dir, vault) = open_test_vault();
     let repo = init_repo();
     let tracked = repo.path().join("README.md");
     let before = fs::read_to_string(&tracked).expect("read before");
-    let input_ref = repo_ref(&repo);
-    let repo_root = resolve_mutable_repo_root(&input_ref).expect("repo root");
-    let canonical = canonical_repo_ref_for_root(&input_ref, &repo_root).expect("canonical repo");
-    let request = RepoMutationRequest::new(
-        canonical.clone(),
-        RepoMutationOperation::CommitFile {
-            path: "README.md".to_owned(),
-            content: b"mutated\n".to_vec(),
-            message: "mutate readme".to_owned(),
-        },
-    );
-    let prepared = vault
-        .prepare_repo_mutation(&canonical, &request, &repo_root)
-        .expect("prepared row");
-    fs::write(&tracked, "half applied\n").expect("simulate interrupted mutation");
+    let canonical = repo_ref(&repo);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterPreparedBeforeAction));
+    let error = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            canonical.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect_err("injected crash before git action");
+    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
 
     let recovered = vault
         .recover_prepared_repo_mutations(&canonical)
@@ -681,7 +842,6 @@ fn repo_mutation_auto_recovers_prepared_rows() {
         before
     );
     let log = vault.repo_mutation_oplog(&canonical).expect("oplog");
-    assert_eq!(log[0].seq, prepared.seq);
     assert_eq!(log[0].status, RepoMutationStatus::Failed);
     assert_eq!(log[1].operation_kind, "recover_snapshot");
     assert_eq!(log[1].status, RepoMutationStatus::Applied);
