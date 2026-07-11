@@ -1550,6 +1550,20 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn delete_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        let key = gate_decision_key(decision_id);
+        if !self.vault_meta.delete(wtxn, &key)? {
+            return Err(Error::InvariantViolation(
+                "staged gate decision missing during rollback",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn matching_gate_decision_in_txn(
         &self,
         txn: &RwTxn<'_>,

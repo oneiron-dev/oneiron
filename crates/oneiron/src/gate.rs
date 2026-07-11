@@ -2386,8 +2386,17 @@ pub(crate) fn check_claim_policy_for_write(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
 ) -> Result<()> {
-    check_claim_policy_for_write_with_record(store, wtxn, id, body, envelope, policy, mode)
-        .map(|_| ())
+    let mut recorded_decision = None;
+    check_claim_policy_for_write_with_record(
+        store,
+        wtxn,
+        id,
+        body,
+        envelope,
+        policy,
+        mode,
+        &mut recorded_decision,
+    )
 }
 
 pub(crate) fn check_claim_policy_for_write_with_record(
@@ -2398,12 +2407,13 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     envelope: Option<&WriteEnvelope>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
-) -> Result<Option<GateDecisionRecord>> {
+    recorded_decision: &mut Option<GateDecisionRecord>,
+) -> Result<()> {
+    *recorded_decision = None;
     if let Some(envelope) = envelope {
         validate_write_envelope(envelope)?;
     }
 
-    let mut write_decision = None;
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
@@ -2475,6 +2485,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
 
         if mode.record_decision {
             store.append_gate_decision_in_txn(wtxn, &decision_record)?;
+            *recorded_decision = Some(decision_record.clone());
             record_gate_decision_metrics(&decision);
         }
 
@@ -2517,11 +2528,9 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             &binding,
             mode,
         )?;
-        write_decision = Some(decision_record);
     }
 
-    check_claim_source_trust(body, policy)?;
-    Ok(write_decision)
+    check_claim_source_trust(body, policy)
 }
 
 /// `admit_for_execution` tells the connector-key budget stage whether an
