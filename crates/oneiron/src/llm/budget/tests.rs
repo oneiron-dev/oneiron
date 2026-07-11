@@ -1,6 +1,36 @@
 use super::*;
-use crate::llm::{LlmInputUsage, LlmOutputUsage};
+use crate::llm::{
+    CallClass, CallEnvelope, CallPurpose, LlmInputUsage, LlmMessage, LlmMessageRole,
+    LlmOutputUsage, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
+};
 use serde_json::Value as JsonValue;
+use std::sync::{Arc, Barrier};
+use std::thread;
+
+fn on_device_request() -> LlmRequest {
+    LlmRequest {
+        model: ModelId::new("test/model@r1").expect("model id"),
+        envelope: CallEnvelope {
+            purpose: CallPurpose::Consolidation,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence {
+                per_call: None,
+                vault_policy: None,
+                purpose_default: None,
+                global_default: ModelTierRef("default".to_owned()),
+            },
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::OnDevice,
+        },
+        messages: vec![LlmMessage {
+            role: LlmMessageRole::User,
+            content: Vec::new(),
+        }],
+        tools: Vec::new(),
+        params: std::collections::BTreeMap::new(),
+        provider_options: std::collections::BTreeMap::new(),
+    }
+}
 
 #[test]
 fn admission_reserves_lease_and_exhaustion_denies_new_leases() {
@@ -17,6 +47,84 @@ fn admission_reserves_lease_and_exhaustion_denies_new_leases() {
     assert_eq!(second.read.remaining_units, 2);
 
     assert!(matches!(guard.admit(), Err(BudgetDenied::Exhausted)));
+}
+
+#[test]
+fn concurrent_reservations_are_arithmetic_deterministic() {
+    const LIMIT_UNITS: u64 = 1_000;
+    const RESERVE_UNITS: u64 = 37;
+    const THREADS: usize = 64;
+
+    let guard = Arc::new(BudgetGuard::with_reserve_units(
+        "job",
+        LIMIT_UNITS,
+        RESERVE_UNITS,
+        BudgetExhaustionPolicy::Suspend,
+    ));
+    let start = Arc::new(Barrier::new(THREADS));
+    let handles = (0..THREADS)
+        .map(|_| {
+            let guard = Arc::clone(&guard);
+            let start = Arc::clone(&start);
+            thread::spawn(move || {
+                start.wait();
+                guard.admit()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let admissions = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("admission thread"))
+        .collect::<Vec<_>>();
+    let admitted = admissions
+        .iter()
+        .filter(|admission| admission.is_ok())
+        .count() as u64;
+    let expected = LIMIT_UNITS / RESERVE_UNITS;
+    assert_eq!(admitted, expected);
+
+    let read = guard.read();
+    assert_eq!(read.reserved_units, admitted * RESERVE_UNITS);
+    assert!(read.reserved_units <= read.cap_units);
+}
+
+#[test]
+fn on_device_continuation_racing_abort_never_gets_transiently_denied() {
+    for _ in 0..128 {
+        let guard = Arc::new(BudgetGuard::with_reserve_units(
+            "job",
+            10,
+            10,
+            BudgetExhaustionPolicy::ContinueOnLocal,
+        ));
+        let metered = guard.admit().expect("initial lease");
+        let request = Arc::new(on_device_request());
+        let start = Arc::new(Barrier::new(2));
+
+        let local_guard = Arc::clone(&guard);
+        let local_request = Arc::clone(&request);
+        let local_start = Arc::clone(&start);
+        let local = thread::spawn(move || {
+            local_start.wait();
+            local_guard.admit_for_request(&local_request)
+        });
+
+        let abort_guard = Arc::clone(&guard);
+        let abort_start = Arc::clone(&start);
+        let lease = metered.lease.clone();
+        let abort = thread::spawn(move || {
+            abort_start.wait();
+            abort_guard.abort(&lease)
+        });
+
+        let admission = local.join().expect("local admission thread");
+        abort.join().expect("abort thread").expect("abort lease");
+        assert!(
+            admission.is_ok(),
+            "local continuation was denied despite either free capacity or local policy: {admission:?}"
+        );
+    }
 }
 
 #[test]
