@@ -1040,6 +1040,11 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
     .expect("unrelated claim id");
 
     let pending_before = vault.pending_gate_consents(10).expect("pending consent");
+    let parked_pending = pending_before
+        .iter()
+        .find(|record| record.claim_id == *parked_id.as_bytes())
+        .expect("parked proposal consent")
+        .clone();
     assert!(
         pending_before
             .iter()
@@ -1053,9 +1058,27 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
         "the unrelated proposal must be parked before retraction"
     );
 
-    facade
+    let retract_receipt = facade
         .claim_retract(&parked.claim_short_id)
         .expect("agent retracts its own parked proposal");
+    let retract_decision = vault
+        .gate_decisions(10)
+        .expect("gate decisions")
+        .into_iter()
+        .find(|record| {
+            retract_receipt.receipt_ref == format!("gate:{}", record.decision_id.to_hex())
+        })
+        .expect("retraction consent receipt");
+    assert_eq!(retract_decision.outcome, "retracted");
+    assert_eq!(
+        retract_decision.reason_codes,
+        vec!["gate.pending.claim_retracted"]
+    );
+    assert_eq!(retract_decision.diff_handle, parked_pending.diff_handle);
+    assert_eq!(
+        retract_decision.read_frontier_hash, parked_pending.read_frontier_hash,
+        "withdrawal receipt preserves the consent's original policy binding"
+    );
 
     // Retraction is a state transition, not a tray-only dismissal: the
     // claim remains stored as bitemporal history with its lifecycle closed.
@@ -1102,6 +1125,58 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
             .iter()
             .any(|record| record.claim_id == *unrelated_id.as_bytes()),
         "stale unrelated proposal must stay parked"
+    );
+}
+
+#[test]
+fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
+    let (_dir, vault) = open_vault();
+    let first_agent = put_person(&vault, 0x19);
+    let replacement_agent = put_person(&vault, 0x1A);
+    let subject = put_person(&vault, 0x1B);
+    let first_facade = vault.memory_facade(first_agent, EdgeActorClass::Agent);
+    let replacement_facade = vault.memory_facade(replacement_agent, EdgeActorClass::Agent);
+    let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
+
+    let mut first = claim_input(
+        "profile.mood",
+        &subject,
+        "observed",
+        serde_json::json!("curious"),
+    );
+    first.id = Some(claim_id.to_hex());
+    first_facade
+        .claim_upsert(&first)
+        .expect("first agent parks proposal");
+
+    let mut replacement = claim_input(
+        "profile.color",
+        &subject,
+        "observed",
+        serde_json::json!("teal"),
+    );
+    replacement.id = Some(claim_id.to_hex());
+    replacement_facade
+        .claim_upsert(&replacement)
+        .expect("second agent replaces same id");
+
+    let err = first_facade
+        .claim_retract(&claim_id.to_hex())
+        .expect_err("prior author has no authority over same-id replacement");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    let current = vault
+        .get_claim(&claim_id)
+        .expect("read replacement")
+        .expect("replacement remains");
+    assert_eq!(current.predicate, "profile.color");
+    assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
+    assert!(
+        vault
+            .pending_gate_consents(10)
+            .expect("pending consent")
+            .iter()
+            .any(|record| record.claim_id == *claim_id.as_bytes()),
+        "replacement agent's consent row remains actionable"
     );
 }
 
