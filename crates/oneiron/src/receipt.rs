@@ -1660,10 +1660,21 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
 
 fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
-    for decision in vault.store.gate_decisions(MAX_RECEIPT_QUERY_SCAN)? {
-        let receipt = gate_decision_receipt(&decision);
-        if query.matches(&receipt) {
-            receipts.push(receipt);
+    let mut before = None;
+    loop {
+        let decisions = vault
+            .store
+            .gate_decisions_page(before, MAX_RECEIPT_QUERY_SCAN)?;
+        let page_len = decisions.len();
+        before = decisions.last().map(|decision| decision.decision_id);
+        for decision in decisions {
+            let receipt = gate_decision_receipt(&decision);
+            if query.matches(&receipt) {
+                receipts.push(receipt);
+            }
+        }
+        if page_len < MAX_RECEIPT_QUERY_SCAN {
+            break;
         }
     }
     Ok(receipts)
