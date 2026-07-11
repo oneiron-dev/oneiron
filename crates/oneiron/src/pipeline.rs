@@ -208,6 +208,7 @@ struct PipelineFilterConfig<'a> {
     project_id_filter: Option<&'a str>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
+    off_record_fences_present: bool,
 }
 
 #[derive(Default)]
@@ -1077,6 +1078,8 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            let off_record_fences_present =
+                crate::off_record::off_record_fences_present(&self.vault.store, &rtxn)?;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -1086,6 +1089,7 @@ impl<'a> PipelineBuilder<'a> {
                 project_id_filter: self.project_id_filter.as_deref(),
                 facet_filter: self.facet_filter,
                 world_scope: self.world_scope,
+                off_record_fences_present,
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -1190,7 +1194,10 @@ impl<'a> PipelineBuilder<'a> {
                 )?;
                 // OFRC-2iii: preserve the fence-free channel path; widen
                 // only when a returned row would otherwise consume a slot.
-                if contains_off_record_fence(&vector_results, &self.vault.store, &rtxn)? {
+                let mut vector_probe_claim_gate = ClaimStatusGateCache::default();
+                if off_record_fences_present
+                    && contains_off_record_fence(&vector_results, &self.vault.store, &rtxn)?
+                {
                     if channel_limit > *limit {
                         truncate_widened_channel_results_to_scope(
                             &mut vector_results,
@@ -1199,7 +1206,7 @@ impl<'a> PipelineBuilder<'a> {
                             *limit,
                             filter_config,
                             &mut metadata_cache,
-                            &mut claim_gate,
+                            &mut vector_probe_claim_gate,
                         )?;
                     } else {
                         let widened_limit =
@@ -1221,10 +1228,15 @@ impl<'a> PipelineBuilder<'a> {
                             *limit,
                             filter_config,
                             &mut metadata_cache,
-                            &mut claim_gate,
+                            &mut vector_probe_claim_gate,
                         )?;
                     }
                 }
+                import_claim_gate_decisions_for_scores(
+                    &mut claim_gate,
+                    &mut vector_probe_claim_gate,
+                    &vector_results,
+                );
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -1299,7 +1311,9 @@ impl<'a> PipelineBuilder<'a> {
                         &mut metadata_cache,
                         &mut prefix_probe_claim_gate,
                     )?;
-                } else if contains_off_record_fence(&text_results, &self.vault.store, &rtxn)? {
+                } else if off_record_fences_present
+                    && contains_off_record_fence(&text_results, &self.vault.store, &rtxn)?
+                {
                     let restore_text_limit = text_channel_limit == *limit;
                     if text_channel_limit == *limit {
                         let widened_limit =
@@ -3168,7 +3182,15 @@ fn execute_temporal(
 
         previous_radius = Some(radius);
 
-        if !config.adaptive || candidates.len() >= config.limit || round + 1 == ADAPTIVE_ROUNDS {
+        if !config.adaptive
+            || temporal_candidates_include_at_least_unfenced(
+                store,
+                rtxn,
+                &candidates,
+                config.limit,
+            )?
+            || round + 1 == ADAPTIVE_ROUNDS
+        {
             break;
         }
 
@@ -3318,6 +3340,29 @@ fn collect_temporal_candidates(
     }
 
     Ok(())
+}
+
+fn temporal_candidates_include_at_least_unfenced(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    candidates: &HashSet<EntityId>,
+    requested: usize,
+) -> Result<bool> {
+    if candidates.len() < requested {
+        return Ok(false);
+    }
+
+    let mut unfenced = 0;
+    for id in candidates {
+        if crate::off_record::off_record_fence_active(store, rtxn, id)? {
+            continue;
+        }
+        unfenced += 1;
+        if unfenced >= requested {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn score_temporal_candidate(
@@ -3791,7 +3836,9 @@ fn pipeline_candidate_matches_filters_and_gate(
     // to any retrieval/extraction consumer of this filter, independent of
     // the owning session's current mode — the tag outlives a same-session
     // flip back on-record, and only promote or delete-at-close lifts it.
-    if crate::off_record::off_record_fence_active(store, rtxn, id)? {
+    if filters.off_record_fences_present
+        && crate::off_record::off_record_fence_active(store, rtxn, id)?
+    {
         return Ok(false);
     }
 

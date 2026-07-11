@@ -2116,6 +2116,50 @@ fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
 }
 
 #[test]
+fn vector_widening_probe_does_not_export_discarded_claim_gate_decisions() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let retracted_claim = entity_id(0x10);
+    let live_result = entity_id(0x20);
+
+    put_vector(&vault, fenced, [1.0, 0.0, 0.0, 0.0])?;
+    vault
+        .batch()
+        .put(
+            &retracted_claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &claim_body_bytes(
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Retracted,
+                false,
+            ),
+        )
+        .vector(&retracted_claim, &[0.99, 0.01, 0.0, 0.0])
+        .commit()?;
+    put_vector(&vault, live_result, [0.98, 0.02, 0.0, 0.0])?;
+
+    vault.enter_off_record_session(
+        "vector-claim-gate-probe",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-claim-gate-probe", &fenced)?;
+
+    let output = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .limit(1)
+        .run_for_pack()?;
+
+    assert_eq!(output.scores.len(), 1);
+    assert_eq!(output.scores[0].id, live_result);
+    assert_eq!(output.claims_suppressed, 0);
+    assert!(output.claim_bodies.is_empty());
+    Ok(())
+}
+
+#[test]
 fn exact_out_of_scope_text_hit_does_not_suppress_in_scope_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let out_of_scope_exact = entity_id(0x10);
@@ -2782,6 +2826,40 @@ fn fenced_temporal_rows_do_not_consume_channel_limit_slots() -> Result<()> {
         results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
         vec![live_a, live_b]
     );
+    Ok(())
+}
+
+#[test]
+fn fenced_temporal_candidates_do_not_stop_adaptive_widening() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let fenced = entity_id(0x01);
+    let live = entity_id(0x10);
+
+    put_entity(&vault, fenced, 1, anchor, anchor, anchor)?;
+    put_entity(
+        &vault,
+        live,
+        1,
+        anchor + 8 * 86_400,
+        anchor + 8 * 86_400,
+        anchor,
+    )?;
+
+    vault.enter_off_record_session(
+        "temporal-adaptive-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("temporal-adaptive-fence", &fenced)?;
+
+    let results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, live);
     Ok(())
 }
 

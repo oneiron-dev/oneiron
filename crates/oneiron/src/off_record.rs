@@ -283,6 +283,18 @@ pub(crate) fn off_record_fence_active(
     Ok(store.vault_meta.get(rtxn, &key)?.is_some())
 }
 
+/// Returns whether the vault has any fence rows at all. Retrieval channels use
+/// this once-per-query probe to preserve their fence-free fast path before
+/// checking returned candidates individually.
+pub(crate) fn off_record_fences_present(store: &Store, rtxn: &RoTxn<'_>) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .prefix_iter(rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
 fn session_record_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
