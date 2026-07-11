@@ -1,6 +1,8 @@
 use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
+use crate::receipt::MAX_RECEIPT_QUERY_SCAN;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
@@ -102,6 +104,164 @@ fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
         }
         other => panic!("expected GateWriteRejected, got {other:?}"),
     }
+}
+
+fn synthetic_gate_decision_id(prefix: u8, value: u64) -> GateDecisionId {
+    let mut bytes = [prefix; 16];
+    bytes[8..].copy_from_slice(&value.to_be_bytes());
+    GateDecisionId::from_bytes(&bytes)
+}
+
+fn gate_decision(
+    decision_id: GateDecisionId,
+    created_at: u64,
+    grant_ref: Option<&str>,
+) -> GateDecisionRecord {
+    GateDecisionRecord {
+        version: GATE_DECISION_LEDGER_VERSION,
+        decision_id,
+        created_at,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.test.receipt_family".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: None,
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: None,
+        grant_ref: grant_ref.map(str::to_owned),
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0xBB; 32],
+    }
+}
+
+#[test]
+fn grant_ref_index_reaches_a_receipt_beyond_the_legacy_scan_budget() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let grant_ref = "bundle:dreamer_run:older-target";
+    // The old ledger query reads newest-first.  Keep the matching record
+    // below 100,001 newer unrelated records so a bounded global scan cannot
+    // rediscover it by accident.
+    let target = gate_decision(synthetic_gate_decision_id(0x01, 1), 1, Some(grant_ref));
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &target)?;
+        for offset in 0..=MAX_RECEIPT_QUERY_SCAN {
+            let filler = gate_decision(
+                synthetic_gate_decision_id(0xF1, offset as u64),
+                10 + offset as u64,
+                None,
+            );
+            vault.store.append_gate_decision_in_txn(wtxn, &filler)?;
+        }
+        Ok(())
+    })?;
+
+    let legacy_scan = vault.store.gate_decisions(MAX_RECEIPT_QUERY_SCAN)?;
+    assert_eq!(legacy_scan.len(), MAX_RECEIPT_QUERY_SCAN);
+    assert!(
+        legacy_scan
+            .iter()
+            .all(|record| record.grant_ref.as_deref() != Some(grant_ref))
+    );
+    assert_eq!(
+        vault.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![target]
+    );
+    Ok(())
+}
+
+#[test]
+fn open_backfills_receipt_family_sidecars_without_a_storage_abi_change() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let config = VaultConfig::device();
+    let run_id = "legacy-receipt-family-run";
+    let grant_ref = "bundle:dreamer_run:legacy-receipt-family-run";
+    let decision = gate_decision(synthetic_gate_decision_id(0x44, 7), 7, Some(grant_ref));
+    let pending = PendingGateConsentRecord {
+        version: GATE_DECISION_LEDGER_VERSION,
+        claim_id: [0x77; 16],
+        decision_id: decision.decision_id,
+        created_at: 7,
+        diff_handle: decision.diff_handle.clone(),
+        read_frontier_hash: decision.read_frontier_hash,
+        reason_codes: vec!["gate.pending.receipt_family".to_owned()],
+        dreamer_run_id: Some(run_id.to_owned()),
+    };
+
+    let vault = Vault::open(dir.path(), config.clone())?;
+    let queue = JobQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(job) = queue.enqueue(EnqueueJob {
+        kind: "legacy-receipt-family".to_owned(),
+        payload: b"legacy".to_vec(),
+        dedupe_key: None,
+        run_id: Some(run_id.to_owned()),
+        now: 7,
+    })?
+    else {
+        panic!("expected a fresh legacy job");
+    };
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        vault
+            .store
+            .put_pending_gate_consent_in_txn(wtxn, &pending)?;
+
+        for prefix in [
+            GATE_DECISION_GRANT_REF_INDEX_PREFIX,
+            PENDING_GATE_CONSENT_RUN_INDEX_PREFIX,
+            PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX,
+            PENDING_GATE_CONSENT_HASH_INDEX_PREFIX,
+            PENDING_GATE_CONSENT_INDEX_STATE_PREFIX,
+            JOB_RUN_INDEX_PREFIX,
+        ] {
+            let mut keys = Vec::new();
+            for row in vault.store.vault_meta.prefix_iter(&*wtxn, prefix)? {
+                let (key, _) = row?;
+                keys.push(key.to_vec());
+            }
+            for key in keys {
+                vault.store.vault_meta.delete(wtxn, &key)?;
+            }
+        }
+        vault
+            .store
+            .vault_meta
+            .delete(wtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?;
+        Ok(())
+    })?;
+    drop(vault);
+
+    let reopened = Vault::open(dir.path(), config)?;
+    assert_eq!(
+        JobQueue::new(&reopened).list_run(run_id)?,
+        vec![
+            JobQueue::new(&reopened)
+                .get(job.id)?
+                .expect("backfilled job")
+        ]
+    );
+    assert_eq!(
+        reopened.store.gate_decisions_for_grant_ref(grant_ref)?,
+        vec![decision]
+    );
+    assert_eq!(
+        reopened.store.pending_gate_consents_for_run(run_id)?,
+        vec![pending.clone()]
+    );
+    assert_eq!(
+        reopened.store.pending_gate_consents_for_group_key(run_id)?,
+        vec![pending]
+    );
+    let rtxn = reopened.store.env.read_txn()?;
+    assert_eq!(
+        reopened
+            .store
+            .vault_meta
+            .get(&rtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?,
+        Some(&[RECEIPT_FAMILY_INDEX_VERSION][..])
+    );
+    Ok(())
 }
 
 #[test]
