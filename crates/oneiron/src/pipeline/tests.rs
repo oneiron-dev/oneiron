@@ -2172,10 +2172,20 @@ fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
 }
 
 #[test]
-fn vector_fence_widening_advances_only_by_missing_slots() {
-    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10_000), 11);
+fn vector_fence_widening_grows_in_bounded_batches() {
+    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10_000), 20);
     assert_eq!(next_vector_fence_search_limit(10, 0, 10, 10_000), 20);
     assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10), 10);
+}
+
+#[test]
+fn temporal_fence_replacement_scan_budget_is_bounded() {
+    assert_eq!(temporal_fence_scan_budget(4, false), 4);
+    assert_eq!(temporal_fence_scan_budget(4, true), 16);
+    assert_eq!(
+        temporal_fence_scan_budget(MAX_TEMPORAL_SEEK_BUFFER, true),
+        MAX_TEMPORAL_SEEK_BUFFER
+    );
 }
 
 #[test]
