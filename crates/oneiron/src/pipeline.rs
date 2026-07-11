@@ -1080,6 +1080,12 @@ impl<'a> PipelineBuilder<'a> {
             let codebase_scope_active = self.has_codebase_scope_filter();
             let off_record_fences_present =
                 crate::off_record::off_record_fences_present(&self.vault.store, &rtxn)?;
+            let off_record_fence_count =
+                if self.temporal_search.is_some() && off_record_fences_present {
+                    crate::off_record::off_record_fence_count(&self.vault.store, &rtxn)?
+                } else {
+                    0
+                };
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -1315,23 +1321,21 @@ impl<'a> PipelineBuilder<'a> {
                     && contains_off_record_fence(&text_results, &self.vault.store, &rtxn)?
                 {
                     let restore_text_limit = text_channel_limit == *limit;
-                    if text_channel_limit == *limit {
-                        let widened_limit =
-                            scoped_text_channel_limit(&self.vault.store, &rtxn, *limit, true)?;
-                        if widened_limit > text_channel_limit {
-                            text_results = crate::bm25::search_text_scoped_with_recency(
-                                &self.vault.store,
-                                &rtxn,
-                                &self.vault.analyzer,
-                                &bm25_config,
-                                query,
-                                widened_limit,
-                                crate::bm25::Bm25SearchOptions {
-                                    recency: None,
-                                    exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                                },
-                            )?;
-                        }
+                    let widened_limit =
+                        scoped_text_channel_limit(&self.vault.store, &rtxn, *limit, true)?;
+                    if widened_limit > text_channel_limit {
+                        text_results = crate::bm25::search_text_scoped_with_recency(
+                            &self.vault.store,
+                            &rtxn,
+                            &self.vault.analyzer,
+                            &bm25_config,
+                            query,
+                            widened_limit,
+                            crate::bm25::Bm25SearchOptions {
+                                recency: None,
+                                exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                            },
+                        )?;
                     }
                     if restore_text_limit {
                         truncate_widened_channel_results_to_scope(
@@ -1417,7 +1421,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &scoped_config,
-                    off_record_fences_present,
+                    off_record_fence_count,
                     temporal_now,
                     &mut metadata_cache,
                 )?;
@@ -3128,7 +3132,7 @@ fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
-    off_record_fences_present: bool,
+    off_record_fence_count: usize,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
@@ -3150,7 +3154,12 @@ fn execute_temporal(
     let learned_anchor_mid = midpoint(learned_anchor.0, learned_anchor.1);
 
     let range_width = effective_range_width(config.anchor_start, config.anchor_end);
-    let per_scan_cap = config.limit.saturating_mul(PER_SCAN_CAP_FACTOR).max(1);
+    let per_scan_cap = config
+        .limit
+        .saturating_mul(PER_SCAN_CAP_FACTOR)
+        .saturating_add(off_record_fence_count)
+        .max(1);
+    let off_record_fences_present = off_record_fence_count > 0;
 
     let mut sigma = sigma_initial;
     let mut previous_radius = None;

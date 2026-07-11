@@ -2070,6 +2070,42 @@ fn fenced_text_rows_do_not_consume_channel_limit_slots() -> Result<()> {
 }
 
 #[test]
+fn fenced_recency_text_rows_do_not_exhaust_overfetch_window() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let live = entity_id(0x10);
+    let now = crate::unix_seconds_now();
+
+    for id in fenced {
+        put_text_at(&vault, id, "fencedrecencywindow", now)?;
+    }
+    put_text_at(&vault, live, "fencedrecencywindow", now)?;
+
+    vault.enter_off_record_session(
+        "text-recency-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    for id in fenced {
+        vault.tag_turn_off_record("text-recency-fence", &id)?;
+    }
+
+    let results = vault
+        .query()
+        .search_text("fencedrecencywindow", 1)
+        .boost_recency(0.01)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, live);
+    Ok(())
+}
+
+#[test]
 fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let fenced_a = entity_id(0x01);
@@ -2833,10 +2869,17 @@ fn fenced_temporal_rows_do_not_consume_channel_limit_slots() -> Result<()> {
 fn fenced_temporal_candidates_do_not_stop_adaptive_widening() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let anchor = 2_000_000;
-    let fenced = entity_id(0x01);
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
     let live = entity_id(0x10);
 
-    put_entity(&vault, fenced, 1, anchor, anchor, anchor)?;
+    for id in fenced {
+        put_entity(&vault, id, 1, anchor, anchor, anchor)?;
+    }
     put_entity(
         &vault,
         live,
@@ -2850,7 +2893,9 @@ fn fenced_temporal_candidates_do_not_stop_adaptive_widening() -> Result<()> {
         "temporal-adaptive-fence",
         crate::off_record::OffRecordBackendClass::Local,
     )?;
-    vault.tag_turn_off_record("temporal-adaptive-fence", &fenced)?;
+    for id in fenced {
+        vault.tag_turn_off_record("temporal-adaptive-fence", &id)?;
+    }
 
     let results = vault
         .query()
@@ -3127,14 +3172,7 @@ fn future_events_are_scored() -> Result<()> {
     };
     let rtxn = vault.store.env.read_txn()?;
     let mut metadata_cache = EntityMetadataCache::default();
-    let results = execute_temporal(
-        &vault.store,
-        &rtxn,
-        &config,
-        false,
-        now,
-        &mut metadata_cache,
-    )?;
+    let results = execute_temporal(&vault.store, &rtxn, &config, 0, now, &mut metadata_cache)?;
 
     let scored = results
         .iter()
@@ -3273,22 +3311,10 @@ fn granularity_sigma_ordering() -> Result<()> {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let results_a = execute_temporal(
-            &vault.store,
-            &rtxn,
-            &cfg_a,
-            false,
-            anchor,
-            &mut metadata_cache,
-        )?;
-        let results_b = execute_temporal(
-            &vault.store,
-            &rtxn,
-            &cfg_b,
-            false,
-            anchor,
-            &mut metadata_cache,
-        )?;
+        let results_a =
+            execute_temporal(&vault.store, &rtxn, &cfg_a, 0, anchor, &mut metadata_cache)?;
+        let results_b =
+            execute_temporal(&vault.store, &rtxn, &cfg_b, 0, anchor, &mut metadata_cache)?;
 
         let score_a = results_a
             .iter()
