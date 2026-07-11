@@ -345,14 +345,16 @@ fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Resu
 ///
 /// Every ordinary, typed, claim-candidate, and replicated entity put reaches
 /// this probe through `batch::apply_put` before it can stage bytes, index
-/// rows, or gate receipts. A live fence permits the tag-before-write flow;
-/// a closing, closed, malformed, or mismatched fence rejects the write with a
-/// typed error. The retained post-close marker is sessionless, so this guard
-/// never needs to surface or preserve an evaporated session ref.
+/// rows, or gate receipts. A live fence permits only the local
+/// tag-before-write flow; a replicated write, or a closing, closed, malformed,
+/// or mismatched fence rejects with a typed error. The retained post-close
+/// marker is sessionless, so this guard never needs to surface or preserve an
+/// evaporated session ref.
 pub(crate) fn guard_off_record_entity_put(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
+    replicated: bool,
 ) -> Result<()> {
     let fence_key = off_record_fence_key(id);
     let Some(fence_value) = store.vault_meta.get(wtxn, &fence_key)? else {
@@ -371,7 +373,7 @@ pub(crate) fn guard_off_record_entity_put(
     let Some(record) = session_record_in_txn(store, wtxn, session_ref)? else {
         return Err(rejected());
     };
-    if record.closing || !record.fenced_turns.contains(id.as_bytes()) {
+    if replicated || record.closing || !record.fenced_turns.contains(id.as_bytes()) {
         return Err(rejected());
     }
     Ok(())

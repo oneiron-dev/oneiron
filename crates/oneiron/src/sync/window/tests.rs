@@ -259,6 +259,8 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         &fenced.to_hex(),
         &fenced_raw,
     )?;
+    let fenced_upper = fenced.to_hex().to_ascii_uppercase();
+    map_insert_bytes(&replay_doc.get_map("entities"), &fenced_upper, &fenced_raw)?;
     map_insert_bytes(
         &replay_doc.get_map("edges"),
         &edge_key,
@@ -270,6 +272,10 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
     assert!(
         map_get_bytes(&replay_doc.get_map("entities"), &fenced.to_hex()).is_none(),
         "pending replay must remove the pre-fence body carrier"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("entities"), &fenced_upper).is_none(),
+        "pending replay must remove non-canonical body aliases too"
     );
     assert!(
         map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
@@ -286,6 +292,7 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         &fenced.to_hex(),
         &fenced_raw,
     )?;
+    map_insert_bytes(&reverse_doc.get_map("entities"), &fenced_upper, &fenced_raw)?;
     map_insert_bytes(
         &reverse_doc.get_map("edges"),
         &edge_key,
@@ -299,8 +306,99 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         "reverse rematerialization must remove the pre-fence body carrier"
     );
     assert!(
+        map_get_bytes(&reverse_doc.get_map("entities"), &fenced_upper).is_none(),
+        "reverse rematerialization must remove non-canonical body aliases too"
+    );
+    assert!(
         map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
         "reverse rematerialization must remove the pre-fence incident edge carrier"
+    );
+
+    Ok(())
+}
+
+/// A fenced target can reside in a different window from an ordinary source.
+/// Repacking the source must remove a preexisting edge carrier in both paths;
+/// scrubbing only the target's window would leave that cross-window edge live.
+#[test]
+fn off_record_fence_scrubs_preexisting_cross_window_target_edges() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_window = WindowKey::new("2026-03");
+    let target_window = WindowKey::new("2026-04");
+    let source_at = source_window.start_timestamp().unwrap() + 60;
+    let target_at = target_window.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x46; 16])?;
+    let fenced_target = EntityId::from_bytes([0x47; 16])?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window ordinary source",
+    )?;
+    vault.enter_off_record_session("sess-cross-window-edge", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-cross-window-edge", &fenced_target)?;
+    vault.put_entity(
+        &fenced_target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window fenced target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &fenced_target, 0.5)?;
+
+    let source_raw = vault.get_raw(&source)?.expect("source body");
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &fenced_target);
+    let marker = format!("pm:{source_window}:{}", source.to_hex());
+    vault.sync_state_put(&marker, &[1])?;
+
+    let replay_doc = create_window_doc("source", &source_window);
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &source.to_hex(),
+        &source_raw,
+    )?;
+    map_insert_bytes(
+        &replay_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    replay_doc.commit();
+    assert_eq!(
+        replay_pending_mirrors(&vault, &replay_doc, &source_window)?,
+        1,
+        "removing the stale source-window edge is a replayed CRDT mutation"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
+        "pending replay must remove a source-window edge to a fenced target"
+    );
+
+    let reverse_doc = create_window_doc("source", &source_window);
+    map_insert_bytes(
+        &reverse_doc.get_map("entities"),
+        &source.to_hex(),
+        &source_raw,
+    )?;
+    map_insert_bytes(
+        &reverse_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    reverse_doc.commit();
+    assert_eq!(
+        reverse_rematerialize(&vault, &reverse_doc, &source_window)?,
+        0
+    );
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
+        "reverse rematerialization must remove a source-window edge to a fenced target"
     );
 
     Ok(())
