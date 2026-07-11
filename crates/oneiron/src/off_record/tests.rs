@@ -475,6 +475,12 @@ fn off_record_close_rejects_late_write_for_missing_turn_without_audit_artifacts(
         .tag_turn_off_record("sess-rejoin", &phantom)
         .expect("tag phantom");
 
+    // A headerless delete would address a tombstone to this current/requested
+    // at window, not the written fixture's historical window. Keep both
+    // probes explicit so this regression verifies the actual no-op surface.
+    #[cfg(feature = "sync")]
+    let requested_at_window =
+        crate::sync::types::WindowKey::from_timestamp(crate::unix_seconds_now());
     let log = vault
         .off_record_receipt_log("sess-rejoin")
         .expect("mint log");
@@ -488,6 +494,14 @@ fn off_record_close_rejects_late_write_for_missing_turn_without_audit_artifacts(
         outcome.redaction_receipt_ids.len(),
         1,
         "only the actually written turn may mint a redaction receipt"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("redaction receipt index")
+            .len(),
+        1,
+        "the tag-before-write turn must not mint a redaction receipt"
     );
 
     // Deleted turn's fence row is gone; the missing turn's row remains.
@@ -550,17 +564,84 @@ fn off_record_close_rejects_late_write_for_missing_turn_without_audit_artifacts(
 
     #[cfg(feature = "sync")]
     {
-        let key = crate::sync::types::WindowKey::from_timestamp(1000);
-        let doc = crate::sync::window::load_window_from_state(&vault, "test", &key)
-            .expect("load written-turn tombstone window");
-        assert!(
-            !crate::sync::loro_support::tombstone_map_contains_id(
-                &doc.get_map("tombstones"),
-                &phantom,
-            ),
-            "never-written turn must not mint a CRDT tombstone"
-        );
+        for key in [
+            crate::sync::types::WindowKey::from_timestamp(1000),
+            requested_at_window,
+        ] {
+            let doc = match crate::sync::window::load_window_from_state(&vault, "test", &key) {
+                Ok(doc) => doc,
+                // No `d:w:` state is itself the expected no-tombstone proof
+                // for an untouched requested-at window.
+                Err(Error::WindowNotFound { .. }) => continue,
+                Err(error) => panic!("load no-op tombstone window: {error:?}"),
+            };
+            assert!(
+                !crate::sync::loro_support::tombstone_map_contains_id(
+                    &doc.get_map("tombstones"),
+                    &phantom,
+                ),
+                "never-written turn must not mint a CRDT tombstone in {key}"
+            );
+        }
     }
+}
+
+/// A retry after PolicyDelete's purge committed but before close removed its
+/// fence must recognize the permanent hard-delete marker as a deleted turn,
+/// rather than converting it into a closed tag-before-write fence.
+#[test]
+fn off_record_close_retry_keeps_completed_delete_out_of_missing_counts() {
+    let (_tmp, vault) = temp_vault();
+    let fenced = seed_turn(&vault, 1000);
+    vault
+        .enter_off_record_session("sess-close-retry", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-close-retry", &fenced)
+        .expect("tag");
+    let retry_log = vault
+        .off_record_receipt_log("sess-close-retry")
+        .expect("receipt log");
+
+    // Reproduce the interruption boundary: close's first transaction froze
+    // the session, then PolicyDelete completed, but final fence cleanup did
+    // not run before the process stopped.
+    vault
+        .with_write_txn(|wtxn| {
+            let mut record = session_record_in_txn(&vault.store, wtxn, "sess-close-retry")?
+                .expect("session record");
+            record.closing = true;
+            vault.store.vault_meta.put(
+                wtxn,
+                &off_record_session_key("sess-close-retry"),
+                &encode_off_record_session(&record)?,
+            )?;
+            Ok(())
+        })
+        .expect("freeze close");
+    let first_delete = vault
+        .delete_entity_with_reason(&fenced, crate::deletion::DeleteReason::PolicyDelete)
+        .expect("PolicyDelete before interruption");
+    assert!(first_delete.existed);
+    assert!(first_delete.receipt_id.is_some());
+
+    let outcome = vault
+        .close_off_record_session("sess-close-retry", retry_log)
+        .expect("retry close");
+    assert_eq!(outcome.turns_deleted, 1);
+    assert_eq!(outcome.turns_missing, 0);
+    assert_eq!(outcome.fence_rows_retained, 0);
+    assert!(
+        !vault
+            .is_turn_off_record_fenced(&fenced)
+            .expect("fence removed")
+    );
+    assert!(
+        vault
+            .off_record_session("sess-close-retry")
+            .expect("session")
+            .is_none()
+    );
 }
 
 #[test]

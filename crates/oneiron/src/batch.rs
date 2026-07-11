@@ -843,6 +843,18 @@ fn preflight_gate_decisions_in_txn(
         return Ok(());
     }
 
+    // #493 now owns this caller-provided transaction: gate receipts remain
+    // atomic with phase-2 apply and metrics are emitted only after commit.
+    // Run #498's entity write door in that SAME transaction before any gate
+    // receipt is appended, so a closed off-record fence cannot leave a
+    // decision behind when the later materialization is rejected.
+    for op in ops {
+        let id = match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
+            _ => continue,
+        };
+        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id)?;
+    }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
         let mut recorded_decision = None;
