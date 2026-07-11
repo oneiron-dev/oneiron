@@ -9,6 +9,9 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::off_record::OffRecordBackendClass;
+use crate::registry::ENTITY_TYPE_TURN;
+use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
@@ -58,6 +61,84 @@ fn companion_record(
         ),
         export_classification,
     )
+}
+
+#[test]
+fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let promoted = EntityId::from_bytes([0x41; 16])?;
+    let still_fenced = EntityId::from_bytes([0x42; 16])?;
+    let ordinary = EntityId::from_bytes([0x43; 16])?;
+
+    vault.enter_off_record_session("sess-defer-sync", OffRecordBackendClass::Local)?;
+    for id in [&promoted, &still_fenced] {
+        // Tag before the entity write: this is the live-session path that
+        // must remain writable while it is held out of sync.
+        vault.tag_turn_off_record("sess-defer-sync", id)?;
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"off-record turn",
+        )?;
+    }
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
+
+    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
+    let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
+    vault.sync_state_put(&promoted_marker, &[1])?;
+    vault.sync_state_put(&fenced_marker, &[1])?;
+
+    let doc = create_window_doc("source", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
+    let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
+
+    // Exercise both packing paths in a live session. Neither fenced body nor
+    // the edges that name it can enter the window; the pm rows stay deferred.
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_some());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+
+    vault.promote_off_record_turn("sess-defer-sync", &promoted)?;
+
+    // Promotion lifts exactly one fence. Its pending mirror can now flow;
+    // the other fenced body remains device-local, and reverse packing only
+    // releases the edge whose target was explicitly promoted.
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 0);
+    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+
+    Ok(())
 }
 
 /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`

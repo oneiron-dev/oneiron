@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
-use crate::error::ErrorKind;
+use crate::error::{Error, ErrorKind};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
@@ -456,11 +456,11 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
 }
 
 /// Tag-before-write turn whose entity write lands AFTER close: the
-/// fence row must be retained so the late write cannot silently rejoin
-/// retrieval (the ARCH-0038 delete of a fully-missing id is a strict
-/// no-op with no tombstone to block it).
+/// sessionless fence marker must reject every entity write door. A
+/// fully-missing id stays a strict no-op at close: no tombstone and no
+/// receipt are minted for it.
 #[test]
-fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
+fn off_record_close_rejects_late_write_for_missing_turn_without_audit_artifacts() {
     let (_tmp, vault) = temp_vault();
     let written = seed_turn(&vault, 1000);
     let phantom = EntityId::now();
@@ -484,13 +484,31 @@ fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
     assert_eq!(outcome.turns_deleted, 1);
     assert_eq!(outcome.turns_missing, 1);
     assert_eq!(outcome.fence_rows_retained, 1);
+    assert_eq!(
+        outcome.redaction_receipt_ids.len(),
+        1,
+        "only the actually written turn may mint a redaction receipt"
+    );
 
     // Deleted turn's fence row is gone; the missing turn's row remains.
     assert!(!vault.is_turn_off_record_fenced(&written).expect("probe"));
     assert!(vault.is_turn_off_record_fenced(&phantom).expect("probe"));
+    let rtxn = vault.store.env.read_txn().expect("read fence marker");
+    let retained = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &off_record_fence_key(&phantom))
+        .expect("load retained fence")
+        .expect("closed fence retained");
+    assert!(
+        retained.is_empty(),
+        "closed fence must not retain the evaporated session ref"
+    );
+    drop(rtxn);
 
-    // The in-flight write lands late — it must stay fenced, not rejoin.
-    vault
+    // The in-flight write lands late — the shared entity write door rejects
+    // it before it can create any entity/index/receipt side effects.
+    let late = vault
         .put_entity(
             &phantom,
             ENTITY_TYPE_TURN,
@@ -501,12 +519,48 @@ fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
             1001,
             b"late-landing off-record turn",
         )
-        .expect("late write");
-    assert!(
-        surfaced_turns(&vault).is_empty(),
-        "late-landing fenced turn must not rejoin retrieval"
-    );
+        .expect_err("late write must be rejected");
+    assert_eq!(late.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(matches!(
+        late,
+        Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == phantom.to_hex()
+    ));
+
+    #[cfg(feature = "sync")]
+    {
+        let replay = vault
+            .batch()
+            .put_replicated(
+                &phantom,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: 1001,
+                    end: 1001,
+                },
+                1001,
+                b"late-replayed off-record turn",
+            )
+            .commit()
+            .expect_err("replicated late write must hit the same door");
+        assert_eq!(replay.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    }
+    assert!(vault.get(&phantom).expect("read phantom").is_none());
+    assert!(surfaced_turns(&vault).is_empty());
     assert!(dreamer_working_set_turns(&vault).is_empty());
+
+    #[cfg(feature = "sync")]
+    {
+        let key = crate::sync::types::WindowKey::from_timestamp(1000);
+        let doc = crate::sync::window::load_window_from_state(&vault, "test", &key)
+            .expect("load written-turn tombstone window");
+        assert!(
+            !crate::sync::loro_support::tombstone_map_contains_id(
+                &doc.get_map("tombstones"),
+                &phantom,
+            ),
+            "never-written turn must not mint a CRDT tombstone"
+        );
+    }
 }
 
 #[test]

@@ -2516,6 +2516,11 @@ fn apply_put(
     include_source_in_gate_input: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
+    // OFRC-2i: this is the shared entity materialization choke point for
+    // public/typed puts, claim candidates, and replicated replay. Reject a
+    // closed tag-before-write fence before any validation or side effect can
+    // mint an index row, gate receipt, or late entity body.
+    crate::off_record::guard_off_record_entity_put(store, wtxn, &id)?;
     // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at
     // one of them would resolve at the gate as a system preset with its
