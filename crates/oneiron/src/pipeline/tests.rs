@@ -3127,7 +3127,14 @@ fn future_events_are_scored() -> Result<()> {
     };
     let rtxn = vault.store.env.read_txn()?;
     let mut metadata_cache = EntityMetadataCache::default();
-    let results = execute_temporal(&vault.store, &rtxn, &config, now, &mut metadata_cache)?;
+    let results = execute_temporal(
+        &vault.store,
+        &rtxn,
+        &config,
+        false,
+        now,
+        &mut metadata_cache,
+    )?;
 
     let scored = results
         .iter()
@@ -3266,8 +3273,22 @@ fn granularity_sigma_ordering() -> Result<()> {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let results_a = execute_temporal(&vault.store, &rtxn, &cfg_a, anchor, &mut metadata_cache)?;
-        let results_b = execute_temporal(&vault.store, &rtxn, &cfg_b, anchor, &mut metadata_cache)?;
+        let results_a = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_a,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
+        let results_b = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_b,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
 
         let score_a = results_a
             .iter()

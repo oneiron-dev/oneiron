@@ -1417,6 +1417,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &scoped_config,
+                    off_record_fences_present,
                     temporal_now,
                     &mut metadata_cache,
                 )?;
@@ -3127,6 +3128,7 @@ fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    off_record_fences_present: bool,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
@@ -3188,6 +3190,7 @@ fn execute_temporal(
                 rtxn,
                 &candidates,
                 config.limit,
+                off_record_fences_present,
             )?
             || round + 1 == ADAPTIVE_ROUNDS
         {
@@ -3211,7 +3214,9 @@ fn execute_temporal(
         // OF-326 THE FENCE: temporal candidate collection deliberately
         // overfetches before this per-channel limit is applied. Drop fenced
         // entities first so they cannot consume the channel's result slots.
-        if crate::off_record::off_record_fence_active(store, rtxn, &id)? {
+        if off_record_fences_present
+            && crate::off_record::off_record_fence_active(store, rtxn, &id)?
+        {
             continue;
         }
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
@@ -3347,9 +3352,14 @@ fn temporal_candidates_include_at_least_unfenced(
     rtxn: &RoTxn<'_>,
     candidates: &HashSet<EntityId>,
     requested: usize,
+    off_record_fences_present: bool,
 ) -> Result<bool> {
     if candidates.len() < requested {
         return Ok(false);
+    }
+
+    if !off_record_fences_present {
+        return Ok(true);
     }
 
     let mut unfenced = 0;
