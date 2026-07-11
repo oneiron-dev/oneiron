@@ -90,6 +90,7 @@ const MAX_REPO_MUTATION_SNAPSHOT_FILES: usize = 100_000;
 const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const REPO_MUTATION_LOCK_FILE_NAME: &str = "oneiron-repo-mutation.lock";
+const REPO_MUTATION_WORKTREE_PREFIX: &str = "oneiron-repo-mutation-";
 const REPO_PROVENANCE_TRAILER_PREFIX: &str = "Oneiron-Claim:";
 const REPO_PROVENANCE_GIT_AUTHOR_NAME: &str = "Oneiron";
 const REPO_PROVENANCE_GIT_AUTHOR_EMAIL: &str = "oneiron@example.invalid";
@@ -345,6 +346,10 @@ struct PreparedRepoMutationAction {
 enum PreparedRepoMutationExecution {
     Direct,
     CommitFile(PreparedCommitFile),
+    ResolveConflictFile {
+        commit: PreparedCommitFile,
+        recovery: PreparedConflictResolution,
+    },
 }
 
 #[derive(Debug)]
@@ -354,20 +359,66 @@ struct PreparedCommitFile {
     new_head: String,
 }
 
+#[derive(Debug, Clone)]
+struct PreparedConflictResolution {
+    resolution_claim_id: EntityId,
+    branch_subject: EntityId,
+    open_conflict_claim_id: EntityId,
+    branch_name: String,
+    path: String,
+    resolved_tree: String,
+}
+
 impl PreparedRepoMutationExecution {
     fn commit_file(&self) -> Result<&PreparedCommitFile> {
-        let Self::CommitFile(prepared) = self else {
-            return Err(Error::InvariantViolation(
+        match self {
+            Self::CommitFile(prepared) => Ok(prepared),
+            Self::ResolveConflictFile { commit, .. } => Ok(commit),
+            Self::Direct => Err(Error::InvariantViolation(
                 "commit-producing repo mutation missing prepared commit",
+            )),
+        }
+    }
+
+    fn conflict_resolution(&self) -> Result<&PreparedConflictResolution> {
+        let Self::ResolveConflictFile { recovery, .. } = self else {
+            return Err(Error::InvariantViolation(
+                "conflict resolution missing prepared recovery intent",
             ));
         };
-        Ok(prepared)
+        Ok(recovery)
     }
 
     fn cleanup(&self, repo_root: &Path) -> Result<()> {
         match self {
             Self::Direct => Ok(()),
             Self::CommitFile(prepared) => remove_queue_worktree(repo_root, &prepared.worktree_path),
+            Self::ResolveConflictFile { commit, .. } => {
+                remove_queue_worktree(repo_root, &commit.worktree_path)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredPreparedConflictResolution {
+    resolution_claim_id: [u8; 16],
+    branch_subject: [u8; 16],
+    open_conflict_claim_id: [u8; 16],
+    branch_name: String,
+    path: String,
+    resolved_tree: String,
+}
+
+impl From<&PreparedConflictResolution> for StoredPreparedConflictResolution {
+    fn from(value: &PreparedConflictResolution) -> Self {
+        Self {
+            resolution_claim_id: *value.resolution_claim_id.as_bytes(),
+            branch_subject: *value.branch_subject.as_bytes(),
+            open_conflict_claim_id: *value.open_conflict_claim_id.as_bytes(),
+            branch_name: value.branch_name.clone(),
+            path: value.path.clone(),
+            resolved_tree: value.resolved_tree.clone(),
         }
     }
 }
@@ -398,6 +449,8 @@ struct StoredRepoMutationOplogEntry {
     pre_action_fork_hash: RepoForkHash,
     #[serde(default)]
     expected_post_action_fork_hash: Option<RepoForkHash>,
+    #[serde(default)]
+    prepared_conflict_resolution: Option<StoredPreparedConflictResolution>,
     status: String,
     failure: Option<String>,
 }
@@ -453,6 +506,7 @@ impl Vault {
             .lock()
             .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
         let _file_guard = repo_mutation_file_lock(&common_dir)?;
+        let _ = prune_queue_owned_worktrees(&repo_root);
 
         if !matches!(
             request.operation,
@@ -547,6 +601,7 @@ impl Vault {
             .lock()
             .map_err(|_| Error::ConcurrentWrite("repo mutation lock poisoned"))?;
         let _file_guard = repo_mutation_file_lock(&common_dir)?;
+        let _ = prune_queue_owned_worktrees(&repo_root);
         self.recover_prepared_repo_mutations_locked(&canonical, &repo_root)
     }
 
@@ -635,13 +690,23 @@ impl Vault {
         &self,
         repo_ref: &RepoRef,
     ) -> Result<Vec<RepoMutationOplogEntry>> {
+        self.stored_repo_mutation_oplog_for_canonical(repo_ref)?
+            .into_iter()
+            .map(public_oplog_entry)
+            .collect()
+    }
+
+    fn stored_repo_mutation_oplog_for_canonical(
+        &self,
+        repo_ref: &RepoRef,
+    ) -> Result<Vec<StoredRepoMutationOplogEntry>> {
         let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
         let prefix = repo_mutation_oplog_prefix(&repo_key_hash);
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_, bytes) = row?;
-            entries.push(decode_oplog_entry(bytes)?);
+            entries.push(decode_stored_oplog_entry(bytes)?);
         }
         entries.sort_by_key(|entry| entry.seq);
         Ok(entries)
@@ -653,19 +718,50 @@ impl Vault {
         repo_root: &Path,
     ) -> Result<Vec<RepoMutationOutcome>> {
         let prepared_entries = self
-            .repo_mutation_oplog_for_canonical(repo_ref)?
+            .stored_repo_mutation_oplog_for_canonical(repo_ref)?
             .into_iter()
-            .filter(|entry| entry.status == RepoMutationStatus::Prepared)
+            .filter(|entry| entry.status == RepoMutationStatus::Prepared.as_str())
             .collect::<Vec<_>>();
         let mut outcomes = Vec::new();
-        for stale in prepared_entries {
+        for stored in prepared_entries {
+            let recovery_intent = stored.prepared_conflict_resolution.clone();
+            let stale = public_oplog_entry(stored)?;
             let (actual_fork_hash, _) = capture_repo_snapshot(repo_root)?;
+            if stale.operation_kind == "resolve_conflict_file"
+                && recovery_intent.is_none()
+                && actual_fork_hash != stale.pre_action_fork_hash
+            {
+                let entry = self.finish_repo_mutation(
+                    &PreparedRepoMutation {
+                        repo_key_hash: repo_mutation_repo_key_hash(repo_ref),
+                        seq: stale.seq,
+                    },
+                    RepoMutationStatus::Failed,
+                    Some(
+                        "prepared conflict resolution missing claim recovery intent; repo left untouched"
+                            .into(),
+                    ),
+                    now_millis(),
+                )?;
+                outcomes.push(RepoMutationOutcome {
+                    entry,
+                    repo_conflict_claim_id: None,
+                });
+                continue;
+            }
             if stale
                 .expected_post_action_fork_hash
                 .is_some_and(|expected| {
                     expected != stale.pre_action_fork_hash && actual_fork_hash == expected
                 })
             {
+                let repo_conflict_claim_id = finish_repo_mutation_roll_forward(
+                    self,
+                    repo_ref,
+                    repo_root,
+                    &stale,
+                    recovery_intent.as_ref(),
+                )?;
                 let entry = self.finish_repo_mutation(
                     &PreparedRepoMutation {
                         repo_key_hash: repo_mutation_repo_key_hash(repo_ref),
@@ -673,6 +769,28 @@ impl Vault {
                     },
                     RepoMutationStatus::Applied,
                     None,
+                    now_millis(),
+                )?;
+                outcomes.push(RepoMutationOutcome {
+                    entry,
+                    repo_conflict_claim_id,
+                });
+                continue;
+            }
+
+            if stale.expected_post_action_fork_hash.is_none()
+                && actual_fork_hash != stale.pre_action_fork_hash
+            {
+                let entry = self.finish_repo_mutation(
+                    &PreparedRepoMutation {
+                        repo_key_hash: repo_mutation_repo_key_hash(repo_ref),
+                        seq: stale.seq,
+                    },
+                    RepoMutationStatus::Failed,
+                    Some(
+                        "legacy prepared row missing expected post-state; repo left untouched"
+                            .into(),
+                    ),
                     now_millis(),
                 )?;
                 outcomes.push(RepoMutationOutcome {
@@ -756,7 +874,19 @@ impl Vault {
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
-        let execution = prepare_repo_mutation_execution(repo_root, request)?;
+        let execution = match prepare_repo_mutation_execution(repo_root, request) {
+            Ok(execution) => execution,
+            Err(error) => {
+                self.record_failed_repo_mutation_preparation(
+                    repo_ref,
+                    request,
+                    fork_hash,
+                    &snapshot_bytes,
+                    &error,
+                )?;
+                return Err(error);
+            }
+        };
         let prepared = (|| -> Result<PreparedRepoMutation> {
             let expected_post_action_fork_hash = expected_post_action_fork_hash(
                 &request.operation,
@@ -781,6 +911,13 @@ impl Vault {
                 finished_at_ms: None,
                 pre_action_fork_hash: fork_hash,
                 expected_post_action_fork_hash: Some(expected_post_action_fork_hash),
+                prepared_conflict_resolution: match &execution {
+                    PreparedRepoMutationExecution::ResolveConflictFile { recovery, .. } => {
+                        Some(StoredPreparedConflictResolution::from(recovery))
+                    }
+                    PreparedRepoMutationExecution::Direct
+                    | PreparedRepoMutationExecution::CommitFile(_) => None,
+                },
                 status: RepoMutationStatus::Prepared.as_str().to_owned(),
                 failure: None,
             };
@@ -800,6 +937,45 @@ impl Vault {
                 Err(error)
             }
         }
+    }
+
+    fn record_failed_repo_mutation_preparation(
+        &self,
+        repo_ref: &RepoRef,
+        request: &RepoMutationRequest,
+        fork_hash: RepoForkHash,
+        snapshot_bytes: &[u8],
+        error: &Error,
+    ) -> Result<()> {
+        let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
+        let timestamp = now_millis();
+        let mut wtxn = self.store.env.write_txn()?;
+        store_snapshot_if_absent(self, &mut wtxn, fork_hash, snapshot_bytes)?;
+        let seq = allocate_next_repo_mutation_seq(self, &mut wtxn, &repo_key_hash)?;
+        let stored = StoredRepoMutationOplogEntry {
+            schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
+            repo_ref: repo_ref.canonical(),
+            seq,
+            operation_kind: request.operation.kind().to_owned(),
+            operation_subject: Some(operation_subject(&request.operation)),
+            actor_id: request.actor_id.map(|id| *id.as_bytes()),
+            session_id: request.session_id.map(|id| *id.as_bytes()),
+            started_at_ms: timestamp,
+            finished_at_ms: Some(timestamp),
+            pre_action_fork_hash: fork_hash,
+            expected_post_action_fork_hash: None,
+            prepared_conflict_resolution: None,
+            status: RepoMutationStatus::Failed.as_str().to_owned(),
+            failure: Some(truncate_failure(&error.to_string())),
+        };
+        let encoded = encode_oplog_entry(&stored)?;
+        self.store.vault_meta.put(
+            &mut wtxn,
+            &repo_mutation_oplog_key(&repo_key_hash, seq),
+            &encoded,
+        )?;
+        wtxn.commit()?;
+        Ok(())
     }
 
     fn finish_repo_mutation(
@@ -829,6 +1005,53 @@ impl Vault {
     }
 }
 
+fn finish_repo_mutation_roll_forward(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    stale: &RepoMutationOplogEntry,
+    stored_resolution: Option<&StoredPreparedConflictResolution>,
+) -> Result<Option<EntityId>> {
+    if matches!(
+        stale.operation_kind.as_str(),
+        "commit_file" | "resolve_conflict_file"
+    ) {
+        let path = stale
+            .operation_subject
+            .as_deref()
+            .ok_or(Error::InvalidRepoMutationRecord(
+                "prepared commit mutation is missing its path",
+            ))?;
+        validate_relative_repo_path(path)?;
+        run_git(
+            repo_root,
+            &["add".to_owned(), "--".to_owned(), path.to_owned()],
+        )?;
+    }
+
+    if stale.operation_kind != "resolve_conflict_file" {
+        return Ok(None);
+    }
+    let stored = stored_resolution.ok_or(Error::InvalidRepoMutationRecord(
+        "prepared conflict resolution is missing recovery intent",
+    ))?;
+    let prepared = PreparedConflictResolution {
+        resolution_claim_id: EntityId::from_bytes(stored.resolution_claim_id).map_err(|_| {
+            Error::InvalidRepoMutationRecord("invalid prepared resolution claim id")
+        })?,
+        branch_subject: EntityId::from_bytes(stored.branch_subject).map_err(|_| {
+            Error::InvalidRepoMutationRecord("invalid prepared resolution branch subject")
+        })?,
+        open_conflict_claim_id: EntityId::from_bytes(stored.open_conflict_claim_id).map_err(
+            |_| Error::InvalidRepoMutationRecord("invalid prepared open conflict claim id"),
+        )?,
+        branch_name: stored.branch_name.clone(),
+        path: stored.path.clone(),
+        resolved_tree: stored.resolved_tree.clone(),
+    };
+    finish_repo_conflict_resolution(vault, repo_ref, repo_root, &prepared).map(Some)
+}
+
 fn prepare_repo_mutation_execution(
     repo_root: &Path,
     request: &RepoMutationRequest,
@@ -838,21 +1061,51 @@ fn prepare_repo_mutation_execution(
             path,
             content,
             message,
-        }
-        | RepoMutationOperation::ResolveConflictFile {
+        } => Some((path.as_str(), content.as_slice(), message.as_str(), None)),
+        RepoMutationOperation::ResolveConflictFile {
+            branch_subject,
+            open_conflict_claim_id,
+            branch_name,
             path,
             content,
             message,
             ..
-        } => Some((path.as_str(), content.as_slice(), message.as_str())),
+        } => Some((
+            path.as_str(),
+            content.as_slice(),
+            message.as_str(),
+            Some((
+                *branch_subject,
+                *open_conflict_claim_id,
+                branch_name.as_str(),
+            )),
+        )),
         _ => None,
     };
-    let Some((path, content, message)) = commit else {
+    let Some((path, content, message, conflict)) = commit else {
         return Ok(PreparedRepoMutationExecution::Direct);
     };
     let message = commit_message_with_provenance_trailer(message, request.provenance_claim_id)?;
-    prepare_commit_file_through_queue_worktree(repo_root, path, content, &message)
-        .map(PreparedRepoMutationExecution::CommitFile)
+    let commit = prepare_commit_file_through_queue_worktree(repo_root, path, content, &message)?;
+    let Some((branch_subject, open_conflict_claim_id, branch_name)) = conflict else {
+        return Ok(PreparedRepoMutationExecution::CommitFile(commit));
+    };
+    let resolved_tree = match tree_hash_for_ref(repo_root, &commit.new_head) {
+        Ok(tree) => tree,
+        Err(error) => {
+            let _ = remove_queue_worktree(repo_root, &commit.worktree_path);
+            return Err(error);
+        }
+    };
+    let recovery = PreparedConflictResolution {
+        resolution_claim_id: EntityId::now(),
+        branch_subject,
+        open_conflict_claim_id,
+        branch_name: branch_name.to_owned(),
+        path: path.to_owned(),
+        resolved_tree,
+    };
+    Ok(PreparedRepoMutationExecution::ResolveConflictFile { commit, recovery })
 }
 
 fn expected_post_action_fork_hash(
@@ -992,6 +1245,7 @@ fn execute_repo_mutation(
                 message,
                 request.provenance_claim_id,
                 execution.commit_file()?,
+                execution.conflict_resolution()?,
             )?;
             Ok(Some(claim_id))
         }
@@ -1161,6 +1415,7 @@ fn resolve_repo_conflict_file(
     message: &str,
     provenance_claim_id: Option<EntityId>,
     prepared_commit: &PreparedCommitFile,
+    prepared_resolution: &PreparedConflictResolution,
 ) -> Result<EntityId> {
     validate_git_ref_label(branch_name)?;
     validate_relative_repo_path(path)?;
@@ -1190,21 +1445,107 @@ fn resolve_repo_conflict_file(
     let _ = commit_message_with_provenance_trailer(message, provenance_claim_id)?;
     apply_prepared_commit_file(repo_root, path, content, prepared_commit)?;
     let resolved_tree = tree_hash_for_ref(repo_root, "HEAD")?;
-    let claim_id = EntityId::now();
-    put_repo_conflict_resolution_claim(
-        vault,
-        claim_id,
-        branch_subject,
-        RepoConflictResolutionValue {
-            repo_ref: repo_ref.clone(),
-            branch: branch_name.to_owned(),
-            open_conflict_claim_id,
-            resolved_tree,
-            resolved_paths: normalize_repo_conflict_paths(vec![path.to_owned()])?,
-        },
+    if resolved_tree != prepared_resolution.resolved_tree {
+        return Err(Error::InvariantViolation(
+            "prepared conflict resolution tree changed before claim write",
+        ));
+    }
+    finish_repo_conflict_resolution(vault, repo_ref, repo_root, prepared_resolution)
+}
+
+fn finish_repo_conflict_resolution(
+    vault: &Vault,
+    repo_ref: &RepoRef,
+    repo_root: &Path,
+    prepared: &PreparedConflictResolution,
+) -> Result<EntityId> {
+    validate_git_ref_label(&prepared.branch_name)?;
+    validate_relative_repo_path(&prepared.path)?;
+    validate_git_object_hash(
+        &prepared.resolved_tree,
+        "resolved tree must be a 40-hex object id",
     )?;
-    supersede_repo_conflict_claim(vault, claim_id, open_conflict_claim_id, now_secs())?;
-    Ok(claim_id)
+    if current_branch(repo_root)? != prepared.branch_name {
+        return Err(Error::InvalidRepoMutationRecord(
+            "prepared conflict resolution must finish on its recorded branch",
+        ));
+    }
+    let value = RepoConflictResolutionValue {
+        repo_ref: repo_ref.clone(),
+        branch: prepared.branch_name.clone(),
+        open_conflict_claim_id: prepared.open_conflict_claim_id,
+        resolved_tree: prepared.resolved_tree.clone(),
+        resolved_paths: normalize_repo_conflict_paths(vec![prepared.path.clone()])?,
+    };
+    let resolution_exists = match vault.get_claim(&prepared.resolution_claim_id)? {
+        Some(body)
+            if body.predicate == PREDICATE_CONFLICT_RESOLVED
+                && body.lifecycle == ClaimLifecycleStatus::Active
+                && body.subject == ClaimSubject::Entity(prepared.branch_subject)
+                && decode_repo_conflict_resolution_value(&body.value)? == value =>
+        {
+            true
+        }
+        Some(_) => {
+            return Err(Error::InvalidRepoMutationRecord(
+                "prepared conflict resolution claim id was reused",
+            ));
+        }
+        None => false,
+    };
+    let open = vault
+        .get_claim(&prepared.open_conflict_claim_id)?
+        .ok_or(Error::EntityNotFound)?;
+    if open.lifecycle == ClaimLifecycleStatus::Superseded {
+        if resolution_exists
+            && vault.edge_exists(
+                &prepared.resolution_claim_id,
+                EdgeKind::Supersedes,
+                &prepared.open_conflict_claim_id,
+            )?
+        {
+            return Ok(prepared.resolution_claim_id);
+        }
+        return Err(Error::InvalidRepoMutationRecord(
+            "open conflict was superseded by another resolution",
+        ));
+    }
+    if open.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(Error::ClaimAlreadyClosed {
+            status: open.lifecycle,
+        });
+    }
+    let open = require_active_repo_conflict_claim(
+        vault,
+        &prepared.open_conflict_claim_id,
+        prepared.branch_subject,
+    )?;
+    if open.repo_ref != *repo_ref
+        || open.branch != prepared.branch_name
+        || !open
+            .conflicted_paths
+            .iter()
+            .any(|path| path == &prepared.path)
+    {
+        return Err(Error::InvalidRepoMutationRecord(
+            "prepared conflict resolution does not match the open conflict",
+        ));
+    }
+    if !resolution_exists {
+        put_repo_conflict_resolution_claim(
+            vault,
+            prepared.resolution_claim_id,
+            prepared.branch_subject,
+            value,
+        )?;
+    }
+    supersede_repo_conflict_claim(
+        vault,
+        prepared.resolution_claim_id,
+        prepared.open_conflict_claim_id,
+        now_secs(),
+    )?;
+    Ok(prepared.resolution_claim_id)
 }
 
 fn require_active_repo_conflict_claim(
@@ -2464,6 +2805,53 @@ fn create_queue_worktree(repo_root: &Path) -> Result<PathBuf> {
     Ok(worktree_path)
 }
 
+fn prune_queue_owned_worktrees(repo_root: &Path) -> Result<()> {
+    let output = run_git(
+        repo_root,
+        &[
+            "worktree".to_owned(),
+            "list".to_owned(),
+            "--porcelain".to_owned(),
+            "-z".to_owned(),
+        ],
+    )?;
+    for field in output.split(|byte| *byte == 0) {
+        let Some(path) = field.strip_prefix(b"worktree ") else {
+            continue;
+        };
+        let Ok(path) = std::str::from_utf8(path) else {
+            continue;
+        };
+        let path = Path::new(path);
+        if is_queue_owned_worktree_path(path) {
+            let _ = remove_queue_worktree(repo_root, path);
+        }
+    }
+    Ok(())
+}
+
+fn is_queue_owned_worktree_path(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Ok(parent) = parent.canonicalize() else {
+        return false;
+    };
+    let Ok(temp_dir) = std::env::temp_dir().canonicalize() else {
+        return false;
+    };
+    if parent != temp_dir {
+        return false;
+    }
+    let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    let Some(suffix) = name.strip_prefix(REPO_MUTATION_WORKTREE_PREFIX) else {
+        return false;
+    };
+    suffix.len() == 24 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn remove_queue_worktree(repo_root: &Path, worktree_path: &Path) -> Result<()> {
     let result = run_git(
         repo_root,
@@ -2493,7 +2881,7 @@ fn queue_owned_worktree_path(repo_root: &Path) -> Result<PathBuf> {
             counter
         );
         let suffix = &hex_bytes(&sha256_bytes(seed.as_bytes()))[..24];
-        let path = std::env::temp_dir().join(format!("oneiron-repo-mutation-{suffix}"));
+        let path = std::env::temp_dir().join(format!("{REPO_MUTATION_WORKTREE_PREFIX}{suffix}"));
         if !path.exists() {
             return Ok(path);
         }
@@ -2663,10 +3051,6 @@ fn allocate_next_repo_mutation_seq(
         .vault_meta
         .put(wtxn, &key, &next.to_be_bytes())?;
     Ok(next)
-}
-
-fn decode_oplog_entry(bytes: &[u8]) -> Result<RepoMutationOplogEntry> {
-    public_oplog_entry(decode_stored_oplog_entry(bytes)?)
 }
 
 fn public_oplog_entry(stored: StoredRepoMutationOplogEntry) -> Result<RepoMutationOplogEntry> {

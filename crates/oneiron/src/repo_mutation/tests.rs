@@ -812,6 +812,189 @@ fn repo_mutation_prepared_recovery_halts_on_diverged_repo_state() {
 }
 
 #[test]
+fn repo_mutation_roll_forward_restores_index_after_ref_only_crash() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let input_ref = repo_ref(&repo);
+    let repo_root = resolve_mutable_repo_root(&input_ref).expect("repo root");
+    let canonical = canonical_repo_ref_for_root(&input_ref, &repo_root).expect("canonical repo");
+    let request = RepoMutationRequest::new(
+        canonical.clone(),
+        RepoMutationOperation::CommitFile {
+            path: "README.md".to_owned(),
+            content: b"mutated\n".to_vec(),
+            message: "mutate readme".to_owned(),
+        },
+    );
+    let prepared = vault
+        .prepare_repo_mutation(&canonical, &request, &repo_root)
+        .expect("prepare mutation");
+    let commit = prepared.execution.commit_file().expect("prepared commit");
+    write_repo_file_no_symlink(&repo_root, "README.md", b"mutated\n").expect("write content");
+    run_git(
+        &repo_root,
+        &[
+            "update-ref".to_owned(),
+            "HEAD".to_owned(),
+            commit.new_head.clone(),
+            commit.base_head.clone(),
+        ],
+    )
+    .expect("advance ref only");
+    prepared
+        .execution
+        .cleanup(&repo_root)
+        .expect("cleanup queue worktree");
+
+    let dirty = run_git_at_path(
+        repo.path(),
+        &["status".to_owned(), "--porcelain".to_owned()],
+    )
+    .expect("status before recovery");
+    assert!(!dirty.is_empty(), "index must still reflect the old HEAD");
+
+    vault
+        .recover_prepared_repo_mutations(&canonical)
+        .expect("roll forward mutation");
+    let clean = run_git_at_path(
+        repo.path(),
+        &["status".to_owned(), "--porcelain".to_owned()],
+    )
+    .expect("status after recovery");
+    assert_eq!(clean, b"");
+}
+
+#[test]
+fn repo_mutation_legacy_prepared_row_fails_once_without_reverting_repo() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let tracked = repo.path().join("README.md");
+    let input_ref = repo_ref(&repo);
+    let repo_root = resolve_mutable_repo_root(&input_ref).expect("repo root");
+    let canonical = canonical_repo_ref_for_root(&input_ref, &repo_root).expect("canonical repo");
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterPreparedBeforeAction));
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect_err("injected pre-action crash");
+
+    let repo_key_hash = repo_mutation_repo_key_hash(&canonical);
+    let key = repo_mutation_oplog_key(&repo_key_hash, 1);
+    let mut wtxn = vault.store.env.write_txn().expect("legacy rewrite txn");
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &key)
+        .expect("read prepared row")
+        .expect("prepared row exists");
+    let mut stored = decode_stored_oplog_entry(raw).expect("decode prepared row");
+    stored.expected_post_action_fork_hash = None;
+    stored.prepared_conflict_resolution = None;
+    let encoded = encode_oplog_entry(&stored).expect("encode legacy row");
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &key, &encoded)
+        .expect("write legacy row");
+    wtxn.commit().expect("commit legacy rewrite");
+    fs::write(&tracked, "foreign state\n").expect("foreign repo touch");
+
+    let recovered = vault
+        .recover_prepared_repo_mutations(&input_ref)
+        .expect("classify legacy row");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].entry.status, RepoMutationStatus::Failed);
+    assert_eq!(
+        recovered[0].entry.failure.as_deref(),
+        Some("legacy prepared row missing expected post-state; repo left untouched")
+    );
+    assert_eq!(
+        fs::read_to_string(&tracked).expect("read untouched repo"),
+        "foreign state\n"
+    );
+
+    let next = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref,
+            RepoMutationOperation::CommitFile {
+                path: "next.txt".to_owned(),
+                content: b"next\n".to_vec(),
+                message: "next mutation".to_owned(),
+            },
+        ))
+        .expect("legacy row no longer blocks mutations");
+    assert_eq!(next.entry.status, RepoMutationStatus::Applied);
+}
+
+#[test]
+fn repo_mutation_prunes_orphaned_queue_worktree_before_next_mutation() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let orphan = create_queue_worktree(repo.path()).expect("create orphan queue worktree");
+    assert!(orphan.exists());
+    assert!(is_queue_owned_worktree_path(&orphan));
+
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "next.txt".to_owned(),
+                content: b"next\n".to_vec(),
+                message: "next mutation".to_owned(),
+            },
+        ))
+        .expect("mutation after orphan");
+
+    assert!(!orphan.exists());
+    let worktrees = run_git_at_path(
+        repo.path(),
+        &[
+            "worktree".to_owned(),
+            "list".to_owned(),
+            "--porcelain".to_owned(),
+        ],
+    )
+    .expect("list worktrees");
+    assert!(
+        !String::from_utf8(worktrees)
+            .expect("utf8 worktree list")
+            .contains(&orphan.to_string_lossy().into_owned())
+    );
+}
+
+#[test]
+fn repo_mutation_failed_commit_preparation_is_durably_logged() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let input_ref = repo_ref(&repo);
+
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            input_ref.clone(),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"base\n".to_vec(),
+                message: "no-op commit".to_owned(),
+            },
+        ))
+        .expect_err("no-op preparation must fail");
+
+    let log = vault.repo_mutation_oplog(&input_ref).expect("oplog");
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].operation_kind, "commit_file");
+    assert_eq!(log[0].status, RepoMutationStatus::Failed);
+    assert!(log[0].failure.is_some());
+    assert!(log[0].finished_at_ms.is_some());
+}
+
+#[test]
 fn repo_mutation_auto_recovers_prepared_rows() {
     let (_vault_dir, vault) = open_test_vault();
     let repo = init_repo();
@@ -1230,6 +1413,101 @@ fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
         resolutions[0].resolved_tree,
         tree_hash_for_ref(repo.path(), "HEAD").expect("resolved tree")
     );
+}
+
+#[test]
+fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let branch_subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject,
+                branch_name: "left".to_owned(),
+                ours_ref: "left".to_owned(),
+                theirs_ref: "right".to_owned(),
+            },
+        ))
+        .expect("record conflict")
+        .repo_conflict_claim_id
+        .expect("open claim id");
+    run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+        .expect("checkout left");
+    let input_ref = repo_ref(&repo);
+    let repo_root = resolve_mutable_repo_root(&input_ref).expect("repo root");
+    let canonical = canonical_repo_ref_for_root(&input_ref, &repo_root).expect("canonical repo");
+    let request = RepoMutationRequest::new(
+        canonical.clone(),
+        RepoMutationOperation::ResolveConflictFile {
+            branch_subject,
+            open_conflict_claim_id: open,
+            branch_name: "left".to_owned(),
+            path: "README.md".to_owned(),
+            content: b"resolved after crash\n".to_vec(),
+            message: "resolve after crash".to_owned(),
+        },
+    );
+    let prepared = vault
+        .prepare_repo_mutation(&canonical, &request, &repo_root)
+        .expect("prepare conflict resolution");
+    let resolution_claim_id = prepared
+        .execution
+        .conflict_resolution()
+        .expect("prepared resolution")
+        .resolution_claim_id;
+    apply_prepared_commit_file(
+        &repo_root,
+        "README.md",
+        b"resolved after crash\n",
+        prepared.execution.commit_file().expect("prepared commit"),
+    )
+    .expect("apply commit before simulated crash");
+    prepared
+        .execution
+        .cleanup(&repo_root)
+        .expect("cleanup queue worktree");
+    assert_eq!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("open conflict before recovery")
+            .len(),
+        1
+    );
+    assert!(
+        vault
+            .repo_conflict_resolution_claims(&branch_subject)
+            .expect("resolutions before recovery")
+            .is_empty()
+    );
+
+    let recovered = vault
+        .recover_prepared_repo_mutations(&canonical)
+        .expect("roll forward conflict resolution");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        recovered[0].repo_conflict_claim_id,
+        Some(resolution_claim_id)
+    );
+    assert!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("open conflicts after recovery")
+            .is_empty()
+    );
+    let resolutions = vault
+        .repo_conflict_resolution_claims(&branch_subject)
+        .expect("resolutions after recovery");
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].claim_id, resolution_claim_id);
+    assert_eq!(resolutions[0].open_conflict_claim_id, open);
+    let open_body = vault
+        .get_claim(&open)
+        .expect("get open claim")
+        .expect("open claim exists");
+    assert_eq!(open_body.lifecycle, ClaimLifecycleStatus::Superseded);
 }
 
 #[test]
