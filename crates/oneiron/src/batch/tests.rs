@@ -717,7 +717,7 @@ fn write_envelope_validation_rejects_missing_required_axes() -> Result<()> {
 
 #[test]
 fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
+    let (_dir, vault) = open_raw_test_vault();
     let subject = EntityId::now();
     vault.put_entity(
         &subject,

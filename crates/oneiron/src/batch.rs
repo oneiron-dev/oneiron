@@ -795,9 +795,7 @@ impl<'a> BatchBuilder<'a> {
                 .load(std::sync::atomic::Ordering::Acquire)
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
-        if let Err(err) =
-            preflight_standalone_gate_decisions(&self.vault.store, &self.ops, &mut wtxn)
-        {
+        if let Err(err) = preflight_gate_decisions_in_txn(&self.vault.store, &self.ops, &mut wtxn) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
             // later phase-2 failures drop this transaction and its receipt.
@@ -820,7 +818,10 @@ impl<'a> BatchBuilder<'a> {
     }
 }
 
-fn preflight_standalone_gate_decisions(
+/// Evaluates local claim gates and appends their decisions to `wtxn`.
+///
+/// The caller owns committing or aborting the transaction.
+fn preflight_gate_decisions_in_txn(
     store: &Store,
     ops: &[BatchOp],
     wtxn: &mut RwTxn<'_>,
@@ -830,9 +831,10 @@ fn preflight_standalone_gate_decisions(
     }
 
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
-    let mut first_error = None;
+    let mut staged_decision_ids = Vec::new();
 
     for op in ops {
+        let mut recorded_decision = None;
         let result = match op {
             BatchOp::Put {
                 id,
@@ -844,7 +846,7 @@ fn preflight_standalone_gate_decisions(
                 && !*allow_reserved_predicate =>
             {
                 crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                    crate::gate::check_claim_policy_for_write(
+                    crate::gate::check_claim_policy_for_write_with_record(
                         store,
                         wtxn,
                         id,
@@ -858,6 +860,7 @@ fn preflight_standalone_gate_decisions(
                             can_resolve_pending_consent: true,
                             include_source_in_gate_input: false,
                         },
+                        &mut recorded_decision,
                     )
                 })
             }
@@ -869,7 +872,7 @@ fn preflight_standalone_gate_decisions(
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                crate::gate::check_claim_policy_for_write(
+                crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
                     id,
@@ -883,20 +886,30 @@ fn preflight_standalone_gate_decisions(
                         can_resolve_pending_consent: true,
                         include_source_in_gate_input: false,
                     },
+                    &mut recorded_decision,
                 )
             }
             _ => Ok(()),
         };
 
+        if let Some(decision) = &recorded_decision {
+            staged_decision_ids.push(decision.decision_id);
+        }
         if let Err(err) = result {
-            first_error = Some(err);
-            break;
+            let preserved_denial_id = recorded_decision
+                .as_ref()
+                .filter(|decision| decision.outcome != "allow")
+                .map(|decision| decision.decision_id);
+            for decision_id in staged_decision_ids
+                .into_iter()
+                .filter(|decision_id| Some(*decision_id) != preserved_denial_id)
+            {
+                store.delete_gate_decision_in_txn(wtxn, decision_id)?;
+            }
+            return Err(err);
         }
     }
 
-    if let Some(err) = first_error {
-        return Err(err);
-    }
     Ok(())
 }
 
