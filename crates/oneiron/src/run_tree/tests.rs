@@ -484,6 +484,13 @@ fn fail_next(vault: &Vault, expected_id: crate::JobId, now: u64, reason: &str) -
 
 fn delete_job_record(vault: &Vault, id: crate::JobId) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
+    let Some(raw) = vault.store.job_records.get(&wtxn, id.as_bytes())? else {
+        return Err(Error::CorruptedIndex("job record"));
+    };
+    let record = crate::job_queue::decode_record(raw, id)?;
+    vault
+        .store
+        .delete_job_run_index_in_txn(&mut wtxn, record.run_id.as_deref(), id.as_bytes())?;
     vault.store.job_records.delete(&mut wtxn, id.as_bytes())?;
     wtxn.commit()?;
     Ok(())

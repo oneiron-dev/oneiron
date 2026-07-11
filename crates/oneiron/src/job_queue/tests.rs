@@ -168,6 +168,31 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
 }
 
 #[test]
+fn list_run_rejects_a_dangling_run_index_row() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = JobQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("indexed-worker", None, 10))? else {
+        panic!("expected indexed job");
+    };
+
+    // This bypasses the index-maintaining removal seam to model actual index
+    // corruption. `list_run` must fail closed rather than silently dropping
+    // the dangling row.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .job_records
+        .delete(&mut wtxn, job.id.as_bytes())?;
+    wtxn.commit()?;
+
+    assert!(matches!(
+        queue.list_run("run-10"),
+        Err(Error::CorruptedIndex("job run index"))
+    ));
+    Ok(())
+}
+
+#[test]
 fn job_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = JobQueue::new(&vault);
