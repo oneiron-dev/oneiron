@@ -269,6 +269,7 @@ pub enum ErrorKind {
     OffRecordSessionNotFound,
     OffRecordSessionClosing,
     OffRecordTurnNotFenced,
+    OffRecordFencedTurnWriteRejected,
     OffRecordTalkOnly,
     OffRecordExportRefused,
     #[cfg(feature = "sync")]
@@ -1321,6 +1322,14 @@ pub enum Error {
         session_ref: String,
         turn_ref: String,
     },
+    /// The entity write door found an off-record fence that is no longer
+    /// owned by a live, mutable session. This is the permanent fail-closed
+    /// guard for a tag-before-write turn after close; the error deliberately
+    /// carries the caller-supplied turn id, never the evaporated session ref.
+    #[error(
+        "off-record fenced turn {turn_ref} cannot be written: its session is closed or closing"
+    )]
+    OffRecordFencedTurnWriteRejected { turn_ref: String },
     /// OF-326 talk-only: the intent originated from a session currently in
     /// off-record mode, where outbound/commitment verbs are disabled. Exit
     /// prompt semantics — wanting the action means exiting off-record mode.
@@ -1586,6 +1595,9 @@ impl Error {
             Self::OffRecordSessionNotFound { .. } => ErrorKind::OffRecordSessionNotFound,
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
             Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
+            Self::OffRecordFencedTurnWriteRejected { .. } => {
+                ErrorKind::OffRecordFencedTurnWriteRejected
+            }
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             #[cfg(feature = "sync")]

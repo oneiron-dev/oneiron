@@ -596,6 +596,10 @@ pub fn rebuild_window_from_updates(
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
+///
+/// Fenced off-record entities remain pending until promotion. The marker is
+/// intentionally not cleared while the fence is live: promotion lifts only
+/// that turn's fence, then this normal replay path releases that turn to sync.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     let prefix = format!("pm:{window_key}:");
@@ -634,6 +638,13 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 continue;
             }
         };
+
+        // OFRC-2i defer-sync: a fenced turn (including its incident edges)
+        // is device-local until explicit promotion. Keep the pending marker
+        // so the promoted turn can flow through this ordinary path later.
+        if vault.is_turn_off_record_fenced(id)? {
+            continue;
+        }
 
         if skip_companion_register_sync_mirror(&raw)? {
             let mut wrote_doc = false;
@@ -690,6 +701,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                     continue;
                 }
+                if vault.is_turn_off_record_fenced(&edge.target)? {
+                    continue;
+                }
                 let edge_key = format_edge_key(id, edge.kind, &edge.target);
                 if map_contains_binary(&edges_map, &edge_key) {
                     continue;
@@ -733,6 +747,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+                continue;
+            }
+            if vault.is_turn_off_record_fenced(&edge.target)? {
                 continue;
             }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -1606,11 +1623,10 @@ pub fn forward_rematerialize(
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
 ///
 /// ARCH-0023b crash-recovery step 4: scan LMDB entities + `edges_out` in the
-/// window's `learned_at` range and "mirror ANYTHING present in LMDB but
-/// missing from CRDT" — edge backfill runs for EVERY non-tombstoned in-range
-/// entity, not just entities the CRDT is missing (an already-mirrored entity
-/// can still have locally-written edges the CRDT lacks). Differing edge
-/// values are left alone: this pass inserts missing records only.
+/// window's `learned_at` range and mirror every syncable, non-fenced entity
+/// missing from CRDT. Edge backfill runs for every non-tombstoned, non-fenced
+/// in-range entity; edges to fenced targets stay device-local too. Differing
+/// edge values are left alone: this pass inserts missing records only.
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
@@ -1632,6 +1648,13 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     for id in &entities_in_range {
         let hex_id = id.to_hex();
+
+        // OFRC-2i defer-sync: check the fence before reading or packing the
+        // payload, so a live off-record turn cannot enter a window through
+        // reverse rematerialization.
+        if vault.is_turn_off_record_fenced(id)? {
+            continue;
+        }
 
         // Value-agnostic, entity-canonical tombstone presence (fail
         // closed): a non-binary tombstone decodes HARD on replay and a
@@ -1681,6 +1704,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
+                continue;
+            }
+            if vault.is_turn_off_record_fenced(&edge.target)? {
                 continue;
             }
             if local_entity_is_unsyncable_companion(vault, &edge.target)? {
