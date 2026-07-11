@@ -208,24 +208,33 @@ impl BudgetGuard {
     }
 
     pub fn admit(&self) -> Result<BudgetAdmission, BudgetDenied> {
-        let reserve_units = self.lock_state().reserve_units;
-        self.admit_reserve(reserve_units)
+        let mut state = self.lock_state();
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve(reserve_units)?;
+        Ok(state.metered_admission(lease))
     }
 
     pub fn admit_for_request(&self, request: &LlmRequest) -> Result<BudgetAdmission, BudgetDenied> {
-        let continue_local = {
-            let state = self.lock_state();
-            matches!(request.envelope.locality, ModelLocality::OnDevice)
-                && matches!(
-                    state.on_budget_exhausted,
-                    BudgetExhaustionPolicy::ContinueOnLocal
-                )
-                && state.is_exhausted()
-        };
+        let mut state = self.lock_state();
+        let continue_local = matches!(request.envelope.locality, ModelLocality::OnDevice)
+            && matches!(
+                state.on_budget_exhausted,
+                BudgetExhaustionPolicy::ContinueOnLocal
+            )
+            && state.is_exhausted();
         if continue_local {
-            return self.admit_local();
+            let lease = state.issue_lease(0, false, "local");
+            let read = state.read();
+            return Ok(BudgetAdmission {
+                lease,
+                read,
+                ladder_events: Vec::new(),
+            });
         }
-        self.admit()
+
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve(reserve_units)?;
+        Ok(state.metered_admission(lease))
     }
 
     pub fn admit_local(&self) -> Result<BudgetAdmission, BudgetDenied> {
@@ -248,29 +257,9 @@ impl BudgetGuard {
     }
 
     pub fn admit_reserve(&self, reserve_units: u64) -> Result<BudgetAdmission, BudgetDenied> {
-        if reserve_units == 0 {
-            return Err(BudgetDenied::AdmissionDenied);
-        }
-
         let mut state = self.lock_state();
-        let cap_units = state.cap_units();
-        let projected = state
-            .used_units
-            .saturating_add(state.reserved_units)
-            .saturating_add(reserve_units);
-        if projected > cap_units {
-            return Err(BudgetDenied::Exhausted);
-        }
-
-        let lease = state.issue_lease(reserve_units, true, "metered");
-        state.reserved_units = state.reserved_units.saturating_add(reserve_units);
-        let ladder_events = state.fire_ladder_events();
-        let read = state.read();
-        Ok(BudgetAdmission {
-            lease,
-            read,
-            ladder_events,
-        })
+        let lease = state.reserve(reserve_units)?;
+        Ok(state.metered_admission(lease))
     }
 
     pub fn settle_terminal(
@@ -377,6 +366,35 @@ struct BudgetState {
 }
 
 impl BudgetState {
+    fn reserve(&mut self, reserve_units: u64) -> Result<BudgetLease, BudgetDenied> {
+        if reserve_units == 0 {
+            return Err(BudgetDenied::AdmissionDenied);
+        }
+
+        let cap_units = self.cap_units();
+        let projected = self
+            .used_units
+            .saturating_add(self.reserved_units)
+            .saturating_add(reserve_units);
+        if projected > cap_units {
+            return Err(BudgetDenied::Exhausted);
+        }
+
+        let lease = self.issue_lease(reserve_units, true, "metered");
+        self.reserved_units = self.reserved_units.saturating_add(reserve_units);
+        Ok(lease)
+    }
+
+    fn metered_admission(&mut self, lease: BudgetLease) -> BudgetAdmission {
+        let ladder_events = self.fire_ladder_events();
+        let read = self.read();
+        BudgetAdmission {
+            lease,
+            read,
+            ladder_events,
+        }
+    }
+
     fn cap_units(&self) -> u64 {
         self.on_budget_exhausted.admission_cap(self.limit_units)
     }
