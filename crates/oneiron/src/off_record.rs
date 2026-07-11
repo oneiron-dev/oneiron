@@ -295,22 +295,6 @@ pub(crate) fn off_record_fences_present(store: &Store, rtxn: &RoTxn<'_>) -> Resu
         .is_some())
 }
 
-/// Counts active fence rows so bounded retrieval scans can reserve enough
-/// additional candidate slots without widening to the entire vault.
-pub(crate) fn off_record_fence_count(store: &Store, rtxn: &RoTxn<'_>) -> Result<usize> {
-    let mut count = 0_usize;
-    for entry in store
-        .vault_meta
-        .prefix_iter(rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
-    {
-        entry?;
-        count = count
-            .checked_add(1)
-            .ok_or(Error::IndexOverflow("off-record fence count"))?;
-    }
-    Ok(count)
-}
-
 fn session_record_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
