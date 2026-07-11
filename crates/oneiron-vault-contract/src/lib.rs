@@ -27,6 +27,7 @@ pub const TOKEN_LEN: usize = 32;
 pub const MAX_CTL_LINE: usize = 64 * 1024;
 pub const MAX_LEDGER_ENTRIES: usize = 128;
 pub const MAX_REASON_TAG: usize = 64;
+pub const MAX_WAKE_ID: usize = 128;
 
 /// Ready byte written to the ready fd once both sockets are bound.
 pub const READY_BYTE: u8 = 0x01;
@@ -69,15 +70,29 @@ pub struct WakeEntry {
     pub reason_tag: String,
 }
 
+/// Shared id/reason_tag bounds for anything carrying wake fields — ledger
+/// entries and `alarm_due` requests alike. Control bytes (< 0x20) are
+/// rejected: serde_json escapes each as a 6-char `\u00XX`, which would let a
+/// bounds-valid entry list serialize past [`MAX_CTL_LINE`] (the worst
+/// remaining expansion is the 2-char escapes for `"` and `\`, which the
+/// `max_valid_wake_list_fits_ctl_line` test proves stays under the cap).
+fn validate_wake_fields(id: &str, reason_tag: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!id.is_empty() && id.len() <= MAX_WAKE_ID, "bad entry id");
+    anyhow::ensure!(!id.bytes().any(|b| b < 0x20), "control bytes in entry id");
+    anyhow::ensure!(reason_tag.len() <= MAX_REASON_TAG, "reason_tag too long");
+    anyhow::ensure!(
+        !reason_tag.bytes().any(|b| b < 0x20),
+        "control bytes in reason_tag"
+    );
+    Ok(())
+}
+
 impl WakeEntry {
-    /// Bounds checks only (id length, reason_tag length, window ordering).
-    /// Concrete fire-time selection and window jitter live supervisor-side.
+    /// Bounds checks only (id length/charset, reason_tag length/charset,
+    /// window ordering). Concrete fire-time selection and window jitter live
+    /// supervisor-side.
     pub fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(!self.id.is_empty() && self.id.len() <= 128, "bad entry id");
-        anyhow::ensure!(
-            self.reason_tag.len() <= MAX_REASON_TAG,
-            "reason_tag too long"
-        );
+        validate_wake_fields(&self.id, &self.reason_tag)?;
         if let Schedule::Window { start, end } = self.at {
             anyhow::ensure!(end >= start, "window end < start");
         }
@@ -92,8 +107,26 @@ impl WakeEntry {
 pub enum CtlRequest {
     PrepareReap,
     ReapAbort,
-    AlarmDue { id: String, reason_tag: String },
+    /// Fields carry the same bounds as [`WakeEntry`]; vaults must run
+    /// [`CtlRequest::validate`] after parsing — deserialization alone does
+    /// not enforce the wire limits.
+    AlarmDue {
+        id: String,
+        reason_tag: String,
+    },
     Ping,
+}
+
+impl CtlRequest {
+    /// Vault-side reject-not-truncate enforcement: `alarm_due` fields share
+    /// the [`WakeEntry`] bounds; the other variants carry no fields. Vaults
+    /// call this immediately after parsing a ctl line.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let CtlRequest::AlarmDue { id, reason_tag } = self {
+            validate_wake_fields(id, reason_tag)?;
+        }
+        Ok(())
+    }
 }
 
 /// Untagged: variant selection is structural, tried in declaration order.
@@ -126,7 +159,11 @@ pub enum CtlResponse {
 
 /// Hex of the 32-byte spawn token. Debug is redacted so the value can never
 /// reach logs through derived formatting; contents zeroized on drop.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Deliberately does NOT implement `PartialEq` — `String` equality exits on
+/// the first mismatched byte and leaks prefix timing of the expected token
+/// to a guessing client. Compare with [`TokenHex::ct_eq`] (or compare
+/// digests, as Hypnos does).
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TokenHex(String);
 
@@ -140,6 +177,23 @@ impl TokenHex {
     /// Deliberate accessor — the only way to read the value.
     pub fn expose(&self) -> &str {
         &self.0
+    }
+    /// Constant-time equality over the decoded token bytes (hex case does
+    /// not matter). Malformed hex on either side compares unequal. Decode
+    /// cost depends only on the caller's own inputs, never on where the
+    /// first differing byte sits.
+    pub fn ct_eq(&self, other: &TokenHex) -> bool {
+        let (Some(mut a), Some(mut b)) = (from_hex(&self.0), from_hex(&other.0)) else {
+            return false;
+        };
+        let mut diff = u8::from(a.len() != b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            diff |= x ^ y;
+        }
+        let eq = std::hint::black_box(diff) == 0;
+        a.zeroize();
+        b.zeroize();
+        eq
     }
 }
 
@@ -402,5 +456,108 @@ mod tests {
         // Same list through the shared helper (the prepare_reap path).
         assert!(validate_wake_entries(&u.entries).is_err());
         assert!(validate_wake_entries(&u.entries[..1]).is_ok());
+    }
+
+    #[test]
+    fn wake_fields_reject_control_bytes() {
+        let mut e = WakeEntry {
+            id: "ok".into(),
+            at: Schedule::Exact { at: 0 },
+            reason_tag: "tag".into(),
+        };
+        e.validate().unwrap();
+        e.id = "a\nb".into();
+        assert!(e.validate().is_err());
+        e.id = "ok".into();
+        e.reason_tag = "t\u{0}g".into();
+        assert!(e.validate().is_err());
+    }
+
+    #[test]
+    fn ctl_request_validate() {
+        let ok = CtlRequest::AlarmDue {
+            id: "e1".into(),
+            reason_tag: "cron".into(),
+        };
+        ok.validate().unwrap();
+        CtlRequest::Ping.validate().unwrap();
+        let bad = [
+            CtlRequest::AlarmDue {
+                id: String::new(),
+                reason_tag: String::new(),
+            },
+            CtlRequest::AlarmDue {
+                id: "e1".into(),
+                reason_tag: "x".repeat(MAX_REASON_TAG + 1),
+            },
+            CtlRequest::AlarmDue {
+                id: "e\u{1b}1".into(),
+                reason_tag: String::new(),
+            },
+        ];
+        for req in bad {
+            assert!(req.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn token_ct_eq() {
+        let a = TokenHex::from_token(&[0xabu8; TOKEN_LEN]);
+        let b = TokenHex::from_token(&[0xabu8; TOKEN_LEN]);
+        let c = TokenHex::from_token(&[0xacu8; TOKEN_LEN]);
+        assert!(a.ct_eq(&b));
+        assert!(!a.ct_eq(&c));
+        // hex case must not matter — compare decoded bytes, not strings
+        let upper = TokenHex::new("AB".repeat(TOKEN_LEN));
+        assert!(a.ct_eq(&upper));
+        // malformed hex compares unequal, never panics
+        assert!(!a.ct_eq(&TokenHex::new("zz".into())));
+        assert!(!a.ct_eq(&TokenHex::new(String::new())));
+    }
+
+    /// The contract's guarantee that validate() and the line cap agree: a
+    /// maximal validator-passing message must still fit MAX_CTL_LINE. Control
+    /// bytes are rejected precisely because their 6-char `\u00XX` escapes
+    /// would break this bound; the worst remaining JSON expansion is the
+    /// 2-char escapes for `"` and `\`, exercised here.
+    #[test]
+    fn max_valid_wake_list_fits_ctl_line() {
+        let entry = WakeEntry {
+            id: "\\".repeat(MAX_WAKE_ID),
+            at: Schedule::Window {
+                start: u64::MAX - 1,
+                end: u64::MAX,
+            },
+            reason_tag: "\"".repeat(MAX_REASON_TAG),
+        };
+        entry.validate().unwrap();
+        let entries = vec![entry; MAX_LEDGER_ENTRIES];
+        validate_wake_entries(&entries).unwrap();
+
+        let resp = serde_json::to_string(&CtlResponse::PrepareReap {
+            quiescent: false,
+            ledger_rev: u64::MAX,
+            next_wake: entries.clone(),
+        })
+        .unwrap();
+        assert!(
+            resp.len() <= MAX_CTL_LINE,
+            "prepare_reap line {} exceeds cap",
+            resp.len()
+        );
+
+        let push = serde_json::to_string(&LedgerUpdate {
+            op: "ledger_update".into(),
+            vault: "x".repeat(63),
+            token: TokenHex::from_token(&[0xffu8; TOKEN_LEN]),
+            rev: u64::MAX,
+            entries,
+        })
+        .unwrap();
+        assert!(
+            push.len() <= MAX_CTL_LINE,
+            "ledger_update line {} exceeds cap",
+            push.len()
+        );
     }
 }
