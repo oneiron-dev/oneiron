@@ -214,6 +214,7 @@ pub enum ErrorKind {
     InvalidCodeSymbolManifestBody,
     InvalidRepoMutationRecord,
     RepoMutationFailed,
+    RepoMutationRecoveryDiverged,
     InvalidPredicate,
     ReservedPredicate,
     SourceNotTrustedForAuto,
@@ -940,6 +941,17 @@ pub enum Error {
     /// A serialized repo mutation reached the git/worktree layer and failed.
     #[error("repo mutation failed: {0}")]
     RepoMutationFailed(String),
+    /// A prepared repo mutation cannot be recovered automatically because the
+    /// current repo state matches neither side of its write-ahead intent.
+    #[error(
+        "repo mutation recovery diverged for sequence {seq}; current state matches neither the recorded pre-state nor expected post-state"
+    )]
+    RepoMutationRecoveryDiverged {
+        seq: u64,
+        pre_action_fork_hash: Box<[u8; 32]>,
+        expected_post_action_fork_hash: Option<Box<[u8; 32]>>,
+        actual_fork_hash: Box<[u8; 32]>,
+    },
     /// Claim predicate violates the pinned D17 grammar (≥2 segments of
     /// `[a-z][a-z0-9_]*` joined by `.`, total ≤128 bytes).
     #[error("invalid claim predicate {predicate:?}: {reason}")]
@@ -1507,6 +1519,7 @@ impl Error {
             Self::InvalidCodeSymbolManifestBody(_) => ErrorKind::InvalidCodeSymbolManifestBody,
             Self::InvalidRepoMutationRecord(_) => ErrorKind::InvalidRepoMutationRecord,
             Self::RepoMutationFailed(_) => ErrorKind::RepoMutationFailed,
+            Self::RepoMutationRecoveryDiverged { .. } => ErrorKind::RepoMutationRecoveryDiverged,
             Self::InvalidPredicate { .. } => ErrorKind::InvalidPredicate,
             Self::ReservedPredicate { .. } => ErrorKind::ReservedPredicate,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
