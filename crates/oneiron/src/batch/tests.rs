@@ -764,12 +764,11 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
     Ok(())
 }
 
-/// Standalone claim preflight writes its gate decision before the normal
-/// apply pass. A closed off-record fence must reject before that preflight can
-/// leave a decision receipt behind.
+/// Gate decisions for standalone claims share the apply transaction with the
+/// fence check, so a closed off-record fence cannot leave a receipt behind.
 #[test]
-fn standalone_claim_preflight_does_not_record_gate_decision_before_closed_fence_rejection()
--> Result<()> {
+fn standalone_claim_write_does_not_record_gate_decision_before_closed_fence_rejection() -> Result<()>
+{
     let (_dir, vault) = open_raw_test_vault();
     let claim = EntityId::now();
     let (envelope, candidate) = claim_candidate_fixture(&vault, "fenced candidate")?;
@@ -783,10 +782,35 @@ fn standalone_claim_preflight_does_not_record_gate_decision_before_closed_fence_
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
         .commit()
-        .expect_err("closed fence must reject before gate preflight persists");
+        .expect_err("closed fence must reject before the gate decision persists");
     assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
     assert!(vault.gate_decisions(10)?.is_empty());
     assert!(vault.get_claim(&claim)?.is_none());
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_put_is_rejected_while_off_record_fence_is_live() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    vault.enter_off_record_session("sess-replicated-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-replicated-fence", &turn)?;
+
+    let err = vault
+        .batch()
+        .put_replicated(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            test_time_range(10, 10),
+            10,
+            b"stale remote off-record turn",
+        )
+        .commit()
+        .expect_err("a remote payload must not materialize under a live fence");
+
+    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(vault.get(&turn)?.is_none());
     Ok(())
 }
 

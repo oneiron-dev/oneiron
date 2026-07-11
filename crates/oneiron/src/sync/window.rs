@@ -713,6 +713,17 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             let fenced_targets =
                 off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
             for edge in &edges_out {
+                let edge_key = format_edge_key(id, edge.kind, &edge.target);
+                // A cross-window source may already carry an edge to a
+                // newly fenced target. Defer must remove that carrier, not
+                // merely skip its next backfill.
+                if fenced_targets.contains(&edge.target) {
+                    if map_contains_key(&edges_map, &edge_key) {
+                        map_delete(&edges_map, &edge_key)?;
+                        wrote_edges = true;
+                    }
+                    continue;
+                }
                 // Never backfill an edge whose TARGET is tombstoned —
                 // matching forward remat's both-endpoint filter. A surviving
                 // local S→E row (crash between the tombstone CRDT commit and
@@ -724,10 +735,6 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                     continue;
                 }
-                if fenced_targets.contains(&edge.target) {
-                    continue;
-                }
-                let edge_key = format_edge_key(id, edge.kind, &edge.target);
                 if map_contains_binary(&edges_map, &edge_key) {
                     continue;
                 }
@@ -769,15 +776,18 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         let fenced_targets =
             off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
+            let edge_key = format_edge_key(id, edge.kind, &edge.target);
+            if fenced_targets.contains(&edge.target) {
+                if map_contains_key(&edges_map, &edge_key) {
+                    map_delete(&edges_map, &edge_key)?;
+                }
+                continue;
+            }
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
-            if fenced_targets.contains(&edge.target) {
-                continue;
-            }
-            let edge_key = format_edge_key(id, edge.kind, &edge.target);
             let edge_val = encode_edge_value_for_crdt(
                 edge.kind,
                 edge.weight,
@@ -1726,6 +1736,17 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let fenced_targets =
             off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
+            let edge_key = format_edge_key(id, edge.kind, &edge.target);
+            // The target can live in another window, so its own entity scrub
+            // cannot reach this source-window carrier. Delete it here when
+            // the source is packed again.
+            if fenced_targets.contains(&edge.target) {
+                if map_contains_key(&edges_map, &edge_key) {
+                    map_delete(&edges_map, &edge_key)?;
+                    wrote_any = true;
+                }
+                continue;
+            }
             // Never backfill an edge whose TARGET is tombstoned — matching
             // forward remat's both-endpoint filter (the source is gated
             // above). A surviving local S→E row from the tombstone-commit/
@@ -1735,13 +1756,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
-            if fenced_targets.contains(&edge.target) {
-                continue;
-            }
             if local_entity_is_unsyncable_companion(vault, &edge.target)? {
                 continue;
             }
-            let edge_key = format_edge_key(id, edge.kind, &edge.target);
             if map_contains_binary(&edges_map, &edge_key) {
                 continue;
             }
@@ -1792,10 +1809,15 @@ fn scrub_fenced_entity_crdt_carriers(
     edges_map: &LoroMap,
     id: &EntityId,
 ) -> Result<bool> {
-    let hex_id = id.to_hex();
     let mut removed = false;
-    if map_contains_key(entities_map, &hex_id) {
-        map_delete(entities_map, &hex_id)?;
+    let mut entity_keys = Vec::new();
+    map_for_each_value_bytes(entities_map, |key, _| {
+        if EntityId::from_hex(key).ok().as_ref() == Some(id) {
+            entity_keys.push(key.to_owned());
+        }
+    });
+    for key in &entity_keys {
+        map_delete(entities_map, key)?;
         removed = true;
     }
     if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
