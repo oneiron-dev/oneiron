@@ -1325,7 +1325,7 @@ impl<'a> PipelineBuilder<'a> {
                 // widen only after a fenced hit is observed.
                 if text_channel_limit > *limit && text_scope_widening_active {
                     let scoped_result_limit = if recency.is_some() {
-                        text_channel_limit
+                        limit.saturating_mul(PER_SCAN_CAP_FACTOR)
                     } else {
                         *limit
                     };
