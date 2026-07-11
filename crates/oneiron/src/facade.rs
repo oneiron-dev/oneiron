@@ -1392,25 +1392,21 @@ impl MemoryFacade<'_> {
     /// actor. Everything else is a typed denial — binding an actor key is
     /// not authority (W3).
     ///
-    /// Race window: the actor check and `Vault::retract_claim` run in
-    /// separate transactions — no in-txn retract seam exists. See the
-    /// full window analysis on `verify_actor_binding` (in-place retype
-    /// impossible; two-step hard-delete retype refused facade-side; the
-    /// residual is a hard purge between check and apply, itself
-    /// owner-gated). Closing it fully needs a `retract_claim_in_txn`
-    /// engine seam (follow-up).
+    /// The authorship check and lifecycle transition share one write
+    /// transaction, so a same-id intervening writer cannot turn prior
+    /// authorization into authority over the replacement body.
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
         let actor_class = self.verified_actor_class()?;
         let id = self.resolve_ref(claim_ref)?;
-        if actor_class != EdgeActorClass::Human {
-            let authored = self
+        let now = crate::unix_seconds_now();
+        let (approval, consent_decision_id) = self.vault.try_with_write_txn(|wtxn| {
+            let body = self
                 .vault
-                .get_claim(&id)
-                .map_err(FacadeError::from)?
-                .as_ref()
-                .and_then(claim_envelope_actor)
-                .is_some_and(|writer| writer == self.actor);
-            if !authored {
+                .get_claim_in_txn(wtxn, &id)?
+                .ok_or(Error::EntityNotFound)?;
+            if actor_class != EdgeActorClass::Human
+                && claim_envelope_actor(&body) != Some(self.actor)
+            {
                 return Err(FacadeError::new(
                     FACADE_CODE_FORBIDDEN,
                     format!(
@@ -1424,22 +1420,17 @@ impl MemoryFacade<'_> {
                     ],
                 ));
             }
-        }
-        let now = crate::unix_seconds_now();
-        self.vault
-            .retract_claim(&id, now)
-            .map_err(FacadeError::from)?;
-        let approval = self
-            .vault
-            .get_claim(&id)
-            .map_err(FacadeError::from)?
-            .map_or_else(
+            let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
+            let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
                 || "retracted".to_owned(),
                 |body| body.approval.as_str().to_owned(),
             );
-        let receipt_ref = self
-            .latest_decision_ref_for(&id)?
-            .unwrap_or_else(|| format!("retract:{}", id.to_hex()));
+            Ok((approval, consent_receipt.map(|record| record.decision_id)))
+        })?;
+        let receipt_ref = consent_decision_id.map_or_else(
+            || format!("retract:{}", id.to_hex()),
+            |decision_id| format!("gate:{}", decision_id.to_hex()),
+        );
         Ok(CommitReceipt {
             claim_short_id: self.short_ref_or_hex(&id)?,
             approval,

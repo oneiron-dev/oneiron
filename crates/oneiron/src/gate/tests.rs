@@ -3374,6 +3374,44 @@ fn pending_gate_consent_survives_reopen() -> Result<()> {
 }
 
 #[test]
+fn retraction_closes_custom_policy_pending_without_rebinding_or_reparking() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, 0x97, &encode_policy_manifest(vec![]))?;
+
+    let id = test_id(0x98);
+    let mut proposed = source_trust_claim(ClaimSource::UserStated);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+    vault
+        .batch()
+        .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
+        .commit()?;
+
+    let pending = vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &id)?
+            .ok_or(Error::CorruptedIndex("pending gate consent"))
+    })?;
+    vault.retract_claim(&id, 4)?;
+
+    let retracted = vault.get_claim(&id)?.expect("retracted claim remains");
+    assert_eq!(retracted.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert!(!has_pending_gate_consent(&vault, &id)?);
+    let closure = vault
+        .store
+        .gate_decisions(10)?
+        .into_iter()
+        .find(|record| record.outcome == "retracted")
+        .expect("terminal retraction receipt");
+    assert_eq!(closure.claim_id, Some(*id.as_bytes()));
+    assert_eq!(closure.reason_codes, vec!["gate.pending.claim_retracted"]);
+    assert_eq!(closure.diff_handle, pending.diff_handle);
+    assert_eq!(closure.read_frontier_hash, pending.read_frontier_hash);
+    Ok(())
+}
+
+#[test]
 fn pending_gate_consent_groups_interleaved_dreamer_runs_with_default_lane() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, 0xA0, &encode_policy_manifest(vec![]))?;
