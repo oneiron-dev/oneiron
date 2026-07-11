@@ -221,6 +221,11 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::ReceiptAttestationInvalid
         | ErrorKind::ReceiptLeaseUnknown
         | ErrorKind::ReceiptLeaseRevoked
+        // OFRC-2i: a replicated turn landing after its off-record session
+        // closed is a rejection of that remote op. It must take the same
+        // Observer-B / forward-remat quarantine-and-continue path as the
+        // other typed remote write-door rejections.
+        | ErrorKind::OffRecordFencedTurnWriteRejected
         // ONE-1326: a known-key maintenance-band flood that passes origin
         // validation but exceeds this device's local ingest budget is a
         // remote-op rejection. Quarantine keeps evidence and lets a later

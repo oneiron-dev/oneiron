@@ -5,6 +5,7 @@ use crate::claim::{
 use crate::config::{HnswConfig, VaultConfig};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
+use crate::off_record::OffRecordBackendClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::write_envelope::ClaimCandidate;
@@ -760,6 +761,32 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
         0,
         "phase-2 validation failure must roll back the gate decision with the claim"
     );
+    Ok(())
+}
+
+/// Standalone claim preflight writes its gate decision before the normal
+/// apply pass. A closed off-record fence must reject before that preflight can
+/// leave a decision receipt behind.
+#[test]
+fn standalone_claim_preflight_does_not_record_gate_decision_before_closed_fence_rejection()
+-> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let claim = EntityId::now();
+    let (envelope, candidate) = claim_candidate_fixture(&vault, "fenced candidate")?;
+    vault.enter_off_record_session("sess-claim-preflight", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-claim-preflight", &claim)?;
+    let log = vault.off_record_receipt_log("sess-claim-preflight")?;
+    vault.close_off_record_session("sess-claim-preflight", log)?;
+    assert!(vault.gate_decisions(10)?.is_empty());
+
+    let err = vault
+        .batch()
+        .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+        .commit()
+        .expect_err("closed fence must reject before gate preflight persists");
+    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(vault.gate_decisions(10)?.is_empty());
+    assert!(vault.get_claim(&claim)?.is_none());
     Ok(())
 }
 

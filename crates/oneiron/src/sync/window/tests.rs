@@ -141,6 +141,92 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     Ok(())
 }
 
+/// A fence must scrub a carrier that reached the window before the fence was
+/// observed. Both production packing paths are covered: pending-mirror replay
+/// owns a source carrier, while reverse rematerialization owns an in-range
+/// local source plus an incident edge from an ordinary neighbor.
+#[test]
+fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x44; 16])?;
+    let ordinary = EntityId::from_bytes([0x45; 16])?;
+
+    for id in [&fenced, &ordinary] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"window carrier fixture",
+        )?;
+    }
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &fenced, 0.5)?;
+    vault.enter_off_record_session("sess-scrub-carrier", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-scrub-carrier", &fenced)?;
+
+    let fenced_raw = vault.get_raw(&fenced)?.expect("fenced fixture body");
+    let edge_key = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    let pending_marker = format!("pm:{window_key}:{}", fenced.to_hex());
+    vault.sync_state_put(&pending_marker, &[1])?;
+
+    let replay_doc = create_window_doc("source", &window_key);
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &fenced.to_hex(),
+        &fenced_raw,
+    )?;
+    map_insert_bytes(
+        &replay_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    replay_doc.commit();
+
+    assert_eq!(replay_pending_mirrors(&vault, &replay_doc, &window_key)?, 0);
+    assert!(
+        map_get_bytes(&replay_doc.get_map("entities"), &fenced.to_hex()).is_none(),
+        "pending replay must remove the pre-fence body carrier"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
+        "pending replay must remove the pre-fence incident edge carrier"
+    );
+    assert!(
+        vault.sync_state_get(&pending_marker)?.is_some(),
+        "the pending marker stays deferred until explicit promotion"
+    );
+
+    let reverse_doc = create_window_doc("source", &window_key);
+    map_insert_bytes(
+        &reverse_doc.get_map("entities"),
+        &fenced.to_hex(),
+        &fenced_raw,
+    )?;
+    map_insert_bytes(
+        &reverse_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    reverse_doc.commit();
+
+    assert_eq!(reverse_rematerialize(&vault, &reverse_doc, &window_key)?, 1);
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("entities"), &fenced.to_hex()).is_none(),
+        "reverse rematerialization must remove the pre-fence body carrier"
+    );
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
+        "reverse rematerialization must remove the pre-fence incident edge carrier"
+    );
+
+    Ok(())
+}
+
 /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`
 /// rows its snapshot subsumed — in the same transaction as the `d:w:`
 /// write — while `m:u_seq:w:{key}` keeps its high-water mark

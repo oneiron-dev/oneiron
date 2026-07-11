@@ -13,9 +13,9 @@ use super::bridge::{
 };
 use super::loro_support::{
     doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_from, import_doc,
-    map_contains_binary, map_delete, map_for_each_bytes, map_for_each_tombstone_value,
-    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
-    tombstone_values_for_id,
+    map_contains_binary, map_contains_key, map_delete, map_for_each_bytes,
+    map_for_each_tombstone_value, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
+    tombstone_map_contains_id, tombstone_values_for_id,
 };
 use super::quarantine::{self, QuarantineContainer};
 use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
@@ -595,6 +595,24 @@ pub fn rebuild_window_from_updates(
     Ok(doc)
 }
 
+/// Captures the fenced subset of `ids` under one LMDB read snapshot.
+///
+/// Window packing calls this for an entity's edge targets so fence checks do
+/// not open one read transaction per edge on large graphs.
+fn off_record_fenced_ids(
+    vault: &Vault,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<HashSet<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut fenced = HashSet::new();
+    for id in ids {
+        if crate::off_record::off_record_fence_active(&vault.store, &rtxn, &id)? {
+            fenced.insert(id);
+        }
+    }
+    Ok(fenced)
+}
+
 /// Replays pending-mirror markers (pm:*) for crash recovery.
 ///
 /// Fenced off-record entities remain pending until promotion. The marker is
@@ -643,6 +661,9 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // is device-local until explicit promotion. Keep the pending marker
         // so the promoted turn can flow through this ordinary path later.
         if vault.is_turn_off_record_fenced(id)? {
+            if scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)? {
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
             continue;
         }
 
@@ -689,6 +710,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // clearing early would silently drop the un-mirrored edges.
             let mut wrote_edges = false;
             let edges_out = vault.edges_out(id)?;
+            let fenced_targets =
+                off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
             for edge in &edges_out {
                 // Never backfill an edge whose TARGET is tombstoned —
                 // matching forward remat's both-endpoint filter. A surviving
@@ -701,7 +724,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                     continue;
                 }
-                if vault.is_turn_off_record_fenced(&edge.target)? {
+                if fenced_targets.contains(&edge.target) {
                     continue;
                 }
                 let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -743,13 +766,15 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
 
         let edges_out = vault.edges_out(id)?;
+        let fenced_targets =
+            off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
-            if vault.is_turn_off_record_fenced(&edge.target)? {
+            if fenced_targets.contains(&edge.target) {
                 continue;
             }
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
@@ -1650,9 +1675,11 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         let hex_id = id.to_hex();
 
         // OFRC-2i defer-sync: check the fence before reading or packing the
-        // payload, so a live off-record turn cannot enter a window through
-        // reverse rematerialization.
+        // payload. It also scrubs a carrier that landed before the fence was
+        // observed, so a live off-record turn cannot remain in a window
+        // through reverse rematerialization.
         if vault.is_turn_off_record_fenced(id)? {
+            wrote_any |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             continue;
         }
 
@@ -1696,6 +1723,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         }
 
         let edges_out = vault.edges_out(id)?;
+        let fenced_targets =
+            off_record_fenced_ids(vault, edges_out.iter().map(|edge| edge.target))?;
         for edge in &edges_out {
             // Never backfill an edge whose TARGET is tombstoned — matching
             // forward remat's both-endpoint filter (the source is gated
@@ -1706,7 +1735,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             if tombstone_map_contains_id(&tombstones_map, &edge.target) {
                 continue;
             }
-            if vault.is_turn_off_record_fenced(&edge.target)? {
+            if fenced_targets.contains(&edge.target) {
                 continue;
             }
             if local_entity_is_unsyncable_companion(vault, &edge.target)? {
@@ -1752,6 +1781,27 @@ fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<
         return Ok(false);
     };
     skip_companion_register_sync_mirror(&raw)
+}
+
+/// Removes a fenced entity's already-present CRDT body and every incident
+/// edge. Fencing must hold even when the carrier arrived before the local
+/// fence check; merely skipping a later mirror would leave the old carrier
+/// sync-visible indefinitely.
+fn scrub_fenced_entity_crdt_carriers(
+    entities_map: &LoroMap,
+    edges_map: &LoroMap,
+    id: &EntityId,
+) -> Result<bool> {
+    let hex_id = id.to_hex();
+    let mut removed = false;
+    if map_contains_key(entities_map, &hex_id) {
+        map_delete(entities_map, &hex_id)?;
+        removed = true;
+    }
+    if delete_edges_touching_entities(edges_map, &HashSet::from([*id]))? {
+        removed = true;
+    }
+    Ok(removed)
 }
 
 fn delete_edges_touching_entities(edges_map: &LoroMap, ids: &HashSet<EntityId>) -> Result<bool> {

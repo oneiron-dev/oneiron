@@ -734,9 +734,23 @@ impl Vault {
             if outcome.existed {
                 turns_deleted += 1;
             } else {
-                // Fully-missing id: the ARCH-0038 delete is a strict no-op
-                // (no tombstone) — remember it so its fence row is retained.
-                missing_turns.push(*bytes);
+                let rtxn = self.store.env.read_txn()?;
+                let already_hard_deleted =
+                    self.local_hard_delete_marker_exists_in_txn(&rtxn, &id)?;
+                drop(rtxn);
+                if already_hard_deleted {
+                    // A crash can land after PolicyDelete's purge transaction
+                    // (which writes the permanent `dt:` marker) but before this
+                    // close path removes the fence row. On retry the entity is
+                    // absent, but it was a written turn already deleted by this
+                    // close; treating it as tag-before-write would retain a
+                    // permanent closed fence and misreport the outcome.
+                    turns_deleted += 1;
+                } else {
+                    // Fully-missing id: the ARCH-0038 delete is a strict no-op
+                    // (no tombstone) — remember it so its fence row is retained.
+                    missing_turns.push(*bytes);
+                }
             }
             if let Some(receipt_id) = outcome.receipt_id {
                 redaction_receipt_ids.push(receipt_id);
