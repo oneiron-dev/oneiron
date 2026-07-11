@@ -4,6 +4,7 @@ use crate::claim::{ClaimSubject, claim_consolidatable};
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::gate::GateOutcome;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -157,7 +158,6 @@ fn promotion_lands_as_generated_proposed_through_gate() -> Result<()> {
     let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
 
-    let decisions_before = gate_decision_count(&vault);
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     assert_eq!(outcome.pended, vec![claim_id], "Proposed lane");
     assert!(outcome.landed.is_empty());
@@ -195,17 +195,28 @@ fn promotion_lands_as_generated_proposed_through_gate() -> Result<()> {
         "the surviving turn ref is stamped"
     );
 
-    // The write went through the gate: a decision receipt exists.
-    assert!(
-        gate_decision_count(&vault) > decisions_before,
-        "gate decision receipt recorded"
+    let claim_decisions: Vec<_> = vault
+        .store
+        .gate_decisions(1_000)?
+        .into_iter()
+        .filter(|decision| decision.claim_id == Some(*claim_id.as_bytes()))
+        .collect();
+    assert_eq!(
+        claim_decisions.len(),
+        1,
+        "one promotion must append exactly one gate decision"
+    );
+    assert_eq!(
+        claim_decisions[0].outcome,
+        GateOutcome::Pending.as_str(),
+        "the gate outcome stays Pending while the claim is stamped Proposed"
     );
     Ok(())
 }
 
 #[test]
 fn promotion_cannot_supersede_user_stated() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_gated_vault();
     let fixture = fixture(&vault)?;
     let head = user_stated_head(&vault, &fixture, "profile.name")?;
 
@@ -222,6 +233,16 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
     assert_eq!(outcome.rejected.len(), 1);
     assert_eq!(outcome.rejected[0].0, superseding_id);
     assert!(vault.get_claim(&superseding_id)?.is_none(), "rolled back");
+    let superseding_receipts = vault
+        .store
+        .gate_decisions(1_000)?
+        .into_iter()
+        .filter(|decision| decision.claim_id == Some(*superseding_id.as_bytes()))
+        .count();
+    assert_eq!(
+        superseding_receipts, 0,
+        "failed supersession must roll back its same-transaction gate decision"
+    );
 
     // The UserStated head is untouched and the other candidate landed.
     let head_body = vault.get_claim(&head)?.expect("head");
