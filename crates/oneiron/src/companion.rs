@@ -2179,6 +2179,21 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.ensure_companion_register_kind()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        self.create_companion_record_in_txn(&mut wtxn, id, record, learned_at)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Transaction-composable body of [`Vault::create_companion_record`].
+    pub(crate) fn create_companion_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &CompanionRecord,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.ensure_companion_register_kind()?;
         if record.lifecycle != ClaimLifecycleStatus::Active {
             return Err(Error::InvalidClaimBody(
                 "companion record create must be active",
@@ -2187,14 +2202,12 @@ impl Vault {
         let record = record.created_at(learned_at)?;
         let data = encode_companion_record_body(&record)?;
         let key = record.key();
-        let mut wtxn = self.store.env.write_txn()?;
-        if self.store.entities.get(&wtxn, id.as_bytes())?.is_some()
-            || companion_record_any_id_for_key_in_txn(&self.store, &wtxn, &key)?.is_some()
+        if self.store.entities.get(&*wtxn, id.as_bytes())?.is_some()
+            || companion_record_any_id_for_key_in_txn(&self.store, &*wtxn, &key)?.is_some()
         {
             return Err(Error::CompanionRecordAlreadyExists);
         }
-        self.apply_companion_record_body(&mut wtxn, id, learned_at, data)?;
-        wtxn.commit()?;
+        self.apply_companion_record_body(wtxn, id, learned_at, data)?;
         Ok(())
     }
 
@@ -2269,14 +2282,26 @@ impl Vault {
     ) -> Result<CompanionRecord> {
         self.ensure_companion_register_kind()?;
         let mut wtxn = self.store.env.write_txn()?;
-        let existing = self.read_companion_record_in_txn(&wtxn, id)?;
+        let retired = self.retire_companion_record_in_txn(&mut wtxn, id, retired_at)?;
+        wtxn.commit()?;
+        Ok(retired)
+    }
+
+    /// Transaction-composable body of [`Vault::retire_companion_record`].
+    pub(crate) fn retire_companion_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        retired_at: u64,
+    ) -> Result<CompanionRecord> {
+        self.ensure_companion_register_kind()?;
+        let existing = self.read_companion_record_in_txn(&*wtxn, id)?;
         if existing.lifecycle == ClaimLifecycleStatus::Retracted {
             return Ok(existing);
         }
         let retired = existing.retired_at(retired_at)?;
         let data = encode_companion_record_body(&retired)?;
-        self.apply_companion_record_body(&mut wtxn, id, retired_at, data)?;
-        wtxn.commit()?;
+        self.apply_companion_record_body(wtxn, id, retired_at, data)?;
         Ok(retired)
     }
 

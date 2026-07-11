@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::Vault;
@@ -18,6 +19,7 @@ use crate::batch::delete_from_phonetic_postings;
 use crate::bm25;
 use crate::claim::ClaimLifecycleStatus;
 use crate::claim::ClaimSubject;
+use crate::edge::EdgeActorClass;
 use crate::edge::EdgeConfirmationStatus;
 use crate::edge::EdgeKind;
 use crate::edge::EdgeProvenanceFlags;
@@ -37,7 +39,7 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
-use crate::store::Store;
+use crate::store::{GateDecisionId, GateDecisionRecord, Store};
 use crate::unix_seconds_now;
 
 pub(crate) const HARD_ERASE_SWEEP_PREFIX: &[u8] = b"h:";
@@ -140,6 +142,21 @@ pub struct TombstoneValueV2 {
     /// Deletion request UUID, raw 16 bytes — correlates the tombstone with
     /// the REDACTION_AUDIT receipt's `request_id` (M4-06).
     pub request_id: [u8; 16],
+}
+
+/// Inputs committed together by the sync tombstone persistence transaction.
+/// Grouping these values makes the TXN1 contract explicit: the request-keyed
+/// recovery sidecar, window snapshot, queue mutation, and scrub all commit
+/// as one unit before the later purge transaction authors the gate record.
+#[cfg(feature = "sync")]
+struct TombstonePersistence<'a> {
+    target: &'a EntityId,
+    snapshot: &'a [u8],
+    version_vector: &'a [u8],
+    tombstone: &'a TombstoneValueV2,
+    delete_update: Option<&'a crate::sync::window::DeleteBearingUpdate>,
+    scrubbed_update_keys: &'a [String],
+    gate_decision: Option<&'a GateDecisionRecord>,
 }
 
 impl TombstoneValueV2 {
@@ -434,6 +451,68 @@ pub struct DeleteEntityOutcome {
     pub existed: bool,
     pub receipt_id: Option<EntityId>,
     pub sweep_key: Option<Vec<u8>>,
+}
+
+/// Owner-authority evidence evaluated before a facade deletion starts.
+///
+/// The actor identity is intentionally recorded at today's strength: a
+/// store-verified actor entity plus asserted class. Stronger identity minting
+/// remains ONE-1604 and is not implied by this record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeletionGateContext {
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    policy_manifest_version: String,
+    read_frontier_hash: [u8; 32],
+}
+
+impl DeletionGateContext {
+    pub(crate) fn new(
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        policy_manifest_version: String,
+        read_frontier_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            actor,
+            actor_class,
+            policy_manifest_version,
+            read_frontier_hash,
+        }
+    }
+
+    fn decision_record(
+        &self,
+        request_id: [u8; 16],
+        target: &EntityId,
+        reason: DeleteReason,
+        created_at: u64,
+    ) -> GateDecisionRecord {
+        let mut diff = Sha256::new();
+        diff.update(b"oneiron.gate.deletion.v0");
+        diff.update(self.actor.as_bytes());
+        diff.update(target.as_bytes());
+        diff.update([TombstoneReason::from(reason).wire_byte()]);
+        GateDecisionRecord {
+            version: 0,
+            // The ledger key is the deletion request id, so recovery and
+            // REDACTION_AUDIT correlation never need a second identifier.
+            decision_id: GateDecisionId::from_bytes(request_id),
+            created_at,
+            outcome: "allow".to_owned(),
+            reason_codes: vec!["gate.allow.owner_delete".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: self.actor_class.gate_actor_class().to_owned(),
+            actor_ref: Some(self.actor.to_hex()),
+            content_kind: "deletion".to_owned(),
+            policy_manifest_version: self.policy_manifest_version.clone(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: diff.finalize().to_vec(),
+            read_frontier_hash: self.read_frontier_hash,
+        }
+    }
 }
 
 impl DeleteEntityOutcome {
@@ -1332,6 +1411,34 @@ fn signal_after_header_read() {
 #[inline(always)]
 fn signal_after_header_read() {}
 
+#[cfg(all(test, feature = "sync"))]
+thread_local! {
+    static FAIL_AFTER_TOMBSTONE_BEFORE_PURGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arms a one-shot crash surrogate after TXN1 has durably persisted the CRDT
+/// tombstone and request-keyed authority recovery sidecar, but before any
+/// local scrub/purge.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn arm_fail_after_tombstone_before_purge() {
+    FAIL_AFTER_TOMBSTONE_BEFORE_PURGE.with(|armed| armed.set(true));
+}
+
+#[cfg(all(test, feature = "sync"))]
+fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
+    #[cfg(all(test, feature = "sync"))]
+    if FAIL_AFTER_TOMBSTONE_BEFORE_PURGE.replace(false) {
+        return Err(Error::InvariantViolation(
+            "test crash after deletion TXN1 before purge",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(all(test, feature = "sync")))]
+#[inline(always)]
+fn maybe_fail_after_tombstone_before_purge() {}
+
 pub(crate) fn is_delete_protected_engine_record(entity_type: u8) -> bool {
     matches!(
         entity_type,
@@ -1406,9 +1513,28 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
+        self.delete_entity_with_reason_impl(id, reason, None)
+    }
+
+    /// Facade delete seam carrying an owner gate evaluated before TXN1.
+    pub(crate) fn delete_entity_with_reason_gated(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: DeletionGateContext,
+    ) -> Result<DeleteEntityOutcome> {
+        self.delete_entity_with_reason_impl(id, reason, Some(gate))
+    }
+
+    fn delete_entity_with_reason_impl(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<DeletionGateContext>,
+    ) -> Result<DeleteEntityOutcome> {
         let requested_at = unix_seconds_now();
         let Some(header) = self.read_entity_header(id)? else {
-            return self.delete_entity_without_header(id, reason, requested_at);
+            return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
         if is_delete_protected_engine_record(header.entity_type) {
             return Err(Error::MaintenanceKindNotWritable(header.entity_type));
@@ -1432,6 +1558,9 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
+        let gate_decision = gate
+            .as_ref()
+            .map(|gate| gate.decision_record(*request_uuid.as_bytes(), id, reason, requested_at));
         let window_label = window_label_from_timestamp(header.learned_at);
 
         // ARCH-0038 DELETE interplay: an `edge.provenance` Claim's subject
@@ -1465,11 +1594,15 @@ impl Vault {
                 // OWNER-DECISION (cfg-off durability): the pending-tombstone
                 // marker rides the SAME txn as the shell scrub.
                 self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+                if let Some(decision) = gate_decision.as_ref() {
+                    self.store
+                        .append_gate_decision_in_txn(&mut wtxn, decision)?;
+                }
             }
             wtxn.commit()?;
             if existed {
                 let crdt_persisted =
-                    self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
+                    self.write_crdt_tombstone(id, header.learned_at, &tombstone, None)?;
                 if crdt_persisted {
                     self.clear_pending_tombstone(&window_label, id)?;
                 }
@@ -1483,7 +1616,12 @@ impl Vault {
 
         // LOCKED ordering (ARCH-0038): CRDT tombstone FIRST — prevents sync
         // resurrection before the destructive purge touches payloads.
-        let crdt_persisted = self.write_crdt_tombstone(id, header.learned_at, &tombstone)?;
+        let crdt_persisted =
+            self.write_crdt_tombstone(id, header.learned_at, &tombstone, gate_decision.as_ref())?;
+        #[cfg(all(test, feature = "sync"))]
+        maybe_fail_after_tombstone_before_purge()?;
+        #[cfg(not(all(test, feature = "sync")))]
+        maybe_fail_after_tombstone_before_purge();
         let tombstone_complete_at = unix_seconds_now();
 
         let soft_complete_at = if matches!(
@@ -1534,8 +1672,19 @@ impl Vault {
                 self.store
                     .sync_state
                     .put(&mut wtxn, &marker_key, &tombstone.encode())?;
-                wtxn.commit()?;
             }
+            if crdt_persisted
+                && let Some(decision) = gate_decision.as_ref()
+                && !self.store.discard_pending_deletion_gate_decision_in_txn(
+                    &mut wtxn,
+                    decision.decision_id,
+                    id.as_bytes(),
+                    tombstone.reason.wire_byte(),
+                )?
+            {
+                return Err(Error::CorruptedIndex("pending deletion gate decision"));
+            }
+            wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
@@ -1564,6 +1713,13 @@ impl Vault {
         // OWNER-DECISION (cfg-off durability): the pending-tombstone marker
         // rides the SAME txn as the active-store purge — on every build.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        self.append_deletion_gate_decision_in_purge_txn(
+            &mut wtxn,
+            crdt_persisted,
+            gate_decision.as_ref(),
+            id,
+            tombstone.reason,
+        )?;
 
         let hard_purge_complete_at = unix_seconds_now();
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
@@ -1603,6 +1759,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         requested_at: u64,
+        gate: Option<&DeletionGateContext>,
     ) -> Result<DeleteEntityOutcome> {
         // Probe first so a fully-missing id stays a strict no-op — deleting
         // a nonexistent entity must not mint tombstones or receipts.
@@ -1626,8 +1783,15 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
+        let gate_decision = gate
+            .map(|gate| gate.decision_record(*request_uuid.as_bytes(), id, reason, requested_at));
         let window_label = window_label_from_timestamp(requested_at);
-        let crdt_persisted = self.write_crdt_tombstone(id, requested_at, &tombstone)?;
+        let crdt_persisted =
+            self.write_crdt_tombstone(id, requested_at, &tombstone, gate_decision.as_ref())?;
+        #[cfg(all(test, feature = "sync"))]
+        maybe_fail_after_tombstone_before_purge()?;
+        #[cfg(not(all(test, feature = "sync")))]
+        maybe_fail_after_tombstone_before_purge();
 
         let mut wtxn = self.store.env.write_txn()?;
         let marker_key = local_hard_delete_key(id);
@@ -1647,13 +1811,31 @@ impl Vault {
                 self.store
                     .sync_state
                     .put(&mut wtxn, &marker_key, &tombstone.encode())?;
-                wtxn.commit()?;
             }
+            if crdt_persisted
+                && let Some(decision) = gate_decision.as_ref()
+                && !self.store.discard_pending_deletion_gate_decision_in_txn(
+                    &mut wtxn,
+                    decision.decision_id,
+                    id.as_bytes(),
+                    tombstone.reason.wire_byte(),
+                )?
+            {
+                return Err(Error::CorruptedIndex("pending deletion gate decision"));
+            }
+            wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
         let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
+        self.append_deletion_gate_decision_in_purge_txn(
+            &mut wtxn,
+            crdt_persisted,
+            gate_decision.as_ref(),
+            id,
+            tombstone.reason,
+        )?;
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
             // `[reason:1][deleted_at:8 LE][request_id:16]` value, GLOBAL
@@ -1709,6 +1891,40 @@ impl Vault {
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
         })
+    }
+
+    /// Completes the deletion authority record in the same TXN3 write as the
+    /// active-store purge and REDACTION_AUDIT receipt. Sync-enabled TXN1
+    /// stages only a recovery sidecar; sync-disabled deletes have no TXN1 and
+    /// append the evaluated record directly on their first durable purge.
+    fn append_deletion_gate_decision_in_purge_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        crdt_persisted: bool,
+        decision: Option<&GateDecisionRecord>,
+        id: &EntityId,
+        tombstone_reason: TombstoneReason,
+    ) -> Result<()> {
+        let Some(decision) = decision else {
+            return Ok(());
+        };
+        if crdt_persisted {
+            if self
+                .store
+                .append_pending_deletion_gate_decision_in_txn(
+                    wtxn,
+                    decision.decision_id,
+                    id.as_bytes(),
+                    tombstone_reason.wire_byte(),
+                )?
+                .is_none()
+            {
+                return Err(Error::CorruptedIndex("pending deletion gate decision"));
+            }
+        } else {
+            self.store.append_gate_decision_in_txn(wtxn, decision)?;
+        }
+        Ok(())
     }
 
     /// Pre-purge ARCH-0038 capture for the local delete paths: decodes the
@@ -2015,8 +2231,18 @@ impl Vault {
                 self.store
                     .sync_state
                     .put(&mut wtxn, &marker_key, &marker_value)?;
-                wtxn.commit()?;
             }
+            if let Some((request_id, tombstone_reason)) =
+                decoded.request_id.zip(raw_value.first().copied())
+            {
+                let _ = self.store.discard_pending_deletion_gate_decision_in_txn(
+                    &mut wtxn,
+                    GateDecisionId::from_bytes(request_id),
+                    id.as_bytes(),
+                    tombstone_reason,
+                )?;
+            }
+            wtxn.commit()?;
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
                 receipt_id: None,
@@ -2034,6 +2260,16 @@ impl Vault {
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {
             self.refresh_subject_edge_after_claim_delete_in_txn(&mut wtxn, id, &captured.subject)?;
+        }
+        if let Some((request_id, tombstone_reason)) =
+            decoded.request_id.zip(raw_value.first().copied())
+        {
+            let _ = self.store.append_pending_deletion_gate_decision_in_txn(
+                &mut wtxn,
+                GateDecisionId::from_bytes(request_id),
+                id.as_bytes(),
+                tombstone_reason,
+            )?;
         }
         let applied_at = unix_seconds_now();
         let receipt_id = EntityId::now();
@@ -2152,10 +2388,11 @@ impl Vault {
     /// ONE-1135 (delete-propagation transport):
     /// - **Live routing**: when the window is OPEN (registry lookup via the
     ///   attached [`crate::sync::WindowManager`]), the tombstone commits
-    ///   through the registry-owned live doc — Observer A persists the `u:`
-    ///   row and every registry holder sees the delete — never through a
-    ///   parallel transient copy whose `d:w:` export a live
-    ///   `persist_state` would clobber.
+    ///   through the registry-owned live doc. Its synchronous Observer A
+    ///   callback is suppressed for this one commit; the deletion TXN1 then
+    ///   persists the snapshot + outbound delta alongside the authority
+    ///   recovery sidecar — never through a parallel transient copy whose
+    ///   `d:w:` export a live `persist_state` would clobber.
     /// - **Transient path** (window NOT open): the doc is import-merged
     ///   from the persisted snapshot + pending `u:` rows
     ///   ([`crate::sync::window::load_window_from_state`]) — never a blind
@@ -2170,21 +2407,25 @@ impl Vault {
     ///   (ARCH-0038 carriers 13–15; fail-closed — over-drop + full resync,
     ///   never leak).
     ///
-    /// OWNER-DECISION (ONE-1135, live-path commit origin): the live-doc
-    /// commit is tagged `BRIDGE_ORIGIN`. Observer A fires for ALL local
-    /// commits and still persists the `u:` row; Observer B MUST skip it —
-    /// the local delete path owns the LMDB purge under the pinned
-    /// tombstone → purge → receipt ordering, and a B-side replay here would
-    /// purge BEFORE the purge transaction, voiding the local receipt and
-    /// the `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
+    /// OWNER-DECISION (ONE-1601 live-path commit origin): the live-doc
+    /// commit is tagged `DELETION_TOMBSTONE_ORIGIN`. Observer B skips it;
+    /// Observer A is synchronously suppressed so it cannot persist the
+    /// tombstone before the same TXN1 stages the recovery sidecar. The local
+    /// delete path owns the LMDB purge under the pinned tombstone → purge →
+    /// receipt ordering, and a B-side replay here would purge BEFORE the
+    /// purge transaction, voiding the local receipt and the
+    /// `DeleteEntityOutcome` (mirrors `replay_pending_tombstones`).
     #[cfg(feature = "sync")]
     fn write_crdt_tombstone(
         &self,
         id: &EntityId,
         window_ts: u64,
         value: &TombstoneValueV2,
+        gate_decision: Option<&GateDecisionRecord>,
     ) -> Result<bool> {
-        use crate::sync::bridge::BRIDGE_ORIGIN;
+        use crate::sync::bridge::{
+            DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
+        };
         use crate::sync::loro_support::{doc_version_vector, export_snapshot};
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
@@ -2213,18 +2454,21 @@ impl Vault {
             // atomic under that lock, so a concurrent remote re-put can no
             // longer check the tombstones map BEFORE this commit and write
             // the deleted body back AFTER the purge txn that follows
-            // (resurrection race). Deadlock-free: the BRIDGE_ORIGIN commit
-            // is rejected by Observer B callbacks BEFORE they lock, and
-            // Observer A never takes this lock. Lock order materializer →
-            // LMDB txn matches every other holder; the registry lock is
-            // NOT held here (manager lock-order pin).
+            // (resurrection race). The deletion origin skips Observer B;
+            // Observer A is synchronously suppressed just for this commit so
+            // the snapshot, outbound delta, and authority-recovery sidecar
+            // land together in the TXN1 immediately below. Lock order
+            // materializer → LMDB txn matches every other holder; the
+            // registry lock is NOT held here (manager lock-order pin).
             let (delete_update, snapshot, vv) = {
                 let _guard = materializer.lock();
                 let vv_before = window.doc.oplog_vv();
                 apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
-                window
-                    .doc
-                    .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+                with_deletion_tombstone_observer_a_suppressed(|| {
+                    window
+                        .doc
+                        .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
+                });
                 let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
                 let snapshot = export_snapshot(&window.doc)?;
                 let vv = doc_version_vector(&window.doc);
@@ -2232,11 +2476,15 @@ impl Vault {
             };
             self.finish_crdt_tombstone_persist(
                 &window_key,
-                &snapshot,
-                &vv,
-                value,
-                delete_update.as_ref(),
-                &merged_update_keys,
+                TombstonePersistence {
+                    target: id,
+                    snapshot: &snapshot,
+                    version_vector: &vv,
+                    tombstone: value,
+                    delete_update: delete_update.as_ref(),
+                    scrubbed_update_keys: &merged_update_keys,
+                    gate_decision,
+                },
             )?;
             return Ok(true);
         }
@@ -2258,11 +2506,15 @@ impl Vault {
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist(
             &window_key,
-            &snapshot,
-            &vv,
-            value,
-            delete_update.as_ref(),
-            &merged_update_keys,
+            TombstonePersistence {
+                target: id,
+                snapshot: &snapshot,
+                version_vector: &vv,
+                tombstone: value,
+                delete_update: delete_update.as_ref(),
+                scrubbed_update_keys: &merged_update_keys,
+                gate_decision,
+            },
         )?;
         Ok(true)
     }
@@ -2276,15 +2528,25 @@ impl Vault {
     fn finish_crdt_tombstone_persist(
         &self,
         window_key: &crate::sync::WindowKey,
-        snapshot: &[u8],
-        vv: &[u8],
-        value: &TombstoneValueV2,
-        delete_update: Option<&crate::sync::window::DeleteBearingUpdate>,
-        scrubbed_update_keys: &[String],
+        persistence: TombstonePersistence<'_>,
     ) -> Result<()> {
-        let is_hard = value.reason.is_hard();
+        let is_hard = persistence.tombstone.reason.is_hard();
         self.with_write_txn(|wtxn| {
-            crate::sync::window::persist_window_doc_in_txn(self, wtxn, window_key, snapshot, vv)?;
+            if let Some(decision) = persistence.gate_decision {
+                self.store.put_pending_deletion_gate_decision_in_txn(
+                    wtxn,
+                    decision,
+                    persistence.target.as_bytes(),
+                    persistence.tombstone.reason.wire_byte(),
+                )?;
+            }
+            crate::sync::window::persist_window_doc_in_txn(
+                self,
+                wtxn,
+                window_key,
+                persistence.snapshot,
+                persistence.version_vector,
+            )?;
             if is_hard {
                 // ARCH-0038 carrier 15: pending `q:` rows for this window
                 // may carry the deleted payload — drop them all (fail-closed
@@ -2292,7 +2554,7 @@ impl Vault {
                 // scrub). The `u:w:` rows the snapshot just subsumed are
                 // active payload carriers too.
                 crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
-                for update_key in scrubbed_update_keys {
+                for update_key in persistence.scrubbed_update_keys {
                     self.store.sync_state.delete(wtxn, update_key)?;
                 }
                 // Carriers 13–14: this window's sync state is no longer a
@@ -2301,7 +2563,18 @@ impl Vault {
                 let fr_key = format!("fr:w:{window_key}");
                 self.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
             }
-            if let Some(update) = delete_update {
+            if let Some(update) = persistence.delete_update {
+                // The live-doc path suppresses Observer A for the tombstone
+                // commit, then writes its ordinary `u:w:` carrier here in
+                // the same TXN1 as the snapshot and recovery sidecar. This
+                // preserves restart replay without a crash window where a
+                // tombstone is durable but its authorization decision is not.
+                crate::sync::bridge::persist_window_update_in_txn(
+                    self,
+                    wtxn,
+                    window_key.as_str(),
+                    update.as_bytes(),
+                )?;
                 crate::sync::queue::push_delete_bearing_in_txn(
                     self,
                     wtxn,
@@ -2325,6 +2598,7 @@ impl Vault {
         _id: &EntityId,
         _window_ts: u64,
         _value: &TombstoneValueV2,
+        _gate_decision: Option<&GateDecisionRecord>,
     ) -> Result<bool> {
         // No CRDT in this build — the `pt:` marker written in the purge /
         // scrub txn is the deletion's durable propagation intent.
