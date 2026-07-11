@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use uuid::Uuid;
 
 use crate::Vault;
+use crate::dreamer_runner::{
+    DREAMER_RUNNER_JOB_KIND, DreamerJobPayload, decode_dreamer_job_payload,
+};
 use crate::error::{Error, Result};
 use crate::store::Store;
 
@@ -50,6 +53,7 @@ static JOB_QUEUE_CLEANUP_STALE_REQUEUED: AtomicU64 = AtomicU64::new(0);
 static JOB_QUEUE_CLEANUP_RETRY_REASON_COUNTERS: [AtomicU64; JOB_QUEUE_RETRY_REASON_COUNT] =
     [AtomicU64::new(0), AtomicU64::new(0)];
 const CLAIM_KIND_WRITE_RETRY_LIMIT: usize = 3;
+const DREAMER_RUN_ROOT_CLIMB_LIMIT: usize = 64;
 
 #[derive(Debug, Default)]
 struct ClaimKindReadScan {
@@ -526,6 +530,11 @@ impl<'a> JobQueue<'a> {
         self.store
             .job_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
+        self.store.put_job_run_index_in_txn(
+            wtxn,
+            record.run_id.as_deref(),
+            record.id.as_bytes(),
+        )?;
         let ready_key = ready_key(ready_at(&record), record.id);
         self.store
             .job_ready
@@ -1239,16 +1248,25 @@ impl<'a> JobQueue<'a> {
         validate_optional_run_id(Some(run_id))?;
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
-        for row in self.store.job_records.iter(&rtxn)? {
-            let (key, raw_record) = row?;
-            let id = JobId::from_bytes(key)?;
+        for id_bytes in self.store.job_ids_for_run_in_txn(&rtxn, run_id)? {
+            let id = JobId::from_bytes(&id_bytes)?;
+            let Some(raw_record) = self.store.job_records.get(&rtxn, id.as_bytes())? else {
+                return Err(Error::CorruptedIndex("job run index"));
+            };
             let record = decode_record(raw_record, id)?;
-            if record.run_id.as_deref() == Some(run_id) {
-                records.push(record);
+            if record.run_id.as_deref() != Some(run_id) {
+                return Err(Error::CorruptedIndex("job run index"));
             }
+            records.push(record);
         }
         records.sort_by(job_record_order);
         Ok(records)
+    }
+
+    pub(crate) fn dreamer_run_root_id(&self, run_id: &str) -> Result<Option<JobId>> {
+        validate_optional_run_id(Some(run_id))?;
+        let rtxn = self.store.env.read_txn()?;
+        dreamer_run_root_id_in_txn(self.store, &rtxn, run_id)
     }
 
     fn read_existing_dedupe_in_read_txn(
@@ -1575,6 +1593,69 @@ fn mark_rechecked_candidate_not_running(report: &mut JobQueueCleanupReport) {
     report.running = report.running.saturating_sub(1);
 }
 
+/// Resolves the OF-193 Dreamer root for one stamped run id using the durable
+/// run index.  A branch-only run climbs parent links with the same bounded,
+/// fail-safe behavior used by the inbox projection.
+pub(crate) fn dreamer_run_root_id_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    run_id: &str,
+) -> Result<Option<JobId>> {
+    let mut records = Vec::new();
+    // The sidecar is ordered by job id; preserve the prior `list_run`
+    // behavior by selecting a root/branch in deterministic creation order.
+    let mut first_branch: Option<(JobId, DreamerJobPayload)> = None;
+    for id_bytes in store.job_ids_for_run_in_txn(txn, run_id)? {
+        let id = JobId::from_bytes(&id_bytes)?;
+        let Some(raw) = store.job_records.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("job run index"));
+        };
+        let record = decode_record(raw, id)?;
+        if record.run_id.as_deref() != Some(run_id) {
+            return Err(Error::CorruptedIndex("job run index"));
+        }
+        records.push(record);
+    }
+    records.sort_by(job_record_order);
+    for record in records {
+        if record.kind != DREAMER_RUNNER_JOB_KIND {
+            continue;
+        }
+        let Ok(payload) = decode_dreamer_job_payload(&record.payload) else {
+            continue;
+        };
+        if payload.parent_job.is_none() {
+            return Ok(Some(record.id));
+        }
+        if first_branch.is_none() {
+            first_branch = Some((record.id, payload));
+        }
+    }
+
+    let Some((mut job_id, mut payload)) = first_branch else {
+        return Ok(None);
+    };
+    let mut visited = HashSet::from([job_id]);
+    while let Some(parent_id) = payload.parent_job {
+        if visited.len() >= DREAMER_RUN_ROOT_CLIMB_LIMIT || !visited.insert(parent_id) {
+            break;
+        }
+        let Some(raw) = store.job_records.get(txn, parent_id.as_bytes())? else {
+            break;
+        };
+        let parent = decode_record(raw, parent_id)?;
+        if parent.kind != DREAMER_RUNNER_JOB_KIND {
+            break;
+        }
+        let Ok(parent_payload) = decode_dreamer_job_payload(&parent.payload) else {
+            break;
+        };
+        job_id = parent_id;
+        payload = parent_payload;
+    }
+    Ok(Some(job_id))
+}
+
 pub(crate) fn job_record_order(left: &JobRecord, right: &JobRecord) -> std::cmp::Ordering {
     left.created_at
         .cmp(&right.created_at)
@@ -1608,7 +1689,7 @@ fn encode_record(record: &JobRecord) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
+pub(crate) fn decode_record(raw: &[u8], expected_id: JobId) -> Result<JobRecord> {
     let Some((&version, body)) = raw.split_first() else {
         return Err(Error::InvalidJobQueueRecord("missing job record version"));
     };

@@ -36,16 +36,14 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_CONFLICT_OPEN,
 };
-use crate::dreamer_runner::{
-    DREAMER_RUNNER_JOB_KIND, DreamerJobPayload, decode_dreamer_job_payload,
-};
+#[cfg(test)]
+use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::dreamer_runner::decode_dreamer_job_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
-use crate::job_queue::{JobId, JobQueue};
-use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower,
-};
+use crate::job_queue::JobQueue;
+use crate::receipt::{ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, PendingGateConsentRecord,
@@ -54,15 +52,6 @@ use crate::temporal::TimeRange;
 
 /// Upper bound on pending-consent rows visited per browse projection pass.
 pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;
-
-/// Deeper pending-row scan budget for EXPLICIT group resolution and reopen,
-/// aligned with the receipt family's `MAX_RECEIPT_QUERY_SCAN`: a named bulk
-/// verb must reach its group even when the browse window is saturated.
-/// Per-item gap-decay bounds the open tray well below this in practice.
-pub const INBOX_RESOLVE_PENDING_SCAN_LIMIT: usize = 100_000;
-
-/// Cycle/depth guard when climbing dreamer parent links to the run root.
-const INBOX_RUN_ROOT_CLIMB_LIMIT: usize = 64;
 
 /// Sub-clusters by entity/theme are emitted only when a run surfaces at
 /// least this many members ("when the run emits many items").
@@ -340,16 +329,7 @@ impl Vault {
         verb_class: Option<&str>,
         now: u64,
     ) -> Result<InboxBundleResolution> {
-        let groups = inbox_groups_projection(
-            self,
-            InboxQuery::at(now, INBOX_RESOLVE_PENDING_SCAN_LIMIT),
-            InboxReviewDial::ReviewEverything,
-            INBOX_RESOLVE_PENDING_SCAN_LIMIT,
-        )?;
-        let group = groups
-            .into_iter()
-            .find(|group| group.group_key == group_key || group.run_id == group_key)
-            .ok_or(Error::EntityNotFound)?;
+        let group = explicit_inbox_group(self, group_key, now)?.ok_or(Error::EntityNotFound)?;
 
         let mut targets = Vec::new();
         for member in &group.members {
@@ -454,23 +434,12 @@ impl Vault {
         })?;
         let bundle_ref = bundle_ref_for_group(group_key);
 
-        let open_group = inbox_groups_projection(
-            self,
-            InboxQuery::at(now, INBOX_RESOLVE_PENDING_SCAN_LIMIT),
-            InboxReviewDial::ReviewEverything,
-            INBOX_RESOLVE_PENDING_SCAN_LIMIT,
-        )?
-        .into_iter()
-        .find(|group| group.group_key == group_key || group.run_id == group_key);
+        let open_group = explicit_inbox_group(self, group_key, now)?;
 
-        // Same ledger scan budget as the RS1 receipt-family query; a durable
-        // per-grant_ref decision index is follow-up work on the RCPT-1
-        // receipt-family index track.
         let resolution_receipts = self
             .store
-            .gate_decisions(MAX_RECEIPT_QUERY_SCAN)?
+            .gate_decisions_for_grant_ref(&bundle_ref)?
             .iter()
-            .filter(|record| record.grant_ref.as_deref() == Some(bundle_ref.as_str()))
             .map(gate_decision_receipt)
             .collect();
 
@@ -492,7 +461,7 @@ fn bundle_ref_for_group(group_key: &str) -> String {
 /// same fact by a later run would never match it. This hash keeps the claim
 /// identity (predicate, subject, value, world, scope, validity) and drops
 /// the per-write stamps.
-fn inbox_claim_hash(body: &ClaimBody) -> Result<Vec<u8>> {
+pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     let mut normalized = body.clone();
     normalized.approval = ClaimApprovalStatus::Proposed;
     normalized.lifecycle = ClaimLifecycleStatus::Active;
@@ -505,9 +474,10 @@ fn inbox_claim_hash(body: &ClaimBody) -> Result<Vec<u8>> {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.inbox.claim_hash.v0");
     hasher.update(&encoded);
-    Ok(hasher.finalize().to_vec())
+    Ok(hasher.finalize().into())
 }
 
+#[derive(Clone)]
 struct OpenMember {
     pending: PendingGateConsentRecord,
     decision: GateDecisionRecord,
@@ -516,13 +486,27 @@ struct OpenMember {
 }
 
 fn open_dreamer_members(vault: &Vault, scan_limit: usize) -> Result<Vec<OpenMember>> {
+    let pending = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .pending_gate_consents_in_txn(&rtxn, scan_limit)?
+    };
+    open_dreamer_members_from_pending(vault, pending)
+}
+
+fn open_dreamer_members_for_run(vault: &Vault, run_id: &str) -> Result<Vec<OpenMember>> {
+    open_dreamer_members_from_pending(vault, vault.store.pending_gate_consents_for_run(run_id)?)
+}
+
+fn open_dreamer_members_from_pending(
+    vault: &Vault,
+    pending_records: Vec<PendingGateConsentRecord>,
+) -> Result<Vec<OpenMember>> {
     let mut rows = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for pending in vault
-            .store
-            .pending_gate_consents_in_txn(&rtxn, scan_limit)?
-        {
+        for pending in pending_records {
             let Some(run_id) = pending.dreamer_run_id.clone() else {
                 continue;
             };
@@ -562,28 +546,18 @@ fn open_dreamer_members(vault: &Vault, scan_limit: usize) -> Result<Vec<OpenMemb
 /// run id as their key.
 fn resolve_run_identity(vault: &Vault, run_id: &str) -> Result<(String, Option<String>)> {
     let queue = JobQueue::new(vault);
-    // `list_run` already returns rows in deterministic `job_record_order`.
-    let records = queue.list_run(run_id)?;
-    let mut first_branch: Option<(JobId, DreamerJobPayload)> = None;
-    for record in &records {
-        if record.kind != DREAMER_RUNNER_JOB_KIND {
-            continue;
-        }
-        let Ok(payload) = decode_dreamer_job_payload(&record.payload) else {
-            continue;
-        };
-        if payload.parent_job.is_none() {
-            let intent = run_brief_intent(&payload.input);
-            return Ok((bytes_to_hex_lower(record.id.as_bytes()), intent));
-        }
-        if first_branch.is_none() {
-            first_branch = Some((record.id, payload));
-        }
-    }
-    if let Some((job_id, payload)) = first_branch {
-        return climb_to_run_root(&queue, job_id, payload);
-    }
-    Ok((run_id.to_owned(), None))
+    let Some(root_id) = queue.dreamer_run_root_id(run_id)? else {
+        return Ok((run_id.to_owned(), None));
+    };
+    let Some(root) = queue.get(root_id)? else {
+        return Err(Error::CorruptedIndex("job run index"));
+    };
+    let payload = decode_dreamer_job_payload(&root.payload)
+        .map_err(|_| Error::CorruptedIndex("job run index"))?;
+    Ok((
+        bytes_to_hex_lower(root_id.as_bytes()),
+        run_brief_intent(&payload.input),
+    ))
 }
 
 fn run_brief_intent(input: &rmpv::Value) -> Option<String> {
@@ -597,39 +571,6 @@ fn run_brief_intent(input: &rmpv::Value) -> Option<String> {
         let intent = value.as_str()?.trim();
         (!intent.is_empty()).then(|| intent.to_owned())
     })
-}
-
-/// Follows dreamer parent links from a branch job to the run-tree root,
-/// bounded by a visited set and depth cap. Stops (keeping the deepest
-/// reachable ancestor) on missing parents, non-Dreamer parents, undecodable
-/// payloads, or cycles.
-fn climb_to_run_root(
-    queue: &JobQueue<'_>,
-    start_id: JobId,
-    start_payload: DreamerJobPayload,
-) -> Result<(String, Option<String>)> {
-    let mut job_id = start_id;
-    let mut payload = start_payload;
-    let mut visited = vec![job_id];
-    while let Some(parent_id) = payload.parent_job {
-        if visited.contains(&parent_id) || visited.len() >= INBOX_RUN_ROOT_CLIMB_LIMIT {
-            break;
-        }
-        let Some(parent) = queue.get(parent_id)? else {
-            break;
-        };
-        if parent.kind != DREAMER_RUNNER_JOB_KIND {
-            break;
-        }
-        let Ok(parent_payload) = decode_dreamer_job_payload(&parent.payload) else {
-            break;
-        };
-        job_id = parent_id;
-        payload = parent_payload;
-        visited.push(job_id);
-    }
-    let intent = run_brief_intent(&payload.input);
-    Ok((bytes_to_hex_lower(job_id.as_bytes()), intent))
 }
 
 fn classify_member(
@@ -795,7 +736,7 @@ fn inbox_groups_projection(
     let mut drafts: Vec<GroupDraft> = Vec::new();
     let mut group_index_by_run: HashMap<String, usize> = HashMap::new();
     // Same-claim-hash collapse: earliest open row per content hash wins.
-    let mut owner_by_hash: HashMap<Vec<u8>, (usize, usize)> = HashMap::new();
+    let mut owner_by_hash: HashMap<[u8; 32], (usize, usize)> = HashMap::new();
 
     for member in open_members {
         let group_index = match group_index_by_run.get(&member.run_id) {
@@ -874,76 +815,176 @@ fn inbox_groups_projection(
 
     let mut groups = Vec::new();
     for draft in drafts {
-        let new_claim_count = draft
-            .members
-            .iter()
-            .filter(|row| row.member.verb_class == VERB_CLASS_NEW_CLAIM)
-            .count();
-        let update_count = draft
-            .members
-            .iter()
-            .filter(|row| row.member.verb_class == VERB_CLASS_UPDATE)
-            .count();
-        let conflict_count = draft
-            .members
-            .iter()
-            .filter(|row| row.member.verb_class == VERB_CLASS_CONFLICT)
-            .count();
-        let open_count = draft.members.len();
-        let surfaced_drafts: Vec<MemberDraft> = draft
-            .members
-            .into_iter()
-            .filter(|row| row.surfaced)
-            .collect();
-        if surfaced_drafts.is_empty() && draft.pointer_rows.is_empty() {
-            continue;
-        }
-
-        let sub_clusters = if surfaced_drafts.len() >= INBOX_SUBCLUSTER_MIN_MEMBERS {
-            let mut clusters: Vec<InboxSubCluster> = Vec::new();
-            for row in &surfaced_drafts {
-                match clusters
-                    .iter_mut()
-                    .find(|cluster| cluster.key == row.cluster_key)
-                {
-                    Some(cluster) => cluster.member_claim_ids.push(row.member.claim_id.clone()),
-                    None => clusters.push(InboxSubCluster {
-                        key: row.cluster_key.clone(),
-                        member_claim_ids: vec![row.member.claim_id.clone()],
-                    }),
-                }
+        if let Some(group) = finish_group_draft(draft) {
+            groups.push(group);
+            if groups.len() == query.limit {
+                break;
             }
-            clusters
-        } else {
-            Vec::new()
-        };
-
-        let surfaced: Vec<InboxGroupMember> =
-            surfaced_drafts.into_iter().map(|row| row.member).collect();
-        let held_member_count = open_count - surfaced.len();
-        groups.push(InboxGroup {
-            headline: group_headline(
-                draft.intent.as_deref(),
-                new_claim_count,
-                update_count,
-                conflict_count,
-            ),
-            group_key: draft.group_key,
-            run_id: draft.run_id,
-            created_at: draft.created_at,
-            members: surfaced,
-            held_member_count,
-            pointer_rows: draft.pointer_rows,
-            sub_clusters,
-            new_claim_count,
-            update_count,
-            conflict_count,
-        });
-        if groups.len() == query.limit {
-            break;
         }
     }
     Ok(groups)
+}
+
+fn finish_group_draft(draft: GroupDraft) -> Option<InboxGroup> {
+    let new_claim_count = draft
+        .members
+        .iter()
+        .filter(|row| row.member.verb_class == VERB_CLASS_NEW_CLAIM)
+        .count();
+    let update_count = draft
+        .members
+        .iter()
+        .filter(|row| row.member.verb_class == VERB_CLASS_UPDATE)
+        .count();
+    let conflict_count = draft
+        .members
+        .iter()
+        .filter(|row| row.member.verb_class == VERB_CLASS_CONFLICT)
+        .count();
+    let open_count = draft.members.len();
+    let surfaced_drafts: Vec<MemberDraft> = draft
+        .members
+        .into_iter()
+        .filter(|row| row.surfaced)
+        .collect();
+    if surfaced_drafts.is_empty() && draft.pointer_rows.is_empty() {
+        return None;
+    }
+
+    let sub_clusters = if surfaced_drafts.len() >= INBOX_SUBCLUSTER_MIN_MEMBERS {
+        let mut clusters: Vec<InboxSubCluster> = Vec::new();
+        for row in &surfaced_drafts {
+            match clusters
+                .iter_mut()
+                .find(|cluster| cluster.key == row.cluster_key)
+            {
+                Some(cluster) => cluster.member_claim_ids.push(row.member.claim_id.clone()),
+                None => clusters.push(InboxSubCluster {
+                    key: row.cluster_key.clone(),
+                    member_claim_ids: vec![row.member.claim_id.clone()],
+                }),
+            }
+        }
+        clusters
+    } else {
+        Vec::new()
+    };
+
+    let surfaced: Vec<InboxGroupMember> =
+        surfaced_drafts.into_iter().map(|row| row.member).collect();
+    let held_member_count = open_count - surfaced.len();
+    Some(InboxGroup {
+        headline: group_headline(
+            draft.intent.as_deref(),
+            new_claim_count,
+            update_count,
+            conflict_count,
+        ),
+        group_key: draft.group_key,
+        run_id: draft.run_id,
+        created_at: draft.created_at,
+        members: surfaced,
+        held_member_count,
+        pointer_rows: draft.pointer_rows,
+        sub_clusters,
+        new_claim_count,
+        update_count,
+        conflict_count,
+    })
+}
+
+/// Resolves one named group through the RCPT-1 sidecars.  A canonical root
+/// door first selects its earliest raw stamped run (matching the former scan
+/// projection); a literal run id remains a supported alias.  Cross-run
+/// duplicate collapse is reconstructed only for the target group through the
+/// semantic-hash sidecar, never by reopening the full pending table.
+fn explicit_inbox_group(vault: &Vault, group_ref: &str, now: u64) -> Result<Option<InboxGroup>> {
+    let group_pending = vault.store.pending_gate_consents_for_group_key(group_ref)?;
+    let run_id = if let Some(first) = group_pending.first() {
+        first
+            .dreamer_run_id
+            .clone()
+            .ok_or(Error::CorruptedIndex("pending gate consent group index"))?
+    } else {
+        let raw_run_pending = vault.store.pending_gate_consents_for_run(group_ref)?;
+        if raw_run_pending.is_empty() {
+            return Ok(None);
+        }
+        group_ref.to_owned()
+    };
+    let members = open_dreamer_members_for_run(vault, &run_id)?;
+    let Some(first_member) = members.first() else {
+        return Ok(None);
+    };
+    let (group_key, intent) = resolve_run_identity(vault, &run_id)?;
+    let mut draft = GroupDraft {
+        group_key,
+        run_id: run_id.clone(),
+        intent,
+        created_at: first_member.pending.created_at,
+        members: Vec::new(),
+        pointer_rows: Vec::new(),
+    };
+    let mut duplicate_members_by_hash: HashMap<[u8; 32], Vec<OpenMember>> = HashMap::new();
+
+    for member in members {
+        let claim_hash = inbox_claim_hash(&member.body)?;
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            duplicate_members_by_hash.entry(claim_hash)
+        {
+            let pending = vault
+                .store
+                .pending_gate_consents_for_semantic_claim_hash(&claim_hash)?;
+            entry.insert(open_dreamer_members_from_pending(vault, pending)?);
+        }
+        let duplicate_members = duplicate_members_by_hash
+            .get(&claim_hash)
+            .expect("inserted above");
+        let earliest = duplicate_members
+            .first()
+            .ok_or(Error::CorruptedIndex("pending gate consent hash index"))?;
+        let claim_id_hex = hex_lower(&member.pending.claim_id);
+        if earliest.run_id != run_id {
+            let (duplicate_of_group_key, _) = resolve_run_identity(vault, &earliest.run_id)?;
+            draft.pointer_rows.push(InboxPointerRow {
+                claim_id: claim_id_hex,
+                duplicate_of_claim_id: hex_lower(&earliest.pending.claim_id),
+                duplicate_of_group_key,
+            });
+            continue;
+        }
+
+        let (mut classes, verb_class) = classify_member(vault, &member)?;
+        let mut duplicate_claim_ids = Vec::new();
+        if earliest.pending.claim_id == member.pending.claim_id {
+            for duplicate in duplicate_members
+                .iter()
+                .filter(|duplicate| duplicate.run_id != run_id)
+            {
+                let (duplicate_classes, _) = classify_member(vault, duplicate)?;
+                duplicate_claim_ids.push(hex_lower(&duplicate.pending.claim_id));
+                classes.extend(duplicate_classes);
+            }
+            classes.sort_unstable();
+            classes.dedup();
+        }
+        let surfaced = member_surfaces(InboxReviewDial::ReviewEverything, &classes);
+        draft.members.push(MemberDraft {
+            member: InboxGroupMember {
+                claim_id: claim_id_hex,
+                created_at: member.pending.created_at,
+                age_secs: now.saturating_sub(member.pending.created_at),
+                hold_reasons: member.pending.reason_codes.clone(),
+                exception_classes: classes,
+                verb_class: verb_class.to_owned(),
+                duplicate_claim_ids,
+                receipt_view: ReceiptView::new(gate_decision_receipt(&member.decision)),
+            },
+            surfaced,
+            cluster_key: sub_cluster_key(&member.body),
+        });
+    }
+    Ok(finish_group_draft(draft))
 }
 
 /// Redeems bundle consent on one member: verifies the content-addressed
