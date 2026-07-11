@@ -179,18 +179,14 @@ impl TokenHex {
         &self.0
     }
     /// Constant-time equality over the decoded token bytes (hex case does
-    /// not matter). Malformed hex on either side compares unequal. Decode
-    /// cost depends only on the caller's own inputs, never on where the
-    /// first differing byte sits.
+    /// not matter), via [`subtle`]. Malformed hex on either side compares
+    /// unequal. Decode cost depends only on the caller's own inputs, never
+    /// on where the first differing byte sits; length is not secret.
     pub fn ct_eq(&self, other: &TokenHex) -> bool {
         let (Some(mut a), Some(mut b)) = (from_hex(&self.0), from_hex(&other.0)) else {
             return false;
         };
-        let mut diff = u8::from(a.len() != b.len());
-        for (x, y) in a.iter().zip(b.iter()) {
-            diff |= x ^ y;
-        }
-        let eq = std::hint::black_box(diff) == 0;
+        let eq = bool::from(subtle::ConstantTimeEq::ct_eq(a.as_slice(), b.as_slice()));
         a.zeroize();
         b.zeroize();
         eq
