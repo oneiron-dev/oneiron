@@ -1010,7 +1010,34 @@ fn verify_actor_binding(
     actor: EntityId,
     actor_class: EdgeActorClass,
 ) -> FacadeResult<()> {
-    let Some(entity_type) = vault.get_entity_type(&actor).map_err(FacadeError::from)? else {
+    let entity_type = vault.get_entity_type(&actor).map_err(FacadeError::from)?;
+    verify_actor_entity_type(actor, actor_class, entity_type)
+}
+
+fn verify_actor_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> FacadeResult<()> {
+    let entity_type = vault
+        .get_raw_in(txn, &actor)
+        .map_err(FacadeError::from)?
+        .map(|raw| {
+            crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or_else(|| FacadeError::from(Error::CorruptedIndex("entity header")))
+                .map(|header| header.entity_type)
+        })
+        .transpose()?;
+    verify_actor_entity_type(actor, actor_class, entity_type)
+}
+
+fn verify_actor_entity_type(
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    entity_type: Option<u8>,
+) -> FacadeResult<()> {
+    let Some(entity_type) = entity_type else {
         return Err(FacadeError::new(
             FACADE_CODE_FORBIDDEN,
             format!(
@@ -1396,15 +1423,24 @@ impl MemoryFacade<'_> {
     /// transaction, so a same-id intervening writer cannot turn prior
     /// authorization into authority over the replacement body.
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
-        let actor_class = self.verified_actor_class()?;
+        self.claim_retract_with_before_txn(claim_ref, || {})
+    }
+
+    fn claim_retract_with_before_txn(
+        &self,
+        claim_ref: &str,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
         let id = self.resolve_ref(claim_ref)?;
         let now = crate::unix_seconds_now();
+        before_txn();
         let (approval, consent_decision_id) = self.vault.try_with_write_txn(|wtxn| {
+            verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
             let body = self
                 .vault
                 .get_claim_in_txn(wtxn, &id)?
                 .ok_or(Error::EntityNotFound)?;
-            if actor_class != EdgeActorClass::Human
+            if self.actor_class != EdgeActorClass::Human
                 && claim_envelope_actor(&body) != Some(self.actor)
             {
                 return Err(FacadeError::new(
@@ -1439,6 +1475,15 @@ impl MemoryFacade<'_> {
             superseded_short_id: None,
             receipt_ref,
         })
+    }
+
+    #[cfg(test)]
+    fn claim_retract_with_pre_txn_hook(
+        &self,
+        claim_ref: &str,
+        before_txn: impl FnOnce(),
+    ) -> FacadeResult<CommitReceipt> {
+        self.claim_retract_with_before_txn(claim_ref, before_txn)
     }
 
     /// Deletes an entity under a NAMED reason (S7). `user_delete` is the

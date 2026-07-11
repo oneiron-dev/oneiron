@@ -2386,10 +2386,24 @@ pub(crate) fn check_claim_policy_for_write(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
 ) -> Result<()> {
+    check_claim_policy_for_write_with_record(store, wtxn, id, body, envelope, policy, mode)
+        .map(|_| ())
+}
+
+pub(crate) fn check_claim_policy_for_write_with_record(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    envelope: Option<&WriteEnvelope>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+) -> Result<Option<GateDecisionRecord>> {
     if let Some(envelope) = envelope {
         validate_write_envelope(envelope)?;
     }
 
+    let mut write_decision = None;
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
@@ -2503,9 +2517,11 @@ pub(crate) fn check_claim_policy_for_write(
             &binding,
             mode,
         )?;
+        write_decision = Some(decision_record);
     }
 
-    check_claim_source_trust(body, policy)
+    check_claim_source_trust(body, policy)?;
+    Ok(write_decision)
 }
 
 /// `admit_for_execution` tells the connector-key budget stage whether an

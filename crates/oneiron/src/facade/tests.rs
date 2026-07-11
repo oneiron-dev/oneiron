@@ -984,6 +984,10 @@ fn claim_retract_preserves_readable_history() {
         short_id_part(&receipt.claim_short_id)
     );
     assert!(retracted.receipt_ref.starts_with("gate:"));
+    assert_ne!(
+        retracted.receipt_ref, receipt.receipt_ref,
+        "retraction must return its own gate decision, not the earlier write receipt"
+    );
     assert!(
         facade
             .receipts(50)
@@ -1165,12 +1169,16 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         serde_json::json!("teal"),
     );
     replacement.id = Some(claim_id.to_hex());
-    replacement_facade
-        .claim_upsert(&replacement)
-        .expect("second agent replaces same id");
-
+    // Reproduce the former split-transaction race deterministically: the
+    // replacement lands after call setup but immediately before the retraction
+    // write transaction begins. The fixed path authorizes only after acquiring
+    // that transaction, so it observes and rejects the replacement author.
     let err = first_facade
-        .claim_retract(&claim_id.to_hex())
+        .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
+            replacement_facade
+                .claim_upsert(&replacement)
+                .expect("second agent replaces same id in former race window");
+        })
         .expect_err("prior author has no authority over same-id replacement");
     assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
     let current = vault
