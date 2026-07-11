@@ -2701,9 +2701,20 @@ fn next_vector_fence_search_limit(
     requested: usize,
     entity_count: usize,
 ) -> usize {
+    let missing = requested.saturating_sub(filtered).max(1);
     current
-        .saturating_add(requested.saturating_sub(filtered).max(1))
+        .saturating_add(current.max(missing))
         .min(entity_count)
+}
+
+fn temporal_fence_scan_budget(cap: usize, off_record_fences_present: bool) -> usize {
+    if off_record_fences_present {
+        cap.saturating_mul(PER_SCAN_CAP_FACTOR)
+            .min(MAX_TEMPORAL_SEEK_BUFFER)
+            .max(cap)
+    } else {
+        cap
+    }
 }
 
 fn scoped_vector_channel_limit(
@@ -3500,10 +3511,13 @@ fn collect_index_candidates(
             std::ops::Bound::Included(&window_end_key[..]),
         ),
     )?;
-    while rows.len() < cap {
+    let scan_budget = temporal_fence_scan_budget(cap, off_record_fences_present);
+    let mut scanned = 0_usize;
+    while rows.len() < cap && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(&mut forward)? else {
             break;
         };
+        scanned = scanned.saturating_add(1);
         if off_record_fences_present
             && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
         {
@@ -3579,11 +3593,14 @@ where
     I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
 {
     let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
+    let scan_budget = temporal_fence_scan_budget(cap, off_record_fences_present);
+    let mut scanned = 0_usize;
 
-    while rows.len() < cap {
+    while rows.len() < cap && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(iter)? else {
             return Ok(rows);
         };
+        scanned = scanned.saturating_add(1);
         if off_record_fences_present
             && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
         {
@@ -3627,10 +3644,13 @@ fn normalize_backward_boundary_bucket(
             std::ops::Bound::Included(&boundary_end_key[..]),
         ),
     )?;
-    while boundary_rows.len() < boundary_count {
+    let scan_budget = temporal_fence_scan_budget(boundary_count, off_record_fences_present);
+    let mut scanned = 0_usize;
+    while boundary_rows.len() < boundary_count && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
             break;
         };
+        scanned = scanned.saturating_add(1);
         if off_record_fences_present
             && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
         {
