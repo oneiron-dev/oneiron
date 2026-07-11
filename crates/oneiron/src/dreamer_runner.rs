@@ -1382,6 +1382,18 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: EnqueueDreamerConsolidationJob,
     ) -> Result<EnqueueDreamerJobOutcome> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.enqueue_consolidation_in_txn(&mut wtxn, input)?;
+        wtxn.commit()?;
+        Ok(outcome)
+    }
+
+    /// Enqueues a consolidation job in a caller-owned write transaction.
+    pub(crate) fn enqueue_consolidation_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: EnqueueDreamerConsolidationJob,
+    ) -> Result<EnqueueDreamerJobOutcome> {
         let payload = DreamerJobPayload {
             job_type: input.scope.as_str().to_owned(),
             input: input.input,
@@ -1389,9 +1401,8 @@ impl<'a> DreamerRunnerStore<'a> {
         };
         let encoded_payload = encode_dreamer_job_payload(&payload)?;
 
-        let mut wtxn = self.vault.store.env.write_txn()?;
         let outcome = self.jobs.enqueue_in_txn(
-            &mut wtxn,
+            wtxn,
             EnqueueJob {
                 kind: input.scope.job_kind().to_owned(),
                 payload: encoded_payload,
@@ -1405,7 +1416,7 @@ impl<'a> DreamerRunnerStore<'a> {
             EnqueueOutcome::Enqueued(record) => {
                 put_run_tree_record_in_txn(
                     self.vault,
-                    &mut wtxn,
+                    wtxn,
                     &DreamerRunTreeRecord {
                         job_id: record.id,
                         parent_job: payload.parent_job,
@@ -1415,11 +1426,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 (true, decode_dreamer_job_status(record)?)
             }
             EnqueueOutcome::Existing(record) => {
-                ensure_run_tree_record_in_txn(self.vault, &mut wtxn, &record)?;
+                ensure_run_tree_record_in_txn(self.vault, wtxn, &record)?;
                 (false, decode_dreamer_job_status(record)?)
             }
         };
-        wtxn.commit()?;
 
         if was_enqueued {
             Ok(EnqueueDreamerJobOutcome::Enqueued(status))

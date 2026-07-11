@@ -1550,7 +1550,16 @@ impl Vault {
     /// Returns the entity type byte for a stored entity, or None if not found.
     pub fn get_entity_type(&self, id: &EntityId) -> Result<Option<u8>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        self.get_entity_type_in_txn(&rtxn, id)
+    }
+
+    /// Transaction-composable body of [`Vault::get_entity_type`].
+    pub(crate) fn get_entity_type_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<u8>> {
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =

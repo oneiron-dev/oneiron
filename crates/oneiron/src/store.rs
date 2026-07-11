@@ -258,6 +258,11 @@ const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
 pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
+/// TXN1 crash-recovery sidecar for a deletion authority record. This is not
+/// the Gate decision ledger: TXN3 consumes it with `append_gate_decision_in_txn`
+/// in the same transaction as the active-store purge.
+const PENDING_DELETION_GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_delete_pending:v0:";
+const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
 /// Maps a scheduled outbound job id to the gate surface its first dispatch
@@ -650,6 +655,11 @@ pub struct GateDecisionId {
 
 impl GateDecisionId {
     #[must_use]
+    pub(crate) const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self { bytes }
+    }
+
+    #[must_use]
     pub fn now() -> Self {
         Self {
             bytes: Uuid::now_v7().into_bytes(),
@@ -708,6 +718,18 @@ pub struct GateDecisionRecord {
     pub grant_ref: Option<String>,
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
+}
+
+/// Private TXN1 recovery data for a deletion authority record. The target and
+/// wire reason bind the sidecar to exactly one tombstone, so a remote update
+/// cannot consume a same-request-id sidecar for a different deletion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+struct PendingDeletionGateDecisionRecord {
+    version: u8,
+    target: [u8; 16],
+    tombstone_reason: u8,
+    decision: GateDecisionRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1562,6 +1584,109 @@ impl Store {
             ));
         }
         Ok(())
+    }
+
+    /// Stages a deletion authority record in TXN1. The sidecar exists only so
+    /// a crash before TXN3 can recover the exact evaluated actor/policy data;
+    /// it is never queryable as a Gate decision and is consumed by TXN3.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn put_pending_deletion_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+        target: &[u8; 16],
+        tombstone_reason: u8,
+    ) -> Result<()> {
+        let pending = PendingDeletionGateDecisionRecord {
+            version: PENDING_DELETION_GATE_DECISION_VERSION,
+            target: *target,
+            tombstone_reason,
+            decision: record.clone(),
+        };
+        vet_pending_deletion_gate_decision_record(&pending)?;
+        let key = pending_deletion_gate_decision_key(record.decision_id);
+        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
+            let existing = decode_pending_deletion_gate_decision(existing)?;
+            if existing == pending {
+                return Ok(());
+            }
+            return Err(Error::InvariantViolation(
+                "pending deletion gate decision id collision",
+            ));
+        }
+        let value = encode_pending_deletion_gate_decision(&pending)?;
+        self.vault_meta.put(wtxn, &key, &value)?;
+        Ok(())
+    }
+
+    /// Reads a TXN1-staged deletion authority record by deletion request id.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pending_deletion_gate_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        request_id: GateDecisionId,
+    ) -> Result<Option<GateDecisionRecord>> {
+        let key = pending_deletion_gate_decision_key(request_id);
+        let Some(value) = self.vault_meta.get(txn, &key)? else {
+            return Ok(None);
+        };
+        let pending = decode_pending_deletion_gate_decision(value)?;
+        if pending.decision.decision_id != request_id {
+            return Err(Error::CorruptedIndex("pending deletion gate decision"));
+        }
+        Ok(Some(pending.decision))
+    }
+
+    /// Appends a TXN1-staged deletion authority record to the real Gate
+    /// ledger and removes its recovery sidecar atomically with TXN3.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn append_pending_deletion_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        request_id: GateDecisionId,
+        target: &[u8; 16],
+        tombstone_reason: u8,
+    ) -> Result<Option<GateDecisionRecord>> {
+        let key = pending_deletion_gate_decision_key(request_id);
+        let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
+            return Ok(None);
+        };
+        let pending = decode_pending_deletion_gate_decision(value)?;
+        if pending.decision.decision_id != request_id {
+            return Err(Error::CorruptedIndex("pending deletion gate decision"));
+        }
+        if pending.target != *target || pending.tombstone_reason != tombstone_reason {
+            return Ok(None);
+        }
+        self.append_gate_decision_in_txn(wtxn, &pending.decision)?;
+        self.vault_meta.delete(wtxn, &key)?;
+        Ok(Some(pending.decision))
+    }
+
+    /// Discards a TXN1 recovery sidecar when a later ownership probe proves
+    /// this request did not perform a purge. No final Gate record is emitted:
+    /// gate evidence must not outlive an unperformed deletion mutation.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn discard_pending_deletion_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        request_id: GateDecisionId,
+        target: &[u8; 16],
+        tombstone_reason: u8,
+    ) -> Result<bool> {
+        let key = pending_deletion_gate_decision_key(request_id);
+        let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
+            return Ok(false);
+        };
+        let pending = decode_pending_deletion_gate_decision(value)?;
+        if pending.decision.decision_id != request_id {
+            return Err(Error::CorruptedIndex("pending deletion gate decision"));
+        }
+        if pending.target != *target || pending.tombstone_reason != tombstone_reason {
+            return Ok(false);
+        }
+        self.vault_meta.delete(wtxn, &key)?;
+        Ok(true)
     }
 
     pub(crate) fn matching_gate_decision_in_txn(
@@ -2726,6 +2851,13 @@ fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
     key
 }
 
+fn pending_deletion_gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {
+    let mut key = Vec::with_capacity(PENDING_DELETION_GATE_DECISION_KEY_PREFIX.len() + 16);
+    key.extend_from_slice(PENDING_DELETION_GATE_DECISION_KEY_PREFIX);
+    key.extend_from_slice(&decision_id.as_bytes());
+    key
+}
+
 fn outbound_gate_binding_key(job_id: &[u8; 16]) -> Vec<u8> {
     let mut key = Vec::with_capacity(OUTBOUND_GATE_BINDING_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OUTBOUND_GATE_BINDING_KEY_PREFIX);
@@ -2821,6 +2953,22 @@ fn decode_gate_decision(raw: &[u8]) -> Result<GateDecisionRecord> {
     Ok(record)
 }
 
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+fn encode_pending_deletion_gate_decision(
+    record: &PendingDeletionGateDecisionRecord,
+) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(record)
+        .map_err(|_| Error::InvariantViolation("pending deletion gate decision encode failed"))
+}
+
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+fn decode_pending_deletion_gate_decision(raw: &[u8]) -> Result<PendingDeletionGateDecisionRecord> {
+    let record: PendingDeletionGateDecisionRecord = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("pending deletion gate decision"))?;
+    vet_pending_deletion_gate_decision_record(&record)?;
+    Ok(record)
+}
+
 fn encode_pending_gate_consent(record: &PendingGateConsentRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("pending gate consent encode failed"))
@@ -2877,6 +3025,19 @@ fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()> {
         return Err(Error::CorruptedIndex("gate decision ledger"));
     }
     Ok(())
+}
+
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+fn vet_pending_deletion_gate_decision_record(
+    record: &PendingDeletionGateDecisionRecord,
+) -> Result<()> {
+    if record.version != PENDING_DELETION_GATE_DECISION_VERSION
+        || !matches!(record.tombstone_reason, 1..=4)
+        || record.decision.content_kind != "deletion"
+    {
+        return Err(Error::CorruptedIndex("pending deletion gate decision"));
+    }
+    vet_gate_decision_record(&record.decision)
 }
 
 fn gate_decision_matches_pending_candidate(
