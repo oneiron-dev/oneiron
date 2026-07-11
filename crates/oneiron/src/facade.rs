@@ -1384,7 +1384,7 @@ impl MemoryFacade<'_> {
     /// Retracts an active claim (deliberate withdrawal; record preserved).
     ///
     /// Authority (fail-closed): the asserted actor is first RESOLVED
-    /// against the store ([`Self::verified_actor_class`] — it must exist
+    /// against the store (`Self::verified_actor_class` — it must exist
     /// and its stored type must match the asserted class). A verified
     /// `human`-class actor holds the vault owner's memory authority and
     /// may retract any claim; `agent`/`system` actors may retract ONLY
@@ -1453,7 +1453,7 @@ impl MemoryFacade<'_> {
     ///
     /// Authority (fail-closed): deletion is an OWNER verb — the named
     /// reasons are `user_*`/compliance erasures. Only a VERIFIED
-    /// `human`-class actor may delete ([`Self::verified_actor_class`]:
+    /// `human`-class actor may delete (`Self::verified_actor_class`:
     /// the asserted actor must exist and be a PERSON — asserted class
     /// strings are never trusted); `agent`/`system` actors get a typed
     /// denial (agents withdraw their own claims via
