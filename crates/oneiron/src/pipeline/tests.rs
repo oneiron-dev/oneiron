@@ -1864,6 +1864,37 @@ fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
 }
 
 #[test]
+fn scoped_recency_text_overfetch_is_bounded_after_filtering() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let now = crate::unix_seconds_now();
+    let old = [
+        entity_id(0x10),
+        entity_id(0x20),
+        entity_id(0x30),
+        entity_id(0x40),
+    ];
+    let fresh_beyond_overfetch = entity_id(0x50);
+
+    for id in old {
+        put_text_at(&vault, id, "scopedrecencycap", 1)?;
+    }
+    put_text_at(&vault, fresh_beyond_overfetch, "scopedrecencycap", now)?;
+
+    let results = vault
+        .query()
+        .search_text("scopedrecencycap", 1)
+        .filter_types(&[1])
+        .boost_recency(0.01)
+        .limit(1)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, old[0]);
+    assert_ne!(results[0].id, fresh_beyond_overfetch);
+    Ok(())
+}
+
+#[test]
 fn recency_signal_applies_once_to_blended_candidates() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let old_text = entity_id(0x10);
