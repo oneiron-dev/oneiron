@@ -11,6 +11,7 @@ use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::sync::WindowManager;
 use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -137,6 +138,84 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 0);
     assert!(map_get_bytes(&edges, &promoted_edge).is_some());
     assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+
+    Ok(())
+}
+
+/// A promotion must refresh the registry-owned document when the relevant
+/// window was already open. Otherwise its deferred `pm:` row would survive
+/// until unload/reopen even though the user explicitly released the turn.
+#[test]
+fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let promoted = EntityId::from_bytes([0x51; 16])?;
+    let still_fenced = EntityId::from_bytes([0x52; 16])?;
+    let ordinary = EntityId::from_bytes([0x53; 16])?;
+
+    vault.enter_off_record_session("sess-live-promotion", OffRecordBackendClass::Local)?;
+    for id in [&promoted, &still_fenced] {
+        vault.tag_turn_off_record("sess-live-promotion", id)?;
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"fenced live-window fixture",
+        )?;
+    }
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary live-window fixture",
+    )?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
+
+    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
+    let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
+    vault.sync_state_put(&promoted_marker, &[1])?;
+    vault.sync_state_put(&fenced_marker, &[1])?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let window = manager.open_window(&window_key)?;
+    let entities = window.doc.get_map("entities");
+    let edges = window.doc.get_map("edges");
+    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
+    let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
+
+    // The open-time recovery honours the fences and leaves both `pm:` rows
+    // pending; only the ordinary record reaches the registered doc.
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+
+    vault.promote_off_record_turn("sess-live-promotion", &promoted)?;
+
+    // No unload/reopen is needed: the explicit promotion catches up the same
+    // registry-owned doc, clears only its marker, and backfills only the edge
+    // whose target is no longer fenced.
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
     Ok(())
 }
