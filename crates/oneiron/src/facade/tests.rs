@@ -983,6 +983,15 @@ fn claim_retract_preserves_readable_history() {
         short_id_part(&retracted.claim_short_id),
         short_id_part(&receipt.claim_short_id)
     );
+    assert!(retracted.receipt_ref.starts_with("gate:"));
+    assert!(
+        facade
+            .receipts(50)
+            .expect("receipts")
+            .iter()
+            .any(|entry| entry.receipt_ref == retracted.receipt_ref),
+        "ordinary retraction receipt_ref must remain resolvable"
+    );
 
     let claims = facade
         .claim_list(&ClaimListFilter {
