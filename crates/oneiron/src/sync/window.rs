@@ -636,7 +636,8 @@ fn off_record_fenced_ids(
     Ok(fenced)
 }
 
-/// Removes every currently fenced off-record carrier from a window doc.
+/// Removes every currently fenced off-record carrier from a window doc and
+/// returns whether the window must use history-free persistence/transport.
 ///
 /// This is the export-boundary backstop for a fence that was established
 /// after a body or incident edge had already entered the CRDT. Candidate ids
@@ -665,6 +666,10 @@ pub fn scrub_off_record_fenced_carriers(
     });
 
     let fenced = off_record_fenced_ids(vault, candidates)?;
+    let fences_present = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::off_record::off_record_fences_present(&vault.store, &rtxn)?
+    };
     let mut removed = false;
     for id in &fenced {
         removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
@@ -674,13 +679,16 @@ pub fn scrub_off_record_fenced_carriers(
         // local privacy scrub back into LMDB; Observer A still durably queues
         // and broadcasts the deletion update to retire any older carrier.
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    if removed || fences_present {
         // Deleting a live value does not erase its prior set operation from
-        // ordinary Loro history. Pin every scrub source here, including eager
-        // tag and forward-remat callers, so no later delta/snapshot can carry
-        // the fenced body bytes from history.
+        // ordinary Loro history. An inbound set-then-delete can also carry a
+        // fenced body without leaving a live value for the scan above. Pin
+        // every window boundary while any fence exists so neither shape can
+        // later take a raw delta/snapshot path.
         require_history_free_window(vault, key)?;
     }
-    Ok(removed)
+    Ok(removed || fences_present)
 }
 
 /// Whether this window has ever carried bytes for a currently fenced turn.

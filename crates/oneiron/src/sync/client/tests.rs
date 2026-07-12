@@ -11,7 +11,9 @@ use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK};
 use crate::store::Store;
 use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::{export_snapshot, map_get_bytes, map_insert_bytes};
+use crate::sync::loro_support::{
+    doc_from_snapshot, export_snapshot, map_get_bytes, map_insert_bytes,
+};
 use crate::sync::schema::create_root_doc;
 use crate::temporal::TimeRange;
 
@@ -617,6 +619,88 @@ fn vv_response_scrubs_fenced_carrier_before_export() {
     peer.import(delta).unwrap();
     assert!(map_get_bytes(&peer.get_map("entities"), &fenced.to_hex()).is_none());
     assert!(map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some());
+}
+
+#[test]
+fn inbound_set_then_delete_fenced_body_persists_history_free_with_ordinary_control() {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let (mut client, _rx) = test_client(&manager);
+    let key = "2026-04";
+    let learned_at = 1_775_000_000u64;
+    let fenced = test_entity_id(0x73);
+    let ordinary = test_entity_id(0x74);
+    let private_sentinel = b"private client history sentinel";
+    vault
+        .enter_off_record_session("sess-client-history", OffRecordBackendClass::Local)
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-client-history", &fenced)
+        .unwrap();
+
+    let incoming = server_window_doc();
+    map_insert_bytes(
+        &incoming.get_map("entities"),
+        &fenced.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            private_sentinel,
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(
+        &incoming.get_map("entities"),
+        &ordinary.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    incoming.commit();
+    incoming
+        .get_map("entities")
+        .delete(&fenced.to_hex())
+        .unwrap();
+    incoming.commit();
+    let payload = incoming.export(ExportMode::all_updates()).unwrap();
+    assert!(
+        payload
+            .windows(private_sentinel.len())
+            .any(|window| window == private_sentinel),
+        "hostile update must carry the deleted fenced body in Loro history"
+    );
+
+    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload);
+    client.handle_server_message(&frame).unwrap();
+
+    assert!(
+        sync_state_values_with_prefix(&vault, &format!("u:w:{key}:")).is_empty(),
+        "sanitized client persistence must not retain the raw inbound frame"
+    );
+    let snapshot = vault
+        .sync_state_get(&format!("d:w:{key}"))
+        .unwrap()
+        .expect("history-free client snapshot");
+    assert!(
+        !snapshot
+            .windows(private_sentinel.len())
+            .any(|window| window == private_sentinel),
+        "durable client snapshot must not contain deleted fenced history bytes"
+    );
+    let durable = doc_from_snapshot(&snapshot).unwrap();
+    assert!(map_get_bytes(&durable.get_map("entities"), &fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&durable.get_map("entities"), &ordinary.to_hex()).is_some());
 }
 
 /// ONE-1128 AC1 machinery: `window_converged` is the queue-clear gate, so

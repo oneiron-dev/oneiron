@@ -638,12 +638,27 @@ impl SyncClient {
             .doc
             .import(payload)
             .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+        let key = WindowKey::new(window_key);
+        let history_free =
+            crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, &key, &window.doc)
+                .map_err(|e| TransportError::Storage(format!("off-record carrier scrub: {e}")))?;
+        if history_free {
+            if let Err(e) = window.persist_state(&self.vault) {
+                self.manager.discard_window(&key);
+                return Err(TransportError::Storage(format!(
+                    "persist sanitized remote window: {e}"
+                )));
+            }
+            let _ = self.event_tx.send(SyncEvent::WindowUpdated {
+                window_key: window_key.to_string(),
+            });
+            return Ok(());
+        }
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
         // delta.
         if window.doc.oplog_vv() == vv_before {
-            let key = WindowKey::new(window_key);
             let durable_doc = match load_window_from_state(&self.vault, "local", &key) {
                 Ok(doc) => doc,
                 Err(Error::WindowNotFound { .. }) => {

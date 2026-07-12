@@ -554,22 +554,17 @@ impl Vault {
         Ok(())
     }
 
-    /// Scrubs a newly fenced turn from its registry-owned live window, if
-    /// that month is already loaded. This never faults a closed window into
+    /// Scrubs a newly fenced turn from every registry-owned live window.
+    /// Incident edges live in their source entity's month, which can differ
+    /// from the fenced target's month. This never faults a closed window into
     /// memory; persistence/VV export performs the same whole-doc backstop.
     #[cfg(feature = "sync")]
-    fn scrub_tagged_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
-        use crate::sync::WindowKey;
+    fn scrub_tagged_turn_in_live_window(&self, _turn_id: &EntityId) -> Result<()> {
         use crate::sync::window::scrub_off_record_fenced_carriers;
 
-        let Some(header) = self.read_entity_header(turn_id)? else {
-            return Ok(());
-        };
-        let window_key = WindowKey::from_timestamp(header.learned_at);
-        let Some((window, _materializer, _manager)) = self.live_window(&window_key) else {
-            return Ok(());
-        };
-        scrub_off_record_fenced_carriers(self, &window_key, &window.doc)?;
+        for window in self.live_windows() {
+            scrub_off_record_fenced_carriers(self, &window.key, &window.doc)?;
+        }
         Ok(())
     }
 
