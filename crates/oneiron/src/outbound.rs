@@ -602,6 +602,8 @@ pub struct OutboundDispatchResult {
 pub enum OutboundDispatchError {
     #[error(transparent)]
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
+    #[error("the facade-bound actor is no longer valid")]
+    InvalidBoundActor,
     #[error(transparent)]
     Engine(#[from] Error),
 }
@@ -925,7 +927,7 @@ impl OutboundDispatchPipeline {
         if let Some((actor, actor_class)) = verified_actor {
             let entity_type = vault
                 .get_entity_type_in_txn(&wtxn, &actor)?
-                .ok_or(Error::EntityNotFound)?;
+                .ok_or(OutboundDispatchError::InvalidBoundActor)?;
             crate::provenance::validate_actor_class(entity_type, actor_class)?;
         }
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;

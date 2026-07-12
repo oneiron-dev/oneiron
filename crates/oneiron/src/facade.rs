@@ -2551,15 +2551,7 @@ impl MemoryFacade<'_> {
                     note: Some("outbound dispatch failed before gate decision".to_owned()),
                     now,
                 });
-                return Err(match err {
-                    OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
-                    OutboundDispatchError::UnsupportedCapability(capability) => {
-                        FacadeError::bad_request_with(
-                            format!("unsupported outbound capability: {capability}"),
-                            &["Use a registered channel/verb pair from the connector manifest."],
-                        )
-                    }
-                });
+                return Err(facade_error_from_outbound_dispatch(err));
             }
         };
         // Persist the gate surface keyed by job id so an idempotent replay
@@ -3111,6 +3103,21 @@ impl MemoryFacade<'_> {
             .filter(|record| record.claim_id.as_ref() == Some(id.as_bytes()))
             .max_by_key(|record| record.decision_id.to_hex());
         Ok(latest.map(|record| format!("gate:{}", record.decision_id.to_hex())))
+    }
+}
+
+fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {
+    match err {
+        OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
+        OutboundDispatchError::InvalidBoundActor => FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            "the bound actor is no longer authorized for outbound dispatch",
+            &["Refresh the actor binding and retry."],
+        ),
+        OutboundDispatchError::UnsupportedCapability(capability) => FacadeError::bad_request_with(
+            format!("unsupported outbound capability: {capability}"),
+            &["Use a registered channel/verb pair from the connector manifest."],
+        ),
     }
 }
 
