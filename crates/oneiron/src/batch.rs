@@ -850,8 +850,10 @@ fn preflight_gate_decisions_in_txn(
                         store,
                         wtxn,
                         id,
-                        &body,
-                        None,
+                        crate::gate::ClaimGateWrite {
+                            body: &body,
+                            envelope: None,
+                        },
                         &policy,
                         crate::gate::GateWriteMode {
                             record_decision: true,
@@ -876,8 +878,10 @@ fn preflight_gate_decisions_in_txn(
                     store,
                     wtxn,
                     id,
-                    &body,
-                    Some(envelope),
+                    crate::gate::ClaimGateWrite {
+                        body: &body,
+                        envelope: Some(envelope),
+                    },
                     &policy,
                     crate::gate::GateWriteMode {
                         record_decision: true,
