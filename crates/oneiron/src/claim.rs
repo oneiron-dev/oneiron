@@ -2432,6 +2432,8 @@ impl Vault {
     /// gate or storage failure rolls both changes back. Pending persistence is
     /// disabled for the terminal body write: a policy that evaluates the
     /// retracted body as `pending` must not recreate an actionable tray row.
+    /// The caller owns commit/abort; facade callers compose actor binding and
+    /// authorship authorization into this same transaction.
     pub(crate) fn retract_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

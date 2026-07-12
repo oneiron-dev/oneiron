@@ -617,6 +617,37 @@ fn dispatch_pipeline_resolves_gates_executes_and_emits_receipt()
 }
 
 #[test]
+fn verified_dispatch_classifies_a_missing_bound_actor_as_authorization_failure() {
+    let (_tmp, vault) = temp_vault();
+    let missing_actor = entity(0x52);
+    let request = OutboundDispatchRequest::new(
+        "outbound:intent:missing-actor",
+        "intent:missing-actor",
+        dispatch_intent(OutboundIntentTrigger::agent_immediate(
+            "session:missing-actor",
+        )),
+        OutboundDispatchActor::agent(missing_actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_001,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    );
+    let mut executor = RecordingExecutor::default();
+
+    let err = OutboundDispatchPipeline
+        .dispatch_with_verified_actor(
+            &vault,
+            request,
+            &mut executor,
+            missing_actor,
+            EdgeActorClass::Agent,
+        )
+        .expect_err("missing bound actor must fail closed");
+
+    assert!(matches!(err, OutboundDispatchError::InvalidBoundActor));
+    assert!(executor.calls.is_empty());
+}
+
+#[test]
 fn dispatch_pipeline_records_context_receipt_field_set()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (_tmp, vault) = temp_vault();
@@ -1971,6 +2002,9 @@ fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
         OutboundDispatchError::UnsupportedCapability(error) => {
             assert_eq!(error.connector(), "line");
             assert_eq!(error.verb(), Some("edit"));
+        }
+        OutboundDispatchError::InvalidBoundActor => {
+            panic!("unexpected facade-bound actor validation")
         }
         OutboundDispatchError::Engine(error) => panic!("unexpected engine error: {error}"),
     }

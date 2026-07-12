@@ -36,7 +36,7 @@ use crate::companion::{
     companion_value_to_json,
 };
 use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
-use crate::deletion::DeleteReason;
+use crate::deletion::{DeleteReason, DeletionGateContext};
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerConsolidationJob,
     EnqueueDreamerJobOutcome,
@@ -983,28 +983,18 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> FacadeResult<Entity
 /// Store-truth check behind every actor binding: the entity must exist
 /// and its stored type must permit the asserted class.
 ///
-/// Bind/use race window (applies to EVERY non-claim write verb — witness,
-/// structural puts, checkin, companion, blob, schedule, enqueue — not just
-/// retract/delete): this check runs in its own read transaction while the
-/// engine operation opens its own write transaction. Only the gated claim
-/// path re-validates the actor INSIDE its write transaction
-/// (`apply_claim_candidate`). Within the window:
-/// * in-place retype is impossible (`apply_put` rejects type changes with
-///   `EntityTypeImmutable`), and the two-step retype — hard delete, then
-///   recreate under a different type — is refused facade-side on every
-///   id-accepting create verb, with the marker consulted INSIDE the same
-///   write transaction as the guarded put wherever the facade owns that
-///   transaction (witness, structural, checkin, blob artifact, and both
-///   claim doors' composed txn); companion-create and ingest admission
-///   check pre-transaction because the engine owns their transactions
-///   internally ([`MemoryFacade::refuse_hard_deleted_id`]);
-/// * a soft `user_delete` leaves a 25-byte shell that KEEPS its type, so
-///   a soft-deleted PERSON still passes this check — the meaningful
-///   deleted-actor residual is specifically a HARD purge landing between
-///   check and apply, which itself requires verified owner authority.
-///
-/// Closing the window fully needs in-txn engine seams on the non-claim
-/// write paths (follow-up outside this module's walls).
+/// DA-0 audit: every actor-gated non-claim mutation uses
+/// [`MemoryFacade::with_verified_actor_write_txn`] so the store-truth actor
+/// check and mutation share one LMDB write transaction. The enumerated verbs
+/// are witness, claim_retract, put_structural, put_habit_checkin,
+/// put_companion_record, put_blob_artifact, append_blob_version,
+/// enqueue_consolidation, and schedule_outbound's durable enqueue and later
+/// outbound Gate decision. The claim
+/// doors (commit, claim_upsert, admit_imported_claim, seed_claims) are skipped:
+/// `apply_claim_candidate` already revalidates their actor in the claim write
+/// transaction. Reads and status/query verbs are ungated and non-mutating.
+/// safe_delete is the ordered multi-transaction exception; its gate is
+/// evaluated before TXN1, staged for recovery there, and appended on TXN3.
 fn verify_actor_binding(
     vault: &Vault,
     actor: EntityId,
@@ -1262,13 +1252,48 @@ impl MemoryFacade<'_> {
         self.actor_class
     }
 
+    fn with_verified_actor_write_txn<T>(
+        &self,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> FacadeResult<T>,
+    ) -> FacadeResult<T> {
+        self.vault.try_with_write_txn(|wtxn| {
+            verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
+            write(wtxn)
+        })
+    }
+
+    fn evaluate_deletion_gate(&self) -> FacadeResult<DeletionGateContext> {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        verify_actor_binding_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
+        if self.actor_class != EdgeActorClass::Human {
+            return Err(FacadeError::new(
+                FACADE_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} may not delete entities; deletion is an owner verb",
+                    self.actor_class.gate_actor_class(),
+                ),
+                &[
+                    "Bind a human-class owner actor key to delete.",
+                    "Agents withdraw their own claims via claim_retract.",
+                ],
+            ));
+        }
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)
+            .map_err(FacadeError::from)?;
+        Ok(DeletionGateContext::new(
+            self.actor,
+            self.actor_class,
+            crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash().map_err(FacadeError::from)?,
+        ))
+    }
+
     // ── write verbs ─────────────────────────────────────────────────────
 
     /// Witnesses one turn: create-or-get CONVERSATION/TURN, MESSAGE puts,
     /// `PartOf`/`BelongsTo`/`AuthoredBy` edges, and BM25 `content`
     /// indexing — all in ONE atomic batch.
     pub fn witness(&self, turn: &WitnessTurn) -> FacadeResult<WitnessReceipt> {
-        self.verified_actor_class()?;
         if turn.messages.is_empty() {
             return Err(FacadeError::bad_request("witness turn carries no messages"));
         }
@@ -1320,63 +1345,58 @@ impl MemoryFacade<'_> {
             true
         };
 
-        let refused = self
-            .vault
-            .with_write_txn(|wtxn| {
-                for id in &created_ids {
-                    if self
-                        .vault
-                        .local_hard_delete_marker_exists_in_txn(wtxn, id)?
-                    {
-                        return Ok(Some(*id));
-                    }
-                }
-                let mut batch = self.vault.batch_in();
-                if conversation_is_new {
-                    batch = batch.put(
-                        &conversation_id,
-                        ENTITY_TYPE_CONVERSATION,
-                        occurred,
-                        learned_at,
-                        &container_body,
-                    );
-                }
-                if turn_is_new {
-                    batch = batch.put(
-                        &turn_id,
-                        ENTITY_TYPE_TURN,
-                        occurred,
-                        learned_at,
-                        &container_body,
-                    );
-                }
-                for (message, (id, body)) in
-                    turn.messages.iter().zip(message_ids.iter().zip(&bodies))
+        let refused = self.with_verified_actor_write_txn(|wtxn| {
+            for id in &created_ids {
+                if self
+                    .vault
+                    .local_hard_delete_marker_exists_in_txn(wtxn, id)?
                 {
-                    batch = batch
-                        .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
-                        .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
-                        .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
-                    if message.author != WitnessAuthor::System {
-                        batch = batch.edge(id, EdgeKind::AuthoredBy, &self.actor, 1.0);
-                    }
+                    return Ok(Some(*id));
                 }
-                batch.apply(wtxn)?;
-                if !text_ops.is_empty() {
-                    apply_ops(
-                        &self.vault.store,
-                        &self.vault.config,
-                        &self.vault.analyzer,
-                        wtxn,
-                        text_ops,
-                        text_index_trusted,
-                        false,
-                        true,
-                    )?;
+            }
+            let mut batch = self.vault.batch_in();
+            if conversation_is_new {
+                batch = batch.put(
+                    &conversation_id,
+                    ENTITY_TYPE_CONVERSATION,
+                    occurred,
+                    learned_at,
+                    &container_body,
+                );
+            }
+            if turn_is_new {
+                batch = batch.put(
+                    &turn_id,
+                    ENTITY_TYPE_TURN,
+                    occurred,
+                    learned_at,
+                    &container_body,
+                );
+            }
+            for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
+                batch = batch
+                    .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
+                    .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
+                    .edge(id, EdgeKind::BelongsTo, &conversation_id, 1.0);
+                if message.author != WitnessAuthor::System {
+                    batch = batch.edge(id, EdgeKind::AuthoredBy, &self.actor, 1.0);
                 }
-                Ok(None)
-            })
-            .map_err(FacadeError::from)?;
+            }
+            batch.apply(wtxn)?;
+            if !text_ops.is_empty() {
+                apply_ops(
+                    &self.vault.store,
+                    &self.vault.config,
+                    &self.vault.analyzer,
+                    wtxn,
+                    text_ops,
+                    text_index_trusted,
+                    false,
+                    true,
+                )?;
+            }
+            Ok(None)
+        })?;
         if let Some(id) = refused {
             return Err(hard_deleted_refusal(&id));
         }
@@ -1410,18 +1430,18 @@ impl MemoryFacade<'_> {
 
     /// Retracts an active claim (deliberate withdrawal; record preserved).
     ///
-    /// Authority (fail-closed): the asserted actor is first RESOLVED
-    /// against the store (`Self::verified_actor_class` — it must exist
-    /// and its stored type must match the asserted class). A verified
+    /// Authority (fail-closed): the asserted actor is RESOLVED against the
+    /// store in the SAME write transaction as the lifecycle change. A verified
     /// `human`-class actor holds the vault owner's memory authority and
     /// may retract any claim; `agent`/`system` actors may retract ONLY
     /// claims whose write-envelope evidence names them as the writing
     /// actor. Everything else is a typed denial — binding an actor key is
     /// not authority (W3).
     ///
-    /// The authorship check and lifecycle transition share one write
-    /// transaction, so a same-id intervening writer cannot turn prior
-    /// authorization into authority over the replacement body.
+    /// Actor binding, authorship, pending-consent closure, gate receipt, and
+    /// lifecycle transition share one write transaction, so a same-id
+    /// intervening writer cannot turn prior authorization into authority over
+    /// the replacement body or recreate actionable pending consent.
     pub fn claim_retract(&self, claim_ref: &str) -> FacadeResult<CommitReceipt> {
         self.claim_retract_with_before_txn(claim_ref, || {})
     }
@@ -1497,33 +1517,22 @@ impl MemoryFacade<'_> {
     /// denial (agents withdraw their own claims via
     /// [`Self::claim_retract`]).
     ///
-    /// Race window: the actor check and `Vault::delete_entity_with_reason`
-    /// run in separate transactions — no in-txn delete seam exists. See
-    /// the full window analysis on `verify_actor_binding`. Closing it
-    /// fully needs a `delete_entity_with_reason_in_txn` engine seam
-    /// (follow-up).
+    /// The owner gate is evaluated before deletion TXN1. Sync-enabled deletes
+    /// durably stage an authority-required marker + request-keyed recovery
+    /// sidecar before the tombstone can commit; TXN3 consumes that sidecar
+    /// with `append_gate_decision_in_txn` alongside the purge and distinct
+    /// REDACTION_AUDIT execution receipt. Sync-disabled builds append directly
+    /// on their first local scrub/purge.
     pub fn safe_delete(
         &self,
         entity_ref: &str,
         reason: SafeDeleteReason,
     ) -> FacadeResult<DeleteReceipt> {
-        if self.verified_actor_class()? != EdgeActorClass::Human {
-            return Err(FacadeError::new(
-                FACADE_CODE_FORBIDDEN,
-                format!(
-                    "actor class {} may not delete entities; deletion is an owner verb",
-                    self.actor_class.gate_actor_class(),
-                ),
-                &[
-                    "Bind a human-class owner actor key to delete.",
-                    "Agents withdraw their own claims via claim_retract.",
-                ],
-            ));
-        }
+        let gate = self.evaluate_deletion_gate()?;
         let id = self.resolve_ref(entity_ref)?;
         let outcome = self
             .vault
-            .delete_entity_with_reason(&id, reason.delete_reason())
+            .delete_entity_with_reason_gated(&id, reason.delete_reason(), gate)
             .map_err(FacadeError::from)?;
         Ok(DeleteReceipt {
             existed: outcome.existed,
@@ -1550,7 +1559,6 @@ impl MemoryFacade<'_> {
     /// (design §2.3/§2.8); no non-owner actor can create an entity that
     /// binds to any actor class.
     pub fn put_structural(&self, input: &StructuralPutInput) -> FacadeResult<EntityRefReceipt> {
-        let actor_class = self.verified_actor_class()?;
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
             return Err(FacadeError::bad_request_with(
@@ -1568,12 +1576,12 @@ impl MemoryFacade<'_> {
                 ],
             ));
         }
-        if type_byte == ENTITY_TYPE_PERSON && actor_class != EdgeActorClass::Human {
+        if type_byte == ENTITY_TYPE_PERSON && self.actor_class != EdgeActorClass::Human {
             return Err(FacadeError::new(
                 FACADE_CODE_FORBIDDEN,
                 format!(
                     "actor class {} may not mint PERSON entities; PERSON is actor-capable",
-                    actor_class.gate_actor_class(),
+                    self.actor_class.gate_actor_class(),
                 ),
                 &[
                     "PERSON entities rebind as human/agent actors; only the owner mints them.",
@@ -1627,41 +1635,38 @@ impl MemoryFacade<'_> {
         // Marker check and put share ONE write transaction (A1): a
         // concurrent hard delete either commits first (refused here) or
         // after this txn (its purge then erases what we wrote).
-        let refused = self
-            .vault
-            .with_write_txn(|wtxn| {
-                if self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
-                {
-                    return Ok(true);
-                }
-                let mut batch = self
-                    .vault
-                    .batch_in()
-                    .put(&id, type_byte, occurred, learned_at, &data);
-                for (kind, target, weight) in &resolved_edges {
-                    batch = batch.edge(&id, *kind, target, *weight);
-                }
-                batch.apply(wtxn)?;
-                if !text_fields.is_empty() {
-                    apply_ops(
-                        &self.vault.store,
-                        &self.vault.config,
-                        &self.vault.analyzer,
-                        wtxn,
-                        vec![BatchOp::Text {
-                            id,
-                            fields: text_fields.clone(),
-                        }],
-                        text_index_trusted,
-                        false,
-                        true,
-                    )?;
-                }
-                Ok(false)
-            })
-            .map_err(FacadeError::from)?;
+        let refused = self.with_verified_actor_write_txn(|wtxn| {
+            if self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+            {
+                return Ok(true);
+            }
+            let mut batch = self
+                .vault
+                .batch_in()
+                .put(&id, type_byte, occurred, learned_at, &data);
+            for (kind, target, weight) in &resolved_edges {
+                batch = batch.edge(&id, *kind, target, *weight);
+            }
+            batch.apply(wtxn)?;
+            if !text_fields.is_empty() {
+                apply_ops(
+                    &self.vault.store,
+                    &self.vault.config,
+                    &self.vault.analyzer,
+                    wtxn,
+                    vec![BatchOp::Text {
+                        id,
+                        fields: text_fields.clone(),
+                    }],
+                    text_index_trusted,
+                    false,
+                    true,
+                )?;
+            }
+            Ok(false)
+        })?;
         if refused {
             return Err(hard_deleted_refusal(&id));
         }
@@ -1671,7 +1676,6 @@ impl MemoryFacade<'_> {
     /// Appends one immutable habit check-in child (`ChildOf` edge written by
     /// the pack contract). The pinned `role` body key is facade-injected.
     pub fn put_habit_checkin(&self, input: &HabitCheckinInput) -> FacadeResult<EntityRefReceipt> {
-        self.verified_actor_class()?;
         let habit_id = self.resolve_ref(&input.habit_ref)?;
         let checkin_id = id_from_optional_hex(input.id.as_deref())?;
         let mut entries = vec![(
@@ -1701,22 +1705,19 @@ impl MemoryFacade<'_> {
         };
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
         // Marker check and checkin put share one write transaction (A1).
-        let refused = self
-            .vault
-            .with_write_txn(|wtxn| {
-                if self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(wtxn, &checkin_id)?
-                {
-                    return Ok(true);
-                }
-                self.vault
-                    .batch_in()
-                    .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
-                    .apply(wtxn)?;
-                Ok(false)
-            })
-            .map_err(FacadeError::from)?;
+        let refused = self.with_verified_actor_write_txn(|wtxn| {
+            if self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(wtxn, &checkin_id)?
+            {
+                return Ok(true);
+            }
+            self.vault
+                .batch_in()
+                .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
+                .apply(wtxn)?;
+            Ok(false)
+        })?;
         if refused {
             return Err(hard_deleted_refusal(&checkin_id));
         }
@@ -1729,7 +1730,6 @@ impl MemoryFacade<'_> {
         &self,
         input: &CompanionRecordInput,
     ) -> FacadeResult<EntityRefReceipt> {
-        self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         self.refuse_hard_deleted_id(&id)?;
         let owner = self.resolve_ref(&input.owner_ref)?;
@@ -1752,14 +1752,24 @@ impl MemoryFacade<'_> {
             CompanionProvenance::from_envelope(&envelope),
             CompanionExportClassification::LocalOnly,
         );
-        self.vault
-            .create_companion_record(&id, &record, input.learned_at)
-            .map_err(FacadeError::from)?;
-        if let Some(retired_at) = input.retired_at {
+        self.with_verified_actor_write_txn(|wtxn| {
+            // The early refusal above is only a fast path. Recheck in this
+            // transaction so a concurrent hard delete cannot land between
+            // the probe and companion creation, resurrecting a purged id.
+            if self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+            {
+                return Err(hard_deleted_refusal(&id));
+            }
             self.vault
-                .retire_companion_record(&id, retired_at)
-                .map_err(FacadeError::from)?;
-        }
+                .create_companion_record_in_txn(wtxn, &id, &record, input.learned_at)?;
+            if let Some(retired_at) = input.retired_at {
+                self.vault
+                    .retire_companion_record_in_txn(wtxn, &id, retired_at)?;
+            }
+            Ok(())
+        })?;
         self.entity_ref_receipt(&id)
     }
 
@@ -1853,7 +1863,6 @@ impl MemoryFacade<'_> {
     /// Registers a blob artifact (B8 blob door; bytes ride
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> FacadeResult<EntityRefReceipt> {
-        self.verified_actor_class()?;
         let id = id_from_optional_hex(input.id.as_deref())?;
         let body = crate::blob_artifact::BlobArtifactBody::new(
             input.name.clone(),
@@ -1868,22 +1877,19 @@ impl MemoryFacade<'_> {
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
         // Marker check and artifact put share one write transaction (A1);
         // the encoded body matches Vault::put_blob_artifact exactly.
-        let refused = self
-            .vault
-            .with_write_txn(|wtxn| {
-                if self
-                    .vault
-                    .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
-                {
-                    return Ok(true);
-                }
-                self.vault
-                    .batch_in()
-                    .put(&id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
-                    .apply(wtxn)?;
-                Ok(false)
-            })
-            .map_err(FacadeError::from)?;
+        let refused = self.with_verified_actor_write_txn(|wtxn| {
+            if self
+                .vault
+                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+            {
+                return Ok(true);
+            }
+            self.vault
+                .batch_in()
+                .put(&id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
+                .apply(wtxn)?;
+            Ok(false)
+        })?;
         if refused {
             return Err(hard_deleted_refusal(&id));
         }
@@ -1909,7 +1915,6 @@ impl MemoryFacade<'_> {
         occurred_at: u64,
         learned_at: Option<u64>,
     ) -> FacadeResult<BlobVersionView> {
-        self.verified_actor_class()?;
         let artifact_id = self.resolve_ref(artifact_ref)?;
         let provenance = match run_ref {
             Some(run_ref) => crate::blob_artifact::BlobVersionProvenance::AgentRun {
@@ -1921,17 +1926,19 @@ impl MemoryFacade<'_> {
             start: occurred_at,
             end: occurred_at,
         };
-        let record = self
-            .vault
-            .append_blob_artifact_version(
-                &artifact_id,
-                bytes,
-                &provenance,
-                WriteActor::new(self.actor, self.actor_class),
-                occurred,
-                learned_at.unwrap_or(occurred_at),
-            )
-            .map_err(FacadeError::from)?;
+        let record = self.with_verified_actor_write_txn(|wtxn| {
+            self.vault
+                .append_blob_artifact_version_in_txn(
+                    wtxn,
+                    &artifact_id,
+                    bytes,
+                    &provenance,
+                    WriteActor::new(self.actor, self.actor_class),
+                    occurred,
+                    learned_at.unwrap_or(occurred_at),
+                )
+                .map_err(FacadeError::from)
+        })?;
         Ok(BlobVersionView {
             artifact_ref: artifact_id.to_hex(),
             version: record.version,
@@ -2354,7 +2361,6 @@ impl MemoryFacade<'_> {
         &self,
         input: &ConsolidationJobInput,
     ) -> FacadeResult<DreamerJobRef> {
-        self.verified_actor_class()?;
         let scope = match input.scope.as_str() {
             "micro" => DreamerConsolidationScope::Micro,
             "meso" => DreamerConsolidationScope::Meso,
@@ -2367,16 +2373,21 @@ impl MemoryFacade<'_> {
             }
         };
         let store = DreamerRunnerStore::new(self.vault);
-        let outcome = store
-            .enqueue_consolidation(EnqueueDreamerConsolidationJob {
-                scope,
-                input: json_to_rmpv(&input.input),
-                parent_job: None,
-                dedupe_key: input.dedupe_key.clone(),
-                run_id: input.run_id.clone(),
-                now: input.now.unwrap_or_else(crate::unix_seconds_now),
-            })
-            .map_err(FacadeError::from)?;
+        let outcome = self.with_verified_actor_write_txn(|wtxn| {
+            store
+                .enqueue_consolidation_in_txn(
+                    wtxn,
+                    EnqueueDreamerConsolidationJob {
+                        scope,
+                        input: json_to_rmpv(&input.input),
+                        parent_job: None,
+                        dedupe_key: input.dedupe_key.clone(),
+                        run_id: input.run_id.clone(),
+                        now: input.now.unwrap_or_else(crate::unix_seconds_now),
+                    },
+                )
+                .map_err(FacadeError::from)
+        })?;
         let (status, existing) = match outcome {
             EnqueueDreamerJobOutcome::Enqueued(status) => (status, false),
             EnqueueDreamerJobOutcome::Existing(status) => (status, true),
@@ -2415,7 +2426,6 @@ impl MemoryFacade<'_> {
         &self,
         draft: &OutboundDraftInput,
     ) -> FacadeResult<OutboundIntentReceipt> {
-        self.verified_actor_class()?;
         let trigger = match draft.trigger.as_str() {
             "commitment" | "commitment_timer_wake" => {
                 OutboundIntentTrigger::commitment_timer_wake(draft.trigger_ref.clone())
@@ -2452,15 +2462,20 @@ impl MemoryFacade<'_> {
         let queue = JobQueue::new(self.vault);
         let payload = serde_json::to_vec(draft)
             .map_err(|_| FacadeError::bad_request("outbound draft is not serializable"))?;
-        let outcome = queue
-            .enqueue(EnqueueJob {
-                kind: BRIDGE_OUTBOUND_JOB_KIND.to_owned(),
-                payload,
-                dedupe_key: draft.idempotency_key.clone(),
-                run_id: draft.job_ref.clone(),
-                now,
-            })
-            .map_err(FacadeError::from)?;
+        let outcome = self.with_verified_actor_write_txn(|wtxn| {
+            queue
+                .enqueue_in_txn(
+                    wtxn,
+                    EnqueueJob {
+                        kind: BRIDGE_OUTBOUND_JOB_KIND.to_owned(),
+                        payload,
+                        dedupe_key: draft.idempotency_key.clone(),
+                        run_id: draft.job_ref.clone(),
+                        now,
+                    },
+                )
+                .map_err(FacadeError::from)
+        })?;
         let job = match outcome {
             EnqueueOutcome::Enqueued(job) => job,
             EnqueueOutcome::Existing(job) => {
@@ -2517,7 +2532,12 @@ impl MemoryFacade<'_> {
             },
         );
         let mut sink = ScheduleOnlySink;
-        let result = match self.vault.dispatch_outbound_intent(request, &mut sink) {
+        let result = match self.vault.dispatch_outbound_intent_with_verified_actor(
+            request,
+            &mut sink,
+            self.actor,
+            self.actor_class,
+        ) {
             Ok(result) => result,
             Err(err) => {
                 // Dispatch failed AFTER the durable enqueue. Best-effort cancel
@@ -2531,15 +2551,7 @@ impl MemoryFacade<'_> {
                     note: Some("outbound dispatch failed before gate decision".to_owned()),
                     now,
                 });
-                return Err(match err {
-                    OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
-                    OutboundDispatchError::UnsupportedCapability(capability) => {
-                        FacadeError::bad_request_with(
-                            format!("unsupported outbound capability: {capability}"),
-                            &["Use a registered channel/verb pair from the connector manifest."],
-                        )
-                    }
-                });
+                return Err(facade_error_from_outbound_dispatch(err));
             }
         };
         // Persist the gate surface keyed by job id so an idempotent replay
@@ -3091,6 +3103,21 @@ impl MemoryFacade<'_> {
             .filter(|record| record.claim_id.as_ref() == Some(id.as_bytes()))
             .max_by_key(|record| record.decision_id.to_hex());
         Ok(latest.map(|record| format!("gate:{}", record.decision_id.to_hex())))
+    }
+}
+
+fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) -> FacadeError {
+    match err {
+        OutboundDispatchError::Engine(engine) => FacadeError::from(engine),
+        OutboundDispatchError::InvalidBoundActor => FacadeError::new(
+            FACADE_CODE_FORBIDDEN,
+            "the bound actor is no longer authorized for outbound dispatch",
+            &["Refresh the actor binding and retry."],
+        ),
+        OutboundDispatchError::UnsupportedCapability(capability) => FacadeError::bad_request_with(
+            format!("unsupported outbound capability: {capability}"),
+            &["Use a registered channel/verb pair from the connector manifest."],
+        ),
     }
 }
 
