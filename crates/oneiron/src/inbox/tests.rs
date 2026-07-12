@@ -650,6 +650,65 @@ fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Resu
 }
 
 #[test]
+fn late_root_insertion_rekeys_pending_group_aliases() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let run_id = "run-late-root";
+    let claim_id = entity(0x61);
+
+    // A generated proposal can be durable before its run root. The group
+    // sidecar must follow the root once that job is subsequently persisted.
+    write_dreamer_proposal(
+        &vault,
+        claim_id,
+        entity(0xB1),
+        entity(0xC1),
+        "profile.diet",
+        "vegan",
+        run_id,
+        10,
+        &[REASON_CEILING],
+    )?;
+    let root = enqueue_dreamer_job(
+        &vault,
+        "orchestrator",
+        None,
+        Value::Map(vec![(Value::from("intent"), Value::from("Late root"))]),
+        run_id,
+        20,
+    )?;
+    let root_key = bytes_to_hex_lower(root.as_bytes());
+
+    vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+    let expected = vault
+        .inbox_groups(InboxQuery::at(100, 10))?
+        .into_iter()
+        .next()
+        .expect("browse surfaces the late-root group");
+    assert_eq!(expected.group_key, root_key);
+
+    assert_eq!(
+        explicit_inbox_group(&vault, &root_key, 100)?,
+        Some(expected.clone())
+    );
+    let reopened =
+        vault.reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{root_key}"), 100)?;
+    assert_eq!(reopened.open_group, Some(expected));
+
+    let resolution =
+        vault.resolve_inbox_group_at(&root_key, InboxBulkVerb::AcceptAll, None, 110)?;
+    assert_eq!(resolution.group_key, root_key);
+    assert_eq!(resolution.item_receipts.len(), 1);
+    assert_eq!(
+        vault
+            .get_claim(&claim_id)?
+            .expect("resolved claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_resolution_reaches_a_run_beyond_the_legacy_pending_scan_budget() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // Generic, non-Dreamer pending asks remain in the primary tray but have
