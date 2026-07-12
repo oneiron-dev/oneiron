@@ -346,6 +346,7 @@ pub(crate) struct GateEvaluatorInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GateClaimCheckerInput {
     pub(crate) claim_hash: [u8; 32],
+    pub(crate) expected_checker_binding: Option<crate::claim_checker::ClaimCheckerBinding>,
     pub(crate) evidence: Option<crate::claim_checker::ClaimCheckEvidence>,
 }
 
@@ -1369,6 +1370,7 @@ impl PolicyManifestResolution {
         if evidence.claim_hash() != checker_input.claim_hash
             || evidence.gate_policy_version() != input.policy_manifest_version
             || evidence.manifest_hash() != manifest_hash
+            || checker_input.expected_checker_binding != Some(evidence.checker_binding())
         {
             return Some(GateReasonCode::PendingCheckerUnavailable);
         }
@@ -2563,6 +2565,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         policy,
         mode,
         None,
+        None,
         recorded_decision,
     )
 }
@@ -2576,6 +2579,7 @@ pub(crate) fn check_claim_policy_for_write_with_checker_evidence(
     write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
+    expected_checker_binding: crate::claim_checker::ClaimCheckerBinding,
     checker_evidence: &crate::claim_checker::ClaimCheckEvidence,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
 ) -> Result<()> {
@@ -2586,6 +2590,7 @@ pub(crate) fn check_claim_policy_for_write_with_checker_evidence(
         write,
         policy,
         mode,
+        Some(expected_checker_binding),
         Some(checker_evidence),
         recorded_decision,
     )
@@ -2599,6 +2604,7 @@ fn check_claim_policy_for_write_with_record_impl(
     write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
+    expected_checker_binding: Option<crate::claim_checker::ClaimCheckerBinding>,
     checker_evidence: Option<&crate::claim_checker::ClaimCheckEvidence>,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
 ) -> Result<()> {
@@ -2650,6 +2656,7 @@ fn check_claim_policy_for_write_with_record_impl(
             provenance,
             mode.include_source_in_gate_input,
             agent_definition_ceiling,
+            expected_checker_binding,
             checker_evidence,
         );
         let decision = policy.evaluate_gate(&input);
@@ -3299,6 +3306,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
             false,
             agent_definition_ceiling,
             None,
+            None,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -3326,6 +3334,7 @@ fn claim_gate_input(
     provenance: GateProvenanceHandles,
     include_source: bool,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    expected_checker_binding: Option<crate::claim_checker::ClaimCheckerBinding>,
     checker_evidence: Option<&crate::claim_checker::ClaimCheckEvidence>,
 ) -> GateEvaluatorInput {
     let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
@@ -3349,6 +3358,7 @@ fn claim_gate_input(
             .ok()
             .map(|claim_hash| GateClaimCheckerInput {
                 claim_hash,
+                expected_checker_binding,
                 evidence: checker_evidence.cloned(),
             }),
     }

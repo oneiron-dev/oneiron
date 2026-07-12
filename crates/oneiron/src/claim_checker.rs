@@ -208,6 +208,7 @@ mod tests {
         ));
 
         assert_eq!(result.verdict(), ClaimCheckerVerdict::Confirm);
+        assert_eq!(result.checker_binding(), checker.binding());
         let requests = backend.requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
         for request in requests.iter() {
@@ -253,11 +254,31 @@ mod tests {
         assert_eq!(result.reason_code(), Some(CHECKER_VETO_REASON));
         assert_eq!(backend.requests.lock().unwrap().len(), 4);
     }
+
+    #[test]
+    fn checker_binding_changes_with_behavior_configuration() {
+        let checker_a = ClaimChecker::new(
+            ModelId::new("openai/checker-a@2026-07-13").unwrap(),
+            ModelTierRef("checker".to_owned()),
+            ModelLocality::ThirdParty,
+        );
+        let checker_b = ClaimChecker::new(
+            ModelId::new("openai/checker-b@2026-07-13").unwrap(),
+            ModelTierRef("checker".to_owned()),
+            ModelLocality::ThirdParty,
+        );
+        let checker_retry_change = checker_a.clone().with_retries_per_vote_for_test(2);
+
+        assert_ne!(checker_a.binding(), checker_b.binding());
+        assert_ne!(checker_a.binding(), checker_retry_change.binding());
+        assert_eq!(checker_a.binding(), checker_a.binding());
+    }
 }
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{
@@ -270,6 +291,18 @@ pub const CHECKER_VETO_REASON: &str = "gate.pending.checker.veto";
 pub const CHECKER_UNAVAILABLE_REASON: &str = "gate.pending.checker.unavailable";
 
 const DEFAULT_RETRIES_PER_VOTE: usize = 1;
+const CHECKER_BINDING_VERSION: &str = "oneiron.claim_checker.binding.v1";
+const CHECKER_PROMPT_VERSION: &str = "oneiron.claim_checker.prompt.v1";
+const CHECKER_USER_PROMPT_VERSION: &str = "oneiron.claim_checker.user-prompt.v1";
+const CHECKER_SYSTEM_PROMPT: &str = "You are the Oneiron production claim checker. Return strict JSON only. Confirm only when the claim is safe to retain in the Auto lane; otherwise hold.";
+const CHECKER_RESPONSE_SCHEMA_VERSION: &str = "oneiron.claim_checker.response.v1";
+const CHECKER_AGGREGATION_VERSION: &str = "oneiron.claim_checker.positive-2-of-3.partial-errors.v1";
+const CHECKER_VOTE_COUNT: u8 = 3;
+const CHECKER_POSITIVE_THRESHOLD: u8 = 2;
+const CHECKER_FALLBACK_NAME: &str = "fail_closed_to_proposed";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClaimCheckerBinding([u8; 32]);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimCheckInput {
@@ -284,6 +317,7 @@ pub struct ClaimCheckEvidence {
     claim_hash: [u8; 32],
     gate_policy_version: String,
     manifest_hash: [u8; 32],
+    checker_binding: ClaimCheckerBinding,
     result: ClaimCheckerResult,
 }
 
@@ -293,12 +327,14 @@ impl ClaimCheckEvidence {
         claim_hash: [u8; 32],
         gate_policy_version: String,
         manifest_hash: [u8; 32],
+        checker_binding: ClaimCheckerBinding,
         result: ClaimCheckerResult,
     ) -> Self {
         Self {
             claim_hash,
             gate_policy_version,
             manifest_hash,
+            checker_binding,
             result,
         }
     }
@@ -327,6 +363,11 @@ impl ClaimCheckEvidence {
     pub fn manifest_hash(&self) -> [u8; 32] {
         self.manifest_hash
     }
+
+    #[must_use]
+    pub fn checker_binding(&self) -> ClaimCheckerBinding {
+        self.checker_binding
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +389,45 @@ impl ClaimChecker {
         }
     }
 
+    #[cfg(test)]
+    fn with_retries_per_vote_for_test(mut self, retries_per_vote: usize) -> Self {
+        self.retries_per_vote = retries_per_vote;
+        self
+    }
+
+    #[must_use]
+    pub fn binding(&self) -> ClaimCheckerBinding {
+        let mut hasher = Sha256::new();
+        hash_binding_field(&mut hasher, CHECKER_BINDING_VERSION.as_bytes());
+        hash_binding_field(&mut hasher, self.model.as_str().as_bytes());
+        hash_binding_field(&mut hasher, self.tier.as_str().as_bytes());
+        hash_binding_field(
+            &mut hasher,
+            match self.locality {
+                ModelLocality::OnDevice => b"on_device",
+                ModelLocality::OwnServer => b"own_server",
+                ModelLocality::ThirdParty => b"third_party",
+            },
+        );
+        hash_binding_field(&mut hasher, CHECKER_PROMPT_VERSION.as_bytes());
+        hash_binding_field(&mut hasher, CHECKER_SYSTEM_PROMPT.as_bytes());
+        hash_binding_field(&mut hasher, CHECKER_USER_PROMPT_VERSION.as_bytes());
+        hash_binding_field(&mut hasher, CHECKER_RESPONSE_SCHEMA_VERSION.as_bytes());
+        hash_binding_field(
+            &mut hasher,
+            &serde_json::to_vec(&checker_response_schema())
+                .expect("checker response schema is serializable"),
+        );
+        hash_binding_field(&mut hasher, CHECKER_AGGREGATION_VERSION.as_bytes());
+        hash_binding_field(&mut hasher, &[CHECKER_VOTE_COUNT]);
+        hash_binding_field(&mut hasher, &[CHECKER_POSITIVE_THRESHOLD]);
+        hash_binding_field(&mut hasher, &(self.retries_per_vote as u64).to_be_bytes());
+        hash_binding_field(&mut hasher, b"auto_check");
+        hash_binding_field(&mut hasher, b"durable");
+        hash_binding_field(&mut hasher, CHECKER_FALLBACK_NAME.as_bytes());
+        ClaimCheckerBinding(hasher.finalize().into())
+    }
+
     pub async fn check(
         &self,
         backend: &dyn LlmBackend,
@@ -362,6 +442,7 @@ impl ClaimChecker {
             claim_hash: input.claim_hash,
             gate_policy_version: input.gate_policy_version.clone(),
             manifest_hash: input.manifest_hash,
+            checker_binding: self.binding(),
             result: aggregate_votes(votes),
         }
     }
@@ -392,15 +473,7 @@ impl ClaimChecker {
     }
 
     fn request(&self, input: &ClaimCheckInput) -> LlmRequest {
-        let schema = json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "verdict": { "type": "string", "enum": ["confirm", "hold"] }
-            },
-            "required": ["verdict"]
-        });
-        let system = "You are the Oneiron production claim checker. Return strict JSON only. Confirm only when the claim is safe to retain in the Auto lane; otherwise hold.";
+        let schema = checker_response_schema();
         let user = format!(
             "claim_hash={}\ngate_policy_version={}\nmanifest_hash={}\nclaim:\n{}",
             bytes_to_hex_lower(&input.claim_hash),
@@ -414,7 +487,7 @@ impl ClaimChecker {
                 purpose: CallPurpose::AutoCheck,
                 class: CallClass::Durable {
                     fallback: DeterministicFallback {
-                        name: "fail_closed_to_proposed".to_owned(),
+                        name: CHECKER_FALLBACK_NAME.to_owned(),
                         config: None,
                     },
                 },
@@ -431,7 +504,7 @@ impl ClaimChecker {
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
-                        text: system.to_owned(),
+                        text: CHECKER_SYSTEM_PROMPT.to_owned(),
                     }],
                 },
                 LlmMessage {
@@ -444,6 +517,22 @@ impl ClaimChecker {
             provider_options: BTreeMap::new(),
         }
     }
+}
+
+fn hash_binding_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value);
+}
+
+fn checker_response_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "verdict": { "type": "string", "enum": ["confirm", "hold"] }
+        },
+        "required": ["verdict"]
+    })
 }
 
 #[derive(Deserialize)]

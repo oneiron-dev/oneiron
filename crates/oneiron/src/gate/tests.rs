@@ -255,6 +255,15 @@ fn source_trust_entry_with_checker(
     )
 }
 
+fn test_claim_checker_binding(model: &str) -> crate::claim_checker::ClaimCheckerBinding {
+    crate::claim_checker::ClaimChecker::new(
+        crate::llm::ModelId::new(format!("openai/{model}@2026-07-13")).unwrap(),
+        crate::llm::ModelTierRef("checker".to_owned()),
+        crate::llm::ModelLocality::ThirdParty,
+    )
+    .binding()
+}
+
 fn source_trust_entry_without_auto_permit(
     source: ClaimSource,
     max_auto_sensitivity: u8,
@@ -1686,6 +1695,7 @@ fn gate_evaluator_input(
         agent_definition_ceiling: None,
         claim_checker: Some(GateClaimCheckerInput {
             claim_hash: [0x30; 32],
+            expected_checker_binding: None,
             evidence: None,
         }),
     }
@@ -2151,6 +2161,7 @@ fn positive_checker_evidence_cannot_lift_a_rule_denied_claim() -> Result<()> {
     )?;
     let policy = resolve(&vault)?;
     let claim_hash = [0x31; 32];
+    let checker_binding = test_claim_checker_binding("checker");
     let mut input = gate_evaluator_input(
         "first_party",
         Some("probation"),
@@ -2159,10 +2170,12 @@ fn positive_checker_evidence_cannot_lift_a_rule_denied_claim() -> Result<()> {
     );
     input.claim_checker = Some(GateClaimCheckerInput {
         claim_hash,
+        expected_checker_binding: Some(checker_binding),
         evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
             claim_hash,
             POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
+            checker_binding,
             crate::claim_checker::aggregate_votes([
                 crate::claim_checker::ClaimCheckerVote::Confirm,
                 crate::claim_checker::ClaimCheckerVote::Confirm,
@@ -2196,6 +2209,7 @@ fn bound_checker_hold_surfaces_the_veto_reason() -> Result<()> {
     )?;
     let policy = resolve(&vault)?;
     let claim_hash = [0x32; 32];
+    let checker_binding = test_claim_checker_binding("checker");
     let mut input = gate_evaluator_input(
         "first_party",
         None,
@@ -2204,10 +2218,12 @@ fn bound_checker_hold_surfaces_the_veto_reason() -> Result<()> {
     );
     input.claim_checker = Some(GateClaimCheckerInput {
         claim_hash,
+        expected_checker_binding: Some(checker_binding),
         evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
             claim_hash,
             POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
+            checker_binding,
             crate::claim_checker::aggregate_votes([
                 crate::claim_checker::ClaimCheckerVote::Hold,
                 crate::claim_checker::ClaimCheckerVote::Confirm,
@@ -2241,6 +2257,7 @@ fn checker_confirmation_requires_exact_claim_and_policy_binding() -> Result<()> 
     )?;
     let policy = resolve(&vault)?;
     let claim_hash = [0x33; 32];
+    let checker_binding = test_claim_checker_binding("checker");
     let result = crate::claim_checker::aggregate_votes([
         crate::claim_checker::ClaimCheckerVote::Confirm,
         crate::claim_checker::ClaimCheckerVote::Confirm,
@@ -2254,10 +2271,12 @@ fn checker_confirmation_requires_exact_claim_and_policy_binding() -> Result<()> 
     );
     input.claim_checker = Some(GateClaimCheckerInput {
         claim_hash,
+        expected_checker_binding: Some(checker_binding),
         evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
             claim_hash,
             POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
+            checker_binding,
             result,
         )),
     });
@@ -2268,6 +2287,7 @@ fn checker_confirmation_requires_exact_claim_and_policy_binding() -> Result<()> 
             [0x34; 32],
             POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
+            checker_binding,
             result,
         ));
     let stale = policy.evaluate_gate(&input);
@@ -2373,6 +2393,16 @@ fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Resu
 
     let checker_input =
         claim_checker_input_for_claim(&body, &policy, "profile.name = Ada".to_owned())?;
+    let checker_a = crate::claim_checker::ClaimChecker::new(
+        crate::llm::ModelId::new("openai/checker-a@2026-07-13").unwrap(),
+        crate::llm::ModelTierRef("checker".to_owned()),
+        crate::llm::ModelLocality::ThirdParty,
+    );
+    let checker_b = crate::claim_checker::ClaimChecker::new(
+        crate::llm::ModelId::new("openai/checker-b@2026-07-13").unwrap(),
+        crate::llm::ModelTierRef("checker".to_owned()),
+        crate::llm::ModelLocality::ThirdParty,
+    );
     let confirm = crate::claim_checker::aggregate_votes([
         crate::claim_checker::ClaimCheckerVote::Confirm,
         crate::claim_checker::ClaimCheckerVote::Confirm,
@@ -2382,6 +2412,7 @@ fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Resu
         checker_input.claim_hash,
         checker_input.gate_policy_version.clone(),
         [0x44; 32],
+        checker_a.binding(),
         confirm,
     );
     let mut stale_txn = vault.store.env.write_txn()?;
@@ -2393,6 +2424,7 @@ fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Resu
         write(),
         &policy,
         mode(),
+        checker_a.binding(),
         &stale_evidence,
         &mut stale_record,
     )
@@ -2407,10 +2439,42 @@ fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Resu
     stale_txn.commit()?;
     assert!(vault.get_raw(&claim_id)?.is_none());
 
+    let checker_a_evidence = crate::claim_checker::ClaimCheckEvidence::new_bound(
+        checker_input.claim_hash,
+        checker_input.gate_policy_version.clone(),
+        checker_input.manifest_hash,
+        checker_a.binding(),
+        confirm,
+    );
+    let mut changed_checker_txn = vault.store.env.write_txn()?;
+    let mut changed_checker_record = None;
+    let changed_checker = check_claim_policy_for_write_with_checker_evidence(
+        &vault.store,
+        &mut changed_checker_txn,
+        &claim_id,
+        write(),
+        &policy,
+        mode(),
+        checker_b.binding(),
+        &checker_a_evidence,
+        &mut changed_checker_record,
+    )
+    .expect_err("checker-A evidence must not authorize under checker B");
+    assert!(matches!(
+        changed_checker,
+        Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes
+        } if reason_codes == vec![crate::claim_checker::CHECKER_UNAVAILABLE_REASON]
+    ));
+    changed_checker_txn.commit()?;
+    assert!(vault.get_raw(&claim_id)?.is_none());
+
     let exact_evidence = crate::claim_checker::ClaimCheckEvidence::new_bound(
         checker_input.claim_hash,
         checker_input.gate_policy_version,
         checker_input.manifest_hash,
+        checker_a.binding(),
         confirm,
     );
     let mut exact_txn = vault.store.env.write_txn()?;
@@ -2422,6 +2486,7 @@ fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Resu
         write(),
         &policy,
         mode(),
+        checker_a.binding(),
         &exact_evidence,
         &mut exact_record,
     )?;
