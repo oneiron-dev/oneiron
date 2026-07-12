@@ -1439,6 +1439,7 @@ impl Store {
         };
         self.vault_meta
             .put(wtxn, &job_run_index_key(run_id, job_id), b"1")?;
+        self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
         Ok(())
     }
 
@@ -2212,6 +2213,43 @@ impl Store {
             &pending_gate_consent_index_state_key(&record.claim_id),
             &encoded,
         )?;
+        Ok(())
+    }
+
+    /// Recomputes the derived group aliases after a run gains a job. A
+    /// pending consent can predate its durable root, so its old alias may no
+    /// longer match the run tree that the inbox projection resolves.
+    fn refresh_pending_gate_consent_group_aliases_for_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: &str,
+    ) -> Result<()> {
+        let prefix = pending_gate_consent_run_index_prefix(run_id);
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(&*wtxn, &prefix)? {
+            let (key, _) = row?;
+            let claim_id = EntityId::from_bytes(index_suffix_id(
+                key,
+                &prefix,
+                "pending gate consent run index",
+            )?)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent run index"))?;
+            let Some(record) = self.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            };
+            let Some(state) = self.pending_gate_consent_index_state_in_txn(&*wtxn, &record)? else {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            };
+            if state.run_id != run_id {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            }
+            records.push(record);
+        }
+
+        for record in &records {
+            self.delete_pending_gate_consent_indexes_in_txn(wtxn, record)?;
+            self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
+        }
         Ok(())
     }
 
