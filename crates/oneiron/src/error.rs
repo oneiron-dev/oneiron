@@ -270,6 +270,7 @@ pub enum ErrorKind {
     OffRecordSessionClosing,
     OffRecordTurnNotFenced,
     OffRecordTalkOnly,
+    OffRecordExportRefused,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
@@ -1327,6 +1328,11 @@ pub enum Error {
         "off-record session {session_ref} is talk-only: outbound and commitment verbs are disabled; exit off-record mode to take this action"
     )]
     OffRecordTalkOnly { session_ref: String },
+    /// A whole-vault export cannot run while an off-record session is still
+    /// live. Refusing the operation is preferable to producing an artifact
+    /// whose fenced rows would outlive the session's delete-at-close pass.
+    #[error("whole-vault export refused while off-record session is open: {session_ref}")]
+    OffRecordExportRefused { session_ref: String },
     /// A sync replay door delivered DIVERGENT bytes for an EXISTING
     /// REDACTION_AUDIT receipt id. Receipts are immutable audit records
     /// (contracts.ts `redactionAuditReceipt.immutability`; the ARCH-0023b
@@ -1581,6 +1587,7 @@ impl Error {
             Self::OffRecordSessionClosing { .. } => ErrorKind::OffRecordSessionClosing,
             Self::OffRecordTurnNotFenced { .. } => ErrorKind::OffRecordTurnNotFenced,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
+            Self::OffRecordExportRefused { .. } => ErrorKind::OffRecordExportRefused,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,
             #[cfg(feature = "sync")]

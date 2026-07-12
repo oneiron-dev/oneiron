@@ -3,9 +3,11 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::companion::CompanionProvenance;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::off_record::OffRecordBackendClass;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
+use crate::{Vault, VaultConfig};
 use rmpv::Value;
 
 fn entity(seed: u8) -> EntityId {
@@ -165,7 +167,7 @@ fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
 
     assert_eq!(
         snapshot,
-        "{\n  \"manifest_version\": 1,\n  \"serializer\": {\n    \"name\": \"oneiron.whole_vault_export\",\n    \"version\": 1\n  },\n  \"secrets_nulled\": {\n    \"payloads\": true,\n    \"structural_placeholders\": true\n  },\n  \"data_shape\": {\n    \"storage_abi_version\": 10,\n    \"storage_schema_version\": 1,\n    \"db_manifest_version\": 2,\n    \"max_dbs\": 32,\n    \"named_databases\": [\n      {\n        \"n\": 1,\n        \"name\": \"entities\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 2,\n        \"name\": \"type_index\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 3,\n        \"name\": \"short_ids\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 4,\n        \"name\": \"short_ids_reverse\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 5,\n        \"name\": \"vault_meta\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 6,\n        \"name\": \"vectors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 7,\n        \"name\": \"hnsw_neighbors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 8,\n        \"name\": \"hnsw_meta\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 9,\n        \"name\": \"text_postings\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 10,\n        \"name\": \"text_meta\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 11,\n        \"name\": \"text_forward\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 12,\n        \"name\": \"text_bm25_field_stats\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 13,\n        \"name\": \"text_doc_field_lengths\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 14,\n        \"name\": \"edges_out\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 15,\n        \"name\": \"edges_in\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 16,\n        \"name\": \"ppr_cache\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 17,\n        \"name\": \"ppr_cache_deps\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 18,\n        \"name\": \"temporal_occurred_start\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 19,\n        \"name\": \"temporal_occurred_end\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 20,\n        \"name\": \"temporal_learned\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 21,\n        \"name\": \"temporal_long_intervals\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 22,\n        \"name\": \"phonetic_index\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 23,\n        \"name\": \"phonetic_forward\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 24,\n        \"name\": \"sync_state\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 25,\n        \"name\": \"sync_queue\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 26,\n        \"name\": \"job_records\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 27,\n        \"name\": \"job_ready\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 28,\n        \"name\": \"job_dedupe\",\n        \"group\": \"Jobs\"\n      }\n    ]\n  }\n}"
+        "{\n  \"manifest_version\": 1,\n  \"serializer\": {\n    \"name\": \"oneiron.whole_vault_export\",\n    \"version\": 1\n  },\n  \"secrets_nulled\": {\n    \"payloads\": true,\n    \"structural_placeholders\": true\n  },\n  \"data_shape\": {\n    \"storage_abi_version\": 11,\n    \"storage_schema_version\": 1,\n    \"db_manifest_version\": 2,\n    \"max_dbs\": 32,\n    \"named_databases\": [\n      {\n        \"n\": 1,\n        \"name\": \"entities\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 2,\n        \"name\": \"type_index\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 3,\n        \"name\": \"short_ids\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 4,\n        \"name\": \"short_ids_reverse\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 5,\n        \"name\": \"vault_meta\",\n        \"group\": \"Core\"\n      },\n      {\n        \"n\": 6,\n        \"name\": \"vectors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 7,\n        \"name\": \"hnsw_neighbors\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 8,\n        \"name\": \"hnsw_meta\",\n        \"group\": \"Vector\"\n      },\n      {\n        \"n\": 9,\n        \"name\": \"text_postings\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 10,\n        \"name\": \"text_meta\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 11,\n        \"name\": \"text_forward\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 12,\n        \"name\": \"text_bm25_field_stats\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 13,\n        \"name\": \"text_doc_field_lengths\",\n        \"group\": \"Text\"\n      },\n      {\n        \"n\": 14,\n        \"name\": \"edges_out\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 15,\n        \"name\": \"edges_in\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 16,\n        \"name\": \"ppr_cache\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 17,\n        \"name\": \"ppr_cache_deps\",\n        \"group\": \"Graph\"\n      },\n      {\n        \"n\": 18,\n        \"name\": \"temporal_occurred_start\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 19,\n        \"name\": \"temporal_occurred_end\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 20,\n        \"name\": \"temporal_learned\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 21,\n        \"name\": \"temporal_long_intervals\",\n        \"group\": \"Temporal\"\n      },\n      {\n        \"n\": 22,\n        \"name\": \"phonetic_index\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 23,\n        \"name\": \"phonetic_forward\",\n        \"group\": \"Phonetic\"\n      },\n      {\n        \"n\": 24,\n        \"name\": \"sync_state\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 25,\n        \"name\": \"sync_queue\",\n        \"group\": \"Sync\"\n      },\n      {\n        \"n\": 26,\n        \"name\": \"job_records\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 27,\n        \"name\": \"job_ready\",\n        \"group\": \"Jobs\"\n      },\n      {\n        \"n\": 28,\n        \"name\": \"job_dedupe\",\n        \"group\": \"Jobs\"\n      }\n    ]\n  }\n}",
     );
     assert!(manifest.redacted());
     assert!(manifest.structurally_secret_nulled());
@@ -206,10 +208,66 @@ fn whole_vault_export_manifest_artifact_writes_stable_manifest_json() {
     );
 
     let dir = tempfile::tempdir().expect("temp dir");
-    let path = write_whole_vault_export_manifest(dir.path(), secrets_nulled)
+    let path = whole_vault_export_manifest_artifact(secrets_nulled)
+        .expect("manifest artifact builds")
+        .write_to_dir(dir.path())
         .expect("manifest artifact writes");
     let written = std::fs::read(path).expect("manifest artifact is readable");
     assert_eq!(written, artifact.bytes());
+}
+
+#[test]
+fn every_whole_vault_export_entry_refuses_live_session_without_artifact_then_allows_close()
+-> Result<()> {
+    fn assert_refused<T>(result: Result<T>, expected_session_ref: &str) {
+        match result {
+            Err(Error::OffRecordExportRefused { session_ref }) => {
+                assert_eq!(session_ref, expected_session_ref);
+            }
+            Err(other) => panic!("expected OffRecordExportRefused, got {other:?}"),
+            Ok(_) => panic!("live off-record session must refuse whole-vault export"),
+        }
+    }
+
+    let vault_dir = tempfile::tempdir()?;
+    let vault = Vault::open(vault_dir.path(), VaultConfig::default())?;
+    let export_dir = tempfile::tempdir()?;
+    let artifact_path = export_dir.path().join(EXPORT_MANIFEST_ARTIFACT_NAME);
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(false);
+    let session_ref = "sess-export-guard";
+    vault.enter_off_record_session(session_ref, OffRecordBackendClass::Local)?;
+
+    assert_refused(
+        whole_vault_export_manifest_artifact_for_vault(&vault, secrets_nulled),
+        session_ref,
+    );
+    assert_refused(
+        vault.whole_vault_export_manifest_artifact(secrets_nulled),
+        session_ref,
+    );
+    assert_refused(
+        write_whole_vault_export_manifest_for_vault(&vault, export_dir.path(), secrets_nulled),
+        session_ref,
+    );
+    assert_refused(
+        vault.write_whole_vault_export_manifest(export_dir.path(), secrets_nulled),
+        session_ref,
+    );
+    assert!(
+        !artifact_path.exists(),
+        "refused export must not write manifest.json",
+    );
+
+    let receipt_log = vault.off_record_receipt_log(session_ref)?;
+    vault.close_off_record_session(session_ref, receipt_log)?;
+
+    whole_vault_export_manifest_artifact_for_vault(&vault, secrets_nulled)?;
+    vault.whole_vault_export_manifest_artifact(secrets_nulled)?;
+    write_whole_vault_export_manifest_for_vault(&vault, export_dir.path(), secrets_nulled)?;
+    std::fs::remove_file(&artifact_path)?;
+    vault.write_whole_vault_export_manifest(export_dir.path(), secrets_nulled)?;
+    assert!(artifact_path.is_file());
+    Ok(())
 }
 
 #[test]
