@@ -940,9 +940,18 @@ fn explicit_inbox_group(vault: &Vault, group_ref: &str, now: u64) -> Result<Opti
         let duplicate_members = duplicate_members_by_hash
             .get(&claim_hash)
             .expect("inserted above");
+        // A same-id proposal rewrite can leave its old semantic-hash sidecar
+        // behind. Browse already keeps the pending row visible; the indexed
+        // door treats this current member as its own singleton rather than
+        // calling the stale sidecar corruption.
+        let duplicate_members = if duplicate_members.is_empty() {
+            vec![member.clone()]
+        } else {
+            duplicate_members.clone()
+        };
         let earliest = duplicate_members
             .first()
-            .ok_or(Error::CorruptedIndex("pending gate consent hash index"))?;
+            .expect("the current member supplies the stale-sidecar fallback");
         let claim_id_hex = hex_lower(&member.pending.claim_id);
         if earliest.run_id != run_id {
             let (duplicate_of_group_key, _) = resolve_run_identity(vault, &earliest.run_id)?;
@@ -1016,12 +1025,9 @@ fn accept_member_in_txn(
     }
     let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
 
-    let (diff_handle, _read_frontier_hash) =
+    let (diff_handle, read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)?;
-    // Content must still match the consent. The policy frontier is evaluated
-    // again by the gated rewrite below, so a changed policy hash alone is not
-    // a stale proposal (matching the retraction path's stale-row close).
-    if diff_handle != pending.diff_handle {
+    if diff_handle != pending.diff_handle || read_frontier_hash != pending.read_frontier_hash {
         return Err(Error::GateConsentStale { claim_id: *id });
     }
 

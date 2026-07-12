@@ -346,15 +346,17 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
 }
 
 #[test]
-fn inbox_accept_tolerates_a_stale_policy_hash() -> Result<()> {
+fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim_id = entity(0x91);
-    let run_id = "run-stale-policy-hash";
+    let actor = entity(0x92);
+    let subject = entity(0x93);
+    let run_id = "run-stale-semantic-hash";
     write_dreamer_proposal(
         &vault,
         claim_id,
-        entity(0x92),
-        entity(0x93),
+        actor,
+        subject,
         "profile.hobby",
         "chess",
         run_id,
@@ -362,24 +364,36 @@ fn inbox_accept_tolerates_a_stale_policy_hash() -> Result<()> {
         &[REASON_CEILING],
     )?;
 
-    vault.with_write_txn(|wtxn| {
-        let mut pending = vault
-            .store
-            .pending_gate_consent_in_txn(wtxn, &claim_id)?
-            .expect("proposal is parked for consent");
-        pending.read_frontier_hash = [0xA5; 32];
-        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
-    })?;
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.hobby",
+                ClaimSubject::Entity(subject),
+                Value::from("go"),
+                0.9,
+            ),
+            &dreamer_envelope(actor, run_id),
+            time(21),
+            21,
+        )
+        .commit()?;
 
-    let resolution = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50)?;
-    assert_eq!(resolution.item_receipts.len(), 1);
-    assert_eq!(
+    vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+    assert_eq!(vault.inbox_groups(InboxQuery::at(50, 10))?.len(), 1);
+    assert!(
         vault
-            .get_claim(&claim_id)?
-            .expect("accepted claim")
-            .approval,
-        ClaimApprovalStatus::Approved
+            .reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{run_id}"), 50)?
+            .open_group
+            .is_some()
     );
+    assert!(matches!(
+        vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50),
+        Err(Error::GateConsentStale { claim_id: stale }) if stale == claim_id
+    ));
+    let rejected = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::RejectAll, None, 51)?;
+    assert_eq!(rejected.item_receipts.len(), 1);
     assert!(vault.store.pending_gate_consents(10)?.is_empty());
     Ok(())
 }
