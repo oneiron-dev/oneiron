@@ -492,7 +492,7 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
-                self.scrub_window_before_export(&window.doc)?;
+                self.scrub_window_before_export(&window.key, &window.doc)?;
                 let doc = &window.doc;
                 let delta = crate::sync::window::export_window_updates_since(
                     &self.vault,
@@ -533,7 +533,7 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
-                self.scrub_window_before_export(&window.doc)?;
+                self.scrub_window_before_export(&window.key, &window.doc)?;
                 let doc = &window.doc;
                 let delta = crate::sync::window::export_window_updates_since(
                     &self.vault,
@@ -1113,7 +1113,7 @@ impl SyncClient {
     /// path); full manager open otherwise.
     fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
         if let Some(window) = self.manager.window(key) {
-            crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, &window.doc)?;
+            crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, key, &window.doc)?;
             return Ok(doc_version_vector(&window.doc));
         }
 
@@ -1151,15 +1151,16 @@ impl SyncClient {
         }
 
         let window = self.manager.open_window(key)?;
-        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, &window.doc)?;
+        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, key, &window.doc)?;
         Ok(doc_version_vector(&window.doc))
     }
 
     pub(crate) fn scrub_window_before_export(
         &self,
+        key: &WindowKey,
         doc: &LoroDoc,
     ) -> std::result::Result<(), TransportError> {
-        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, doc)
+        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, key, doc)
             .map(|_| ())
             .map_err(|e| TransportError::Storage(format!("off-record carrier scrub: {e}")))
     }

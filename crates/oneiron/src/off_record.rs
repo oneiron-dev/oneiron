@@ -569,7 +569,7 @@ impl Vault {
         let Some((window, _materializer)) = self.live_window(&window_key) else {
             return Ok(());
         };
-        scrub_off_record_fenced_carriers(self, &window.doc)?;
+        scrub_off_record_fenced_carriers(self, &window_key, &window.doc)?;
         Ok(())
     }
 
