@@ -795,11 +795,20 @@ impl<'a> BatchBuilder<'a> {
                 .load(std::sync::atomic::Ordering::Acquire)
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
-        if let Err(err) = preflight_gate_decisions_in_txn(&self.vault.store, &self.ops, &mut wtxn) {
+        let mut staged_gate_decisions = Vec::new();
+        if let Err(err) = preflight_gate_decisions_in_txn(
+            &self.vault.store,
+            &self.ops,
+            &mut wtxn,
+            &mut staged_gate_decisions,
+        ) {
             // A gate rejection is itself an intentional ledger event. Keep
             // that denial receipt, matching the historical gate semantics;
             // later phase-2 failures drop this transaction and its receipt.
             wtxn.commit()?;
+            for decision in staged_gate_decisions {
+                decision.record_metrics();
+            }
             return Err(err);
         }
 
@@ -814,6 +823,9 @@ impl<'a> BatchBuilder<'a> {
             true,
         )?;
         wtxn.commit()?;
+        for decision in staged_gate_decisions {
+            decision.record_metrics();
+        }
         Ok(())
     }
 }
@@ -825,14 +837,13 @@ fn preflight_gate_decisions_in_txn(
     store: &Store,
     ops: &[BatchOp],
     wtxn: &mut RwTxn<'_>,
+    staged_decisions: &mut Vec<crate::gate::RecordedClaimGateDecision>,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
     }
 
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
-    let mut staged_decision_ids = Vec::new();
-
     for op in ops {
         let mut recorded_decision = None;
         let result = match op {
@@ -853,6 +864,7 @@ fn preflight_gate_decisions_in_txn(
                         crate::gate::ClaimGateWrite {
                             body: &body,
                             envelope: None,
+                            defer_metrics_until_commit: true,
                         },
                         &policy,
                         crate::gate::GateWriteMode {
@@ -881,6 +893,7 @@ fn preflight_gate_decisions_in_txn(
                     crate::gate::ClaimGateWrite {
                         body: &body,
                         envelope: Some(envelope),
+                        defer_metrics_until_commit: true,
                     },
                     &policy,
                     crate::gate::GateWriteMode {
@@ -896,20 +909,20 @@ fn preflight_gate_decisions_in_txn(
             _ => Ok(()),
         };
 
-        if let Some(decision) = &recorded_decision {
-            staged_decision_ids.push(decision.decision_id);
+        if let Some(decision) = recorded_decision {
+            staged_decisions.push(decision);
         }
         if let Err(err) = result {
-            let preserved_denial_id = recorded_decision
-                .as_ref()
-                .filter(|decision| decision.outcome != "allow")
-                .map(|decision| decision.decision_id);
-            for decision_id in staged_decision_ids
-                .into_iter()
-                .filter(|decision_id| Some(*decision_id) != preserved_denial_id)
-            {
-                store.delete_gate_decision_in_txn(wtxn, decision_id)?;
+            let preserved_denial_id = staged_decisions
+                .last()
+                .filter(|decision| decision.outcome() != "allow")
+                .map(crate::gate::RecordedClaimGateDecision::decision_id);
+            for decision in staged_decisions.iter() {
+                if Some(decision.decision_id()) != preserved_denial_id {
+                    store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
+                }
             }
+            staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
             return Err(err);
         }
     }

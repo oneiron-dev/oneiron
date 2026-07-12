@@ -2463,6 +2463,7 @@ impl Vault {
                 crate::gate::ClaimGateWrite {
                     body: &body,
                     envelope: None,
+                    defer_metrics_until_commit: false,
                 },
                 &policy,
                 crate::gate::GateWriteMode {
@@ -2499,7 +2500,7 @@ impl Vault {
             false,
             false,
         )?;
-        Ok(consent_receipt.or(write_receipt))
+        Ok(consent_receipt.or(write_receipt.map(|decision| decision.into_record())))
     }
 
     pub(crate) fn claim_facet_refs_in(

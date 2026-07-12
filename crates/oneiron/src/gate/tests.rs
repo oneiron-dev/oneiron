@@ -3321,12 +3321,18 @@ fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
     let body = source_trust_claim(ClaimSource::UserStated);
     let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
 
+    let metric_emissions_before = gate_metric_emission_count_for_test();
     let err = vault
         .batch()
         .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
         .commit()
         .expect_err("pending auto write must be rejected");
     assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+    assert_eq!(
+        gate_metric_emission_count_for_test(),
+        metric_emissions_before + 1,
+        "a committed denial receipt must emit exactly one decision metric"
+    );
     assert!(
         vault.get_raw(&id)?.is_none(),
         "rejected entity write must not stage the claim"
