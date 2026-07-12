@@ -74,6 +74,8 @@ const DREAMER_PROVENANCE_RUNNER_KEY: &str = "runner";
 const DREAMER_PROVENANCE_SURFACE_KEY: &str = "surface";
 const ACTOR_CEILING_KEY: &str = "ceiling";
 const SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY: &str = "max_auto_sensitivity";
+const SOURCE_TRUST_CHECKER_SENSITIVITY_FLOOR_KEY: &str = "checker_sensitivity_floor";
+const SOURCE_TRUST_CHECKER_MODE_KEY: &str = "checker_mode";
 const SOURCE_TRUST_AUTO_KEY: &str = "auto";
 const SOURCE_TRUST_RECEIPTED_KEY: &str = "receipted";
 const SOURCE_TRUST_WARNED_KEY: &str = "warned";
@@ -113,7 +115,7 @@ pub(crate) const FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID: [u8; ENTITY_ID_LEN] = [0xE
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
-const GATE_METRIC_REASON_CLASS_COUNT: usize = 13;
+const GATE_METRIC_REASON_CLASS_COUNT: usize = 14;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -337,6 +339,14 @@ pub(crate) struct GateEvaluatorInput {
     /// bound (owner writes, connectors, non-definition agent actors) —
     /// preserves pre-AGENT-2 behavior at every existing construction site.
     pub(crate) agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    pub(crate) claim_checker: Option<GateClaimCheckerInput>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GateClaimCheckerInput {
+    pub(crate) claim_hash: [u8; 32],
+    pub(crate) evidence: Option<crate::claim_checker::ClaimCheckEvidence>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -426,6 +436,7 @@ impl ExternalEffectGateInput {
                 has_permission: self.has_permission,
                 policy_risk: self.policy_risk,
             }),
+            claim_checker: None,
         }
     }
 }
@@ -478,6 +489,7 @@ pub(crate) enum GateMetricReasonClass {
     CounterpartyOptOut,
     EffectorBudget,
     CharterPolicy,
+    ClaimChecker,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -498,6 +510,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => "counterparty_opt_out",
             Self::EffectorBudget => "effector_budget",
             Self::CharterPolicy => "charter_policy",
+            Self::ClaimChecker => "claim_checker",
         }
     }
 
@@ -516,6 +529,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut => 10,
             Self::EffectorBudget => 11,
             Self::CharterPolicy => 12,
+            Self::ClaimChecker => 13,
         }
     }
 
@@ -534,6 +548,7 @@ impl GateMetricReasonClass {
             Self::CounterpartyOptOut,
             Self::EffectorBudget,
             Self::CharterPolicy,
+            Self::ClaimChecker,
         ]
     }
 }
@@ -556,6 +571,8 @@ pub(crate) enum GateReasonCode {
     DenyConnectorKeySuspended,
     DenyCharterNeverList,
     PendingCharterDrift,
+    PendingCheckerVeto,
+    PendingCheckerUnavailable,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -578,6 +595,8 @@ impl GateReasonCode {
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
             Self::DenyCharterNeverList => "gate.deny.charter_never_list",
             Self::PendingCharterDrift => "gate.pending.charter_drift",
+            Self::PendingCheckerVeto => crate::claim_checker::CHECKER_VETO_REASON,
+            Self::PendingCheckerUnavailable => crate::claim_checker::CHECKER_UNAVAILABLE_REASON,
         }
     }
 
@@ -601,6 +620,9 @@ impl GateReasonCode {
             }
             Self::DenyCharterNeverList | Self::PendingCharterDrift => {
                 GateMetricReasonClass::CharterPolicy
+            }
+            Self::PendingCheckerVeto | Self::PendingCheckerUnavailable => {
+                GateMetricReasonClass::ClaimChecker
             }
         }
     }
@@ -817,10 +839,57 @@ pub(crate) struct PolicySignature {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimCheckerMode {
+    Shadow,
+    Enforce,
+}
+
+impl ClaimCheckerMode {
+    fn parse(value: &Value) -> Option<Self> {
+        match value.as_str()? {
+            "shadow" => Some(Self::Shadow),
+            "enforce" => Some(Self::Enforce),
+            _ => None,
+        }
+    }
+
+    fn restrict(self, other: Self) -> Self {
+        if matches!(self, Self::Enforce) || matches!(other, Self::Enforce) {
+            Self::Enforce
+        } else {
+            Self::Shadow
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shadow => "shadow",
+            Self::Enforce => "enforce",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClaimCheckerPolicy {
+    sensitivity_floor: u8,
+    mode: ClaimCheckerMode,
+}
+
+impl ClaimCheckerPolicy {
+    fn merge(self, other: Self) -> Self {
+        Self {
+            sensitivity_floor: self.sensitivity_floor.min(other.sensitivity_floor),
+            mode: self.mode.restrict(other.mode),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SourceTrustRow {
     max_auto_sensitivity: Option<u8>,
     receipted: bool,
     warned: bool,
+    checker: Option<ClaimCheckerPolicy>,
 }
 
 impl SourceTrustRow {
@@ -834,6 +903,11 @@ impl SourceTrustRow {
             max_auto_sensitivity,
             receipted: self.receipted && other.receipted,
             warned: self.warned && other.warned,
+            checker: match (self.checker, other.checker) {
+                (Some(left), Some(right)) => Some(left.merge(right)),
+                (Some(checker), None) | (None, Some(checker)) => Some(checker),
+                (None, None) => None,
+            },
         }
     }
 }
@@ -1216,6 +1290,19 @@ impl PolicyManifestResolution {
             }
         }
 
+        if pending.is_empty()
+            && matches!(
+                self.claim_checker_policy(input),
+                Some(ClaimCheckerPolicy {
+                    mode: ClaimCheckerMode::Enforce,
+                    ..
+                })
+            )
+            && let Some(reason) = self.claim_checker_hold_reason(input)
+        {
+            pending.push(reason);
+        }
+
         let decision = if pending.is_empty() {
             GateDecision::allow()
         } else {
@@ -1256,6 +1343,44 @@ impl PolicyManifestResolution {
 
         sensitivity <= max_auto_sensitivity
             && (!source.requires_explicit_auto_permit() || (row.receipted && row.warned))
+    }
+
+    fn claim_checker_policy(&self, input: &GateEvaluatorInput) -> Option<ClaimCheckerPolicy> {
+        if input.content_kind != GateContentKind::Claim || self.source_trust.malformed_manifest_seen
+        {
+            return None;
+        }
+        let source = input.source?;
+        let sensitivity = input.sensitivity_band?;
+        let checker = self.source_trust.row(source)?.checker?;
+        (sensitivity >= checker.sensitivity_floor).then_some(checker)
+    }
+
+    fn claim_checker_hold_reason(&self, input: &GateEvaluatorInput) -> Option<GateReasonCode> {
+        let Some(checker_input) = input.claim_checker.as_ref() else {
+            return Some(GateReasonCode::PendingCheckerUnavailable);
+        };
+        let Some(evidence) = checker_input.evidence.as_ref() else {
+            return Some(GateReasonCode::PendingCheckerUnavailable);
+        };
+        let Ok(manifest_hash) = self.read_frontier_hash() else {
+            return Some(GateReasonCode::PendingCheckerUnavailable);
+        };
+        if evidence.claim_hash() != checker_input.claim_hash
+            || evidence.gate_policy_version() != input.policy_manifest_version
+            || evidence.manifest_hash() != manifest_hash
+        {
+            return Some(GateReasonCode::PendingCheckerUnavailable);
+        }
+        match evidence.verdict() {
+            crate::claim_checker::ClaimCheckerVerdict::Confirm => None,
+            crate::claim_checker::ClaimCheckerVerdict::Hold => {
+                Some(GateReasonCode::PendingCheckerVeto)
+            }
+            crate::claim_checker::ClaimCheckerVerdict::Indeterminate => {
+                Some(GateReasonCode::PendingCheckerUnavailable)
+            }
+        }
     }
 
     fn external_effect_allows_auto(&self, input: &GateEvaluatorInput) -> bool {
@@ -1692,6 +1817,11 @@ fn hash_source_trust_row(hasher: &mut Sha256, row: Option<SourceTrustRow>) {
     hash_opt_u8(hasher, row.max_auto_sensitivity);
     hash_bool(hasher, row.receipted);
     hash_bool(hasher, row.warned);
+    if let Some(checker) = row.checker {
+        hash_str(hasher, "claim_checker");
+        hash_opt_u8(hasher, Some(checker.sensitivity_floor));
+        hash_str(hasher, checker.mode.as_str());
+    }
 }
 
 fn hash_legal_floor_row(hasher: &mut Sha256, row: &PolicyLegalFloorRow) {
@@ -2425,6 +2555,53 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
 ) -> Result<()> {
+    check_claim_policy_for_write_with_record_impl(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        mode,
+        None,
+        recorded_decision,
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_claim_policy_for_write_with_checker_evidence(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    checker_evidence: &crate::claim_checker::ClaimCheckEvidence,
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+) -> Result<()> {
+    check_claim_policy_for_write_with_record_impl(
+        store,
+        wtxn,
+        id,
+        write,
+        policy,
+        mode,
+        Some(checker_evidence),
+        recorded_decision,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_claim_policy_for_write_with_record_impl(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    write: ClaimGateWrite<'_>,
+    policy: &PolicyManifestResolution,
+    mode: GateWriteMode,
+    checker_evidence: Option<&crate::claim_checker::ClaimCheckEvidence>,
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+) -> Result<()> {
     let ClaimGateWrite {
         body,
         envelope,
@@ -2473,6 +2650,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             provenance,
             mode.include_source_in_gate_input,
             agent_definition_ceiling,
+            checker_evidence,
         );
         let decision = policy.evaluate_gate(&input);
         let binding = GateConsentBinding::for_claim(body, policy)?;
@@ -3120,6 +3298,7 @@ pub(crate) fn check_edge_provenance_claim_policy(
             },
             false,
             agent_definition_ceiling,
+            None,
         );
         let decision = policy.evaluate_gate(&input);
         record_gate_decision_metrics(&decision);
@@ -3138,6 +3317,7 @@ fn check_claim_source_trust(body: &ClaimBody, policy: &PolicyManifestResolution)
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn claim_gate_input(
     body: &ClaimBody,
     policy: &PolicyManifestResolution,
@@ -3146,6 +3326,7 @@ fn claim_gate_input(
     provenance: GateProvenanceHandles,
     include_source: bool,
     agent_definition_ceiling: Option<PolicyApprovalCeiling>,
+    checker_evidence: Option<&crate::claim_checker::ClaimCheckEvidence>,
 ) -> GateEvaluatorInput {
     let (source, sensitivity_band) = if include_source || body.approval == ClaimApprovalStatus::Auto
     {
@@ -3164,7 +3345,37 @@ fn claim_gate_input(
         provenance,
         external_effect: None,
         agent_definition_ceiling,
+        claim_checker: checker_claim_hash(body)
+            .ok()
+            .map(|claim_hash| GateClaimCheckerInput {
+                claim_hash,
+                evidence: checker_evidence.cloned(),
+            }),
     }
+}
+
+fn checker_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
+    let mut normalized = body.clone();
+    normalized.approval = ClaimApprovalStatus::Proposed;
+    let encoded = crate::claim::encode_claim_body(&normalized)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.gate.claim_diff.v0");
+    hasher.update(&encoded);
+    Ok(hasher.finalize().into())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn claim_checker_input_for_claim(
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+    claim: String,
+) -> Result<crate::claim_checker::ClaimCheckInput> {
+    Ok(crate::claim_checker::ClaimCheckInput {
+        claim,
+        claim_hash: checker_claim_hash(body)?,
+        gate_policy_version: POLICY_SCHEMA_VERSION.to_owned(),
+        manifest_hash: policy.read_frontier_hash()?,
+    })
 }
 
 fn enforce_gate_decision(decision: GateDecision) -> Result<()> {
@@ -3183,14 +3394,8 @@ struct GateConsentBinding {
 
 impl GateConsentBinding {
     fn for_claim(body: &ClaimBody, policy: &PolicyManifestResolution) -> Result<Self> {
-        let mut normalized = body.clone();
-        normalized.approval = ClaimApprovalStatus::Proposed;
-        let encoded = crate::claim::encode_claim_body(&normalized)?;
-        let mut hasher = Sha256::new();
-        hasher.update(b"oneiron.gate.claim_diff.v0");
-        hasher.update(&encoded);
         Ok(Self {
-            diff_handle: hasher.finalize().to_vec(),
+            diff_handle: checker_claim_hash(body)?.to_vec(),
             read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
@@ -3622,17 +3827,21 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
             max_auto_sensitivity: None,
             receipted: false,
             warned: false,
+            checker: None,
         }),
         Value::Integer(_) | Value::String(_) => Some(SourceTrustRow {
             max_auto_sensitivity: sensitivity_band_from_value(value),
             receipted: false,
             warned: false,
+            checker: None,
         }),
         Value::Map(entries) => {
             let mut max_auto_sensitivity = None;
             let mut auto_disabled = false;
             let mut receipted = false;
             let mut warned = false;
+            let mut checker_sensitivity_floor = None;
+            let mut checker_mode = None;
 
             for (key, value) in entries {
                 match key.as_str()? {
@@ -3650,9 +3859,30 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                     SOURCE_TRUST_WARNED_KEY => {
                         warned = value.as_bool()?;
                     }
+                    SOURCE_TRUST_CHECKER_SENSITIVITY_FLOOR_KEY => {
+                        if checker_sensitivity_floor.is_some() {
+                            return None;
+                        }
+                        checker_sensitivity_floor = Some(sensitivity_band_from_value(value)?);
+                    }
+                    SOURCE_TRUST_CHECKER_MODE_KEY => {
+                        if checker_mode.is_some() {
+                            return None;
+                        }
+                        checker_mode = Some(ClaimCheckerMode::parse(value)?);
+                    }
                     _ => {}
                 }
             }
+
+            let checker = match (checker_sensitivity_floor, checker_mode) {
+                (Some(sensitivity_floor), Some(mode)) => Some(ClaimCheckerPolicy {
+                    sensitivity_floor,
+                    mode,
+                }),
+                (None, None) => None,
+                _ => return None,
+            };
 
             Some(SourceTrustRow {
                 max_auto_sensitivity: if auto_disabled {
@@ -3662,6 +3892,7 @@ fn parse_source_trust_row(value: &Value) -> Option<SourceTrustRow> {
                 },
                 receipted,
                 warned,
+                checker,
             })
         }
         _ => None,

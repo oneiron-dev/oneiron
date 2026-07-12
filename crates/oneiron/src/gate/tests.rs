@@ -224,6 +224,37 @@ fn source_trust_entry(source: ClaimSource, max_auto_sensitivity: u8) -> (Value, 
     )
 }
 
+fn source_trust_entry_with_checker(
+    source: ClaimSource,
+    max_auto_sensitivity: u8,
+    checker_sensitivity_floor: u8,
+    checker_mode: &str,
+) -> (Value, Value) {
+    let row = Value::Map(vec![
+        (
+            Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+            Value::from(u64::from(max_auto_sensitivity)),
+        ),
+        (
+            Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+            Value::Boolean(true),
+        ),
+        (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+        (
+            Value::from(SOURCE_TRUST_CHECKER_SENSITIVITY_FLOOR_KEY),
+            Value::from(u64::from(checker_sensitivity_floor)),
+        ),
+        (
+            Value::from(SOURCE_TRUST_CHECKER_MODE_KEY),
+            Value::from(checker_mode),
+        ),
+    ]);
+    (
+        Value::from(POLICY_SOURCE_TRUST_KEY),
+        Value::Map(vec![(Value::from(source.as_str()), row)]),
+    )
+}
+
 fn source_trust_entry_without_auto_permit(
     source: ClaimSource,
     max_auto_sensitivity: u8,
@@ -1653,6 +1684,10 @@ fn gate_evaluator_input(
         },
         external_effect: None,
         agent_definition_ceiling: None,
+        claim_checker: Some(GateClaimCheckerInput {
+            claim_hash: [0x30; 32],
+            evidence: None,
+        }),
     }
 }
 
@@ -2040,6 +2075,249 @@ fn gate_evaluator_default_policy_fails_closed_with_typed_denial() {
         typed.reason_codes(),
         &[GateDenialReason::DenyPolicyFailClosed]
     );
+}
+
+#[test]
+fn claim_checker_shadow_mode_is_a_gate_no_op() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "shadow",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let input = gate_evaluator_input(
+        "first_party",
+        None,
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert_eq!(decision.reason_codes(), &[GateReasonCode::Allow]);
+    Ok(())
+}
+
+#[test]
+fn enforced_claim_checker_without_evidence_fails_closed_to_proposed() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let input = gate_evaluator_input(
+        "first_party",
+        None,
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingCheckerUnavailable]
+    );
+    Ok(())
+}
+
+#[test]
+fn positive_checker_evidence_cannot_lift_a_rule_denied_claim() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let claim_hash = [0x31; 32];
+    let mut input = gate_evaluator_input(
+        "first_party",
+        Some("probation"),
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    input.claim_checker = Some(GateClaimCheckerInput {
+        claim_hash,
+        evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
+            claim_hash,
+            POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            crate::claim_checker::aggregate_votes([
+                crate::claim_checker::ClaimCheckerVote::Confirm,
+                crate::claim_checker::ClaimCheckerVote::Confirm,
+                crate::claim_checker::ClaimCheckerVote::Confirm,
+            ]),
+        )),
+    });
+
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingActorCeiling]
+    );
+    Ok(())
+}
+
+#[test]
+fn bound_checker_hold_surfaces_the_veto_reason() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let claim_hash = [0x32; 32];
+    let mut input = gate_evaluator_input(
+        "first_party",
+        None,
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    input.claim_checker = Some(GateClaimCheckerInput {
+        claim_hash,
+        evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
+            claim_hash,
+            POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            crate::claim_checker::aggregate_votes([
+                crate::claim_checker::ClaimCheckerVote::Hold,
+                crate::claim_checker::ClaimCheckerVote::Confirm,
+                crate::claim_checker::ClaimCheckerVote::Hold,
+            ]),
+        )),
+    });
+
+    let decision = policy.evaluate_gate(&input);
+
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        decision.reason_codes(),
+        &[GateReasonCode::PendingCheckerVeto]
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_confirmation_requires_exact_claim_and_policy_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let claim_hash = [0x33; 32];
+    let result = crate::claim_checker::aggregate_votes([
+        crate::claim_checker::ClaimCheckerVote::Confirm,
+        crate::claim_checker::ClaimCheckerVote::Confirm,
+        crate::claim_checker::ClaimCheckerVote::Hold,
+    ]);
+    let mut input = gate_evaluator_input(
+        "first_party",
+        None,
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    input.claim_checker = Some(GateClaimCheckerInput {
+        claim_hash,
+        evidence: Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
+            claim_hash,
+            POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            result,
+        )),
+    });
+    assert_eq!(policy.evaluate_gate(&input).outcome(), GateOutcome::Allow);
+
+    input.claim_checker.as_mut().unwrap().evidence =
+        Some(crate::claim_checker::ClaimCheckEvidence::new_bound(
+            [0x34; 32],
+            POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            result,
+        ));
+    let stale = policy.evaluate_gate(&input);
+    assert_eq!(stale.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        stale.reason_codes(),
+        &[GateReasonCode::PendingCheckerUnavailable]
+    );
+    Ok(())
+}
+
+#[test]
+fn checker_triggers_only_above_sensitivity_floor_and_never_for_critical_claims() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            1,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let below_floor = gate_evaluator_input(
+        "first_party",
+        None,
+        ClaimSource::UserStated,
+        PolicyCriticality::Normal,
+    );
+    assert_eq!(
+        policy.evaluate_gate(&below_floor).outcome(),
+        GateOutcome::Allow
+    );
+
+    let mut at_floor = below_floor.clone();
+    at_floor.sensitivity_band = Some(1);
+    assert_eq!(
+        policy.evaluate_gate(&at_floor).reason_codes(),
+        &[GateReasonCode::PendingCheckerUnavailable]
+    );
+
+    let mut critical = at_floor;
+    critical.criticality = PolicyCriticality::Critical;
+    assert_eq!(
+        policy.evaluate_gate(&critical).reason_codes(),
+        &[GateReasonCode::PendingCriticalityFloor]
+    );
+    Ok(())
 }
 
 #[test]

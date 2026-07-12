@@ -16,6 +16,7 @@ pub mod channel_identity_lifecycle;
 pub mod channel_identity_manifest;
 pub mod channel_identity_provider;
 pub mod claim;
+pub mod claim_checker;
 pub mod code_artifact;
 pub mod code_revision;
 pub mod code_run;
