@@ -50,7 +50,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(11, [0, 2, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(12, [0, 2, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -63,17 +63,64 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
         "receipt-family versions must be explicitly pinned to STORAGE_ABI_VERSION",
     );
 
-    for (axis, changed_versions) in [
-        ("gate decision ledger", [1, 2, 1, 1]),
-        ("job record", [0, 3, 1, 1]),
-        ("pending consent index state", [0, 2, 2, 1]),
-        ("receipt family index", [0, 2, 1, 2]),
-    ] {
-        assert!(
-            !RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, changed_versions)),
-            "an unbumped {axis} version must not satisfy the ABI pin",
-        );
+    assert!(receipt_family_version_abi_pins_are_strictly_monotonic(
+        RECEIPT_FAMILY_VERSION_ABI_PINS
+    ));
+    assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
+        (11, [0, 2, 1, 1]),
+        (11, [1, 3, 2, 2]),
+    ]));
+    assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
+        (11, [0, 2, 1, 1]),
+        (12, [0, 1, 3, 2]),
+    ]));
+    assert!(receipt_family_version_abi_pins_are_strictly_monotonic(&[
+        (11, [0, 2, 1, 1]),
+        (12, [1, 3, 2, 2]),
+    ]));
+}
+
+fn receipt_family_version_abi_pins_are_strictly_monotonic(pins: &[(u16, [u8; 4])]) -> bool {
+    pins.windows(2).all(|pair| {
+        let (previous_abi, previous_versions) = pair[0];
+        let (current_abi, current_versions) = pair[1];
+        current_abi > previous_abi
+            && current_versions
+                .iter()
+                .zip(previous_versions)
+                .all(|(current, previous)| current >= &previous)
+            && current_versions != previous_versions
+    })
+}
+
+#[test]
+fn abi_12_vault_is_rejected_before_an_abi_11_reader_checks_receipt_markers() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = temp_dir.path();
+    {
+        let vault = Vault::open(path, VaultConfig::device())?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vault_meta.put(
+            &mut wtxn,
+            RECEIPT_FAMILY_INDEX_VERSION_KEY,
+            &[RECEIPT_FAMILY_INDEX_VERSION + 1],
+        )?;
+        wtxn.commit()?;
     }
+
+    let err = match Store::open_with_storage_abi_version_for_test(path, &VaultConfig::device(), 11)
+    {
+        Ok(_) => panic!("an ABI-11 reader must reject an ABI-12 vault at the ABI gate"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        Error::StorageAbiVersionChanged {
+            stored: Some(12),
+            current: 11,
+        }
+    ));
+    Ok(())
 }
 
 fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {

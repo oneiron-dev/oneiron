@@ -1016,9 +1016,12 @@ fn accept_member_in_txn(
     }
     let mut body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
 
-    let (diff_handle, read_frontier_hash) =
+    let (diff_handle, _read_frontier_hash) =
         crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &body)?;
-    if diff_handle != pending.diff_handle || read_frontier_hash != pending.read_frontier_hash {
+    // Content must still match the consent. The policy frontier is evaluated
+    // again by the gated rewrite below, so a changed policy hash alone is not
+    // a stale proposal (matching the retraction path's stale-row close).
+    if diff_handle != pending.diff_handle {
         return Err(Error::GateConsentStale { claim_id: *id });
     }
 
