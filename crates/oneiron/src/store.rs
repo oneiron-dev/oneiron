@@ -162,6 +162,11 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
+///
+/// Receipt-family ABI-pin rule: changing
+/// [`GATE_DECISION_LEDGER_VERSION`], `JOB_RECORD_VERSION`,
+/// [`PENDING_GATE_CONSENT_INDEX_STATE_VERSION`], or
+/// [`RECEIPT_FAMILY_INDEX_VERSION`] requires bumping this version too.
 pub const STORAGE_ABI_VERSION: u16 = 11;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
@@ -255,6 +260,8 @@ const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
 const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
 pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
@@ -273,12 +280,16 @@ const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
 // readers already ignore unknown `vault_meta` prefixes, while a current
 // reader backfills them before exposing the store.
 const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] = b"receipt_family_index:v1:version";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
 const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
 const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_index:v1:";
 const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v1:";
 const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_index:v1:";
 const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
 const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_state:v1:";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
 const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
 const JOB_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
@@ -687,10 +698,6 @@ impl GateDecisionId {
     #[must_use]
     pub fn as_bytes(self) -> [u8; 16] {
         self.bytes
-    }
-
-    pub(crate) fn from_bytes(bytes: &[u8; 16]) -> Self {
-        Self { bytes: *bytes }
     }
 
     #[must_use]
@@ -1908,6 +1915,8 @@ impl Store {
         self.vault_meta
             .delete(wtxn, &pending_deletion_gate_decision_key(request_id))?;
         Ok(())
+    }
+
     /// Returns every gate decision carrying this grant reference, newest
     /// first, without scanning the global decision ledger.
     pub(crate) fn gate_decisions_for_grant_ref(
@@ -1919,7 +1928,7 @@ impl Store {
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, _) = row?;
-            let decision_id = GateDecisionId::from_bytes(&index_suffix_id(
+            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
                 key,
                 &prefix,
                 "gate decision grant ref index",

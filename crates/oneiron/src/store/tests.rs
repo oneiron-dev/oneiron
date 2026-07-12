@@ -1,7 +1,7 @@
 use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobQueue};
+use crate::job_queue::{EnqueueJob, EnqueueOutcome, JOB_RECORD_VERSION, JobQueue};
 use crate::receipt::MAX_RECEIPT_QUERY_SCAN;
 use crate::temporal::TimeRange;
 use std::collections::BTreeMap;
@@ -46,6 +46,34 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
             current: STORAGE_ABI_VERSION,
         })
     ));
+}
+
+#[test]
+fn receipt_family_versions_require_a_storage_abi_bump() {
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 4])] = &[(11, [0, 2, 1, 1])];
+
+    let receipt_versions = [
+        GATE_DECISION_LEDGER_VERSION,
+        JOB_RECORD_VERSION,
+        PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
+        RECEIPT_FAMILY_INDEX_VERSION,
+    ];
+    assert!(
+        RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, receipt_versions)),
+        "receipt-family versions must be explicitly pinned to STORAGE_ABI_VERSION",
+    );
+
+    for (axis, changed_versions) in [
+        ("gate decision ledger", [1, 2, 1, 1]),
+        ("job record", [0, 3, 1, 1]),
+        ("pending consent index state", [0, 2, 2, 1]),
+        ("receipt family index", [0, 2, 1, 2]),
+    ] {
+        assert!(
+            !RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, changed_versions)),
+            "an unbumped {axis} version must not satisfy the ABI pin",
+        );
+    }
 }
 
 fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
@@ -109,7 +137,7 @@ fn assert_secret_scan_rejected(error: Error, expected_reason: &'static str) {
 fn synthetic_gate_decision_id(prefix: u8, value: u64) -> GateDecisionId {
     let mut bytes = [prefix; 16];
     bytes[8..].copy_from_slice(&value.to_be_bytes());
-    GateDecisionId::from_bytes(&bytes)
+    GateDecisionId::from_bytes(bytes)
 }
 
 fn gate_decision(
