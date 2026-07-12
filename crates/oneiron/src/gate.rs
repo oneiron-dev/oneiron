@@ -2391,8 +2391,7 @@ pub(crate) fn check_claim_policy_for_write(
         store,
         wtxn,
         id,
-        body,
-        envelope,
+        ClaimGateWrite { body, envelope },
         policy,
         mode,
         &mut recorded_decision,
@@ -2403,12 +2402,12 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    body: &ClaimBody,
-    envelope: Option<&WriteEnvelope>,
+    write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<GateDecisionRecord>,
 ) -> Result<()> {
+    let ClaimGateWrite { body, envelope } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
         validate_write_envelope(envelope)?;
@@ -2943,6 +2942,11 @@ pub(crate) struct GateWriteMode {
     pub(crate) resolve_pending: bool,
     pub(crate) can_resolve_pending_consent: bool,
     pub(crate) include_source_in_gate_input: bool,
+}
+
+pub(crate) struct ClaimGateWrite<'a> {
+    pub(crate) body: &'a ClaimBody,
+    pub(crate) envelope: Option<&'a WriteEnvelope>,
 }
 
 pub(crate) fn check_reserved_claim_policy(
