@@ -127,6 +127,10 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v11 (ONE-1576): off-record fence state became a supported vault contract.
+/// v10 readers do not know the fence semantics, so v10 vaults fail closed at
+/// the ABI gate — there is no silent downgrade that could expose fenced rows.
+///
 /// v10 (ONE-1443): AGENT_DEF was registered as a persistent CORE entity type
 /// byte 17. v9 readers do not know this persistent entity kind, so v9 vaults
 /// fail closed at the ABI gate — there is no silent migration; rebuild the
@@ -158,7 +162,7 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 10;
+pub const STORAGE_ABI_VERSION: u16 = 11;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -3631,27 +3635,12 @@ fn gate_storage_versions(
         STORAGE_ABI_VERSION_KEY,
         "storage ABI version",
     )?;
-    match stored_abi {
-        Some(STORAGE_ABI_VERSION) => {}
-        Some(stored) => {
-            return Err(Error::StorageAbiVersionChanged {
-                stored: Some(stored),
-                current: STORAGE_ABI_VERSION,
-            });
-        }
-        None if new_vault => {
-            vault_meta.put(
-                wtxn,
-                STORAGE_ABI_VERSION_KEY,
-                &STORAGE_ABI_VERSION.to_le_bytes(),
-            )?;
-        }
-        None => {
-            return Err(Error::StorageAbiVersionChanged {
-                stored: None,
-                current: STORAGE_ABI_VERSION,
-            });
-        }
+    if gate_storage_abi_value(stored_abi, STORAGE_ABI_VERSION, new_vault)? {
+        vault_meta.put(
+            wtxn,
+            STORAGE_ABI_VERSION_KEY,
+            &STORAGE_ABI_VERSION.to_le_bytes(),
+        )?;
     }
 
     let stored_schema = read_vault_meta_u16(
@@ -3678,6 +3667,25 @@ fn gate_storage_versions(
     }
 
     Ok(())
+}
+
+/// Applies the strict-equality storage-ABI handshake used by every
+/// [`Store::open`] call. `Ok(true)` means a genuinely new vault must stamp the
+/// current version; every existing-vault mismatch fails closed in both
+/// directions, including a prior-version reader opening a newer vault.
+fn gate_storage_abi_value(stored: Option<u16>, current: u16, new_vault: bool) -> Result<bool> {
+    match stored {
+        Some(stored) if stored == current => Ok(false),
+        Some(stored) => Err(Error::StorageAbiVersionChanged {
+            stored: Some(stored),
+            current,
+        }),
+        None if new_vault => Ok(true),
+        None => Err(Error::StorageAbiVersionChanged {
+            stored: None,
+            current,
+        }),
+    }
 }
 
 pub(crate) fn read_vault_meta_u16(

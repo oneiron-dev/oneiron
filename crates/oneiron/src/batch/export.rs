@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::Vault;
 use crate::claim::ClaimLifecycleStatus;
 use crate::companion::{
     CompanionExportClassification, CompanionExpression, CompanionExpressionRegister,
@@ -188,17 +189,59 @@ impl ExportManifestArtifact {
     }
 }
 
-pub fn whole_vault_export_manifest_artifact(
+/// Pure manifest construction for internal fixtures/import tooling. Public
+/// vault exports must use [`whole_vault_export_manifest_artifact_for_vault`]
+/// (or the corresponding [`Vault`] method), which runs the off-record guard.
+pub(crate) fn whole_vault_export_manifest_artifact(
     secrets_nulled: ExportSecretsNulledManifest,
 ) -> Result<ExportManifestArtifact> {
     ExportManifestArtifact::from_manifest(&ExportManifest::from_secrets_nulled(secrets_nulled))
 }
 
-pub fn write_whole_vault_export_manifest(
+/// Builds a whole-vault export manifest after checking the live session seam.
+///
+/// The manifest-only constructors above remain useful for deterministic
+/// fixtures and import tooling that has no vault handle. Callers exporting a
+/// vault must use this guarded entry point (or the corresponding [`Vault`]
+/// method); a live off-record session is a typed refusal rather than a
+/// silently filtered export.
+pub fn whole_vault_export_manifest_artifact_for_vault(
+    vault: &Vault,
+    secrets_nulled: ExportSecretsNulledManifest,
+) -> Result<ExportManifestArtifact> {
+    vault.ensure_no_open_off_record_session()?;
+    whole_vault_export_manifest_artifact(secrets_nulled)
+}
+
+/// Writes a whole-vault export manifest after checking the live session seam.
+pub fn write_whole_vault_export_manifest_for_vault(
+    vault: &Vault,
     export_dir: impl AsRef<Path>,
     secrets_nulled: ExportSecretsNulledManifest,
 ) -> Result<PathBuf> {
-    whole_vault_export_manifest_artifact(secrets_nulled)?.write_to_dir(export_dir)
+    whole_vault_export_manifest_artifact_for_vault(vault, secrets_nulled)?.write_to_dir(export_dir)
+}
+
+impl Vault {
+    /// Builds the manifest for a whole-vault export. Refuses while any
+    /// off-record session remains open so fenced content cannot escape the
+    /// delete-at-close boundary.
+    pub fn whole_vault_export_manifest_artifact(
+        &self,
+        secrets_nulled: ExportSecretsNulledManifest,
+    ) -> Result<ExportManifestArtifact> {
+        whole_vault_export_manifest_artifact_for_vault(self, secrets_nulled)
+    }
+
+    /// Writes the manifest for a whole-vault export, refusing while an
+    /// off-record session is live.
+    pub fn write_whole_vault_export_manifest(
+        &self,
+        export_dir: impl AsRef<Path>,
+        secrets_nulled: ExportSecretsNulledManifest,
+    ) -> Result<PathBuf> {
+        write_whole_vault_export_manifest_for_vault(self, export_dir, secrets_nulled)
+    }
 }
 
 impl ExportManifest {

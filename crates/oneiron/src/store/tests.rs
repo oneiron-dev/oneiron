@@ -13,6 +13,39 @@ fn entity_id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("test ids should be valid")
 }
 
+#[test]
+fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
+    for stored in 0..=u16::MAX {
+        let result = gate_storage_abi_value(Some(stored), STORAGE_ABI_VERSION, false);
+        if stored == STORAGE_ABI_VERSION {
+            assert!(!result.expect("equal ABI versions must open"));
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::StorageAbiVersionChanged {
+                        stored: Some(actual),
+                        current: STORAGE_ABI_VERSION,
+                    }) if actual == stored
+                ),
+                "stored ABI {stored} must fail against current ABI {STORAGE_ABI_VERSION}",
+            );
+        }
+    }
+
+    assert!(
+        gate_storage_abi_value(None, STORAGE_ABI_VERSION, true)
+            .expect("a genuinely new vault initializes its ABI row"),
+    );
+    assert!(matches!(
+        gate_storage_abi_value(None, STORAGE_ABI_VERSION, false),
+        Err(Error::StorageAbiVersionChanged {
+            stored: None,
+            current: STORAGE_ABI_VERSION,
+        })
+    ));
+}
+
 fn put_text(vault: &Vault, id: EntityId, text: &str) -> Result<()> {
     vault
         .batch()
