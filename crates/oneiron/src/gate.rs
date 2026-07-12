@@ -3342,11 +3342,9 @@ fn require_pending_gate_consent_binding(
     pending: &PendingGateConsentRecord,
     binding: &GateConsentBinding,
 ) -> Result<()> {
-    // The pending row binds the proposed bytes.  The policy frontier is
-    // deliberately re-evaluated at redemption, just as a stale pending row
-    // may be closed by the retraction path; only a content change makes the
-    // original consent inapplicable.
-    if pending.diff_handle != binding.diff_handle {
+    if pending.diff_handle != binding.diff_handle
+        || pending.read_frontier_hash != binding.read_frontier_hash
+    {
         return Err(Error::GateConsentStale { claim_id: *id });
     }
     Ok(())

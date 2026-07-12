@@ -66,9 +66,20 @@ fn receipt_family_versions_require_a_storage_abi_bump() {
     assert!(receipt_family_version_abi_pins_are_strictly_monotonic(
         RECEIPT_FAMILY_VERSION_ABI_PINS
     ));
+    for (axis, changed_versions) in [
+        ("gate decision ledger", [1, 2, 1, 1]),
+        ("job record", [0, 3, 1, 1]),
+        ("pending consent index state", [0, 2, 2, 1]),
+        ("receipt family index", [0, 2, 1, 2]),
+    ] {
+        assert!(
+            !RECEIPT_FAMILY_VERSION_ABI_PINS.contains(&(STORAGE_ABI_VERSION, changed_versions)),
+            "an unbumped {axis} version must not satisfy the ABI pin",
+        );
+    }
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
         (11, [0, 2, 1, 1]),
-        (11, [1, 3, 2, 2]),
+        (11, [2, 4, 3, 3]),
     ]));
     assert!(!receipt_family_version_abi_pins_are_strictly_monotonic(&[
         (11, [0, 2, 1, 1]),
