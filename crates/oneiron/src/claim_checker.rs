@@ -116,8 +116,8 @@ mod tests {
         }
     }
 
-    fn response(verdict: &str) -> LlmResult<LlmResponse> {
-        Ok(LlmResponse {
+    fn response(verdict: &str) -> LlmResponse {
+        LlmResponse {
             message: LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
@@ -126,7 +126,7 @@ mod tests {
             },
             usage: LlmUsage::zero(),
             finish_reason: FinishReason::Stop,
-        })
+        }
     }
 
     #[test]
@@ -183,9 +183,9 @@ mod tests {
     fn online_checker_uses_three_durable_autocheck_votes() {
         let backend = ScriptedBackend {
             responses: Mutex::new(VecDeque::from([
-                response("confirm"),
-                response("hold"),
-                response("confirm"),
+                Ok(response("confirm")),
+                Ok(response("hold")),
+                Ok(response("confirm")),
             ])),
             requests: Mutex::new(Vec::new()),
         };
@@ -225,9 +225,9 @@ mod tests {
         let backend = ScriptedBackend {
             responses: Mutex::new(VecDeque::from([
                 Err(RetryableLlmError::Timeout.into()),
-                response("confirm"),
+                Ok(response("confirm")),
                 Err(FatalLlmError::ContentFiltered.into()),
-                response("hold"),
+                Ok(response("hold")),
             ])),
             requests: Mutex::new(Vec::new()),
         };

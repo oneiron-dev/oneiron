@@ -2304,7 +2304,7 @@ fn checker_triggers_only_above_sensitivity_floor_and_never_for_critical_claims()
         GateOutcome::Allow
     );
 
-    let mut at_floor = below_floor.clone();
+    let mut at_floor = below_floor;
     at_floor.sensitivity_band = Some(1);
     assert_eq!(
         policy.evaluate_gate(&at_floor).reason_codes(),
@@ -2317,6 +2317,130 @@ fn checker_triggers_only_above_sensitivity_floor_and_never_for_critical_claims()
         policy.evaluate_gate(&critical).reason_codes(),
         &[GateReasonCode::PendingCriticalityFloor]
     );
+    Ok(())
+}
+
+#[test]
+fn checker_evidence_refold_controls_commit_in_a_real_write_transaction() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        0x81,
+        &encode_policy_manifest(vec![source_trust_entry_with_checker(
+            ClaimSource::UserStated,
+            2,
+            0,
+            "enforce",
+        )]),
+    )?;
+    let policy = resolve(&vault)?;
+    let claim_id = test_id(0x82);
+    let body = source_trust_claim(ClaimSource::UserStated);
+    let mode = || GateWriteMode {
+        record_decision: false,
+        persist_pending_consent: false,
+        resolve_pending: false,
+        can_resolve_pending_consent: true,
+        include_source_in_gate_input: true,
+    };
+    let write = || ClaimGateWrite {
+        body: &body,
+        envelope: None,
+        defer_metrics_until_commit: false,
+    };
+
+    let mut first_txn = vault.store.env.write_txn()?;
+    let mut first_record = None;
+    let first = check_claim_policy_for_write_with_record(
+        &vault.store,
+        &mut first_txn,
+        &claim_id,
+        write(),
+        &policy,
+        mode(),
+        &mut first_record,
+    )
+    .expect_err("triggered Auto without evidence must remain Proposed");
+    assert!(matches!(
+        first,
+        Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes
+        } if reason_codes == vec![crate::claim_checker::CHECKER_UNAVAILABLE_REASON]
+    ));
+    first_txn.commit()?;
+    assert!(vault.get_raw(&claim_id)?.is_none());
+
+    let checker_input =
+        claim_checker_input_for_claim(&body, &policy, "profile.name = Ada".to_owned())?;
+    let confirm = crate::claim_checker::aggregate_votes([
+        crate::claim_checker::ClaimCheckerVote::Confirm,
+        crate::claim_checker::ClaimCheckerVote::Confirm,
+        crate::claim_checker::ClaimCheckerVote::Hold,
+    ]);
+    let stale_evidence = crate::claim_checker::ClaimCheckEvidence::new_bound(
+        checker_input.claim_hash,
+        checker_input.gate_policy_version.clone(),
+        [0x44; 32],
+        confirm,
+    );
+    let mut stale_txn = vault.store.env.write_txn()?;
+    let mut stale_record = None;
+    let stale = check_claim_policy_for_write_with_checker_evidence(
+        &vault.store,
+        &mut stale_txn,
+        &claim_id,
+        write(),
+        &policy,
+        mode(),
+        &stale_evidence,
+        &mut stale_record,
+    )
+    .expect_err("stale checker binding must remain Proposed");
+    assert!(matches!(
+        stale,
+        Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes
+        } if reason_codes == vec![crate::claim_checker::CHECKER_UNAVAILABLE_REASON]
+    ));
+    stale_txn.commit()?;
+    assert!(vault.get_raw(&claim_id)?.is_none());
+
+    let exact_evidence = crate::claim_checker::ClaimCheckEvidence::new_bound(
+        checker_input.claim_hash,
+        checker_input.gate_policy_version,
+        checker_input.manifest_hash,
+        confirm,
+    );
+    let mut exact_txn = vault.store.env.write_txn()?;
+    let mut exact_record = None;
+    check_claim_policy_for_write_with_checker_evidence(
+        &vault.store,
+        &mut exact_txn,
+        &claim_id,
+        write(),
+        &policy,
+        mode(),
+        &exact_evidence,
+        &mut exact_record,
+    )?;
+    let data = crate::claim::encode_claim_body(&body)?;
+    let mut payload = Vec::with_capacity(crate::batch::ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(crate::registry::ENTITY_TYPE_CLAIM);
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&1_u64.to_be_bytes());
+    payload.extend_from_slice(&data);
+    vault
+        .store
+        .entities
+        .put(&mut exact_txn, claim_id.as_bytes(), &payload)?;
+    let type_key = Store::encode_type_key(crate::registry::ENTITY_TYPE_CLAIM, &claim_id);
+    vault.store.type_index.put(&mut exact_txn, &type_key, &[])?;
+    exact_txn.commit()?;
+
+    assert!(vault.get_raw(&claim_id)?.is_some());
     Ok(())
 }
 
