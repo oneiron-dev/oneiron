@@ -167,7 +167,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `JOB_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 11;
+pub const STORAGE_ABI_VERSION: u16 = 12;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -1174,6 +1174,23 @@ impl Drop for Store {
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
+        Self::open_with_storage_abi_version(path, config, STORAGE_ABI_VERSION)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_storage_abi_version_for_test(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        storage_abi_version: u16,
+    ) -> Result<Self> {
+        Self::open_with_storage_abi_version(path, config, storage_abi_version)
+    }
+
+    fn open_with_storage_abi_version(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        storage_abi_version: u16,
+    ) -> Result<Self> {
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -1220,7 +1237,7 @@ impl Store {
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
         let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
-        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault)?;
+        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault, storage_abi_version)?;
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -4530,6 +4547,7 @@ fn gate_storage_versions(
     vault_meta: &Database<Bytes, Bytes>,
     wtxn: &mut RwTxn<'_>,
     new_vault: bool,
+    storage_abi_version: u16,
 ) -> Result<()> {
     let stored_abi = read_vault_meta_u16(
         vault_meta,
@@ -4537,11 +4555,11 @@ fn gate_storage_versions(
         STORAGE_ABI_VERSION_KEY,
         "storage ABI version",
     )?;
-    if gate_storage_abi_value(stored_abi, STORAGE_ABI_VERSION, new_vault)? {
+    if gate_storage_abi_value(stored_abi, storage_abi_version, new_vault)? {
         vault_meta.put(
             wtxn,
             STORAGE_ABI_VERSION_KEY,
-            &STORAGE_ABI_VERSION.to_le_bytes(),
+            &storage_abi_version.to_le_bytes(),
         )?;
     }
 

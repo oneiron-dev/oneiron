@@ -346,6 +346,45 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
 }
 
 #[test]
+fn inbox_accept_tolerates_a_stale_policy_hash() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = entity(0x91);
+    let run_id = "run-stale-policy-hash";
+    write_dreamer_proposal(
+        &vault,
+        claim_id,
+        entity(0x92),
+        entity(0x93),
+        "profile.hobby",
+        "chess",
+        run_id,
+        20,
+        &[REASON_CEILING],
+    )?;
+
+    vault.with_write_txn(|wtxn| {
+        let mut pending = vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &claim_id)?
+            .expect("proposal is parked for consent");
+        pending.read_frontier_hash = [0xA5; 32];
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let resolution = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50)?;
+    assert_eq!(resolution.item_receipts.len(), 1);
+    assert_eq!(
+        vault
+            .get_claim(&claim_id)?
+            .expect("accepted claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(vault.store.pending_gate_consents(10)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn reject_all_emits_per_item_receipts_and_keeps_proposal_history() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-reject";
