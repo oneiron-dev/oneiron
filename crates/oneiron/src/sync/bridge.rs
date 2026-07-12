@@ -1,7 +1,9 @@
 //! Entity bridge: CRDT ↔ LMDB materialization observers.
 //!
-//! **Observer A** (`subscribe_local_update`): Fires for ALL local commits.
-//! Persists update bytes to sync_state and broadcasts.
+//! **Observer A** (`subscribe_local_update`): Fires for local commits and
+//! persists update bytes to sync_state/broadcasts, except a deletion's
+//! explicitly-suppressed live commit. Its authority recovery data is staged
+//! first; the following TXN1 atomically persists the exact snapshot/delta.
 //!
 //! **Observer B** (`doc.subscribe(container_id)` × 3): Fires for all commits.
 //! Subscribes to each of the three map containers (entities, edges, tombstones)
@@ -12,6 +14,7 @@
 //! Observer B callbacks check the event origin and skip bridge-tagged events
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,6 +48,50 @@ use crate::{Error, Result, SyncProtocolValidation, Vault};
 
 /// Origin tag used for LMDB→CRDT bridge writes.
 pub const BRIDGE_ORIGIN: &str = "bridge";
+/// Origin for a local deletion tombstone whose durable LMDB carrier is
+/// authored explicitly by the deletion TXN1, not Observer A. Observer B also
+/// skips it, preserving the tombstone-first → local-purge ordering.
+pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
+
+thread_local! {
+    /// `write_crdt_tombstone` commits a live-doc update before it can assemble
+    /// the snapshot/delta inputs for its one LMDB TXN1. Suppress Observer A
+    /// only for that synchronous commit; the deletion path stages gate
+    /// recovery first, then atomically persists the exact snapshot + queue
+    /// delta.
+    static SUPPRESS_OBSERVER_A_FOR_DELETION_TOMBSTONE: Cell<usize> = const { Cell::new(0) };
+}
+
+struct DeletionTombstoneObserverASuppression;
+
+impl DeletionTombstoneObserverASuppression {
+    fn enter() -> Self {
+        SUPPRESS_OBSERVER_A_FOR_DELETION_TOMBSTONE.with(|depth| {
+            depth.set(depth.get().saturating_add(1));
+        });
+        Self
+    }
+}
+
+impl Drop for DeletionTombstoneObserverASuppression {
+    fn drop(&mut self) {
+        SUPPRESS_OBSERVER_A_FOR_DELETION_TOMBSTONE.with(|depth| {
+            depth.set(depth.get().saturating_sub(1));
+        });
+    }
+}
+
+fn observer_a_suppressed_for_deletion_tombstone() -> bool {
+    SUPPRESS_OBSERVER_A_FOR_DELETION_TOMBSTONE.with(|depth| depth.get() != 0)
+}
+
+/// Runs a synchronous live-doc deletion tombstone commit without Observer A
+/// persisting a separate `u:w:` transaction in the middle. The caller must
+/// immediately persist the returned snapshot/delta in its own TXN1.
+pub(crate) fn with_deletion_tombstone_observer_a_suppressed<T>(commit: impl FnOnce() -> T) -> T {
+    let _guard = DeletionTombstoneObserverASuppression::enter();
+    commit()
+}
 
 /// Shared materializer state for serializing LMDB writes across observers.
 pub struct Materializer {
@@ -130,20 +177,8 @@ impl OutboundSink {
     /// queue otherwise. Failures are logged, never propagated — this runs
     /// inside Observer A, which cannot abort a committed CRDT change.
     pub(crate) fn route(&self, vault: &Arc<Vault>, window_key: &str, update_bytes: &[u8]) {
-        {
-            let mut guard = self.lock();
-            if let Some(sender) = guard.as_ref() {
-                let send_result = sender.send(LocalUpdate {
-                    window_key: window_key.to_string(),
-                    update_bytes: update_bytes.to_vec(),
-                });
-                if send_result.is_ok() {
-                    return;
-                }
-                // Receiver dropped — clear the stale sender and fall through
-                // to the durable queue.
-                *guard = None;
-            }
+        if self.route_live(window_key, update_bytes) {
+            return;
         }
 
         let queue_result = SyncQueue::new(Arc::clone(vault))
@@ -156,6 +191,29 @@ impl OutboundSink {
                 "outbound-sink: failed to buffer offline update in sync_queue"
             );
         }
+    }
+
+    /// Routes an update only to an attached steady-state connection. The
+    /// deletion path uses this after atomically writing its own durable
+    /// delete-bearing queue row, avoiding both a missed live broadcast and a
+    /// duplicate offline queue entry.
+    pub(crate) fn route_live(&self, window_key: &str, update_bytes: &[u8]) -> bool {
+        {
+            let mut guard = self.lock();
+            if let Some(sender) = guard.as_ref() {
+                let send_result = sender.send(LocalUpdate {
+                    window_key: window_key.to_string(),
+                    update_bytes: update_bytes.to_vec(),
+                });
+                if send_result.is_ok() {
+                    return true;
+                }
+                // Receiver dropped — clear the stale sender and fall through
+                // to the durable queue.
+                *guard = None;
+            }
+        }
+        false
     }
 }
 
@@ -202,40 +260,50 @@ pub(crate) fn persist_window_update(
     window_key: &str,
     update_bytes: &[u8],
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        let seq_key = format!("m:u_seq:w:{window_key}");
-        // Distinguish a missing key (fresh window — start at 0) from a
-        // present-but-malformed seq row (on-disk corruption). The latter
-        // must not silently reset to 0; doing so would let next_seq=1
-        // collide with whatever update was already persisted at
-        // `u:w:{window}:00000001` before the row was corrupted.
-        let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
-            None => 0,
-            Some(raw) => decode_observer_u_seq(raw)?,
-        };
-        // checked_add surfaces overflow as a typed error rather than
-        // `wrapping_add`-ing to 0 and silently overwriting update key
-        // `u:w:{window}:00000000`. Matches SyncQueue's update-seq policy.
-        // u32 widening to u64 is tracked as a follow-up schema change.
-        let next_seq = seq
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
+    vault.with_write_txn(|wtxn| persist_window_update_in_txn(vault, wtxn, window_key, update_bytes))
+}
 
-        let update_key = format!("u:w:{window_key}:{next_seq:08x}");
-        vault
-            .store
-            .sync_state
-            .put(wtxn, &update_key, update_bytes)?;
+/// In-transaction form of [`persist_window_update`]. A live deletion
+/// tombstone uses this from its TXN1 so its `u:w:` carrier cannot become
+/// durable before the matching gate-decision recovery sidecar.
+pub(crate) fn persist_window_update_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    update_bytes: &[u8],
+) -> Result<()> {
+    let seq_key = format!("m:u_seq:w:{window_key}");
+    // Distinguish a missing key (fresh window — start at 0) from a
+    // present-but-malformed seq row (on-disk corruption). The latter
+    // must not silently reset to 0; doing so would let next_seq=1
+    // collide with whatever update was already persisted at
+    // `u:w:{window}:00000001` before the row was corrupted.
+    let seq: u32 = match vault.store.sync_state.get(wtxn, &seq_key)? {
+        None => 0,
+        Some(raw) => decode_observer_u_seq(raw)?,
+    };
+    // checked_add surfaces overflow as a typed error rather than
+    // `wrapping_add`-ing to 0 and silently overwriting update key
+    // `u:w:{window}:00000000`. Matches SyncQueue's update-seq policy.
+    // u32 widening to u64 is tracked as a follow-up schema change.
+    let next_seq = seq
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;
+    vault
+        .store
+        .sync_state
+        .put(wtxn, &seq_key, &next_seq.to_le_bytes())?;
 
-        let svf_key = format!("svf:w:{window_key}");
-        vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
+    let update_key = format!("u:w:{window_key}:{next_seq:08x}");
+    vault
+        .store
+        .sync_state
+        .put(wtxn, &update_key, update_bytes)?;
 
-        Ok(())
-    })
+    let svf_key = format!("svf:w:{window_key}");
+    vault.store.sync_state.put(wtxn, &svf_key, &[0u8])?;
+
+    Ok(())
 }
 
 /// Registers Observer A on a Doc: persists all local updates to sync_state
@@ -254,6 +322,9 @@ pub fn register_observer_a(
     let window_key = window_key.to_string();
 
     doc.subscribe_local_update(Box::new(move |update_bytes| {
+        if observer_a_suppressed_for_deletion_tombstone() {
+            return true;
+        }
         let result = persist_window_update(&vault, &window_key, update_bytes);
 
         if let Err(e) = result {
@@ -347,7 +418,7 @@ fn subscribe_map_observer(
     subscription_doc.subscribe(
         &cid,
         Arc::new(move |event| {
-            if event.origin == BRIDGE_ORIGIN {
+            if matches!(event.origin, BRIDGE_ORIGIN | DELETION_TOMBSTONE_ORIGIN) {
                 return;
             }
             let _guard = materializer.lock();

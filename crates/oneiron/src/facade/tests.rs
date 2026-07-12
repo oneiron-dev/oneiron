@@ -592,6 +592,37 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         .receipt_ref
         .expect("hard delete writes a redaction receipt");
     assert!(receipt_ref.starts_with("redaction:"));
+    let receipt_id = EntityId::from_hex(
+        receipt_ref
+            .strip_prefix("redaction:")
+            .expect("redaction receipt prefix"),
+    )
+    .expect("receipt id");
+    let raw = vault
+        .get_raw(&receipt_id)
+        .expect("read receipt")
+        .expect("receipt exists");
+    let audit = crate::deletion::decode_redaction_audit_receipt(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )
+    .expect("decode redaction audit receipt");
+    let request_id = audit.request_id.replace('-', "");
+    let actor_hex = actor.to_hex();
+    let decision = vault
+        .gate_decisions(50)
+        .expect("gate decisions")
+        .into_iter()
+        .find(|decision| decision.decision_id.to_hex() == request_id)
+        .expect("deletion decision keyed by redaction request id");
+    assert_eq!(decision.outcome, "allow");
+    assert_eq!(decision.content_kind, "deletion");
+    assert_eq!(decision.actor_class, "human");
+    assert_eq!(decision.actor_ref.as_deref(), Some(actor_hex.as_str()));
+    assert_eq!(decision.reason_codes, ["gate.allow.owner_delete"]);
+    assert!(
+        decision.claim_id.is_none(),
+        "deletion authority must remain distinct from claim receipts"
+    );
     assert!(
         facade
             .get_entity(&hard_target.to_hex())
@@ -605,6 +636,339 @@ fn safe_delete_requires_named_reason_and_returns_receipt() {
         .safe_delete(&gdpr_target.to_hex(), SafeDeleteReason::GdprDelete)
         .expect("gdpr delete");
     assert!(receipt.receipt_ref.is_some());
+}
+
+/// DA-C/DA-E/DA-F: a crash after tombstone-first TXN1 leaves the subject
+/// untouched until startup recovery executes the purge; TXN1's request-keyed
+/// recovery sidecar lets that TXN3 append the authority record exactly once.
+#[cfg(feature = "sync")]
+#[test]
+fn safe_delete_txn1_crash_recovers_purge_with_one_authority_record() {
+    use std::sync::Arc;
+
+    use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (victim, gate_decision_id) = {
+        let vault = Arc::new(
+            crate::Vault::open(dir.path(), VaultConfig::default()).expect("open first vault"),
+        );
+        let actor = put_person(&vault, 0xBC);
+        let victim = put_person(&vault, 0xBD);
+        // Keep the deletion window live so TXN1 covers the observer-A
+        // suppression path as well as the transient document path.
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            "facade-crash-live-window",
+        ));
+        manager
+            .open_window(&WindowKey::from_timestamp(1))
+            .expect("open live deletion window");
+        let facade = facade_for(&vault, actor);
+
+        crate::deletion::arm_fail_after_tombstone_before_purge();
+        facade
+            .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
+            .expect_err("test crash after durable TXN1");
+
+        assert!(
+            vault.get_raw(&victim).expect("read victim").is_some(),
+            "TXN1 tombstone must precede, not perform, the active-store purge"
+        );
+        let deletion = vault
+            .entity_deletion_metadata(&victim, 1)
+            .expect("read tombstone metadata")
+            .expect("TXN1 persisted tombstone metadata");
+        let request_id = uuid::Uuid::parse_str(
+            deletion
+                .request_id
+                .as_deref()
+                .expect("tombstone request id"),
+        )
+        .expect("request id UUID")
+        .into_bytes();
+        let gate_decision_id = crate::store::GateDecisionId::from_bytes(request_id);
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        let staged = vault
+            .store
+            .pending_deletion_gate_decision_in_txn(&rtxn, gate_decision_id)
+            .expect("read TXN1 authority sidecar")
+            .expect("TXN1 staged request-keyed authority data");
+        assert_eq!(staged.content_kind, "deletion");
+        drop(rtxn);
+        let unrelated_target = EntityId::from_bytes([0xBE; 16]).expect("unrelated target id");
+        let consumed = vault
+            .with_write_txn(|wtxn| {
+                vault.store.append_pending_deletion_gate_decision_in_txn(
+                    wtxn,
+                    gate_decision_id,
+                    unrelated_target.as_bytes(),
+                    crate::deletion::TombstoneReason::UserHardDelete.wire_byte(),
+                )
+            })
+            .expect("mismatched tombstone must not consume sidecar");
+        assert!(
+            consumed.is_none(),
+            "a different target may not consume this request-keyed sidecar"
+        );
+        assert!(
+            vault
+                .gate_decisions(50)
+                .expect("gate decisions")
+                .iter()
+                .all(|decision| decision.decision_id != gate_decision_id),
+            "TXN1 must not append the final GateDecisionRecord before TXN3"
+        );
+        assert_eq!(
+            vault
+                .count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+                .expect("receipt count"),
+            0,
+            "the execution receipt belongs to the later purge transaction"
+        );
+        drop(manager);
+        (victim, gate_decision_id)
+    };
+
+    let recovered = Arc::new(
+        crate::Vault::open(dir.path(), VaultConfig::default()).expect("reopen after crash"),
+    );
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&recovered),
+        Arc::new(Materializer::new()),
+        "facade-crash-recovery",
+    ));
+    manager
+        .open_window(&WindowKey::from_timestamp(1))
+        .expect("startup recovery drives the pending purge");
+    assert!(
+        recovered
+            .get_raw(&victim)
+            .expect("read recovered victim")
+            .is_none(),
+        "the TXN1 tombstone must drive TXN3 purge completion on recovery"
+    );
+    assert_eq!(
+        recovered
+            .gate_decisions(50)
+            .expect("gate decisions after recovery")
+            .iter()
+            .filter(|decision| decision.decision_id == gate_decision_id)
+            .count(),
+        1,
+        "recovery must not multiply the request-keyed authority record"
+    );
+    assert_eq!(
+        recovered
+            .count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("receipt count after recovery"),
+        1,
+        "recovery performs the one delayed execution attestation"
+    );
+
+    drop(manager);
+    drop(recovered);
+    let recovered_again = Arc::new(
+        crate::Vault::open(dir.path(), VaultConfig::default()).expect("reopen idempotently"),
+    );
+    let manager_again = Arc::new(WindowManager::new(
+        Arc::clone(&recovered_again),
+        Arc::new(Materializer::new()),
+        "facade-crash-recovery",
+    ));
+    manager_again
+        .open_window(&WindowKey::from_timestamp(1))
+        .expect("second recovery is idempotent");
+    assert_eq!(
+        recovered_again
+            .gate_decisions(50)
+            .expect("gate decisions after second recovery")
+            .iter()
+            .filter(|decision| decision.decision_id == gate_decision_id)
+            .count(),
+        1,
+        "double recovery must preserve exactly once authority evidence"
+    );
+    assert_eq!(
+        recovered_again
+            .count_entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("receipt count after second recovery"),
+        1,
+        "double recovery must not mint a second execution attestation"
+    );
+}
+
+/// F1: suppressing Observer A for the authority-atomic tombstone commit must
+/// not suppress the steady-state route to an already-connected peer.
+#[cfg(feature = "sync")]
+#[test]
+fn safe_delete_live_tombstone_reaches_attached_outbound_channel() {
+    use std::sync::Arc;
+
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Arc::new(crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let actor = put_person(&vault, 0xC1);
+    let victim = put_person(&vault, 0xC2);
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "facade-live-route",
+    ));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    manager.outbound().attach(tx);
+    let window = manager
+        .open_window(&WindowKey::from_timestamp(1))
+        .expect("open deletion window");
+    let receiver_base = crate::sync::loro_support::export_snapshot(&window.doc)
+        .expect("receiver starts from the sender's pre-delete state");
+
+    facade_for(&vault, actor)
+        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
+        .expect("safe delete");
+
+    let update = rx
+        .try_recv()
+        .expect("connected peer receives tombstone without reconnect");
+    assert_eq!(update.window_key, WindowKey::from_timestamp(1).as_str());
+    let remote = crate::sync::schema::create_window_doc("remote", &WindowKey::from_timestamp(1));
+    remote
+        .import(&receiver_base)
+        .expect("import receiver base state");
+    remote
+        .import(&update.update_bytes)
+        .expect("live-routed update imports");
+    assert!(
+        remote.get_map("tombstones").get(&victim.to_hex()).is_some(),
+        "the live route carries the deletion tombstone"
+    );
+}
+
+/// F3: a live-doc commit that outlives a failed persistence transaction is
+/// already protected by a durable authority-required marker + complete
+/// sidecar. If the sidecar is missing, recovery refuses the purge and leaves
+/// its durable retry marker;
+/// ordinary remote tombstones remain a legitimate sidecar-free control.
+#[cfg(feature = "sync")]
+#[test]
+fn live_tombstone_persist_failure_requires_complete_authority_sidecar() {
+    use std::sync::Arc;
+
+    use loro::{LoroValue, ValueOrContainer};
+
+    use crate::sync::{WindowKey, WindowManager, bridge::Materializer};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (victim, decision_id) = {
+        let vault = Arc::new(
+            crate::Vault::open(dir.path(), VaultConfig::default()).expect("open first vault"),
+        );
+        let actor = put_person(&vault, 0xC3);
+        let victim = put_person(&vault, 0xC4);
+        let manager = Arc::new(WindowManager::new(
+            Arc::clone(&vault),
+            Arc::new(Materializer::new()),
+            "facade-live-txn1-failure",
+        ));
+        let window = manager
+            .open_window(&WindowKey::from_timestamp(1))
+            .expect("open live deletion window");
+
+        crate::deletion::arm_fail_live_tombstone_persist();
+        facade_for(&vault, actor)
+            .safe_delete(&victim.to_hex(), SafeDeleteReason::UserHardDelete)
+            .expect_err("live commit survives a failed persistence transaction");
+        assert!(
+            vault.get_raw(&victim).expect("read victim").is_some(),
+            "failed TXN1 must not reach the purge"
+        );
+        let raw = match window.doc.get_map("tombstones").get(&victim.to_hex()) {
+            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => bytes.to_vec(),
+            other => panic!("committed live tombstone missing: {other:?}"),
+        };
+        let request_id: [u8; 16] = raw[9..25].try_into().expect("request id bytes");
+        let decision_id = crate::store::GateDecisionId::from_bytes(request_id);
+        let rtxn = vault.store.env.read_txn().expect("read transaction");
+        assert!(
+            vault
+                .store
+                .pending_deletion_gate_decision_in_txn(&rtxn, decision_id)
+                .expect("read staged sidecar")
+                .is_some(),
+            "authority sidecar is durable before the live tombstone commit"
+        );
+        drop(rtxn);
+
+        // Model the orphan live commit being persisted later by an ordinary
+        // full-state flush, then remove only the sidecar while retaining the
+        // separate authority-required marker.
+        window
+            .persist_state(&vault)
+            .expect("persist orphan live commit");
+        vault
+            .with_write_txn(|wtxn| {
+                vault
+                    .store
+                    .remove_pending_deletion_gate_sidecar_for_test(wtxn, decision_id)
+            })
+            .expect("simulate lost authority sidecar");
+        drop(window);
+        drop(manager);
+        (victim, decision_id)
+    };
+
+    let recovered = Arc::new(
+        crate::Vault::open(dir.path(), VaultConfig::default()).expect("reopen after failed TXN1"),
+    );
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&recovered),
+        Arc::new(Materializer::new()),
+        "facade-live-txn1-recovery",
+    ));
+    manager
+        .open_window(&WindowKey::from_timestamp(1))
+        .expect("recovery keeps the window available while marking the failed purge for retry");
+    assert!(
+        recovered.get_raw(&victim).expect("read victim").is_some(),
+        "failed authority recovery rolls the purge back"
+    );
+    assert!(
+        crate::sync::pending_remat_windows(&recovered)
+            .expect("pending recovery markers")
+            .contains(&WindowKey::from_timestamp(1).as_str().to_owned()),
+        "refused purge remains durably queued for fail-closed retry"
+    );
+    assert!(
+        recovered
+            .gate_decisions(50)
+            .expect("gate decisions")
+            .iter()
+            .all(|decision| decision.decision_id != decision_id),
+        "no authority record is fabricated from an incomplete sidecar"
+    );
+
+    // Legitimate remote control: no local required marker exists, so the
+    // same replay boundary accepts and purges a peer-authored hard tombstone.
+    let remote_victim = put_person(&recovered, 0xC5);
+    let remote = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 42,
+        request_id: [0xD5; 16],
+    };
+    recovered
+        .apply_replayed_tombstone_for_sync(&remote_victim, &remote.encode())
+        .expect("sidecar-free remote tombstone remains valid");
+    assert!(
+        recovered
+            .get_raw(&remote_victim)
+            .expect("read remote victim")
+            .is_none(),
+        "legitimate remote hard tombstone purges normally"
+    );
 }
 
 // ── error surface (AC-7) ────────────────────────────────────────────────
@@ -863,6 +1227,30 @@ fn put_companion_record_creates_and_optionally_retires() {
         .expect("read record")
         .expect("record exists");
     assert_eq!(record.lifecycle, ClaimLifecycleStatus::Retracted);
+
+    // The hard-delete resurrection guard is rechecked in the same write
+    // transaction as companion creation, rather than trusting a stale
+    // preflight probe for caller-supplied ids.
+    let tombstoned_id = put_person(&vault, 0xE5);
+    assert!(vault.delete_entity(&tombstoned_id).expect("hard delete"));
+    let err = facade
+        .put_companion_record(&CompanionRecordInput {
+            id: Some(tombstoned_id.to_hex()),
+            owner_ref: owner.to_hex(),
+            persona_ref: persona.to_hex(),
+            value: serde_json::json!({"name": "Never resurrect"}),
+            source: None,
+            retired_at: None,
+            learned_at: 960,
+        })
+        .expect_err("hard-deleted ids must not become companion records");
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        vault
+            .get_companion_record(&tombstoned_id)
+            .expect("read rejected record")
+            .is_none()
+    );
 }
 
 #[test]
@@ -1517,6 +1905,10 @@ fn retract_and_delete_enforce_actor_authority() {
         .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent delete must be denied");
     assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert!(
+        vault.get_raw(&target).expect("read target").is_some(),
+        "a denied deletion must not start a tombstone or scrub"
+    );
     let receipt = owner_facade
         .safe_delete(&target.to_hex(), SafeDeleteReason::UserDelete)
         .expect("owner delete");
@@ -2668,6 +3060,14 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
     bad.trigger = "vibes".to_owned();
     let err = facade.schedule_outbound(&bad).expect_err("unknown trigger");
     assert_eq!(err.code, FACADE_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn missing_bound_outbound_actor_maps_to_forbidden() {
+    let err = facade_error_from_outbound_dispatch(OutboundDispatchError::InvalidBoundActor);
+
+    assert_eq!(err.code, FACADE_CODE_FORBIDDEN);
+    assert_ne!(err.code, FACADE_CODE_NOT_FOUND);
 }
 
 /// #484a regression: an unsupported channel is rejected BEFORE the durable

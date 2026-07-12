@@ -19,6 +19,7 @@ use crate::delivery_window::{
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
     DeliveryWindowVerbClass, is_delivery_window_claim_predicate,
 };
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
@@ -601,6 +602,8 @@ pub struct OutboundDispatchResult {
 pub enum OutboundDispatchError {
     #[error(transparent)]
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
+    #[error("the facade-bound actor is no longer valid")]
+    InvalidBoundActor,
     #[error(transparent)]
     Engine(#[from] Error),
 }
@@ -829,6 +832,30 @@ impl OutboundDispatchPipeline {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_inner(vault, request, sink, None)
+    }
+
+    /// Dispatches an outbound intent after validating the facade-bound actor
+    /// in the exact gate-decision transaction. The general dispatch API stays
+    /// available to engine-owned callers whose actor model is different.
+    pub(crate) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_inner(vault, request, sink, Some((actor, actor_class)))
+    }
+
+    fn dispatch_inner<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        verified_actor: Option<(EntityId, EdgeActorClass)>,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         // OF-326 talk-only (ONE-1546): an intent originating from a session
         // currently in off-record mode is rejected before verb resolution —
         // the typed error carries the exit-prompt semantics. Intents from a
@@ -897,6 +924,12 @@ impl OutboundDispatchPipeline {
                 .is_none_or(|decision| matches!(decision.action, LinkedInSeatPolicyAction::Allow));
 
         let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+        if let Some((actor, actor_class)) = verified_actor {
+            let entity_type = vault
+                .get_entity_type_in_txn(&wtxn, &actor)?
+                .ok_or(OutboundDispatchError::InvalidBoundActor)?;
+            crate::provenance::validate_actor_class(entity_type, actor_class)?;
+        }
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
         let (gate_decision_id, gate_decision, effector_charge) =
             gate::check_external_effect_policy(
@@ -1124,6 +1157,24 @@ impl Vault {
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         OutboundDispatchPipeline.dispatch(self, request, sink)
+    }
+
+    /// Facade-only dispatch seam: asserts the actor still resolves in the
+    /// Gate transaction that persists this outbound decision.
+    pub(crate) fn dispatch_outbound_intent_with_verified_actor<S: OutboundExecutionSink>(
+        &self,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        OutboundDispatchPipeline.dispatch_with_verified_actor(
+            self,
+            request,
+            sink,
+            actor,
+            actor_class,
+        )
     }
 }
 

@@ -327,6 +327,7 @@ impl Vault {
     ) -> Option<(
         std::sync::Arc<crate::sync::window::LoadedWindow>,
         std::sync::Arc<crate::sync::bridge::Materializer>,
+        std::sync::Arc<crate::sync::WindowManager>,
     )> {
         let manager = self
             .live_window_manager
@@ -334,7 +335,11 @@ impl Vault {
             .unwrap_or_else(|e| e.into_inner())
             .upgrade()?;
         let window = manager.window(key)?;
-        Some((window, std::sync::Arc::clone(manager.materializer())))
+        Some((
+            window,
+            std::sync::Arc::clone(manager.materializer()),
+            manager,
+        ))
     }
 
     /// Whether `key` is currently unsafe for sweep compaction: registered in
@@ -1550,7 +1555,16 @@ impl Vault {
     /// Returns the entity type byte for a stored entity, or None if not found.
     pub fn get_entity_type(&self, id: &EntityId) -> Result<Option<u8>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
+        self.get_entity_type_in_txn(&rtxn, id)
+    }
+
+    /// Transaction-composable body of [`Vault::get_entity_type`].
+    pub(crate) fn get_entity_type_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<u8>> {
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
             return Ok(None);
         };
         let header =
