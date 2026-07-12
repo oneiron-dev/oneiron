@@ -742,12 +742,18 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
         0.9,
     );
 
+    let metric_emissions_before = crate::gate::gate_metric_emission_count_for_test();
     let err = vault
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time_range(1, 1), 2)
         .commit()
         .expect_err("missing actor entity must reject");
     assert!(matches!(err, Error::EntityNotFound));
+    assert_eq!(
+        crate::gate::gate_metric_emission_count_for_test(),
+        metric_emissions_before,
+        "a rolled-back gate receipt must not emit committed-decision metrics"
+    );
     assert!(vault.get_claim(&claim)?.is_none());
     assert_eq!(
         vault.store.gate_decisions(10)?.len(),
