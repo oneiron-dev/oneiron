@@ -9,6 +9,10 @@ use crate::companion::{
 };
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::off_record::OffRecordBackendClass;
+use crate::registry::ENTITY_TYPE_TURN;
+use crate::sync::WindowManager;
+use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
@@ -41,6 +45,36 @@ fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityI
     id
 }
 
+fn assert_fenced_history_absent_from_export(
+    vault: &Vault,
+    window_key: &WindowKey,
+    doc: &LoroDoc,
+    fenced: &EntityId,
+    ordinary: &EntityId,
+    incident_edge: Option<&str>,
+) -> Result<()> {
+    let export =
+        export_window_updates_since(vault, window_key, doc, &VersionVector::default().encode())?;
+    let peer = create_window_doc("history-proof-peer", window_key);
+    import_doc(&peer, &export)?;
+
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &fenced.to_hex()).is_none(),
+        "ordinary export must not reconstruct a fenced body from Loro history"
+    );
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "history-free export must preserve the ordinary control"
+    );
+    if let Some(edge_key) = incident_edge {
+        assert!(
+            map_get_bytes(&peer.get_map("edges"), edge_key).is_none(),
+            "ordinary export must not reconstruct a fenced incident edge from Loro history"
+        );
+    }
+    Ok(())
+}
+
 fn companion_record(
     persona_ref: EntityId,
     export_classification: CompanionExportClassification,
@@ -58,6 +92,765 @@ fn companion_record(
         ),
         export_classification,
     )
+}
+
+#[test]
+fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let promoted = EntityId::from_bytes([0x41; 16])?;
+    let still_fenced = EntityId::from_bytes([0x42; 16])?;
+    let ordinary = EntityId::from_bytes([0x43; 16])?;
+
+    vault.enter_off_record_session("sess-defer-sync", OffRecordBackendClass::Local)?;
+    for id in [&promoted, &still_fenced] {
+        // Tag before the entity write: this is the live-session path that
+        // must remain writable while it is held out of sync.
+        vault.tag_turn_off_record("sess-defer-sync", id)?;
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"off-record turn",
+        )?;
+    }
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary turn",
+    )?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
+
+    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
+    let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
+    vault.sync_state_put(&promoted_marker, &[1])?;
+    vault.sync_state_put(&fenced_marker, &[1])?;
+
+    let doc = create_window_doc("source", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
+    let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
+
+    // Exercise both packing paths in a live session. Neither fenced body nor
+    // the edges that name it can enter the window; the pm rows stay deferred.
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 0);
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 1);
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_some());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+
+    vault.promote_off_record_turn("sess-defer-sync", &promoted)?;
+
+    // Promotion lifts exactly one fence. Its pending mirror can now flow;
+    // the other fenced body remains device-local, and reverse packing only
+    // releases the edge whose target was explicitly promoted.
+    assert_eq!(replay_pending_mirrors(&vault, &doc, &window_key)?, 1);
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+    assert_eq!(reverse_rematerialize(&vault, &doc, &window_key)?, 0);
+    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+
+    Ok(())
+}
+
+/// A promotion must refresh the registry-owned document when the relevant
+/// window was already open. Otherwise its deferred `pm:` row would survive
+/// until unload/reopen even though the user explicitly released the turn.
+#[test]
+fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let promoted = EntityId::from_bytes([0x51; 16])?;
+    let still_fenced = EntityId::from_bytes([0x52; 16])?;
+    let ordinary = EntityId::from_bytes([0x53; 16])?;
+
+    vault.enter_off_record_session("sess-live-promotion", OffRecordBackendClass::Local)?;
+    for id in [&promoted, &still_fenced] {
+        vault.tag_turn_off_record("sess-live-promotion", id)?;
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"fenced live-window fixture",
+        )?;
+    }
+    vault.put_entity(
+        &ordinary,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"ordinary live-window fixture",
+    )?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &promoted, 0.5)?;
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &still_fenced, 0.5)?;
+
+    let promoted_marker = format!("pm:{window_key}:{}", promoted.to_hex());
+    let fenced_marker = format!("pm:{window_key}:{}", still_fenced.to_hex());
+    vault.sync_state_put(&promoted_marker, &[1])?;
+    vault.sync_state_put(&fenced_marker, &[1])?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let window = manager.open_window(&window_key)?;
+    let entities = window.doc.get_map("entities");
+    let edges = window.doc.get_map("edges");
+    let promoted_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &promoted);
+    let fenced_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &still_fenced);
+
+    // The open-time recovery honours the fences and leaves both `pm:` rows
+    // pending; only the ordinary record reaches the registered doc.
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_none());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+
+    vault.promote_off_record_turn("sess-live-promotion", &promoted)?;
+
+    // No unload/reopen is needed: the explicit promotion catches up the same
+    // registry-owned doc, clears only its marker, and backfills only the edge
+    // whose target is no longer fenced.
+    assert!(map_get_bytes(&entities, &promoted.to_hex()).is_some());
+    assert!(map_get_bytes(&entities, &still_fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &promoted_edge).is_some());
+    assert!(map_get_bytes(&edges, &fenced_edge).is_none());
+    assert!(vault.sync_state_get(&promoted_marker)?.is_none());
+    assert!(vault.sync_state_get(&fenced_marker)?.is_some());
+
+    Ok(())
+}
+
+#[test]
+fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-02");
+    let target_key = WindowKey::new("2026-03");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let target_at = target_key.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x5a; 16])?;
+    let target = EntityId::from_bytes([0x5b; 16])?;
+
+    vault.enter_off_record_session("sess-cross-window-promote", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-cross-window-promote", &target)?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window source",
+    )?;
+    vault.put_entity(
+        &target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    vault.sync_state_put(&format!("pm:{target_key}:{}", target.to_hex()), &[1])?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let source_window = manager.open_window(&source_key)?;
+    let target_window = manager.open_window(&target_key)?;
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &target);
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
+    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_none());
+
+    vault.promote_off_record_turn("sess-cross-window-promote", &target)?;
+
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
+    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_some());
+    Ok(())
+}
+
+/// Tagging an entity that is already present in a registry-owned window must
+/// scrub that live carrier immediately. An ordinary body and edge prove the
+/// refresh is scoped rather than clearing the whole window.
+#[test]
+fn off_record_tag_eagerly_scrubs_an_already_open_window() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x54; 16])?;
+    let ordinary = EntityId::from_bytes([0x55; 16])?;
+
+    for id in [&fenced, &ordinary] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"live tag fixture",
+        )?;
+    }
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &fenced, 0.5)?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let window = manager.open_window(&window_key)?;
+    let fenced_key = fenced.to_hex();
+    let ordinary_key = ordinary.to_hex();
+    let incident_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    assert!(map_get_bytes(&window.doc.get_map("entities"), &fenced_key).is_some());
+    assert!(map_get_bytes(&window.doc.get_map("entities"), &ordinary_key).is_some());
+    assert!(map_get_bytes(&window.doc.get_map("edges"), &incident_edge).is_some());
+
+    vault.enter_off_record_session("sess-live-tag", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-live-tag", &fenced)?;
+
+    assert!(map_get_bytes(&window.doc.get_map("entities"), &fenced_key).is_none());
+    assert!(map_get_bytes(&window.doc.get_map("edges"), &incident_edge).is_none());
+    assert!(
+        map_get_bytes(&window.doc.get_map("entities"), &ordinary_key).is_some(),
+        "legitimate non-fenced body must remain"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &window.doc,
+        &fenced,
+        &ordinary,
+        Some(&incident_edge),
+    )?;
+    Ok(())
+}
+
+/// A stale fenced carrier must not survive the full-snapshot persistence
+/// boundary, even if it was inserted after the fence and bypassed packing.
+#[test]
+fn persist_state_scrubs_fenced_carriers_and_preserves_ordinary_content() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x56; 16])?;
+    let ordinary = EntityId::from_bytes([0x57; 16])?;
+    vault.enter_off_record_session("sess-persist-scrub", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-persist-scrub", &fenced)?;
+
+    let materializer = Arc::new(Materializer::new());
+    let window = LoadedWindow::new("source", window_key, &vault, &materializer);
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &fenced.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"must not persist"),
+    )?;
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary persists"),
+    )?;
+    let incident_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    map_insert_bytes(&window.doc.get_map("edges"), &incident_edge, b"stale edge")?;
+    window.doc.commit();
+
+    let snapshot = window.persist_state(&vault)?;
+    let persisted = doc_from_snapshot(&snapshot)?;
+    assert!(map_get_bytes(&persisted.get_map("entities"), &fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&persisted.get_map("edges"), &incident_edge).is_none());
+    assert_eq!(
+        map_get_bytes(&persisted.get_map("entities"), &ordinary.to_hex()).as_deref(),
+        Some(make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary persists").as_slice())
+    );
+    Ok(())
+}
+
+/// Tagging an entity that is already present in a registry-owned live window
+/// must remove its body and incident edges before the call returns. The
+/// ordinary neighbor is the legitimate control and must remain exportable.
+#[test]
+fn off_record_tag_eagerly_scrubs_an_already_open_live_window() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x54; 16])?;
+    let ordinary = EntityId::from_bytes([0x55; 16])?;
+
+    for id in [&fenced, &ordinary] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"eager live-window scrub fixture",
+        )?;
+    }
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &fenced, 0.5)?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let window = manager.open_window(&window_key)?;
+    let entities = window.doc.get_map("entities");
+    let edges = window.doc.get_map("edges");
+    let edge_key = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    assert!(map_get_bytes(&entities, &fenced.to_hex()).is_some());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(map_get_bytes(&edges, &edge_key).is_some());
+
+    vault.enter_off_record_session("sess-eager-live-scrub", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-eager-live-scrub", &fenced)?;
+
+    assert!(map_get_bytes(&entities, &fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &edge_key).is_none());
+    assert!(
+        map_get_bytes(&entities, &ordinary.to_hex()).is_some(),
+        "eager fence scrub must preserve an unrelated ordinary carrier"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &window.doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn off_record_tag_eagerly_scrubs_every_live_cross_window_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-03");
+    let target_key = WindowKey::new("2026-04");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let target_at = target_key.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x5A; 16])?;
+    let fenced_target = EntityId::from_bytes([0x5B; 16])?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window ordinary source",
+    )?;
+    vault.put_entity(
+        &fenced_target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window private target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &fenced_target, 0.5)?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let source_window = manager.open_window(&source_key)?;
+    let target_window = manager.open_window(&target_key)?;
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &fenced_target);
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
+    assert!(
+        map_get_bytes(
+            &target_window.doc.get_map("entities"),
+            &fenced_target.to_hex()
+        )
+        .is_some()
+    );
+
+    vault.enter_off_record_session("sess-eager-cross-window", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-eager-cross-window", &fenced_target)?;
+
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
+    assert!(
+        map_get_bytes(
+            &target_window.doc.get_map("entities"),
+            &fenced_target.to_hex()
+        )
+        .is_none()
+    );
+    assert!(
+        map_get_bytes(&source_window.doc.get_map("entities"), &source.to_hex()).is_some(),
+        "ordinary source body must survive eager cross-window scrubbing"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_key,
+        &source_window.doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
+    Ok(())
+}
+
+/// A hostile remote body for a locally fenced, never-written id is a terminal
+/// quarantine, but quarantine alone is insufficient: the body and incident
+/// edge must be deleted from the source Doc so a later VV export cannot relay
+/// them. The ordinary body proves legitimate materialization still works.
+#[test]
+fn forward_rematerialization_scrubs_a_fenced_remote_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x56; 16])?;
+    let ordinary = EntityId::from_bytes([0x57; 16])?;
+    vault.enter_off_record_session("sess-forward-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-forward-fence", &fenced)?;
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &fenced.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"hostile fenced remote body"),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary remote body"),
+    )?;
+    let edge_key = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    let edge_value = encode_edge_value_for_crdt(
+        EdgeKind::Mentions,
+        0.5,
+        learned_at,
+        Some(Vad::NEUTRAL),
+        None,
+    )?;
+    map_insert_bytes(&edges, &edge_key, &edge_value)?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+
+    assert!(vault.get(&fenced)?.is_none());
+    assert!(vault.get(&ordinary)?.is_some());
+    assert!(map_get_bytes(&entities, &fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &edge_key).is_none());
+    assert!(map_get_bytes(&entities, &ordinary.to_hex()).is_some());
+    assert!(
+        !crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
+        "the scrubbed hostile row must retain its hashed quarantine evidence"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
+    Ok(())
+}
+
+/// Full snapshot persistence is an outbound carrier boundary: even if a
+/// remote insertion bypassed normal packing and sits in the live Doc, the
+/// returned and durable snapshot must contain the ordinary control only.
+#[test]
+fn persist_state_scrubs_fenced_carriers_before_snapshot_export() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let materializer = Arc::new(Materializer::new());
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x58; 16])?;
+    let ordinary = EntityId::from_bytes([0x59; 16])?;
+    vault.enter_off_record_session("sess-persist-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-persist-fence", &fenced)?;
+
+    let window = LoadedWindow::new("local", window_key, &vault, &materializer);
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &fenced.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"stale fenced snapshot body"),
+    )?;
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary snapshot body"),
+    )?;
+    window.doc.commit();
+
+    let snapshot = window.persist_state(&vault)?;
+    let persisted = doc_from_snapshot(&snapshot)?;
+    assert!(
+        map_get_bytes(&persisted.get_map("entities"), &fenced.to_hex()).is_none(),
+        "persist_state must not serialize a fenced carrier"
+    );
+    assert!(
+        map_get_bytes(&persisted.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "persist_state must preserve the ordinary control"
+    );
+    Ok(())
+}
+
+/// A fence must scrub a carrier that reached the window before the fence was
+/// observed. Both production packing paths are covered: pending-mirror replay
+/// owns a source carrier, while reverse rematerialization owns an in-range
+/// local source plus an incident edge from an ordinary neighbor.
+#[test]
+fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced = EntityId::from_bytes([0x44; 16])?;
+    let ordinary = EntityId::from_bytes([0x45; 16])?;
+
+    for id in [&fenced, &ordinary] {
+        vault.put_entity(
+            id,
+            ENTITY_TYPE_TURN,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            b"window carrier fixture",
+        )?;
+    }
+    vault.put_edge(&ordinary, EdgeKind::Mentions, &fenced, 0.5)?;
+    vault.enter_off_record_session("sess-scrub-carrier", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-scrub-carrier", &fenced)?;
+
+    let fenced_raw = vault.get_raw(&fenced)?.expect("fenced fixture body");
+    let edge_key = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+    let pending_marker = format!("pm:{window_key}:{}", fenced.to_hex());
+    vault.sync_state_put(&pending_marker, &[1])?;
+
+    let replay_doc = create_window_doc("source", &window_key);
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &fenced.to_hex(),
+        &fenced_raw,
+    )?;
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &vault.get_raw(&ordinary)?.expect("ordinary fixture body"),
+    )?;
+    let fenced_upper = fenced.to_hex().to_ascii_uppercase();
+    map_insert_bytes(&replay_doc.get_map("entities"), &fenced_upper, &fenced_raw)?;
+    map_insert_bytes(
+        &replay_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    replay_doc.commit();
+
+    assert_eq!(replay_pending_mirrors(&vault, &replay_doc, &window_key)?, 0);
+    assert!(
+        map_get_bytes(&replay_doc.get_map("entities"), &fenced.to_hex()).is_none(),
+        "pending replay must remove the pre-fence body carrier"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("entities"), &fenced_upper).is_none(),
+        "pending replay must remove non-canonical body aliases too"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
+        "pending replay must remove the pre-fence incident edge carrier"
+    );
+    assert!(
+        vault.sync_state_get(&pending_marker)?.is_some(),
+        "the pending marker stays deferred until explicit promotion"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &replay_doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
+
+    let reverse_doc = create_window_doc("source", &window_key);
+    map_insert_bytes(
+        &reverse_doc.get_map("entities"),
+        &fenced.to_hex(),
+        &fenced_raw,
+    )?;
+    map_insert_bytes(&reverse_doc.get_map("entities"), &fenced_upper, &fenced_raw)?;
+    map_insert_bytes(
+        &reverse_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    reverse_doc.commit();
+
+    assert_eq!(reverse_rematerialize(&vault, &reverse_doc, &window_key)?, 1);
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("entities"), &fenced.to_hex()).is_none(),
+        "reverse rematerialization must remove the pre-fence body carrier"
+    );
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("entities"), &fenced_upper).is_none(),
+        "reverse rematerialization must remove non-canonical body aliases too"
+    );
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
+        "reverse rematerialization must remove the pre-fence incident edge carrier"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &reverse_doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
+
+    Ok(())
+}
+
+/// A fenced target can reside in a different window from an ordinary source.
+/// Repacking the source must remove a preexisting edge carrier in both paths;
+/// scrubbing only the target's window would leave that cross-window edge live.
+#[test]
+fn off_record_fence_scrubs_preexisting_cross_window_target_edges() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_window = WindowKey::new("2026-03");
+    let target_window = WindowKey::new("2026-04");
+    let source_at = source_window.start_timestamp().unwrap() + 60;
+    let target_at = target_window.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x46; 16])?;
+    let fenced_target = EntityId::from_bytes([0x47; 16])?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window ordinary source",
+    )?;
+    vault.enter_off_record_session("sess-cross-window-edge", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-cross-window-edge", &fenced_target)?;
+    vault.put_entity(
+        &fenced_target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window fenced target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &fenced_target, 0.5)?;
+
+    let source_raw = vault.get_raw(&source)?.expect("source body");
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &fenced_target);
+    let marker = format!("pm:{source_window}:{}", source.to_hex());
+    vault.sync_state_put(&marker, &[1])?;
+
+    let replay_doc = create_window_doc("source", &source_window);
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &source.to_hex(),
+        &source_raw,
+    )?;
+    map_insert_bytes(
+        &replay_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    replay_doc.commit();
+    assert_eq!(
+        replay_pending_mirrors(&vault, &replay_doc, &source_window)?,
+        0,
+        "the shared scrub boundary removes the stale edge before replay accounting"
+    );
+    assert!(
+        map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
+        "pending replay must remove a source-window edge to a fenced target"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_window,
+        &replay_doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
+
+    let reverse_doc = create_window_doc("source", &source_window);
+    map_insert_bytes(
+        &reverse_doc.get_map("entities"),
+        &source.to_hex(),
+        &source_raw,
+    )?;
+    map_insert_bytes(
+        &reverse_doc.get_map("edges"),
+        &edge_key,
+        b"stale edge carrier",
+    )?;
+    reverse_doc.commit();
+    assert_eq!(
+        reverse_rematerialize(&vault, &reverse_doc, &source_window)?,
+        0
+    );
+    assert!(
+        map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
+        "reverse rematerialization must remove a source-window edge to a fenced target"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_window,
+        &reverse_doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
+
+    Ok(())
 }
 
 /// ONE-1151 prune: `persist_state` deletes exactly the `u:w:{key}:*`

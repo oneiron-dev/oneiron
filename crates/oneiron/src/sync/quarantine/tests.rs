@@ -3,10 +3,12 @@ use std::sync::Arc;
 use super::*;
 use crate::Vault;
 use crate::config::VaultConfig;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
+use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::map_insert_bytes;
+use crate::sync::bridge::{Materializer, format_edge_key};
+use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{LoadedWindow, forward_rematerialize, reverse_rematerialize};
 use crate::temporal::TimeRange;
@@ -1331,7 +1333,6 @@ fn forward_remat_quarantines_rejected_rows() {
         vault.get(&good).unwrap().as_deref(),
         Some(good_body.as_slice())
     );
-
     let mut reasons: Vec<String> = quarantined_records(&vault)
         .unwrap()
         .into_iter()
@@ -1346,6 +1347,80 @@ fn forward_remat_quarantines_rejected_rows() {
             "InvalidKey".to_string()
         ]
     );
+}
+
+/// A late remote turn for a closed off-record fence is a terminal remote
+/// rejection: persist its x: evidence and continue materializing unrelated
+/// CRDT rows instead of failing the whole pass.
+#[test]
+fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let fenced = EntityId::now();
+    let good = EntityId::now();
+
+    vault
+        .enter_off_record_session("sess-remote-fence", OffRecordBackendClass::Local)
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-remote-fence", &fenced)
+        .unwrap();
+    let log = vault.off_record_receipt_log("sess-remote-fence").unwrap();
+    vault
+        .close_off_record_session("sess-remote-fence", log)
+        .unwrap();
+
+    let doc = create_window_doc("test-user", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &fenced.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            valid_time_range(),
+            LEARNED_AT,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    let good_body = task_body();
+    map_insert_bytes(
+        &entities,
+        &good.to_hex(),
+        &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &good_body),
+    )
+    .unwrap();
+    let incident_edge = format_edge_key(&good, EdgeKind::Mentions, &fenced);
+    map_insert_bytes(&edges, &incident_edge, &semantic_edge_value(0.5)).unwrap();
+    doc.commit();
+
+    assert_eq!(
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap(),
+        1,
+        "the unrelated remote entity must still materialize"
+    );
+    assert!(vault.get(&fenced).unwrap().is_none());
+    assert_eq!(
+        vault.get(&good).unwrap().as_deref(),
+        Some(good_body.as_slice())
+    );
+    assert!(
+        map_get_bytes(&entities, &fenced.to_hex()).is_none(),
+        "quarantined fenced body must be scrubbed from the live doc"
+    );
+    assert!(
+        map_get_bytes(&edges, &incident_edge).is_none(),
+        "incident edge carrier must be scrubbed with the fenced body"
+    );
+    assert!(
+        map_get_bytes(&entities, &good.to_hex()).is_some(),
+        "legitimate non-fenced body remains in the doc"
+    );
+    let records = quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].1.reason_code, "OffRecordFencedTurnWriteRejected");
 }
 
 #[test]

@@ -126,6 +126,7 @@ impl ConvergenceSession {
         let mut frames = Vec::with_capacity(self.pending.len());
         for key in &self.pending {
             let window = client.ensure_window(key)?;
+            client.scrub_window_before_export(&window.key, &window.doc)?;
             frames.push(
                 transport::encode_window_sync(
                     key,

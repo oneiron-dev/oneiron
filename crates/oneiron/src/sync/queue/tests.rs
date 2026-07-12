@@ -754,6 +754,35 @@ fn scrub_window_updates_drops_only_target_window_payload_rows() {
 }
 
 #[test]
+fn off_record_fence_scrub_drops_ordinary_rows_and_preserves_delete_bearing() {
+    let vault = test_vault();
+    let queue = SyncQueue::new(vault.clone()).unwrap();
+    let ordinary_a = queue.push("2026-02", &[0xAA]).unwrap();
+    let ordinary_b = queue.push("2026-03", &[0xBB]).unwrap();
+    let delete = queue.push_delete_bearing("2026-02", &[0xCC]).unwrap();
+
+    let dropped = vault
+        .with_write_txn(|wtxn| scrub_outbox_for_off_record_fence_in_txn(&vault, wtxn))
+        .unwrap();
+    assert_eq!(dropped, 2);
+
+    let updates = queue.drain_updates().unwrap();
+    let seqs: Vec<u64> = updates.iter().map(|update| update.seq).collect();
+    assert!(!seqs.contains(&ordinary_a));
+    assert!(!seqs.contains(&ordinary_b));
+    assert!(
+        seqs.contains(&delete),
+        "delete-bearing control must survive"
+    );
+    for key in ["2026-02", "2026-03"] {
+        assert_eq!(
+            vault.sync_state_get(&format!("fr:w:{key}")).unwrap(),
+            Some(vec![1])
+        );
+    }
+}
+
+#[test]
 fn receiver_live_hard_tombstone_scrubs_window_outbox_and_sets_fr() {
     let vault = test_vault();
     let outbox = seed_receiver_outbox(&vault);
