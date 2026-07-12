@@ -11,6 +11,8 @@ use crate::outbound::{
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, GateDecisionRecord};
+#[cfg(feature = "sync")]
+use crate::sync::queue::SyncQueue;
 use crate::temporal::TimeRange;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -31,6 +33,44 @@ fn seed_turn(vault: &Vault, at: u64) -> EntityId {
         )
         .expect("seed turn");
     id
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn off_record_tag_scrubs_offline_updates_and_preserves_ordinary_state() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault =
+        std::sync::Arc::new(Vault::open(tmp.path(), VaultConfig::default()).expect("open vault"));
+    let fenced = seed_turn(&vault, 1_775_000_000);
+    let ordinary = seed_turn(&vault, 1_775_000_001);
+    let queue = SyncQueue::new(std::sync::Arc::clone(&vault)).unwrap();
+    queue
+        .push("2026-04", b"private queued fenced carrier")
+        .unwrap();
+    queue.push("2026-05", b"ordinary queued control").unwrap();
+
+    vault
+        .enter_off_record_session("sess-offline-queue", OffRecordBackendClass::Local)
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-offline-queue", &fenced)
+        .unwrap();
+
+    assert!(
+        queue.drain_updates().unwrap().is_empty(),
+        "opaque ordinary queue rows may retain fenced history and must be dropped"
+    );
+    for key in ["2026-04", "2026-05"] {
+        assert_eq!(
+            vault.sync_state_get(&format!("fr:w:{key}")).unwrap(),
+            Some(vec![1]),
+            "every affected window must be healed by full resync"
+        );
+    }
+    assert!(
+        vault.get_entity_type(&ordinary).unwrap().is_some(),
+        "ordinary durable state survives queue scrubbing and remains available to full resync"
+    );
 }
 
 fn surfaced_turns(vault: &Vault) -> Vec<EntityId> {

@@ -513,6 +513,8 @@ impl Vault {
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
                 if existing == session_ref.as_bytes() {
+                    #[cfg(feature = "sync")]
+                    crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());
                 }
                 return Err(Error::InvariantViolation(
@@ -533,6 +535,8 @@ impl Vault {
                 &off_record_session_key(session_ref),
                 &encode_off_record_session(&record)?,
             )?;
+            #[cfg(feature = "sync")]
+            crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
             Ok(())
         })?;
 

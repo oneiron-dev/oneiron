@@ -689,6 +689,41 @@ pub(crate) fn scrub_window_updates_in_txn(
     Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
 }
 
+/// Drops every ordinary pending window update after an off-record fence is
+/// installed. Queue payloads are opaque Loro history, so they cannot prove
+/// they omit a newly fenced carrier. Each valid affected window is marked for
+/// full resync; delete-bearing rows remain protected by their sidecars.
+pub(crate) fn scrub_outbox_for_off_record_fence_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<u32> {
+    let delete_bearing = delete_bearing_seqs_in_txn(vault, wtxn)?;
+    let mut doomed = Vec::new();
+    let mut affected_windows = HashSet::new();
+    for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        let Ok(seq) = decode_update_key(key) else {
+            doomed.push(key.to_vec());
+            continue;
+        };
+        if delete_bearing.contains(&seq) {
+            continue;
+        }
+        if let Ok((window_key, _)) = decode_update_value_parts(value) {
+            affected_windows.insert(window_key.to_owned());
+        }
+        doomed.push(key.to_vec());
+    }
+    for key in &doomed {
+        vault.store.sync_queue.delete(wtxn, key)?;
+    }
+    for window_key in affected_windows {
+        let marker = format!("fr:w:{window_key}");
+        vault.store.sync_state.put(wtxn, &marker, &[1_u8])?;
+    }
+    Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
+}
+
 /// Receiver-side carrier-15 scrub (ONE-1165): on a remote HARD delete applied
 /// via live replay (Observer B) or recovery (forward_rematerialize), the
 /// receiver's own `q:` outbox may carry the now-deleted payload. Mirror the
