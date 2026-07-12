@@ -164,9 +164,9 @@ pub const MAX_DBS: u32 = 32;
 /// records dropped the dead `tf` u32.
 ///
 /// Receipt-family ABI-pin rule: changing
-/// [`GATE_DECISION_LEDGER_VERSION`], `JOB_RECORD_VERSION`,
-/// [`PENDING_GATE_CONSENT_INDEX_STATE_VERSION`], or
-/// [`RECEIPT_FAMILY_INDEX_VERSION`] requires bumping this version too.
+/// `GATE_DECISION_LEDGER_VERSION`, `JOB_RECORD_VERSION`,
+/// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
+/// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 pub const STORAGE_ABI_VERSION: u16 = 11;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
