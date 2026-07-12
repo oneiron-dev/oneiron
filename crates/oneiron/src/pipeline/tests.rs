@@ -775,6 +775,139 @@ fn context_pack_records_context_pack_telemetry() -> Result<()> {
 }
 
 #[test]
+fn weak_evidence_abstains() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x36);
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    put_text_and_vector(
+        &vault,
+        id,
+        "stored evidence unrelated to the requested keyword",
+        [0.2, 0.979_795_9, 0.0, 0.0],
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("", 10)
+        .search_vector(&query, 10)
+        .run()?;
+
+    assert!(
+        pack.results.is_empty(),
+        "the context pack must structurally withhold weak evidence"
+    );
+    assert!(pack.neighbors.is_empty());
+    assert_eq!(pack.stats.candidates_considered, 1);
+    Ok(())
+}
+
+#[test]
+fn does_not_delete_stored_memory() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x37);
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    put_text_and_vector(
+        &vault,
+        id,
+        "stored memory remains available after an abstention",
+        [0.2, 0.979_795_9, 0.0, 0.0],
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("", 10)
+        .search_vector(&query, 10)
+        .run()?;
+    assert!(pack.results.is_empty());
+
+    let direct_results = vault.query().search_vector(&query, 10).run()?;
+    assert!(
+        direct_results.iter().any(|scored| scored.id == id),
+        "abstention must not change ordinary retrieval or remove the vector"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.store.entities.get(&rtxn, id.as_bytes())?.is_some(),
+        "abstention must not delete the stored entity"
+    );
+    Ok(())
+}
+
+#[test]
+fn confidence_surfaced() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x38);
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    put_text_and_vector(
+        &vault,
+        id,
+        "stored evidence with an insufficient semantic match",
+        [0.2, 0.979_795_9, 0.0, 0.0],
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("", 10)
+        .search_vector(&query, 10)
+        .run()?;
+
+    let empty = pack
+        .empty
+        .as_ref()
+        .expect("abstention must surface a typed empty-context response");
+    assert_eq!(
+        empty.reason,
+        crate::context_pack::EmptyReason::BelowThreshold
+    );
+    let encoded = serde_json::to_value(empty).expect("empty context serializes");
+    assert_eq!(encoded["reason"], "below_threshold");
+    Ok(())
+}
+
+#[test]
+fn poor_score_gap_abstains() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    put_vector(&vault, entity_id(0x39), [0.4, 1.0, 0.0, 0.0])?;
+    put_vector(&vault, entity_id(0x3A), [0.39, 1.0, 0.0, 0.0])?;
+
+    let pack = vault.context_pack().search_vector(&query, 10).run()?;
+
+    assert!(pack.results.is_empty());
+    assert_eq!(
+        pack.empty.as_ref().map(|empty| empty.reason),
+        Some(crate::context_pack::EmptyReason::BelowThreshold)
+    );
+    Ok(())
+}
+
+#[test]
+fn anomalous_text_abstains() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x3B);
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    put_text_and_vector(
+        &vault,
+        id,
+        "strong vector candidate must still be withheld for anomalous text",
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 10)
+        .search_vector(&query, 10)
+        .run()?;
+
+    assert!(pack.results.is_empty());
+    assert_eq!(
+        pack.empty.as_ref().map(|empty| empty.reason),
+        Some(crate::context_pack::EmptyReason::BelowThreshold)
+    );
+    Ok(())
+}
+
+#[test]
 fn parsed_temporal_bounds_record_temporal_telemetry_signal() -> Result<()> {
     const NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
 
