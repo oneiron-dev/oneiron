@@ -148,10 +148,7 @@ impl LoadedWindow {
         // its incident edges). Persistence is itself an outbound carrier:
         // the snapshot is later used for VV/delta sync, so scrub immediately
         // before computing either the snapshot or its state vector.
-        let scrubbed = scrub_off_record_fenced_carriers(vault, &self.doc)?;
-        if scrubbed {
-            require_history_free_window(vault, &self.key)?;
-        }
+        let scrubbed = scrub_off_record_fenced_carriers(vault, &self.key, &self.doc)?;
         let history_free = scrubbed || history_free_window_required(vault, &self.key)?;
 
         // Once a fenced carrier has existed in this window, a normal Loro
@@ -646,7 +643,11 @@ fn off_record_fenced_ids(
 /// come from both entity keys and edge endpoints, so an edge to a fenced
 /// cross-window target is scrubbed even when that target has no body in this
 /// window. A single LMDB read snapshot decides the entire candidate set.
-pub fn scrub_off_record_fenced_carriers(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
+pub fn scrub_off_record_fenced_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut candidates = HashSet::new();
@@ -673,6 +674,11 @@ pub fn scrub_off_record_fenced_carriers(vault: &Vault, doc: &LoroDoc) -> Result<
         // local privacy scrub back into LMDB; Observer A still durably queues
         // and broadcasts the deletion update to retire any older carrier.
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+        // Deleting a live value does not erase its prior set operation from
+        // ordinary Loro history. Pin every scrub source here, including eager
+        // tag and forward-remat callers, so no later delta/snapshot can carry
+        // the fenced body bytes from history.
+        require_history_free_window(vault, key)?;
     }
     Ok(removed)
 }
@@ -710,10 +716,7 @@ pub fn export_window_updates_since(
         context: "decode version vector",
         source,
     })?;
-    let scrubbed = scrub_off_record_fenced_carriers(vault, doc)?;
-    if scrubbed {
-        require_history_free_window(vault, key)?;
-    }
+    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -740,10 +743,7 @@ pub(crate) fn export_scrubbed_window_snapshot(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<Vec<u8>> {
-    let scrubbed = scrub_off_record_fenced_carriers(vault, doc)?;
-    if scrubbed {
-        require_history_free_window(vault, key)?;
-    }
+    let scrubbed = scrub_off_record_fenced_carriers(vault, key, doc)?;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -757,6 +757,8 @@ pub(crate) fn export_scrubbed_window_snapshot(
 /// intentionally not cleared while the fence is live: promotion lifts only
 /// that turn's fence, then this normal replay path releases that turn to sync.
 pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
+    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
+
     let rtxn = vault.store.env.read_txn()?;
     let prefix = format!("pm:{window_key}:");
 
@@ -799,9 +801,6 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // is device-local until explicit promotion. Keep the pending marker
         // so the promoted turn can flow through this ordinary path later.
         if vault.is_turn_off_record_fenced(id)? {
-            if scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)? {
-                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-            }
             continue;
         }
 
@@ -1409,18 +1408,6 @@ pub fn forward_rematerialize(
         if let Some(err) = entity_error {
             return Err(err);
         }
-        // Quarantine is the durable evidence for the rejected remote write;
-        // it is not a scrub. Remove the rejected body and all incident edges
-        // from the live doc so the same carrier cannot be exported again.
-        if !fenced_rejections.is_empty() {
-            let mut wrote_doc = false;
-            for id in &fenced_rejections {
-                wrote_doc |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
-            }
-            if wrote_doc {
-                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-            }
-        }
         if !local_only_companion_entity_keys.is_empty() {
             let mut wrote_doc = false;
             for key in &local_only_companion_entity_keys {
@@ -1434,6 +1421,14 @@ pub fn forward_rematerialize(
                 doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             }
         }
+    }
+
+    // Quarantine is the durable evidence for the rejected remote write; it
+    // is not a scrub. Wait until the entity pass's read transaction is gone,
+    // then remove the rejected body and all incident edges through the shared
+    // scrub boundary so the same carrier cannot be exported again.
+    if !fenced_rejections.is_empty() {
+        scrub_off_record_fenced_carriers(vault, window_key, doc)?;
     }
 
     // Edges (endpoint + tombstone filtering, stored-value byte-compare).
@@ -1819,6 +1814,8 @@ pub fn forward_rematerialize(
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
+    scrub_off_record_fenced_carriers(vault, window_key, doc)?;
+
     let start_ts = window_key
         .start_timestamp()
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
@@ -1843,7 +1840,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // observed, so a live off-record turn cannot remain in a window
         // through reverse rematerialization.
         if vault.is_turn_off_record_fenced(id)? {
-            wrote_any |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             continue;
         }
 
@@ -1932,7 +1928,6 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     if wrote_any {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-
     Ok(count)
 }
 

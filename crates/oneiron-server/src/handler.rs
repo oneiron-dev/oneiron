@@ -875,15 +875,8 @@ async fn handle_window_sync(
             | window_sub_tags::VV_RESPONSE
             | window_sub_tags::SELECTOR_VV_REQUEST
     ) {
-        let scrubbed =
-            oneiron::sync::window::scrub_off_record_fenced_carriers(server.vault.as_ref(), &doc)
-                .map_err(|e| {
-                    ProtocolError::Persistence(format!("off-record carrier scrub: {e}"))
-                })?;
-        if scrubbed {
-            oneiron::sync::window::require_history_free_window(server.vault.as_ref(), &key)
-                .map_err(|e| ProtocolError::Persistence(format!("pin history-free window: {e}")))?;
-        }
+        oneiron::sync::window::scrub_off_record_fenced_carriers(server.vault.as_ref(), &key, &doc)
+            .map_err(|e| ProtocolError::Persistence(format!("off-record carrier scrub: {e}")))?;
     }
 
     match sub_tag {
@@ -950,16 +943,10 @@ async fn handle_window_sync(
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
             let scrubbed_fenced_carrier = oneiron::sync::window::scrub_off_record_fenced_carriers(
                 server.vault.as_ref(),
+                &key,
                 &doc,
             )
             .map_err(|e| ProtocolError::Persistence(format!("off-record carrier scrub: {e}")))?;
-
-            if scrubbed_fenced_carrier {
-                oneiron::sync::window::require_history_free_window(server.vault.as_ref(), &key)
-                    .map_err(|e| {
-                        ProtocolError::Persistence(format!("pin history-free window: {e}"))
-                    })?;
-            }
 
             // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
             // persist synchronously"). `subscribe_local_update` does not fire

@@ -45,6 +45,36 @@ fn commit_entity(window: &LoadedWindow, learned_at: u64, data: &[u8]) -> EntityI
     id
 }
 
+fn assert_fenced_history_absent_from_export(
+    vault: &Vault,
+    window_key: &WindowKey,
+    doc: &LoroDoc,
+    fenced: &EntityId,
+    ordinary: &EntityId,
+    incident_edge: Option<&str>,
+) -> Result<()> {
+    let export =
+        export_window_updates_since(vault, window_key, doc, &VersionVector::default().encode())?;
+    let peer = create_window_doc("history-proof-peer", window_key);
+    import_doc(&peer, &export)?;
+
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &fenced.to_hex()).is_none(),
+        "ordinary export must not reconstruct a fenced body from Loro history"
+    );
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
+        "history-free export must preserve the ordinary control"
+    );
+    if let Some(edge_key) = incident_edge {
+        assert!(
+            map_get_bytes(&peer.get_map("edges"), edge_key).is_none(),
+            "ordinary export must not reconstruct a fenced incident edge from Loro history"
+        );
+    }
+    Ok(())
+}
+
 fn companion_record(
     persona_ref: EntityId,
     export_classification: CompanionExportClassification,
@@ -320,6 +350,14 @@ fn off_record_tag_eagerly_scrubs_an_already_open_window() -> Result<()> {
         map_get_bytes(&window.doc.get_map("entities"), &ordinary_key).is_some(),
         "legitimate non-fenced body must remain"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &window.doc,
+        &fenced,
+        &ordinary,
+        Some(&incident_edge),
+    )?;
     Ok(())
 }
 
@@ -409,6 +447,14 @@ fn off_record_tag_eagerly_scrubs_an_already_open_live_window() -> Result<()> {
         map_get_bytes(&entities, &ordinary.to_hex()).is_some(),
         "eager fence scrub must preserve an unrelated ordinary carrier"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &window.doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
     Ok(())
 }
 
@@ -461,6 +507,14 @@ fn forward_rematerialization_scrubs_a_fenced_remote_carrier() -> Result<()> {
         !crate::sync::quarantine::quarantined_records(&vault)?.is_empty(),
         "the scrubbed hostile row must retain its hashed quarantine evidence"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
     Ok(())
 }
 
@@ -543,6 +597,11 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         &fenced.to_hex(),
         &fenced_raw,
     )?;
+    map_insert_bytes(
+        &replay_doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &vault.get_raw(&ordinary)?.expect("ordinary fixture body"),
+    )?;
     let fenced_upper = fenced.to_hex().to_ascii_uppercase();
     map_insert_bytes(&replay_doc.get_map("entities"), &fenced_upper, &fenced_raw)?;
     map_insert_bytes(
@@ -569,6 +628,14 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         vault.sync_state_get(&pending_marker)?.is_some(),
         "the pending marker stays deferred until explicit promotion"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &replay_doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
 
     let reverse_doc = create_window_doc("source", &window_key);
     map_insert_bytes(
@@ -597,6 +664,14 @@ fn off_record_fence_scrubs_preexisting_window_carriers() -> Result<()> {
         map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
         "reverse rematerialization must remove the pre-fence incident edge carrier"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &window_key,
+        &reverse_doc,
+        &fenced,
+        &ordinary,
+        Some(&edge_key),
+    )?;
 
     Ok(())
 }
@@ -656,13 +731,21 @@ fn off_record_fence_scrubs_preexisting_cross_window_target_edges() -> Result<()>
     replay_doc.commit();
     assert_eq!(
         replay_pending_mirrors(&vault, &replay_doc, &source_window)?,
-        1,
-        "removing the stale source-window edge is a replayed CRDT mutation"
+        0,
+        "the shared scrub boundary removes the stale edge before replay accounting"
     );
     assert!(
         map_get_bytes(&replay_doc.get_map("edges"), &edge_key).is_none(),
         "pending replay must remove a source-window edge to a fenced target"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_window,
+        &replay_doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
 
     let reverse_doc = create_window_doc("source", &source_window);
     map_insert_bytes(
@@ -684,6 +767,14 @@ fn off_record_fence_scrubs_preexisting_cross_window_target_edges() -> Result<()>
         map_get_bytes(&reverse_doc.get_map("edges"), &edge_key).is_none(),
         "reverse rematerialization must remove a source-window edge to a fenced target"
     );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_window,
+        &reverse_doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
 
     Ok(())
 }
