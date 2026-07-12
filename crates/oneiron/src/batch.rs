@@ -1260,6 +1260,16 @@ impl<'a> TxnBatchBuilder<'a> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true))
+    }
+
+    /// Applies queued promotion operations while recording their gate decisions
+    /// in the caller's transaction.
+    pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true))
+    }
+
+    fn apply_with_gate_mode(self, wtxn: &mut RwTxn<'_>, gate_mode: ApplyOpsGateMode) -> Result<()> {
         if let Some(err) = self.validation_error {
             return Err(err);
         }
@@ -1271,15 +1281,14 @@ impl<'a> TxnBatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        apply_ops(
+        apply_ops_with_gate_mode(
             &self.vault.store,
             &self.vault.config,
             &self.vault.analyzer,
             wtxn,
             self.ops,
             text_index_trusted,
-            false,
-            true,
+            gate_mode,
         )
     }
 }

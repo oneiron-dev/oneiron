@@ -1819,11 +1819,19 @@ impl Store {
     }
 
     pub fn gate_decisions(&self, limit: usize) -> Result<Vec<GateDecisionRecord>> {
+        self.gate_decisions_page(None, limit)
+    }
+
+    pub(crate) fn gate_decisions_page(
+        &self,
+        before: Option<GateDecisionId>,
+        limit: usize,
+    ) -> Result<Vec<GateDecisionRecord>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
         let rtxn = self.env.read_txn()?;
-        let upper = gate_decision_upper_bound();
+        let upper = before.map_or_else(gate_decision_upper_bound, gate_decision_key);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         for row in self.vault_meta.rev_range(
             &rtxn,

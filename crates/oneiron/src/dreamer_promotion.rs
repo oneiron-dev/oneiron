@@ -174,7 +174,7 @@ fn promote_one(
                 candidate.occurred,
                 candidate.learned_at,
             )
-            .apply(wtxn)?;
+            .apply_recording_gate_decisions(wtxn)?;
         if let Some(old_id) = candidate.supersedes.as_ref() {
             vault.supersede_claim_in_txn(wtxn, &candidate.claim_id, old_id, run.now_ms)?;
         }

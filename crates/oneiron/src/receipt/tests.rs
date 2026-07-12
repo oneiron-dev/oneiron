@@ -446,6 +446,89 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
 }
 
 #[test]
+fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = test_config();
+    config.map_size = 128 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), config)?;
+    let target_actor = "agent-before-legacy-window";
+    let target_id = append_gate_decision(
+        &vault,
+        3,
+        target_actor,
+        "pending",
+        "gate.pending.actor_ceiling",
+    )?;
+
+    // The target has the older UUIDv7 decision id but the later event time.
+    // Connector-key gate rows can have this shape because their `created_at`
+    // is caller-supplied; selection must follow occurred_at, not scan order.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    vault.with_write_txn(|wtxn| {
+        let mut decision = GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::now(),
+            created_at: 2,
+            outcome: "pending".to_owned(),
+            reason_codes: vec!["gate.pending.actor_ceiling".to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "agent".to_owned(),
+            actor_ref: Some("agent-noise".to_owned()),
+            content_kind: "claim".to_owned(),
+            policy_manifest_version: "test-policy".to_owned(),
+            claim_id: Some(*entity(0x42).as_bytes()),
+            grant_ref: None,
+            diff_handle: vec![0xA5],
+            read_frontier_hash: [0xB6; 32],
+        };
+        for _ in 0..MAX_RECEIPT_QUERY_SCAN {
+            decision.decision_id = GateDecisionId::now();
+            vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
+        }
+        Ok(())
+    })?;
+
+    reset_gate_receipt_pages_scanned();
+    let recent = vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Gate))?;
+    assert_eq!(recent.len(), 1);
+    assert_eq!(
+        recent[0].receipt_id,
+        format!("gate:{}", target_id.to_hex()),
+        "newest selection follows occurred_at across decision-id pages"
+    );
+    assert_eq!(
+        gate_receipt_pages_scanned(),
+        2,
+        "non-monotonic timestamps require scanning every decision-id page"
+    );
+    assert_eq!(
+        gate_receipt_max_buffered(),
+        1,
+        "full pagination must retain only query.limit matching receipts"
+    );
+
+    reset_gate_receipt_pages_scanned();
+    let receipts = vault.receipts(
+        ReceiptQuery::new(1)
+            .with_kind(ReceiptKind::Gate)
+            .with_actor(target_actor),
+    )?;
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].receipt_id,
+        format!("gate:{}", target_id.to_hex())
+    );
+    assert_eq!(
+        gate_receipt_pages_scanned(),
+        2,
+        "a filtered query must continue past the first page for an older match"
+    );
+    assert_eq!(gate_receipt_max_buffered(), 1);
+    Ok(())
+}
+
+#[test]
 fn gate_receipt_system_notice_selection_is_order_independent() {
     let decision = GateDecisionRecord {
         version: 0,
