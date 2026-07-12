@@ -488,6 +488,16 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
         Ok(())
     })?;
 
+    reset_gate_receipt_pages_scanned();
+    let recent = vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Gate))?;
+    assert_eq!(recent.len(), 1);
+    assert_eq!(
+        gate_receipt_pages_scanned(),
+        1,
+        "a broad small-limit query must not scan older ledger pages"
+    );
+
+    reset_gate_receipt_pages_scanned();
     let receipts = vault.receipts(
         ReceiptQuery::new(1)
             .with_kind(ReceiptKind::Gate)
@@ -497,6 +507,11 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
     assert_eq!(
         receipts[0].receipt_id,
         format!("gate:{}", target_id.to_hex())
+    );
+    assert_eq!(
+        gate_receipt_pages_scanned(),
+        2,
+        "a filtered query must continue past the first page for an older match"
     );
     Ok(())
 }
