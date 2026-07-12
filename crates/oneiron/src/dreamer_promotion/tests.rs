@@ -243,6 +243,16 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
         superseding_receipts, 0,
         "failed supersession must roll back its same-transaction gate decision"
     );
+    let superseding_consents = vault
+        .store
+        .pending_gate_consents(1_000)?
+        .into_iter()
+        .filter(|consent| consent.claim_id == *superseding_id.as_bytes())
+        .count();
+    assert_eq!(
+        superseding_consents, 0,
+        "failed supersession must roll back its same-transaction pending consent"
+    );
 
     // The UserStated head is untouched and the other candidate landed.
     let head_body = vault.get_claim(&head)?.expect("head");
