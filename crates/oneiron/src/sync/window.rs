@@ -142,6 +142,12 @@ impl LoadedWindow {
     pub fn persist_state(&self, vault: &Vault) -> Result<Vec<u8>> {
         let subsumed_update_keys = merge_persisted_state_into_doc(vault, &self.doc, &self.key)?;
 
+        // A fence may be added after this doc acquired the entity (or one of
+        // its incident edges). Persistence is itself an outbound carrier:
+        // the snapshot is later used for VV/delta sync, so scrub immediately
+        // before computing either the snapshot or its state vector.
+        scrub_off_record_fenced_carriers(vault, &self.doc)?;
+
         // Export full snapshot for persistence
         let state = export_snapshot(&self.doc)?;
         let vv = doc_version_vector(&self.doc);
@@ -537,6 +543,7 @@ pub fn replay_pending_tombstones(
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
     // after CRDT commit + snapshot persistence succeed.
+    scrub_off_record_fenced_carriers(vault, doc)?;
     let snapshot = export_snapshot(doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn(|wtxn| {
@@ -611,6 +618,44 @@ fn off_record_fenced_ids(
         }
     }
     Ok(fenced)
+}
+
+/// Removes every currently fenced off-record carrier from a window doc.
+///
+/// This is the export-boundary backstop for a fence that was established
+/// after a body or incident edge had already entered the CRDT. Candidate ids
+/// come from both entity keys and edge endpoints, so an edge to a fenced
+/// cross-window target is scrubbed even when that target has no body in this
+/// window. A single LMDB read snapshot decides the entire candidate set.
+pub fn scrub_off_record_fenced_carriers(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
+    let entities_map = doc.get_map("entities");
+    let edges_map = doc.get_map("edges");
+    let mut candidates = HashSet::new();
+
+    map_for_each_value_bytes(&entities_map, |key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            candidates.insert(id);
+        }
+    });
+    map_for_each_value_bytes(&edges_map, |key, _| {
+        if let Some((source, _, target)) = bridge::parse_edge_key(key) {
+            candidates.insert(source);
+            candidates.insert(target);
+        }
+    });
+
+    let fenced = off_record_fenced_ids(vault, candidates)?;
+    let mut removed = false;
+    for id in &fenced {
+        removed |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+    }
+    if removed {
+        // Bridge origin prevents Observer B from trying to materialize this
+        // local privacy scrub back into LMDB; Observer A still durably queues
+        // and broadcasts the deletion update to retire any older carrier.
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
+    Ok(removed)
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
@@ -873,6 +918,7 @@ pub fn forward_rematerialize(
     let mut terminal_quarantines: Vec<EntityId> = Vec::new();
 
     let mut count = 0u32;
+    let mut fenced_rejections = HashSet::<EntityId>::new();
 
     // Entities
     {
@@ -1257,6 +1303,9 @@ pub fn forward_rematerialize(
                     } else if !retryable_quota {
                         terminal_quarantines.push(id);
                     }
+                    if matches!(err, Error::OffRecordFencedTurnWriteRejected { .. }) {
+                        fenced_rejections.insert(id);
+                    }
                 }
                 Err(err) => {
                     // LOCAL failure — fail closed.
@@ -1266,6 +1315,18 @@ pub fn forward_rematerialize(
         });
         if let Some(err) = entity_error {
             return Err(err);
+        }
+        // Quarantine is the durable evidence for the rejected remote write;
+        // it is not a scrub. Remove the rejected body and all incident edges
+        // from the live doc so the same carrier cannot be exported again.
+        if !fenced_rejections.is_empty() {
+            let mut wrote_doc = false;
+            for id in &fenced_rejections {
+                wrote_doc |= scrub_fenced_entity_crdt_carriers(&entities_map, &edges_map, id)?;
+            }
+            if wrote_doc {
+                doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+            }
         }
         if !local_only_companion_entity_keys.is_empty() {
             let mut wrote_doc = false;

@@ -867,6 +867,19 @@ async fn handle_window_sync(
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
 
+    // A fence can be established after this live doc acquired a body or an
+    // incident edge. Every full-window export must retire those carriers
+    // before computing a delta or advertising the doc's version vector.
+    if matches!(
+        sub_tag,
+        window_sub_tags::VV_REQUEST
+            | window_sub_tags::VV_RESPONSE
+            | window_sub_tags::SELECTOR_VV_REQUEST
+    ) {
+        oneiron::sync::window::scrub_off_record_fenced_carriers(server.vault.as_ref(), &doc)
+            .map_err(|e| ProtocolError::Persistence(format!("off-record carrier scrub: {e}")))?;
+    }
+
     match sub_tag {
         window_sub_tags::VV_REQUEST => {
             // Client sent its binary VV (SyncStep1) — export ONLY the delta it
@@ -923,6 +936,12 @@ async fn handle_window_sync(
             let origin = format!("conn:{conn_id}");
             doc.import_with(payload, &origin)
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
+            let vv_after_import = doc.oplog_vv();
+            let scrubbed_fenced_carrier = oneiron::sync::window::scrub_off_record_fenced_carriers(
+                server.vault.as_ref(),
+                &doc,
+            )
+            .map_err(|e| ProtocolError::Persistence(format!("off-record carrier scrub: {e}")))?;
 
             // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
             // persist synchronously"). `subscribe_local_update` does not fire
@@ -949,8 +968,22 @@ async fn handle_window_sync(
                 )));
             }
 
+            // Never relay an inbound frame verbatim when it contained a
+            // locally fenced carrier. In that case only the scrub commit is
+            // broadcast, retiring an older peer carrier without forwarding
+            // the rejected body bytes. Other accepted updates keep the
+            // existing zero-copy relay path.
+            let scrub_update;
+            let outbound_payload = if scrubbed_fenced_carrier {
+                scrub_update = doc
+                    .export(ExportMode::updates(&vv_after_import))
+                    .map_err(|e| ProtocolError::LoroImport(e.to_string()))?;
+                scrub_update.as_slice()
+            } else {
+                payload
+            };
             let broadcast_msg =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, payload)
+                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, outbound_payload)
                     .into_result()
                     .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);

@@ -73,6 +73,7 @@ pub fn persist_imported_window_update(
 /// Atomically writes `d:w:{key}` (Loro snapshot), `sv:w:{key}` (state
 /// vector), and `svf:w:{key}` = `[1]` (fresh). Returns the snapshot bytes.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
+    crate::sync::window::scrub_off_record_fenced_carriers(vault, doc)?;
     let state = export_snapshot(doc)?;
     let vv = doc_version_vector(doc);
 
@@ -192,6 +193,10 @@ mod tests {
     use super::super::loro_support::{export_all_updates, map_get_bytes, map_insert_bytes};
     use super::*;
     use crate::config::VaultConfig;
+    use crate::edge::EdgeKind;
+    use crate::entity_id::EntityId;
+    use crate::off_record::OffRecordBackendClass;
+    use crate::sync::bridge::format_edge_key;
     use core::assert_matches;
 
     fn test_vault() -> (tempfile::TempDir, Vault) {
@@ -294,6 +299,36 @@ mod tests {
         assert_eq!(
             map_get_bytes(&reloaded.get_map("entities"), "e1").unwrap(),
             b"v1"
+        );
+    }
+
+    #[test]
+    fn persist_window_snapshot_scrubs_fenced_carriers_and_keeps_controls() {
+        let (_dir, vault) = test_vault();
+        let key = WindowKey::new("2026-03");
+        let fenced = EntityId::from_bytes([0x73; 16]).unwrap();
+        let ordinary = EntityId::from_bytes([0x74; 16]).unwrap();
+        vault
+            .enter_off_record_session("sess-server-snapshot", OffRecordBackendClass::Local)
+            .unwrap();
+        vault
+            .tag_turn_off_record("sess-server-snapshot", &fenced)
+            .unwrap();
+
+        let doc = LoroDoc::new();
+        map_insert_bytes(&doc.get_map("entities"), &fenced.to_hex(), b"private").unwrap();
+        map_insert_bytes(&doc.get_map("entities"), &ordinary.to_hex(), b"ordinary").unwrap();
+        let incident_edge = format_edge_key(&ordinary, EdgeKind::Mentions, &fenced);
+        map_insert_bytes(&doc.get_map("edges"), &incident_edge, b"carrier").unwrap();
+        doc.commit();
+
+        let state = persist_window_snapshot(&vault, &key, &doc).unwrap();
+        let reloaded = doc_from_snapshot(&state).unwrap();
+        assert!(map_get_bytes(&reloaded.get_map("entities"), &fenced.to_hex()).is_none());
+        assert!(map_get_bytes(&reloaded.get_map("edges"), &incident_edge).is_none());
+        assert_eq!(
+            map_get_bytes(&reloaded.get_map("entities"), &ordinary.to_hex()).as_deref(),
+            Some(b"ordinary".as_slice())
         );
     }
 

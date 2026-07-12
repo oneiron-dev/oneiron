@@ -359,6 +359,142 @@ async fn vv_request_sends_delta_and_vv_response() {
 }
 
 #[tokio::test]
+async fn vv_request_scrubs_fenced_carrier_before_server_export() {
+    let (_dir, server) = test_server();
+    let key = "2026-03";
+    let fenced = oneiron::EntityId::from_bytes([0x75; 16]).unwrap();
+    let ordinary = oneiron::EntityId::from_bytes([0x76; 16]).unwrap();
+    server
+        .vault()
+        .enter_off_record_session("sess-server-vv", oneiron::OffRecordBackendClass::Local)
+        .unwrap();
+    server
+        .vault()
+        .tag_turn_off_record("sess-server-vv", &fenced)
+        .unwrap();
+
+    let server_doc = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    server_doc
+        .get_map("entities")
+        .insert(&fenced.to_hex(), b"private".as_slice())
+        .unwrap();
+    server_doc
+        .get_map("entities")
+        .insert(&ordinary.to_hex(), b"ordinary".as_slice())
+        .unwrap();
+    server_doc.commit();
+
+    let client_doc = client_window_doc();
+    let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_legacy_conn_state();
+    handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::VV_REQUEST,
+        &client_doc.oplog_vv().encode(),
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    let (_, sub_tag, delta) = expect_window_sync(&direct_rx.try_recv().unwrap());
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    client_doc.import(&delta).unwrap();
+    assert!(
+        client_doc
+            .get_map("entities")
+            .get(&fenced.to_hex())
+            .is_none(),
+        "server VV delta must not carry the fenced body"
+    );
+    assert!(
+        client_doc
+            .get_map("entities")
+            .get(&ordinary.to_hex())
+            .is_some(),
+        "legitimate non-fenced body remains exportable"
+    );
+}
+
+#[tokio::test]
+async fn inbound_update_with_fenced_carrier_is_not_relayed_verbatim() {
+    let (_dir, server) = test_server();
+    let key = "2026-03";
+    let fenced = entity_id(0x77);
+    let ordinary = entity_id(0x78);
+    server
+        .vault()
+        .enter_off_record_session("sess-server-relay", oneiron::OffRecordBackendClass::Local)
+        .unwrap();
+    server
+        .vault()
+        .tag_turn_off_record("sess-server-relay", &fenced)
+        .unwrap();
+
+    let incoming = client_window_doc();
+    insert_entity(
+        &incoming,
+        fenced,
+        oneiron::registry::ENTITY_TYPE_TASK,
+        b"private relay sentinel",
+    );
+    insert_entity(
+        &incoming,
+        ordinary,
+        oneiron::registry::ENTITY_TYPE_TASK,
+        b"ordinary relay control",
+    );
+    incoming.commit();
+    let payload = incoming.export(ExportMode::all_updates()).unwrap();
+
+    let mut broadcast_rx = server.broadcast_tx.subscribe();
+    let (direct_tx, _direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_legacy_conn_state();
+    handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::UPDATE,
+        &payload,
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    let (_sender, relayed) = broadcast_rx.try_recv().expect("scrub update broadcast");
+    let (_, sub_tag, relayed_payload) = expect_window_sync(&relayed);
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    assert!(
+        !relayed_payload
+            .windows(b"private relay sentinel".len())
+            .any(|window| window == b"private relay sentinel"),
+        "the rejected inbound body bytes must not be relayed"
+    );
+    let server_doc = server
+        .get_or_create_window(&WindowKey::new(key))
+        .await
+        .unwrap();
+    assert!(
+        server_doc
+            .get_map("entities")
+            .get(&fenced.to_hex())
+            .is_none()
+    );
+    assert!(
+        server_doc
+            .get_map("entities")
+            .get(&ordinary.to_hex())
+            .is_some()
+    );
+}
+
+#[tokio::test]
 async fn vv_request_malformed_vv_fails_closed_no_fallback() {
     let (_dir, server) = test_server();
     let key = "2026-03";

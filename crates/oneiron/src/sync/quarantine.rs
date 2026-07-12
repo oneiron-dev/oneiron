@@ -1031,6 +1031,7 @@ pub(crate) fn drain_reassert_markers_for_window(
     use crate::sync::window::{
         apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
         merge_persisted_state_into_doc, persist_window_doc_in_txn, rebuild_window_from_updates,
+        scrub_off_record_fenced_carriers,
     };
     use loro::CommitOptions;
 
@@ -1064,6 +1065,7 @@ pub(crate) fn drain_reassert_markers_for_window(
                 .doc
                 .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
+            scrub_off_record_fenced_carriers(vault, &window.doc)?;
             (
                 delete_update,
                 export_snapshot(&window.doc)?,
@@ -1089,6 +1091,7 @@ pub(crate) fn drain_reassert_markers_for_window(
             }
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
+            scrub_off_record_fenced_carriers(vault, &doc)?;
             (
                 delete_update,
                 export_snapshot(&doc)?,
