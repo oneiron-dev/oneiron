@@ -73,8 +73,7 @@ pub fn persist_imported_window_update(
 /// Atomically writes `d:w:{key}` (Loro snapshot), `sv:w:{key}` (state
 /// vector), and `svf:w:{key}` = `[1]` (fresh). Returns the snapshot bytes.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
-    crate::sync::window::scrub_off_record_fenced_carriers(vault, doc)?;
-    let state = export_snapshot(doc)?;
+    let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
 
     vault.with_write_txn(|wtxn| {

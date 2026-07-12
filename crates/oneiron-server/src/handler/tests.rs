@@ -404,6 +404,18 @@ async fn vv_request_scrubs_fenced_carrier_before_server_export() {
 
     let (_, sub_tag, delta) = expect_window_sync(&direct_rx.try_recv().unwrap());
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    assert!(
+        !delta
+            .windows(b"private".len())
+            .any(|bytes| bytes == b"private"),
+        "a peer behind the original set must not receive the private op bytes"
+    );
+    assert_eq!(
+        LoroDoc::decode_import_blob_meta(&delta, false)
+            .unwrap()
+            .mode,
+        loro::EncodedBlobMode::ShallowSnapshot
+    );
     client_doc.import(&delta).unwrap();
     assert!(
         client_doc
@@ -475,6 +487,37 @@ async fn inbound_update_with_fenced_carrier_is_not_relayed_verbatim() {
             .windows(b"private relay sentinel".len())
             .any(|window| window == b"private relay sentinel"),
         "the rejected inbound body bytes must not be relayed"
+    );
+    assert_eq!(
+        LoroDoc::decode_import_blob_meta(&relayed_payload, false)
+            .unwrap()
+            .mode,
+        loro::EncodedBlobMode::ShallowSnapshot,
+        "privacy scrub must travel as a history-free snapshot"
+    );
+    for row in server
+        .vault()
+        .sync_state_keys_with_prefix(&format!("u:w:{key}:"))
+        .unwrap()
+    {
+        let bytes = server.vault().sync_state_get(&row).unwrap().unwrap();
+        assert!(
+            !bytes
+                .windows(b"private relay sentinel".len())
+                .any(|window| window == b"private relay sentinel"),
+            "raw rejected payload must never become a durable u:w carrier"
+        );
+    }
+    let durable = server
+        .vault()
+        .sync_state_get(&format!("d:w:{key}"))
+        .unwrap()
+        .unwrap();
+    assert!(
+        !durable
+            .windows(b"private relay sentinel".len())
+            .any(|window| window == b"private relay sentinel"),
+        "persisted snapshot must omit the rejected historical body bytes"
     );
     let server_doc = server
         .get_or_create_window(&WindowKey::new(key))

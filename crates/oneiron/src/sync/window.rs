@@ -33,7 +33,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
 use crate::store::Store;
-use loro::{CommitOptions, LoroDoc, LoroMap, Subscription};
+use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVector};
+
+const HISTORY_FREE_WINDOW_PREFIX: &str = "hfs:w:";
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -146,14 +148,32 @@ impl LoadedWindow {
         // its incident edges). Persistence is itself an outbound carrier:
         // the snapshot is later used for VV/delta sync, so scrub immediately
         // before computing either the snapshot or its state vector.
-        scrub_off_record_fenced_carriers(vault, &self.doc)?;
+        let scrubbed = scrub_off_record_fenced_carriers(vault, &self.doc)?;
+        if scrubbed {
+            require_history_free_window(vault, &self.key)?;
+        }
+        let history_free = scrubbed || history_free_window_required(vault, &self.key)?;
 
-        // Export full snapshot for persistence
-        let state = export_snapshot(&self.doc)?;
+        // Once a fenced carrier has existed in this window, a normal Loro
+        // snapshot would retain its pre-delete op bytes. Persist a shallow
+        // snapshot at the latest frontier instead: identical live state and
+        // VV, but no historical body carrier.
+        let state = if history_free {
+            export_history_free_window_snapshot(&self.doc)?
+        } else {
+            export_snapshot(&self.doc)?
+        };
         let vv = doc_version_vector(&self.doc);
 
         vault.with_write_txn(|wtxn| {
             persist_window_doc_in_txn(vault, wtxn, &self.key, &state, &vv)?;
+            if history_free {
+                vault.store.sync_state.put(
+                    wtxn,
+                    &format!("{HISTORY_FREE_WINDOW_PREFIX}{}", self.key),
+                    &[1u8],
+                )?;
+            }
             prune_subsumed_window_updates_in_txn(vault, wtxn, &self.key, &subsumed_update_keys)?;
             // svf LAST: freshness is computed against the POST-PRUNE u:w:
             // set, so a surviving post-merge row forces stale (ONE-1151).
@@ -543,8 +563,7 @@ pub fn replay_pending_tombstones(
 
     // Persist BEFORE clearing the markers — the marker may only be cleared
     // after CRDT commit + snapshot persistence succeed.
-    scrub_off_record_fenced_carriers(vault, doc)?;
-    let snapshot = export_snapshot(doc)?;
+    let snapshot = export_scrubbed_window_snapshot(vault, window_key, doc)?;
     let vv = doc_version_vector(doc);
     vault.with_write_txn(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
@@ -656,6 +675,80 @@ pub fn scrub_off_record_fenced_carriers(vault: &Vault, doc: &LoroDoc) -> Result<
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
+}
+
+/// Whether this window has ever carried bytes for a currently fenced turn.
+/// The marker is durable because a scrubbed live doc still retains the old
+/// set operation in its ordinary Loro history until shallow-compacted.
+pub fn history_free_window_required(vault: &Vault, key: &WindowKey) -> Result<bool> {
+    Ok(vault
+        .sync_state_get(&format!("{HISTORY_FREE_WINDOW_PREFIX}{key}"))?
+        .is_some())
+}
+
+/// Durably pins this window to history-free snapshot transport/persistence.
+pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()> {
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &format!("{HISTORY_FREE_WINDOW_PREFIX}{key}"), &[1u8])?;
+        Ok(())
+    })
+}
+
+/// Exports a full-window response without carrying pre-scrub operation bytes.
+/// The peer VV is still decoded first so malformed-VV requests never become a
+/// full-export fallback.
+pub fn export_window_updates_since(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+    remote_vv: &[u8],
+) -> Result<Vec<u8>> {
+    VersionVector::decode(remote_vv).map_err(|source| Error::CrdtDecodeError {
+        context: "decode version vector",
+        source,
+    })?;
+    let scrubbed = scrub_off_record_fenced_carriers(vault, doc)?;
+    if scrubbed {
+        require_history_free_window(vault, key)?;
+    }
+    if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
+        export_history_free_window_snapshot(doc)
+    } else {
+        super::loro_support::export_updates_since(doc, remote_vv)
+    }
+}
+
+pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
+    doc.commit();
+    let frontiers = doc.oplog_frontiers();
+    doc.export(ExportMode::shallow_snapshot(&frontiers))
+        .map_err(|e| {
+            Error::sync_engine(
+                crate::error::SyncEngineContext::LoroExportShallowSnapshot,
+                e,
+            )
+        })
+}
+
+/// Scrubs the live state and chooses ordinary versus shallow snapshot bytes
+/// using the durable per-window history-free pin.
+pub(crate) fn export_scrubbed_window_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<Vec<u8>> {
+    let scrubbed = scrub_off_record_fenced_carriers(vault, doc)?;
+    if scrubbed {
+        require_history_free_window(vault, key)?;
+    }
+    if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
+        export_history_free_window_snapshot(doc)
+    } else {
+        export_snapshot(doc)
+    }
 }
 
 /// Replays pending-mirror markers (pm:*) for crash recovery.
