@@ -566,7 +566,7 @@ impl Vault {
             return Ok(());
         };
         let window_key = WindowKey::from_timestamp(header.learned_at);
-        let Some((window, _materializer)) = self.live_window(&window_key) else {
+        let Some((window, _materializer, _manager)) = self.live_window(&window_key) else {
             return Ok(());
         };
         scrub_off_record_fenced_carriers(self, &window_key, &window.doc)?;
