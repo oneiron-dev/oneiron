@@ -39,6 +39,21 @@ use crate::store::{
 
 const DEFAULT_RECEIPT_QUERY_LIMIT: usize = 100;
 pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
+
+#[cfg(test)]
+thread_local! {
+    static GATE_RECEIPT_PAGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_gate_receipt_pages_scanned() {
+    GATE_RECEIPT_PAGES_SCANNED.set(0);
+}
+
+#[cfg(test)]
+fn gate_receipt_pages_scanned() -> usize {
+    GATE_RECEIPT_PAGES_SCANNED.get()
+}
 const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 const FIELD_JOB_REF: &str = "job_ref";
 const FIELD_BRIEF_REF: &str = "brief_ref";
@@ -1662,6 +1677,8 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
     let mut receipts = Vec::new();
     let mut before = None;
     loop {
+        #[cfg(test)]
+        GATE_RECEIPT_PAGES_SCANNED.with(|count| count.set(count.get() + 1));
         let decisions = vault
             .store
             .gate_decisions_page(before, MAX_RECEIPT_QUERY_SCAN)?;
@@ -1671,6 +1688,14 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
             let receipt = gate_decision_receipt(&decision);
             if query.matches(&receipt) {
                 receipts.push(receipt);
+                // Gate decisions are scanned newest-first, so once every
+                // directly evaluable filter has produced `limit` matches,
+                // older pages cannot enter the final top-N. `job_ref` is the
+                // exception: its lineage join runs after collection and may
+                // discard these rows, so that path must remain exhaustive.
+                if query.job_ref.is_none() && receipts.len() == query.limit {
+                    return Ok(receipts);
+                }
             }
         }
         if page_len < MAX_RECEIPT_QUERY_SCAN {
