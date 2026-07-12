@@ -609,10 +609,16 @@ fn fresh_default_policy_manifest_grants_first_party_eiri_tool_output_auto() -> R
     assert_eq!(stored.source, Some(ClaimSource::ToolOutput));
 
     let decisions = vault.store.gate_decisions(10)?;
-    let decision = decisions
+    let claim_decisions: Vec<_> = decisions
         .iter()
-        .find(|decision| decision.claim_id == Some(*claim.as_bytes()))
-        .expect("first-party Eiri write must record a gate decision");
+        .filter(|decision| decision.claim_id == Some(*claim.as_bytes()))
+        .collect();
+    assert_eq!(
+        claim_decisions.len(),
+        1,
+        "successful claim write must persist exactly one gate decision"
+    );
+    let decision = claim_decisions[0];
     assert_eq!(decision.outcome, "allow");
     assert_eq!(decision.reason_codes, vec!["gate.allow"]);
     assert_eq!(decision.actor_class, "agent");
@@ -710,8 +716,8 @@ fn write_envelope_validation_rejects_missing_required_axes() -> Result<()> {
 }
 
 #[test]
-fn claim_candidate_rejects_missing_actor_entity() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
+fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
     let subject = EntityId::now();
     vault.put_entity(
         &subject,
@@ -736,13 +742,24 @@ fn claim_candidate_rejects_missing_actor_entity() -> Result<()> {
         0.9,
     );
 
+    let metric_emissions_before = crate::gate::gate_metric_emission_count_for_test();
     let err = vault
         .batch()
         .claim_candidate(&claim, candidate, &envelope, test_time_range(1, 1), 2)
         .commit()
         .expect_err("missing actor entity must reject");
     assert!(matches!(err, Error::EntityNotFound));
+    assert_eq!(
+        crate::gate::gate_metric_emission_count_for_test(),
+        metric_emissions_before,
+        "a rolled-back gate receipt must not emit committed-decision metrics"
+    );
     assert!(vault.get_claim(&claim)?.is_none());
+    assert_eq!(
+        vault.store.gate_decisions(10)?.len(),
+        0,
+        "phase-2 validation failure must roll back the gate decision with the claim"
+    );
     Ok(())
 }
 

@@ -775,6 +775,10 @@ impl<'a> BatchBuilder<'a> {
 
     /// Commits all queued operations atomically in a single LMDB write transaction.
     ///
+    /// Gate decisions for local claim writes are appended by the same
+    /// transaction, so a later validation failure cannot leave an orphan
+    /// receipt behind.
+    ///
     /// Returns any validation error captured during builder calls before
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
@@ -790,8 +794,23 @@ impl<'a> BatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
-        preflight_standalone_gate_decisions(&self.vault.store, &self.ops)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let mut staged_gate_decisions = Vec::new();
+        if let Err(err) = preflight_gate_decisions_in_txn(
+            &self.vault.store,
+            &self.ops,
+            &mut wtxn,
+            &mut staged_gate_decisions,
+        ) {
+            // A gate rejection is itself an intentional ledger event. Keep
+            // that denial receipt, matching the historical gate semantics;
+            // later phase-2 failures drop this transaction and its receipt.
+            wtxn.commit()?;
+            for decision in staged_gate_decisions {
+                decision.record_metrics();
+            }
+            return Err(err);
+        }
 
         apply_ops(
             &self.vault.store,
@@ -804,20 +823,29 @@ impl<'a> BatchBuilder<'a> {
             true,
         )?;
         wtxn.commit()?;
+        for decision in staged_gate_decisions {
+            decision.record_metrics();
+        }
         Ok(())
     }
 }
 
-fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result<()> {
+/// Evaluates local claim gates and appends their decisions to `wtxn`.
+///
+/// The caller owns committing or aborting the transaction.
+fn preflight_gate_decisions_in_txn(
+    store: &Store,
+    ops: &[BatchOp],
+    wtxn: &mut RwTxn<'_>,
+    staged_decisions: &mut Vec<crate::gate::RecordedClaimGateDecision>,
+) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
     }
 
-    let mut wtxn = store.env.write_txn()?;
-    let policy = crate::gate::resolve_policy_manifest(store, &wtxn)?;
-    let mut first_error = None;
-
+    let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
+        let mut recorded_decision = None;
         let result = match op {
             BatchOp::Put {
                 id,
@@ -829,12 +857,15 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                 && !*allow_reserved_predicate =>
             {
                 crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                    crate::gate::check_claim_policy_for_write(
+                    crate::gate::check_claim_policy_for_write_with_record(
                         store,
-                        &mut wtxn,
+                        wtxn,
                         id,
-                        &body,
-                        None,
+                        crate::gate::ClaimGateWrite {
+                            body: &body,
+                            envelope: None,
+                            defer_metrics_until_commit: true,
+                        },
                         &policy,
                         crate::gate::GateWriteMode {
                             record_decision: true,
@@ -843,6 +874,7 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                             can_resolve_pending_consent: true,
                             include_source_in_gate_input: false,
                         },
+                        &mut recorded_decision,
                     )
                 })
             }
@@ -854,12 +886,15 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                 ..
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate).clone().into_claim_body(envelope);
-                crate::gate::check_claim_policy_for_write(
+                crate::gate::check_claim_policy_for_write_with_record(
                     store,
-                    &mut wtxn,
+                    wtxn,
                     id,
-                    &body,
-                    Some(envelope),
+                    crate::gate::ClaimGateWrite {
+                        body: &body,
+                        envelope: Some(envelope),
+                        defer_metrics_until_commit: true,
+                    },
                     &policy,
                     crate::gate::GateWriteMode {
                         record_decision: true,
@@ -868,21 +903,30 @@ fn preflight_standalone_gate_decisions(store: &Store, ops: &[BatchOp]) -> Result
                         can_resolve_pending_consent: true,
                         include_source_in_gate_input: false,
                     },
+                    &mut recorded_decision,
                 )
             }
             _ => Ok(()),
         };
 
+        if let Some(decision) = recorded_decision {
+            staged_decisions.push(decision);
+        }
         if let Err(err) = result {
-            first_error = Some(err);
-            break;
+            let preserved_denial_id = staged_decisions
+                .last()
+                .filter(|decision| decision.outcome() != "allow")
+                .map(crate::gate::RecordedClaimGateDecision::decision_id);
+            for decision in staged_decisions.iter() {
+                if Some(decision.decision_id()) != preserved_denial_id {
+                    store.delete_gate_decision_in_txn(wtxn, decision.decision_id())?;
+                }
+            }
+            staged_decisions.retain(|decision| Some(decision.decision_id()) == preserved_denial_id);
+            return Err(err);
         }
     }
 
-    wtxn.commit()?;
-    if let Some(err) = first_error {
-        return Err(err);
-    }
     Ok(())
 }
 
