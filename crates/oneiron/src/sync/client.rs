@@ -492,6 +492,7 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
+                self.scrub_window_before_export(&window.doc)?;
                 let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
@@ -526,6 +527,7 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
+                self.scrub_window_before_export(&window.doc)?;
                 let doc = &window.doc;
                 let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
                 let responses = vec![
@@ -1099,17 +1101,23 @@ impl SyncClient {
     /// path); full manager open otherwise.
     fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
         if let Some(window) = self.manager.window(key) {
+            crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, &window.doc)?;
             return Ok(doc_version_vector(&window.doc));
         }
 
         {
             let rtxn = self.vault.store.env.read_txn()?;
+            let fences_present =
+                crate::off_record::off_record_fences_present(&self.vault.store, &rtxn)?;
             let svf_key = format!("svf:w:{key}");
             let fresh = matches!(
                 self.vault.store.sync_state.get(&rtxn, &svf_key)?,
                 Some([SVF_FRESH])
             );
-            if fresh {
+            // A pre-fence persisted snapshot may still contain a carrier.
+            // Bypass the state-vector fast path while any fence exists so
+            // open-time recovery can scrub the doc before advertising a VV.
+            if fresh && !fences_present {
                 let sv_key = format!("sv:w:{key}");
                 if let Some(sv_raw) = self.vault.store.sync_state.get(&rtxn, &sv_key)? {
                     // Persisted StateVector V1 — decode validates structure
@@ -1131,7 +1139,17 @@ impl SyncClient {
         }
 
         let window = self.manager.open_window(key)?;
+        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, &window.doc)?;
         Ok(doc_version_vector(&window.doc))
+    }
+
+    pub(crate) fn scrub_window_before_export(
+        &self,
+        doc: &LoroDoc,
+    ) -> std::result::Result<(), TransportError> {
+        crate::sync::window::scrub_off_record_fenced_carriers(&self.vault, doc)
+            .map(|_| ())
+            .map_err(|e| TransportError::Storage(format!("off-record carrier scrub: {e}")))
     }
 
     /// Persists the root doc to sync_state: `d:root` snapshot + `sv:root`

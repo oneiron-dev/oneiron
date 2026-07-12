@@ -534,7 +534,43 @@ impl Vault {
                 &encode_off_record_session(&record)?,
             )?;
             Ok(())
-        })
+        })?;
+
+        // The fence is durable before touching the CRDT. If this turn was
+        // already present in a registry-owned window, scrub its body and
+        // incident edges now instead of waiting for a later packing pass.
+        // Export paths also run the same scrub as a fail-closed backstop; a
+        // refresh failure therefore must not turn the committed tag into an
+        // ambiguous error response.
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.scrub_tagged_turn_in_live_window(turn_id) {
+            tracing::warn!(
+                turn = %turn_id.to_hex(),
+                error = %error,
+                "off-record fence committed but live-window carrier scrub deferred to export"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Scrubs a newly fenced turn from its registry-owned live window, if
+    /// that month is already loaded. This never faults a closed window into
+    /// memory; persistence/VV export performs the same whole-doc backstop.
+    #[cfg(feature = "sync")]
+    fn scrub_tagged_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
+        use crate::sync::WindowKey;
+        use crate::sync::window::scrub_off_record_fenced_carriers;
+
+        let Some(header) = self.read_entity_header(turn_id)? else {
+            return Ok(());
+        };
+        let window_key = WindowKey::from_timestamp(header.learned_at);
+        let Some((window, _materializer)) = self.live_window(&window_key) else {
+            return Ok(());
+        };
+        scrub_off_record_fenced_carriers(self, &window.doc)?;
+        Ok(())
     }
 
     /// Whether `id` is currently fenced off-record (public probe over the

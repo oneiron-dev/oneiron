@@ -7,10 +7,11 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::entity_id::EntityId;
+use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK};
 use crate::store::Store;
 use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::export_snapshot;
+use crate::sync::loro_support::{export_snapshot, map_get_bytes, map_insert_bytes};
 use crate::sync::schema::create_root_doc;
 use crate::temporal::TimeRange;
 
@@ -554,6 +555,68 @@ fn vv_response_triggers_local_diff_update() {
         client.window(key).unwrap().doc.get_deep_value(),
         server_doc.get_deep_value()
     );
+}
+
+/// A stale carrier inserted after the fence must be scrubbed before the
+/// client answers either leg of the VV exchange. The ordinary entity proves
+/// the delta remains useful rather than being replaced with an empty export.
+#[test]
+fn vv_response_scrubs_fenced_carrier_before_export() {
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let (mut client, _rx) = test_client(&manager);
+    let key = "2026-04";
+    let learned_at = 1_775_000_000u64;
+    let fenced = EntityId::from_bytes([0x71; 16]).unwrap();
+    let ordinary = EntityId::from_bytes([0x72; 16]).unwrap();
+    vault
+        .enter_off_record_session("sess-vv-export", OffRecordBackendClass::Local)
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-vv-export", &fenced)
+        .unwrap();
+
+    let window = client.ensure_window(key).unwrap();
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &fenced.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    map_insert_bytes(
+        &window.doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &entity_blob(
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            &task_body(),
+        ),
+    )
+    .unwrap();
+    window.doc.commit();
+
+    let peer = server_window_doc();
+    let msg =
+        transport::encode_window_sync(key, window_sub_tags::VV_RESPONSE, &peer.oplog_vv().encode());
+    let responses = client.handle_server_message(&msg).unwrap();
+    assert_eq!(responses.len(), 1);
+    let (_, sub_tag, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    peer.import(delta).unwrap();
+    assert!(map_get_bytes(&peer.get_map("entities"), &fenced.to_hex()).is_none());
+    assert!(map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some());
 }
 
 /// ONE-1128 AC1 machinery: `window_converged` is the queue-clear gate, so

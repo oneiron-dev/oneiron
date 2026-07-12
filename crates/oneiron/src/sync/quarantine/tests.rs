@@ -3,11 +3,12 @@ use std::sync::Arc;
 use super::*;
 use crate::Vault;
 use crate::config::VaultConfig;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::map_insert_bytes;
+use crate::sync::bridge::{Materializer, format_edge_key};
+use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::schema::create_window_doc;
 use crate::sync::window::{LoadedWindow, forward_rematerialize, reverse_rematerialize};
 use crate::temporal::TimeRange;
@@ -1332,7 +1333,6 @@ fn forward_remat_quarantines_rejected_rows() {
         vault.get(&good).unwrap().as_deref(),
         Some(good_body.as_slice())
     );
-
     let mut reasons: Vec<String> = quarantined_records(&vault)
         .unwrap()
         .into_iter()
@@ -1373,6 +1373,7 @@ fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
 
     let doc = create_window_doc("test-user", &window_key);
     let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
     map_insert_bytes(
         &entities,
         &fenced.to_hex(),
@@ -1391,6 +1392,8 @@ fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
         &entity_blob(ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &good_body),
     )
     .unwrap();
+    let incident_edge = format_edge_key(&good, EdgeKind::Mentions, &fenced);
+    map_insert_bytes(&edges, &incident_edge, &semantic_edge_value(0.5)).unwrap();
     doc.commit();
 
     assert_eq!(
@@ -1402,6 +1405,18 @@ fn forward_remat_quarantines_closed_off_record_fence_rejection_and_continues() {
     assert_eq!(
         vault.get(&good).unwrap().as_deref(),
         Some(good_body.as_slice())
+    );
+    assert!(
+        map_get_bytes(&entities, &fenced.to_hex()).is_none(),
+        "quarantined fenced body must be scrubbed from the live doc"
+    );
+    assert!(
+        map_get_bytes(&edges, &incident_edge).is_none(),
+        "incident edge carrier must be scrubbed with the fenced body"
+    );
+    assert!(
+        map_get_bytes(&entities, &good.to_hex()).is_some(),
+        "legitimate non-fenced body remains in the doc"
     );
     let records = quarantined_records(&vault).unwrap();
     assert_eq!(records.len(), 1);
