@@ -342,6 +342,26 @@ impl Vault {
         ))
     }
 
+    /// Returns every registry-owned live window without faulting any closed
+    /// month into memory. Promotion uses this because a newly unfenced target
+    /// can release incident edges whose source belongs to another open month.
+    #[cfg(feature = "sync")]
+    pub(crate) fn live_windows(&self) -> Vec<std::sync::Arc<crate::sync::window::LoadedWindow>> {
+        let Some(manager) = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .upgrade()
+        else {
+            return Vec::new();
+        };
+        manager
+            .loaded_keys()
+            .into_iter()
+            .filter_map(|key| manager.window(&key))
+            .collect()
+    }
+
     /// Whether `key` is currently unsafe for sweep compaction: registered in
     /// an attached manager OR still retained by an outstanding orphaned
     /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op

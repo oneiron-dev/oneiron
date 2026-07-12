@@ -2461,12 +2461,12 @@ impl Vault {
         use crate::sync::bridge::{
             DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
         };
-        use crate::sync::loro_support::{doc_version_vector, export_snapshot};
+        use crate::sync::loro_support::doc_version_vector;
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
         use crate::sync::window::{
-            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
-            merge_persisted_state_into_doc, scrub_off_record_fenced_carriers,
+            apply_tombstone_to_window_doc, export_scrubbed_window_snapshot,
+            export_tombstone_commit_delta, load_window_from_state, merge_persisted_state_into_doc,
         };
         use loro::CommitOptions;
 
@@ -2506,8 +2506,7 @@ impl Vault {
                         .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
                 });
                 let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
-                scrub_off_record_fenced_carriers(self, &window.doc)?;
-                let snapshot = export_snapshot(&window.doc)?;
+                let snapshot = export_scrubbed_window_snapshot(self, &window_key, &window.doc)?;
                 let vv = doc_version_vector(&window.doc);
                 (delete_update, snapshot, vv)
             };
@@ -2547,8 +2546,7 @@ impl Vault {
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        scrub_off_record_fenced_carriers(self, &doc)?;
-        let snapshot = export_snapshot(&doc)?;
+        let snapshot = export_scrubbed_window_snapshot(self, &window_key, &doc)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist(
             &window_key,

@@ -220,6 +220,59 @@ fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-02");
+    let target_key = WindowKey::new("2026-03");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let target_at = target_key.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x5a; 16])?;
+    let target = EntityId::from_bytes([0x5b; 16])?;
+
+    vault.enter_off_record_session("sess-cross-window-promote", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-cross-window-promote", &target)?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window source",
+    )?;
+    vault.put_entity(
+        &target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    vault.sync_state_put(&format!("pm:{target_key}:{}", target.to_hex()), &[1])?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let source_window = manager.open_window(&source_key)?;
+    let target_window = manager.open_window(&target_key)?;
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &target);
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
+    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_none());
+
+    vault.promote_off_record_turn("sess-cross-window-promote", &target)?;
+
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
+    assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_some());
+    Ok(())
+}
+
 /// Tagging an entity that is already present in a registry-owned window must
 /// scrub that live carrier immediately. An ordinary body and edge prove the
 /// refresh is scoped rather than clearing the whole window.

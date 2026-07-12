@@ -690,26 +690,23 @@ impl Vault {
     /// re-materialization, matching the pinned open-time recovery order.
     #[cfg(feature = "sync")]
     fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
-        use crate::sync::WindowKey;
         use crate::sync::window::{replay_pending_mirrors, reverse_rematerialize};
 
-        let Some(header) = self.read_entity_header(turn_id)? else {
-            return Ok(());
-        };
-        let window_key = WindowKey::from_timestamp(header.learned_at);
-        let Some((window, _materializer)) = self.live_window(&window_key) else {
-            return Ok(());
-        };
-
-        let replayed = replay_pending_mirrors(self, &window.doc, &window_key)?;
-        let mirrored = reverse_rematerialize(self, &window.doc, &window_key)?;
-        tracing::debug!(
-            turn = %turn_id.to_hex(),
-            window = %window_key,
-            replayed,
-            mirrored,
-            "off-record promotion refreshed live sync window"
-        );
+        // The promoted body lives in its learned-at window, but incident
+        // edges are packed by SOURCE window. Refresh every window that is
+        // already live so a cross-month source edge appears immediately;
+        // closed windows remain untouched and recover through normal open.
+        for window in self.live_windows() {
+            let replayed = replay_pending_mirrors(self, &window.doc, &window.key)?;
+            let mirrored = reverse_rematerialize(self, &window.doc, &window.key)?;
+            tracing::debug!(
+                turn = %turn_id.to_hex(),
+                window = %window.key,
+                replayed,
+                mirrored,
+                "off-record promotion refreshed live sync window"
+            );
+        }
         Ok(())
     }
 

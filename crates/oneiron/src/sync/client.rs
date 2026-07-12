@@ -494,7 +494,13 @@ impl SyncClient {
                 let window = self.ensure_window(window_key)?;
                 self.scrub_window_before_export(&window.doc)?;
                 let doc = &window.doc;
-                let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
+                let delta = crate::sync::window::export_window_updates_since(
+                    &self.vault,
+                    &window.key,
+                    doc,
+                    payload,
+                )
+                .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
@@ -529,7 +535,13 @@ impl SyncClient {
                 let window = self.ensure_window(window_key)?;
                 self.scrub_window_before_export(&window.doc)?;
                 let doc = &window.doc;
-                let delta = export_updates_since(doc, payload).map_err(map_delta_export_err)?;
+                let delta = crate::sync::window::export_window_updates_since(
+                    &self.vault,
+                    &window.key,
+                    doc,
+                    payload,
+                )
+                .map_err(map_delta_export_err)?;
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
