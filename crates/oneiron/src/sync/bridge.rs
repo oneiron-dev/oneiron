@@ -2,8 +2,8 @@
 //!
 //! **Observer A** (`subscribe_local_update`): Fires for local commits and
 //! persists update bytes to sync_state/broadcasts, except a deletion's
-//! explicitly-suppressed live commit whose enclosing TXN1 persists the exact
-//! snapshot/delta atomically with its recovery data.
+//! explicitly-suppressed live commit. Its authority recovery data is staged
+//! first; the following TXN1 atomically persists the exact snapshot/delta.
 //!
 //! **Observer B** (`doc.subscribe(container_id)` × 3): Fires for all commits.
 //! Subscribes to each of the three map containers (entities, edges, tombstones)
@@ -56,8 +56,9 @@ pub(crate) const DELETION_TOMBSTONE_ORIGIN: &str = "deletion_tombstone";
 thread_local! {
     /// `write_crdt_tombstone` commits a live-doc update before it can assemble
     /// the snapshot/delta inputs for its one LMDB TXN1. Suppress Observer A
-    /// only for that synchronous commit; the deletion path then persists the
-    /// exact snapshot, queue delta, and gate-recovery sidecar atomically.
+    /// only for that synchronous commit; the deletion path stages gate
+    /// recovery first, then atomically persists the exact snapshot + queue
+    /// delta.
     static SUPPRESS_OBSERVER_A_FOR_DELETION_TOMBSTONE: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -176,20 +177,8 @@ impl OutboundSink {
     /// queue otherwise. Failures are logged, never propagated — this runs
     /// inside Observer A, which cannot abort a committed CRDT change.
     pub(crate) fn route(&self, vault: &Arc<Vault>, window_key: &str, update_bytes: &[u8]) {
-        {
-            let mut guard = self.lock();
-            if let Some(sender) = guard.as_ref() {
-                let send_result = sender.send(LocalUpdate {
-                    window_key: window_key.to_string(),
-                    update_bytes: update_bytes.to_vec(),
-                });
-                if send_result.is_ok() {
-                    return;
-                }
-                // Receiver dropped — clear the stale sender and fall through
-                // to the durable queue.
-                *guard = None;
-            }
+        if self.route_live(window_key, update_bytes) {
+            return;
         }
 
         let queue_result = SyncQueue::new(Arc::clone(vault))
@@ -202,6 +191,29 @@ impl OutboundSink {
                 "outbound-sink: failed to buffer offline update in sync_queue"
             );
         }
+    }
+
+    /// Routes an update only to an attached steady-state connection. The
+    /// deletion path uses this after atomically writing its own durable
+    /// delete-bearing queue row, avoiding both a missed live broadcast and a
+    /// duplicate offline queue entry.
+    pub(crate) fn route_live(&self, window_key: &str, update_bytes: &[u8]) -> bool {
+        {
+            let mut guard = self.lock();
+            if let Some(sender) = guard.as_ref() {
+                let send_result = sender.send(LocalUpdate {
+                    window_key: window_key.to_string(),
+                    update_bytes: update_bytes.to_vec(),
+                });
+                if send_result.is_ok() {
+                    return true;
+                }
+                // Receiver dropped — clear the stale sender and fall through
+                // to the durable queue.
+                *guard = None;
+            }
+        }
+        false
     }
 }
 

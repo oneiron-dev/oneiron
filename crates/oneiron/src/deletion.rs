@@ -146,17 +146,15 @@ pub struct TombstoneValueV2 {
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
-/// recovery sidecar, window snapshot, queue mutation, and scrub all commit
-/// as one unit before the later purge transaction authors the gate record.
+/// window snapshot, queue mutation, and scrub commit as one unit after the
+/// authority-required marker and recovery sidecar are durably staged.
 #[cfg(feature = "sync")]
 struct TombstonePersistence<'a> {
-    target: &'a EntityId,
     snapshot: &'a [u8],
     version_vector: &'a [u8],
     tombstone: &'a TombstoneValueV2,
     delete_update: Option<&'a crate::sync::window::DeleteBearingUpdate>,
     scrubbed_update_keys: &'a [String],
-    gate_decision: Option<&'a GateDecisionRecord>,
 }
 
 impl TombstoneValueV2 {
@@ -1414,6 +1412,7 @@ fn signal_after_header_read() {}
 #[cfg(all(test, feature = "sync"))]
 thread_local! {
     static FAIL_AFTER_TOMBSTONE_BEFORE_PURGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_LIVE_TOMBSTONE_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Arms a one-shot crash surrogate after TXN1 has durably persisted the CRDT
@@ -1423,6 +1422,27 @@ thread_local! {
 pub(crate) fn arm_fail_after_tombstone_before_purge() {
     FAIL_AFTER_TOMBSTONE_BEFORE_PURGE.with(|armed| armed.set(true));
 }
+
+/// Arms a one-shot TXN1 failure after the live Loro tombstone commits but
+/// before its snapshot/update persistence transaction begins.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn arm_fail_live_tombstone_persist() {
+    FAIL_LIVE_TOMBSTONE_PERSIST.with(|armed| armed.set(true));
+}
+
+#[cfg(all(test, feature = "sync"))]
+fn maybe_fail_live_tombstone_persist() -> Result<()> {
+    if FAIL_LIVE_TOMBSTONE_PERSIST.replace(false) {
+        return Err(Error::InvariantViolation(
+            "test failure persisting committed live deletion tombstone",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(all(test, feature = "sync")))]
+#[inline(always)]
+fn maybe_fail_live_tombstone_persist() {}
 
 #[cfg(all(test, feature = "sync"))]
 fn maybe_fail_after_tombstone_before_purge() -> Result<()> {
@@ -1894,8 +1914,8 @@ impl Vault {
     }
 
     /// Completes the deletion authority record in the same TXN3 write as the
-    /// active-store purge and REDACTION_AUDIT receipt. Sync-enabled TXN1
-    /// stages only a recovery sidecar; sync-disabled deletes have no TXN1 and
+    /// active-store purge and REDACTION_AUDIT receipt. Sync-enabled deletes
+    /// stage recovery data before the tombstone commit; sync-disabled deletes
     /// append the evaluated record directly on their first durable purge.
     fn append_deletion_gate_decision_in_purge_txn(
         &self,
@@ -2235,12 +2255,19 @@ impl Vault {
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
             {
-                let _ = self.store.discard_pending_deletion_gate_decision_in_txn(
-                    &mut wtxn,
-                    GateDecisionId::from_bytes(request_id),
-                    id.as_bytes(),
-                    tombstone_reason,
-                )?;
+                let discarded_local_authority =
+                    self.store.discard_pending_deletion_gate_decision_in_txn(
+                        &mut wtxn,
+                        GateDecisionId::from_bytes(request_id),
+                        id.as_bytes(),
+                        tombstone_reason,
+                    )?;
+                if discarded_local_authority {
+                    tracing::debug!(
+                        entity = %id.to_hex(),
+                        "remote replay found no local state; discarded the matching local deletion authority sidecar"
+                    );
+                }
             }
             wtxn.commit()?;
             return Ok(ReplayedTombstoneOutcome::HardPurged {
@@ -2264,12 +2291,19 @@ impl Vault {
         if let Some((request_id, tombstone_reason)) =
             decoded.request_id.zip(raw_value.first().copied())
         {
-            let _ = self.store.append_pending_deletion_gate_decision_in_txn(
-                &mut wtxn,
-                GateDecisionId::from_bytes(request_id),
-                id.as_bytes(),
-                tombstone_reason,
-            )?;
+            let completed_local_authority =
+                self.store.append_pending_deletion_gate_decision_in_txn(
+                    &mut wtxn,
+                    GateDecisionId::from_bytes(request_id),
+                    id.as_bytes(),
+                    tombstone_reason,
+                )?;
+            if completed_local_authority.is_some() {
+                tracing::debug!(
+                    entity = %id.to_hex(),
+                    "remote replay completed a staged local deletion authority record"
+                );
+            }
         }
         let applied_at = unix_seconds_now();
         let receipt_id = EntityId::now();
@@ -2389,9 +2423,10 @@ impl Vault {
     /// - **Live routing**: when the window is OPEN (registry lookup via the
     ///   attached [`crate::sync::WindowManager`]), the tombstone commits
     ///   through the registry-owned live doc. Its synchronous Observer A
-    ///   callback is suppressed for this one commit; the deletion TXN1 then
-    ///   persists the snapshot + outbound delta alongside the authority
-    ///   recovery sidecar — never through a parallel transient copy whose
+    ///   callback is suppressed for this one commit; an authority-required
+    ///   marker + complete recovery sidecar are staged first, then the
+    ///   deletion TXN1 persists the snapshot + outbound delta — never through
+    ///   a parallel transient copy whose
     ///   `d:w:` export a live `persist_state` would clobber.
     /// - **Transient path** (window NOT open): the doc is import-merged
     ///   from the persisted snapshot + pending `u:` rows
@@ -2409,8 +2444,8 @@ impl Vault {
     ///
     /// OWNER-DECISION (ONE-1601 live-path commit origin): the live-doc
     /// commit is tagged `DELETION_TOMBSTONE_ORIGIN`. Observer B skips it;
-    /// Observer A is synchronously suppressed so it cannot persist the
-    /// tombstone before the same TXN1 stages the recovery sidecar. The local
+    /// Observer A is synchronously suppressed; the recovery sidecar is staged
+    /// before the live mutation and TXN1 then persists its snapshot. The local
     /// delete path owns the LMDB purge under the pinned tombstone → purge →
     /// receipt ordering, and a B-side replay here would purge BEFORE the
     /// purge transaction, voiding the local receipt and the
@@ -2437,7 +2472,7 @@ impl Vault {
 
         let window_key = WindowKey::from_timestamp(window_ts);
 
-        if let Some((window, materializer)) = self.live_window(&window_key) {
+        if let Some((window, materializer, manager)) = self.live_window(&window_key) {
             // Live path: merge the on-disk record first (clobber guard —
             // a tombstone persisted transiently while this window was open
             // must survive the snapshot export below), then commit the
@@ -2449,15 +2484,16 @@ impl Vault {
             // itself.
             let merged_update_keys =
                 merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
+            self.stage_deletion_gate_recovery(id, value, gate_decision)?;
             // The tombstone commit + exports run UNDER the materializer
             // lock: Observer B's tombstone-check + LMDB-materialize is
             // atomic under that lock, so a concurrent remote re-put can no
             // longer check the tombstones map BEFORE this commit and write
             // the deleted body back AFTER the purge txn that follows
             // (resurrection race). The deletion origin skips Observer B;
-            // Observer A is synchronously suppressed just for this commit so
-            // the snapshot, outbound delta, and authority-recovery sidecar
-            // land together in the TXN1 immediately below. Lock order
+            // Observer A is synchronously suppressed just for this commit.
+            // The authority-required marker + sidecar are already durable;
+            // the snapshot and outbound delta land in TXN1 below. Lock order
             // materializer → LMDB txn matches every other holder; the
             // registry lock is NOT held here (manager lock-order pin).
             let (delete_update, snapshot, vv) = {
@@ -2474,18 +2510,25 @@ impl Vault {
                 let vv = doc_version_vector(&window.doc);
                 (delete_update, snapshot, vv)
             };
+            #[cfg(all(test, feature = "sync"))]
+            maybe_fail_live_tombstone_persist()?;
+            #[cfg(not(all(test, feature = "sync")))]
+            maybe_fail_live_tombstone_persist();
             self.finish_crdt_tombstone_persist(
                 &window_key,
                 TombstonePersistence {
-                    target: id,
                     snapshot: &snapshot,
                     version_vector: &vv,
                     tombstone: value,
                     delete_update: delete_update.as_ref(),
                     scrubbed_update_keys: &merged_update_keys,
-                    gate_decision,
                 },
             )?;
+            if let Some(update) = delete_update.as_ref() {
+                manager
+                    .outbound()
+                    .route_live(window_key.as_str(), update.as_bytes());
+            }
             return Ok(true);
         }
 
@@ -2499,6 +2542,7 @@ impl Vault {
         };
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
+        self.stage_deletion_gate_recovery(id, value, gate_decision)?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
@@ -2507,16 +2551,38 @@ impl Vault {
         self.finish_crdt_tombstone_persist(
             &window_key,
             TombstonePersistence {
-                target: id,
                 snapshot: &snapshot,
                 version_vector: &vv,
                 tombstone: value,
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
-                gate_decision,
             },
         )?;
         Ok(true)
+    }
+
+    /// Durably marks a locally gated tombstone as authority-required and
+    /// stores its complete recovery sidecar before any shared live document
+    /// can commit that tombstone. Remote/ungated tombstones deliberately do
+    /// not create this marker and remain valid replay inputs.
+    #[cfg(feature = "sync")]
+    fn stage_deletion_gate_recovery(
+        &self,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+        gate_decision: Option<&GateDecisionRecord>,
+    ) -> Result<()> {
+        let Some(decision) = gate_decision else {
+            return Ok(());
+        };
+        self.with_write_txn(|wtxn| {
+            self.store.put_pending_deletion_gate_decision_in_txn(
+                wtxn,
+                decision,
+                id.as_bytes(),
+                value.reason.wire_byte(),
+            )
+        })
     }
 
     /// One transaction for the delete path's sync_state / sync_queue
@@ -2532,14 +2598,6 @@ impl Vault {
     ) -> Result<()> {
         let is_hard = persistence.tombstone.reason.is_hard();
         self.with_write_txn(|wtxn| {
-            if let Some(decision) = persistence.gate_decision {
-                self.store.put_pending_deletion_gate_decision_in_txn(
-                    wtxn,
-                    decision,
-                    persistence.target.as_bytes(),
-                    persistence.tombstone.reason.wire_byte(),
-                )?;
-            }
             crate::sync::window::persist_window_doc_in_txn(
                 self,
                 wtxn,
@@ -2566,9 +2624,9 @@ impl Vault {
             if let Some(update) = persistence.delete_update {
                 // The live-doc path suppresses Observer A for the tombstone
                 // commit, then writes its ordinary `u:w:` carrier here in
-                // the same TXN1 as the snapshot and recovery sidecar. This
-                // preserves restart replay without a crash window where a
-                // tombstone is durable but its authorization decision is not.
+                // the snapshot TXN1. Authority recovery was durably staged
+                // before the live mutation, so restart replay cannot observe
+                // an authority-required tombstone without that requirement.
                 crate::sync::bridge::persist_window_update_in_txn(
                     self,
                     wtxn,

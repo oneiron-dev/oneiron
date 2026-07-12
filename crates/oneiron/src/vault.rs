@@ -327,6 +327,7 @@ impl Vault {
     ) -> Option<(
         std::sync::Arc<crate::sync::window::LoadedWindow>,
         std::sync::Arc<crate::sync::bridge::Materializer>,
+        std::sync::Arc<crate::sync::WindowManager>,
     )> {
         let manager = self
             .live_window_manager
@@ -334,7 +335,11 @@ impl Vault {
             .unwrap_or_else(|e| e.into_inner())
             .upgrade()?;
         let window = manager.window(key)?;
-        Some((window, std::sync::Arc::clone(manager.materializer())))
+        Some((
+            window,
+            std::sync::Arc::clone(manager.materializer()),
+            manager,
+        ))
     }
 
     /// Whether `key` is currently unsafe for sweep compaction: registered in

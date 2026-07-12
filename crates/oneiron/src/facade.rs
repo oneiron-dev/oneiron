@@ -1517,11 +1517,12 @@ impl MemoryFacade<'_> {
     /// denial (agents withdraw their own claims via
     /// [`Self::claim_retract`]).
     ///
-    /// The owner gate is evaluated before deletion TXN1. Sync-enabled TXN1
-    /// durably stages its request-keyed recovery sidecar; TXN3 consumes that
-    /// sidecar with `append_gate_decision_in_txn` alongside the purge and
-    /// distinct REDACTION_AUDIT execution receipt. Sync-disabled builds have
-    /// no TXN1 and append directly on their first local scrub/purge.
+    /// The owner gate is evaluated before deletion TXN1. Sync-enabled deletes
+    /// durably stage an authority-required marker + request-keyed recovery
+    /// sidecar before the tombstone can commit; TXN3 consumes that sidecar
+    /// with `append_gate_decision_in_txn` alongside the purge and distinct
+    /// REDACTION_AUDIT execution receipt. Sync-disabled builds append directly
+    /// on their first local scrub/purge.
     pub fn safe_delete(
         &self,
         entity_ref: &str,
