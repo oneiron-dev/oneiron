@@ -3,6 +3,8 @@
 //! GATE-001 added stable decision inputs. GATE-002 routes local write doors
 //! through the evaluator while keeping replicated replay trust-blind.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -757,6 +759,8 @@ pub(crate) fn gate_metrics_snapshot() -> GateMetricsSnapshot {
 }
 
 fn record_gate_decision_metrics(decision: &GateDecision) {
+    #[cfg(test)]
+    GATE_METRIC_EMISSIONS.with(|count| count.set(count.get().saturating_add(1)));
     let outcome = decision.outcome();
     // A decision with multiple reason codes records one outcome/reason-class co-occurrence per code.
     for reason_code in decision.reason_codes() {
@@ -764,6 +768,16 @@ fn record_gate_decision_metrics(decision: &GateDecision) {
         GATE_METRIC_COUNTERS[outcome.metric_index()][reason_class.metric_index()]
             .fetch_add(1, AtomicOrdering::Relaxed);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static GATE_METRIC_EMISSIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn gate_metric_emission_count_for_test() -> u64 {
+    GATE_METRIC_EMISSIONS.with(Cell::get)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2386,24 +2400,41 @@ pub(crate) fn check_claim_policy_for_write(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
 ) -> Result<()> {
-    check_claim_policy_for_write_with_record(store, wtxn, id, body, envelope, policy, mode)
-        .map(|_| ())
+    let mut recorded_decision = None;
+    check_claim_policy_for_write_with_record(
+        store,
+        wtxn,
+        id,
+        ClaimGateWrite {
+            body,
+            envelope,
+            defer_metrics_until_commit: false,
+        },
+        policy,
+        mode,
+        &mut recorded_decision,
+    )
 }
 
 pub(crate) fn check_claim_policy_for_write_with_record(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    body: &ClaimBody,
-    envelope: Option<&WriteEnvelope>,
+    write: ClaimGateWrite<'_>,
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
-) -> Result<Option<GateDecisionRecord>> {
+    recorded_decision: &mut Option<RecordedClaimGateDecision>,
+) -> Result<()> {
+    let ClaimGateWrite {
+        body,
+        envelope,
+        defer_metrics_until_commit,
+    } = write;
+    *recorded_decision = None;
     if let Some(envelope) = envelope {
         validate_write_envelope(envelope)?;
     }
 
-    let mut write_decision = None;
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
             let actor = envelope.actor();
@@ -2475,7 +2506,14 @@ pub(crate) fn check_claim_policy_for_write_with_record(
 
         if mode.record_decision {
             store.append_gate_decision_in_txn(wtxn, &decision_record)?;
-            record_gate_decision_metrics(&decision);
+            let recorded = RecordedClaimGateDecision {
+                record: decision_record.clone(),
+                decision: decision.clone(),
+            };
+            if !defer_metrics_until_commit {
+                recorded.record_metrics();
+            }
+            *recorded_decision = Some(recorded);
         }
 
         if mode.persist_pending_consent
@@ -2517,11 +2555,9 @@ pub(crate) fn check_claim_policy_for_write_with_record(
             &binding,
             mode,
         )?;
-        write_decision = Some(decision_record);
     }
 
-    check_claim_source_trust(body, policy)?;
-    Ok(write_decision)
+    check_claim_source_trust(body, policy)
 }
 
 /// `admit_for_execution` tells the connector-key budget stage whether an
@@ -2934,6 +2970,35 @@ pub(crate) struct GateWriteMode {
     pub(crate) resolve_pending: bool,
     pub(crate) can_resolve_pending_consent: bool,
     pub(crate) include_source_in_gate_input: bool,
+}
+
+pub(crate) struct ClaimGateWrite<'a> {
+    pub(crate) body: &'a ClaimBody,
+    pub(crate) envelope: Option<&'a WriteEnvelope>,
+    pub(crate) defer_metrics_until_commit: bool,
+}
+
+pub(crate) struct RecordedClaimGateDecision {
+    record: GateDecisionRecord,
+    decision: GateDecision,
+}
+
+impl RecordedClaimGateDecision {
+    pub(crate) fn decision_id(&self) -> GateDecisionId {
+        self.record.decision_id
+    }
+
+    pub(crate) fn outcome(&self) -> &str {
+        &self.record.outcome
+    }
+
+    pub(crate) fn record_metrics(&self) {
+        record_gate_decision_metrics(&self.decision);
+    }
+
+    pub(crate) fn into_record(self) -> GateDecisionRecord {
+        self.record
+    }
 }
 
 pub(crate) fn check_reserved_claim_policy(

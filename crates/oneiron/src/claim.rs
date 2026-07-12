@@ -2453,14 +2453,18 @@ impl Vault {
         body.valid_to = Some(now);
         let data = encode_claim_body(&body)?;
 
-        let write_receipt = if consent_receipt.is_none() {
+        let mut write_receipt = None;
+        if consent_receipt.is_none() {
             let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
             crate::gate::check_claim_policy_for_write_with_record(
                 &self.store,
                 wtxn,
                 id,
-                &body,
-                None,
+                crate::gate::ClaimGateWrite {
+                    body: &body,
+                    envelope: None,
+                    defer_metrics_until_commit: false,
+                },
                 &policy,
                 crate::gate::GateWriteMode {
                     record_decision: true,
@@ -2469,10 +2473,9 @@ impl Vault {
                     can_resolve_pending_consent: true,
                     include_source_in_gate_input: false,
                 },
-            )?
-        } else {
-            None
-        };
+                &mut write_receipt,
+            )?;
+        }
 
         let ops = vec![BatchOp::Put {
             id: *id,
@@ -2497,7 +2500,7 @@ impl Vault {
             false,
             false,
         )?;
-        Ok(consent_receipt.or(write_receipt))
+        Ok(consent_receipt.or(write_receipt.map(|decision| decision.into_record())))
     }
 
     pub(crate) fn claim_facet_refs_in(
