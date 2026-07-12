@@ -57,6 +57,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::provenance::validate_actor_class;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
@@ -2410,7 +2411,9 @@ impl Vault {
     /// general claim lifecycle), in ONE write transaction: the body is
     /// closed (`life` = `retracted`, `to` = `now`) and the envelope
     /// `occurred_end` is refreshed to `now` (body ↔ envelope mirror, D15
-    /// principle). The record is PRESERVED — retraction never deletes.
+    /// principle). A parked consent is atomically closed with a terminal
+    /// retraction receipt while preserving the consent's original binding.
+    /// The record is PRESERVED — retraction never deletes.
     ///
     /// Fail-closed, nothing written on any rejection: missing id →
     /// [`Error::EntityNotFound`]; not type 0 → [`Error::InvalidClaimBody`];
@@ -2419,12 +2422,57 @@ impl Vault {
     /// that lifecycle); `life` ≠ `active` → [`Error::ClaimAlreadyClosed`].
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, id)?;
+        self.retract_claim_in_txn(&mut wtxn, id, now)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Transaction-composable [`Vault::retract_claim`]. A pending consent is
+    /// closed before the lifecycle write, in the same transaction, so a later
+    /// gate or storage failure rolls both changes back. Pending persistence is
+    /// disabled for the terminal body write: a policy that evaluates the
+    /// retracted body as `pending` must not recreate an actionable tray row.
+    pub(crate) fn retract_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+    ) -> Result<Option<GateDecisionRecord>> {
+        let (mut body, header) = self.claim_for_lifecycle_in(&*wtxn, id)?;
         Self::require_active_claim(&body)?;
 
+        let consent_receipt = self.store.close_pending_gate_consent_in_txn(
+            wtxn,
+            id,
+            now,
+            "retracted",
+            vec!["gate.pending.claim_retracted".to_owned()],
+            None,
+        )?;
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(now);
         let data = encode_claim_body(&body)?;
+
+        let write_receipt = if consent_receipt.is_none() {
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+            crate::gate::check_claim_policy_for_write_with_record(
+                &self.store,
+                wtxn,
+                id,
+                &body,
+                None,
+                &policy,
+                crate::gate::GateWriteMode {
+                    record_decision: true,
+                    persist_pending_consent: false,
+                    resolve_pending: true,
+                    can_resolve_pending_consent: true,
+                    include_source_in_gate_input: false,
+                },
+            )?
+        } else {
+            None
+        };
 
         let ops = vec![BatchOp::Put {
             id: *id,
@@ -2442,15 +2490,14 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            wtxn,
             ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
-            true,
+            false,
         )?;
-        wtxn.commit()?;
-        Ok(())
+        Ok(consent_receipt.or(write_receipt))
     }
 
     pub(crate) fn claim_facet_refs_in(
