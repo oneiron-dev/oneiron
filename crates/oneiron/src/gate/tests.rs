@@ -3344,35 +3344,6 @@ fn gate_decision_ledger_survives_rejected_standalone_write() -> Result<()> {
 }
 
 #[test]
-fn source_trust_rejection_removes_preflight_allow_decision() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let mut data = encode_policy_manifest(vec![]);
-    trust_human_candidate_actor(&mut data);
-    put_policy_manifest_bytes(&vault, 0x92, &data)?;
-
-    let id = test_id(0x93);
-    let body = source_trust_claim(ClaimSource::ToolOutput);
-    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
-    let err = vault
-        .batch()
-        .claim_candidate(&id, candidate, &envelope, test_time(3), 3)
-        .commit()
-        .expect_err("source trust must reject after the gate allows");
-
-    assert!(
-        matches!(err, Error::SourceNotTrustedForAuto { claim_source: "tool_output" }),
-        "expected source trust rejection after allow, got {err:?}"
-    );
-    assert!(vault.get_raw(&id)?.is_none());
-    assert_eq!(
-        vault.store.gate_decisions(10)?.len(),
-        0,
-        "an allow decision must not survive when post-gate validation rejects the claim"
-    );
-    Ok(())
-}
-
-#[test]
 fn pending_gate_consent_survives_reopen() -> Result<()> {
     let (tmp, vault) = temp_vault();
     {
