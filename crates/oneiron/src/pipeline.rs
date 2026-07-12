@@ -4125,6 +4125,7 @@ fn context_pack_evidence_abstains(
     let absent_keyword_and_low_vector = text_query.is_some()
         && has_vector_query
         && !has_keyword_hit
+        && !vector_scores.is_empty()
         && vector_scores
             .iter()
             .all(|score| !score.is_finite() || *score < CONTEXT_PACK_MIN_VECTOR_SIMILARITY);

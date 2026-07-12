@@ -802,6 +802,35 @@ fn weak_evidence_abstains() -> Result<()> {
 }
 
 #[test]
+fn phonetic_context_pack_candidate_without_vector_scores_remains_eligible() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x3C);
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    vault
+        .batch()
+        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
+        .phonetic(&id, &["VAKYUOUS"])
+        .commit()?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("", 10)
+        .search_vector(&query, 10)
+        .search_phonetic(&["VAKYUOUS"])
+        .run()?;
+
+    assert_eq!(
+        pack.results
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<Vec<_>>(),
+        [id]
+    );
+    assert!(pack.empty.is_none());
+    Ok(())
+}
+
+#[test]
 fn does_not_delete_stored_memory() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x37);
