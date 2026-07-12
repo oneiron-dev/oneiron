@@ -458,6 +458,80 @@ fn off_record_tag_eagerly_scrubs_an_already_open_live_window() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn off_record_tag_eagerly_scrubs_every_live_cross_window_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-03");
+    let target_key = WindowKey::new("2026-04");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let target_at = target_key.start_timestamp().unwrap() + 60;
+    let source = EntityId::from_bytes([0x5A; 16])?;
+    let fenced_target = EntityId::from_bytes([0x5B; 16])?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"cross-window ordinary source",
+    )?;
+    vault.put_entity(
+        &fenced_target,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: target_at,
+            end: target_at,
+        },
+        target_at,
+        b"cross-window private target",
+    )?;
+    vault.put_edge(&source, EdgeKind::Mentions, &fenced_target, 0.5)?;
+
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "source",
+    ));
+    let source_window = manager.open_window(&source_key)?;
+    let target_window = manager.open_window(&target_key)?;
+    let edge_key = format_edge_key(&source, EdgeKind::Mentions, &fenced_target);
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
+    assert!(
+        map_get_bytes(
+            &target_window.doc.get_map("entities"),
+            &fenced_target.to_hex()
+        )
+        .is_some()
+    );
+
+    vault.enter_off_record_session("sess-eager-cross-window", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-eager-cross-window", &fenced_target)?;
+
+    assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
+    assert!(
+        map_get_bytes(
+            &target_window.doc.get_map("entities"),
+            &fenced_target.to_hex()
+        )
+        .is_none()
+    );
+    assert!(
+        map_get_bytes(&source_window.doc.get_map("entities"), &source.to_hex()).is_some(),
+        "ordinary source body must survive eager cross-window scrubbing"
+    );
+    assert_fenced_history_absent_from_export(
+        &vault,
+        &source_key,
+        &source_window.doc,
+        &fenced_target,
+        &source,
+        Some(&edge_key),
+    )?;
+    Ok(())
+}
+
 /// A hostile remote body for a locally fenced, never-written id is a terminal
 /// quarantine, but quarantine alone is insufficient: the body and incident
 /// edge must be deleted from the source Doc so a later VV export cannot relay

@@ -538,6 +538,103 @@ async fn inbound_update_with_fenced_carrier_is_not_relayed_verbatim() {
 }
 
 #[tokio::test]
+async fn inbound_set_then_delete_fenced_body_relays_and_persists_history_free() {
+    let (_dir, server) = test_server();
+    let key = "2026-03";
+    let fenced = entity_id(0x79);
+    let ordinary = entity_id(0x7A);
+    let private_sentinel = b"private server history sentinel";
+    server
+        .vault()
+        .enter_off_record_session("sess-server-history", oneiron::OffRecordBackendClass::Local)
+        .unwrap();
+    server
+        .vault()
+        .tag_turn_off_record("sess-server-history", &fenced)
+        .unwrap();
+
+    let incoming = client_window_doc();
+    insert_entity(
+        &incoming,
+        fenced,
+        oneiron::registry::ENTITY_TYPE_TASK,
+        private_sentinel,
+    );
+    insert_entity(
+        &incoming,
+        ordinary,
+        oneiron::registry::ENTITY_TYPE_TASK,
+        b"ordinary server history control",
+    );
+    incoming.commit();
+    incoming
+        .get_map("entities")
+        .delete(&fenced.to_hex())
+        .unwrap();
+    incoming.commit();
+    let payload = incoming.export(ExportMode::all_updates()).unwrap();
+    assert!(
+        payload
+            .windows(private_sentinel.len())
+            .any(|window| window == private_sentinel),
+        "hostile update must carry the deleted fenced body in Loro history"
+    );
+
+    let mut broadcast_rx = server.broadcast_tx.subscribe();
+    let (direct_tx, _direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let mut conn_state = test_legacy_conn_state();
+    handle_window_sync(
+        &server,
+        1,
+        key,
+        window_sub_tags::UPDATE,
+        &payload,
+        &direct_tx,
+        &mut conn_state,
+    )
+    .await
+    .unwrap();
+
+    let (_sender, relayed) = broadcast_rx.try_recv().expect("history-free broadcast");
+    let (_, sub_tag, relayed_payload) = expect_window_sync(&relayed);
+    assert_eq!(sub_tag, window_sub_tags::UPDATE);
+    assert_eq!(
+        LoroDoc::decode_import_blob_meta(&relayed_payload, false)
+            .unwrap()
+            .mode,
+        loro::EncodedBlobMode::ShallowSnapshot
+    );
+    assert!(
+        !relayed_payload
+            .windows(private_sentinel.len())
+            .any(|window| window == private_sentinel)
+    );
+    let peer = client_window_doc();
+    peer.import(&relayed_payload).unwrap();
+    assert!(peer.get_map("entities").get(&fenced.to_hex()).is_none());
+    assert!(peer.get_map("entities").get(&ordinary.to_hex()).is_some());
+
+    assert!(
+        server
+            .vault()
+            .sync_state_keys_with_prefix(&format!("u:w:{key}:"))
+            .unwrap()
+            .is_empty(),
+        "server must replace the raw frame with a sanitized snapshot"
+    );
+    let durable = server
+        .vault()
+        .sync_state_get(&format!("d:w:{key}"))
+        .unwrap()
+        .expect("history-free server snapshot");
+    assert!(
+        !durable
+            .windows(private_sentinel.len())
+            .any(|window| window == private_sentinel)
+    );
+}
+
+#[tokio::test]
 async fn vv_request_malformed_vv_fails_closed_no_fallback() {
     let (_dir, server) = test_server();
     let key = "2026-03";

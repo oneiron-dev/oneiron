@@ -719,6 +719,72 @@ fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() 
     );
 }
 
+#[test]
+fn observer_b_quarantines_fenced_edge_before_apply_and_keeps_ordinary_control() {
+    let vault = test_vault();
+    let source = EntityId::now();
+    let fenced_target = EntityId::now();
+    let ordinary_target = EntityId::now();
+    for id in [&source, &fenced_target, &ordinary_target] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                2,
+                &task_body(),
+            )
+            .unwrap();
+    }
+    vault
+        .enter_off_record_session(
+            "sess-observer-edge-fence",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-observer-edge-fence", &fenced_target)
+        .unwrap();
+
+    let doc = LoroDoc::new();
+    let edges = doc.get_map("edges");
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    for target in [&fenced_target, &ordinary_target] {
+        map_insert_bytes(
+            &edges,
+            &format_edge_key(&source, EdgeKind::Mentions, target),
+            &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.5, 10, Some(Vad::NEUTRAL), None)
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    doc.commit();
+
+    assert!(
+        !vault
+            .edge_exists(&source, EdgeKind::Mentions, &fenced_target)
+            .unwrap(),
+        "edge touching a fenced endpoint must be rejected before LMDB apply"
+    );
+    assert!(
+        vault
+            .edge_exists(&source, EdgeKind::Mentions, &ordinary_target)
+            .unwrap(),
+        "unrelated ordinary edge in the same Observer-B batch must survive"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .iter()
+            .any(|(_, record)| {
+                record.reason_code == "OffRecordFencedTurnWriteRejected"
+                    && record.container == crate::sync::quarantine::QuarantineContainer::Edges
+            }),
+        "rejected fenced edge must retain hashed quarantine evidence"
+    );
+}
+
 /// ONE-1122 AC2 — ARCH-0023b: "If tombstoned in CRDT → never resurrect";
 /// contracts.ts `user_hard_delete`: "Tombstone-first prevents sync
 /// resurrection". Hard delete writes the CRDT tombstone and (ONE-1132)

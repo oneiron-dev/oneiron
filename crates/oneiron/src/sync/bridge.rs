@@ -1136,6 +1136,27 @@ fn apply_materialized_edge_ops(
     let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
 
     for (index, op) in ops.into_iter().enumerate() {
+        let mut fenced_endpoint = None;
+        if let BatchOp::EdgeWithCreatedAt { src, tgt, .. } | BatchOp::Edge { src, tgt, .. } = &op {
+            for id in [src, tgt] {
+                if crate::off_record::off_record_fence_active(&vault.store, wtxn, id)? {
+                    fenced_endpoint = Some(*id);
+                    break;
+                }
+            }
+        }
+        if let Some(id) = fenced_endpoint {
+            quarantine_edge_apply_failure(
+                vault,
+                wtxn,
+                window_key,
+                &metas[index],
+                &Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: id.to_hex(),
+                },
+            )?;
+            continue;
+        }
         match &op {
             BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
             | BatchOp::Edge { src, kind, tgt, .. }
