@@ -454,14 +454,15 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
     let target_actor = "agent-before-legacy-window";
     let target_id = append_gate_decision(
         &vault,
-        1,
+        3,
         target_actor,
         "pending",
         "gate.pending.actor_ceiling",
     )?;
 
-    // UUIDv7 decision ids are time-ordered. Put the target in an earlier
-    // millisecond so every synthetic row below sorts ahead of it.
+    // The target has the older UUIDv7 decision id but the later event time.
+    // Connector-key gate rows can have this shape because their `created_at`
+    // is caller-supplied; selection must follow occurred_at, not scan order.
     std::thread::sleep(std::time::Duration::from_millis(2));
     vault.with_write_txn(|wtxn| {
         let mut decision = GateDecisionRecord {
@@ -492,9 +493,19 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
     let recent = vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Gate))?;
     assert_eq!(recent.len(), 1);
     assert_eq!(
+        recent[0].receipt_id,
+        format!("gate:{}", target_id.to_hex()),
+        "newest selection follows occurred_at across decision-id pages"
+    );
+    assert_eq!(
         gate_receipt_pages_scanned(),
+        2,
+        "non-monotonic timestamps require scanning every decision-id page"
+    );
+    assert_eq!(
+        gate_receipt_max_buffered(),
         1,
-        "a broad small-limit query must not scan older ledger pages"
+        "full pagination must retain only query.limit matching receipts"
     );
 
     reset_gate_receipt_pages_scanned();
@@ -513,6 +524,7 @@ fn gate_receipt_query_paginates_past_legacy_scan_window() -> Result<()> {
         2,
         "a filtered query must continue past the first page for an older match"
     );
+    assert_eq!(gate_receipt_max_buffered(), 1);
     Ok(())
 }
 

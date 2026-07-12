@@ -43,16 +43,23 @@ pub(crate) const MAX_RECEIPT_QUERY_SCAN: usize = 100_000;
 #[cfg(test)]
 thread_local! {
     static GATE_RECEIPT_PAGES_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GATE_RECEIPT_MAX_BUFFERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 fn reset_gate_receipt_pages_scanned() {
     GATE_RECEIPT_PAGES_SCANNED.set(0);
+    GATE_RECEIPT_MAX_BUFFERED.set(0);
 }
 
 #[cfg(test)]
 fn gate_receipt_pages_scanned() -> usize {
     GATE_RECEIPT_PAGES_SCANNED.get()
+}
+
+#[cfg(test)]
+fn gate_receipt_max_buffered() -> usize {
+    GATE_RECEIPT_MAX_BUFFERED.get()
 }
 const RECEIPT_VIEW_COMPONENT: &str = "receipt_view";
 const FIELD_JOB_REF: &str = "job_ref";
@@ -1534,13 +1541,32 @@ fn lineage_scan_query() -> ReceiptQuery {
 }
 
 fn sort_receipts_newest_first(records: &mut [ReceiptRecord]) {
-    records.sort_by(|left, right| {
-        right
-            .occurred_at
-            .cmp(&left.occurred_at)
-            .then_with(|| left.receipt_kind.cmp(&right.receipt_kind))
-            .then_with(|| left.receipt_id.cmp(&right.receipt_id))
-    });
+    records.sort_by(receipt_newest_first_order);
+}
+
+fn receipt_newest_first_order(left: &ReceiptRecord, right: &ReceiptRecord) -> std::cmp::Ordering {
+    right
+        .occurred_at
+        .cmp(&left.occurred_at)
+        .then_with(|| left.receipt_kind.cmp(&right.receipt_kind))
+        .then_with(|| left.receipt_id.cmp(&right.receipt_id))
+}
+
+fn retain_newest_receipt(receipts: &mut Vec<ReceiptRecord>, receipt: ReceiptRecord, limit: usize) {
+    if receipts.len() < limit {
+        receipts.push(receipt);
+        return;
+    }
+    let Some((oldest_index, oldest)) = receipts
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| receipt_newest_first_order(left, right))
+    else {
+        return;
+    };
+    if receipt_newest_first_order(&receipt, oldest).is_lt() {
+        receipts[oldest_index] = receipt;
+    }
 }
 
 fn finalize_receipt_query_records(
@@ -1687,15 +1713,18 @@ fn gate_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecor
         for decision in decisions {
             let receipt = gate_decision_receipt(&decision);
             if query.matches(&receipt) {
-                receipts.push(receipt);
-                // Gate decisions are scanned newest-first, so once every
-                // directly evaluable filter has produced `limit` matches,
-                // older pages cannot enter the final top-N. `job_ref` is the
-                // exception: its lineage join runs after collection and may
-                // discard these rows, so that path must remain exhaustive.
-                if query.job_ref.is_none() && receipts.len() == query.limit {
-                    return Ok(receipts);
+                if query.job_ref.is_none() {
+                    // Decision ids define ledger traversal, but connector-key
+                    // rows may carry caller-supplied, non-monotonic event
+                    // times. Scan every page while retaining only the exact
+                    // public newest-first top-N. `job_ref` stays exhaustive
+                    // because its lineage join runs after collection.
+                    retain_newest_receipt(&mut receipts, receipt, query.limit);
+                } else {
+                    receipts.push(receipt);
                 }
+                #[cfg(test)]
+                GATE_RECEIPT_MAX_BUFFERED.with(|max| max.set(max.get().max(receipts.len())));
             }
         }
         if page_len < MAX_RECEIPT_QUERY_SCAN {
