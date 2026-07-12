@@ -16,7 +16,9 @@ use crate::dreamer_runner::{
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-const JOB_RECORD_VERSION: u8 = 2;
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`crate::store::STORAGE_ABI_VERSION`] bump.
+pub(crate) const JOB_RECORD_VERSION: u8 = 2;
 const DEDUPE_DOMAIN: &[u8] = b"oneiron.job_queue.dedupe.v1\0";
 const DEDUPE_INDEX_KEY_LEN: usize = 32;
 const READY_KEY_LEN: usize = 24;

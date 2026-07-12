@@ -35,7 +35,7 @@ fn synthetic_pending_id(prefix: u8, value: u64) -> [u8; 16] {
 }
 
 fn synthetic_gate_decision_id(prefix: u8, value: u64) -> GateDecisionId {
-    GateDecisionId::from_bytes(&synthetic_pending_id(prefix, value))
+    GateDecisionId::from_bytes(synthetic_pending_id(prefix, value))
 }
 
 fn dreamer_envelope(actor: EntityId, run_id: &str) -> WriteEnvelope {
