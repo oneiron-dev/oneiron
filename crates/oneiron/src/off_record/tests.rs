@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
-use crate::error::ErrorKind;
+use crate::error::{Error, ErrorKind};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
@@ -11,6 +11,8 @@ use crate::outbound::{
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN};
 use crate::store::{GateDecisionId, GateDecisionRecord};
+#[cfg(feature = "sync")]
+use crate::sync::queue::SyncQueue;
 use crate::temporal::TimeRange;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -31,6 +33,44 @@ fn seed_turn(vault: &Vault, at: u64) -> EntityId {
         )
         .expect("seed turn");
     id
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn off_record_tag_scrubs_offline_updates_and_preserves_ordinary_state() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault =
+        std::sync::Arc::new(Vault::open(tmp.path(), VaultConfig::default()).expect("open vault"));
+    let fenced = seed_turn(&vault, 1_775_000_000);
+    let ordinary = seed_turn(&vault, 1_775_000_001);
+    let queue = SyncQueue::new(std::sync::Arc::clone(&vault)).unwrap();
+    queue
+        .push("2026-04", b"private queued fenced carrier")
+        .unwrap();
+    queue.push("2026-05", b"ordinary queued control").unwrap();
+
+    vault
+        .enter_off_record_session("sess-offline-queue", OffRecordBackendClass::Local)
+        .unwrap();
+    vault
+        .tag_turn_off_record("sess-offline-queue", &fenced)
+        .unwrap();
+
+    assert!(
+        queue.drain_updates().unwrap().is_empty(),
+        "opaque ordinary queue rows may retain fenced history and must be dropped"
+    );
+    for key in ["2026-04", "2026-05"] {
+        assert_eq!(
+            vault.sync_state_get(&format!("fr:w:{key}")).unwrap(),
+            Some(vec![1]),
+            "every affected window must be healed by full resync"
+        );
+    }
+    assert!(
+        vault.get_entity_type(&ordinary).unwrap().is_some(),
+        "ordinary durable state survives queue scrubbing and remains available to full resync"
+    );
 }
 
 fn surfaced_turns(vault: &Vault) -> Vec<EntityId> {
@@ -456,11 +496,11 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
 }
 
 /// Tag-before-write turn whose entity write lands AFTER close: the
-/// fence row must be retained so the late write cannot silently rejoin
-/// retrieval (the ARCH-0038 delete of a fully-missing id is a strict
-/// no-op with no tombstone to block it).
+/// sessionless fence marker must reject every entity write door. A
+/// fully-missing id stays a strict no-op at close: no tombstone and no
+/// receipt are minted for it.
 #[test]
-fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
+fn off_record_close_rejects_late_write_for_missing_turn_without_audit_artifacts() {
     let (_tmp, vault) = temp_vault();
     let written = seed_turn(&vault, 1000);
     let phantom = EntityId::now();
@@ -475,6 +515,12 @@ fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
         .tag_turn_off_record("sess-rejoin", &phantom)
         .expect("tag phantom");
 
+    // A headerless delete would address a tombstone to this current/requested
+    // at window, not the written fixture's historical window. Keep both
+    // probes explicit so this regression verifies the actual no-op surface.
+    #[cfg(feature = "sync")]
+    let requested_at_window =
+        crate::sync::types::WindowKey::from_timestamp(crate::unix_seconds_now());
     let log = vault
         .off_record_receipt_log("sess-rejoin")
         .expect("mint log");
@@ -484,13 +530,39 @@ fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
     assert_eq!(outcome.turns_deleted, 1);
     assert_eq!(outcome.turns_missing, 1);
     assert_eq!(outcome.fence_rows_retained, 1);
+    assert_eq!(
+        outcome.redaction_receipt_ids.len(),
+        1,
+        "only the actually written turn may mint a redaction receipt"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_REDACTION_AUDIT)
+            .expect("redaction receipt index")
+            .len(),
+        1,
+        "the tag-before-write turn must not mint a redaction receipt"
+    );
 
     // Deleted turn's fence row is gone; the missing turn's row remains.
     assert!(!vault.is_turn_off_record_fenced(&written).expect("probe"));
     assert!(vault.is_turn_off_record_fenced(&phantom).expect("probe"));
+    let rtxn = vault.store.env.read_txn().expect("read fence marker");
+    let retained = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &off_record_fence_key(&phantom))
+        .expect("load retained fence")
+        .expect("closed fence retained");
+    assert!(
+        retained.is_empty(),
+        "closed fence must not retain the evaporated session ref"
+    );
+    drop(rtxn);
 
-    // The in-flight write lands late — it must stay fenced, not rejoin.
-    vault
+    // The in-flight write lands late — the shared entity write door rejects
+    // it before it can create any entity/index/receipt side effects.
+    let late = vault
         .put_entity(
             &phantom,
             ENTITY_TYPE_TURN,
@@ -501,12 +573,115 @@ fn off_record_close_retains_fence_for_missing_turn_blocking_silent_rejoin() {
             1001,
             b"late-landing off-record turn",
         )
-        .expect("late write");
-    assert!(
-        surfaced_turns(&vault).is_empty(),
-        "late-landing fenced turn must not rejoin retrieval"
-    );
+        .expect_err("late write must be rejected");
+    assert_eq!(late.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(matches!(
+        late,
+        Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == phantom.to_hex()
+    ));
+
+    #[cfg(feature = "sync")]
+    {
+        let replay = vault
+            .batch()
+            .put_replicated(
+                &phantom,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: 1001,
+                    end: 1001,
+                },
+                1001,
+                b"late-replayed off-record turn",
+            )
+            .commit()
+            .expect_err("replicated late write must hit the same door");
+        assert_eq!(replay.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    }
+    assert!(vault.get(&phantom).expect("read phantom").is_none());
+    assert!(surfaced_turns(&vault).is_empty());
     assert!(dreamer_working_set_turns(&vault).is_empty());
+
+    #[cfg(feature = "sync")]
+    {
+        for key in [
+            crate::sync::types::WindowKey::from_timestamp(1000),
+            requested_at_window,
+        ] {
+            let doc = match crate::sync::window::load_window_from_state(&vault, "test", &key) {
+                Ok(doc) => doc,
+                // No `d:w:` state is itself the expected no-tombstone proof
+                // for an untouched requested-at window.
+                Err(Error::WindowNotFound { .. }) => continue,
+                Err(error) => panic!("load no-op tombstone window: {error:?}"),
+            };
+            assert!(
+                !crate::sync::loro_support::tombstone_map_contains_id(
+                    &doc.get_map("tombstones"),
+                    &phantom,
+                ),
+                "never-written turn must not mint a CRDT tombstone in {key}"
+            );
+        }
+    }
+}
+
+/// A retry after PolicyDelete's purge committed but before close removed its
+/// fence must recognize the permanent hard-delete marker as a deleted turn,
+/// rather than converting it into a closed tag-before-write fence.
+#[test]
+fn off_record_close_retry_keeps_completed_delete_out_of_missing_counts() {
+    let (_tmp, vault) = temp_vault();
+    let fenced = seed_turn(&vault, 1000);
+    vault
+        .enter_off_record_session("sess-close-retry", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-close-retry", &fenced)
+        .expect("tag");
+    let retry_log = vault
+        .off_record_receipt_log("sess-close-retry")
+        .expect("receipt log");
+
+    // Reproduce the interruption boundary: close's first transaction froze
+    // the session, then PolicyDelete completed, but final fence cleanup did
+    // not run before the process stopped.
+    vault
+        .with_write_txn(|wtxn| {
+            let mut record = session_record_in_txn(&vault.store, wtxn, "sess-close-retry")?
+                .expect("session record");
+            record.closing = true;
+            vault.store.vault_meta.put(
+                wtxn,
+                &off_record_session_key("sess-close-retry"),
+                &encode_off_record_session(&record)?,
+            )?;
+            Ok(())
+        })
+        .expect("freeze close");
+    let first_delete = vault
+        .delete_entity_with_reason(&fenced, crate::deletion::DeleteReason::PolicyDelete)
+        .expect("PolicyDelete before interruption");
+    assert!(first_delete.existed);
+    assert!(first_delete.receipt_id.is_some());
+
+    let outcome = vault
+        .close_off_record_session("sess-close-retry", retry_log)
+        .expect("retry close");
+    assert_eq!(outcome.turns_deleted, 1);
+    assert_eq!(outcome.turns_missing, 0);
+    assert_eq!(outcome.fence_rows_retained, 0);
+    assert!(
+        !vault
+            .is_turn_off_record_fenced(&fenced)
+            .expect("fence removed")
+    );
+    assert!(
+        vault
+            .off_record_session("sess-close-retry")
+            .expect("session")
+            .is_none()
+    );
 }
 
 #[test]

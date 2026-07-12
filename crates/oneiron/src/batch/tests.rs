@@ -5,6 +5,7 @@ use crate::claim::{
 use crate::config::{HnswConfig, VaultConfig};
 use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
+use crate::off_record::OffRecordBackendClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::write_envelope::ClaimCandidate;
@@ -760,6 +761,106 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
         0,
         "phase-2 validation failure must roll back the gate decision with the claim"
     );
+    Ok(())
+}
+
+/// A closed off-record fence rejects before standalone preflight can leave a
+/// decision receipt behind.
+#[test]
+fn standalone_claim_write_does_not_record_gate_decision_before_closed_fence_rejection() -> Result<()>
+{
+    let (_dir, vault) = open_raw_test_vault();
+    let claim = EntityId::now();
+    let (envelope, candidate) = claim_candidate_fixture(&vault, "fenced candidate")?;
+    vault.enter_off_record_session("sess-claim-preflight", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-claim-preflight", &claim)?;
+    let log = vault.off_record_receipt_log("sess-claim-preflight")?;
+    vault.close_off_record_session("sess-claim-preflight", log)?;
+    assert!(vault.gate_decisions(10)?.is_empty());
+
+    let err = vault
+        .batch()
+        .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+        .commit()
+        .expect_err("closed fence must reject before the gate decision persists");
+    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(vault.gate_decisions(10)?.is_empty());
+    assert!(vault.get_claim(&claim)?.is_none());
+    Ok(())
+}
+
+/// Covers the boundary after a standalone preflight has persisted its gate
+/// decision but before the apply pass can write the entity: close must remove
+/// that receipt when the tagged id remains missing and install the typed
+/// closed-fence denial for the late apply.
+#[test]
+fn off_record_close_removes_preflight_gate_decision_for_never_written_turn() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let claim = EntityId::now();
+    let (envelope, candidate) = claim_candidate_fixture(&vault, "preflight-close race")?;
+    vault.enter_off_record_session("sess-preflight-close", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-preflight-close", &claim)?;
+
+    let body = candidate.clone().into_claim_body(&envelope);
+    vault.with_write_txn(|wtxn| {
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?;
+        crate::gate::check_claim_policy_for_write(
+            &vault.store,
+            wtxn,
+            &claim,
+            &body,
+            Some(&envelope),
+            &policy,
+            crate::gate::GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+        )
+    })?;
+    assert_eq!(vault.gate_decisions(10)?.len(), 1);
+
+    let log = vault.off_record_receipt_log("sess-preflight-close")?;
+    let outcome = vault.close_off_record_session("sess-preflight-close", log)?;
+    assert_eq!(outcome.turns_deleted, 0);
+    assert_eq!(outcome.turns_missing, 1);
+    assert!(vault.gate_decisions(10)?.is_empty());
+
+    let err = vault
+        .batch()
+        .claim_candidate(&claim, candidate, &envelope, test_time_range(10, 10), 11)
+        .commit()
+        .expect_err("closed fence must reject the deferred apply");
+    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(vault.gate_decisions(10)?.is_empty());
+    assert!(vault.get_claim(&claim)?.is_none());
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_put_is_rejected_while_off_record_fence_is_live() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    vault.enter_off_record_session("sess-replicated-fence", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-replicated-fence", &turn)?;
+
+    let err = vault
+        .batch()
+        .put_replicated(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            test_time_range(10, 10),
+            10,
+            b"stale remote off-record turn",
+        )
+        .commit()
+        .expect_err("a remote payload must not materialize under a live fence");
+
+    assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(vault.get(&turn)?.is_none());
     Ok(())
 }
 

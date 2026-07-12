@@ -15,6 +15,10 @@
 //!   `pipeline_candidate_matches_filters_and_gate`). Fenced turns are never
 //!   surfaced to witness/extraction, and the tag outlives a same-session
 //!   flip back on-record: only promote or delete-at-close lifts it.
+//! * **Defer-sync** — fenced entities and incident edges are held out of
+//!   both window-packing paths until explicit promotion. The fence remains
+//!   device-local; promoting one turn lifts only that turn's fence, so only
+//!   that turn joins ordinary sync.
 //! * **Talk-only** — an outbound intent whose originating session is
 //!   currently in off-record mode is rejected by the dispatch spine with
 //!   the typed [`crate::Error::OffRecordTalkOnly`] (exit-prompt semantics).
@@ -59,13 +63,6 @@
 //! Ticketed follow-ups pending an owner design pass — deliberately named
 //! here, not silently absent:
 //!
-//! * **Fence rows do not sync.** The fence is a local `vault_meta` row; it
-//!   never rides the CRDT transport. A replica that received fenced turns
-//!   mid-session treats them as ordinary turns until close's tombstones
-//!   replay there: its extraction may surface them, replica-derived claims
-//!   survive the close, and a replica that goes offline before tombstone
-//!   replay retains the transcript indefinitely. True cross-device
-//!   evaporation needs the fence (or the session contract) on the wire.
 //! * **Whole-vault export refuses while a session is live.** The export seam
 //!   checks the durable session family before it writes an artifact, returning
 //!   a typed error naming the open session rather than producing a bundle that
@@ -75,7 +72,7 @@
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
 //!   that does not exist today.
 
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -91,6 +88,10 @@ const OFF_RECORD_SESSION_KEY_PREFIX: &[u8] = b"offrecord_session:v0:";
 const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
 /// `vault_meta` key prefix for durable promote receipts (survive close).
 const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
+/// Value replacing a tag-before-write fence after close. An empty value can
+/// never be a live session ref (`vet_off_record_session_ref` rejects empty),
+/// so it preserves the closed write door without retaining session metadata.
+const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
 
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
@@ -207,10 +208,10 @@ pub struct OffRecordCloseOutcome {
     /// Emit-adjacent receipts dropped with the session's
     /// [`SessionLocalReceiptLog`] (RECEIPTS-FOLLOW-TRANSCRIPT).
     pub emit_receipts_deleted: usize,
-    /// Fence rows kept for turns that were MISSING at delete time
-    /// (tag-before-write where the write had not landed). The retained row
-    /// keeps a late-landing write permanently fenced instead of letting it
-    /// rejoin retrieval silently; equals `turns_missing`.
+    /// Sessionless closed-fence rows kept for turns that were MISSING at
+    /// delete time (tag-before-write where the write had not landed). The
+    /// retained marker rejects a late entity write without keeping session
+    /// metadata; equals `turns_missing`.
     pub fence_rows_retained: usize,
     /// Promoted turns intentionally left in place.
     pub promoted_turns_kept: usize,
@@ -338,6 +339,44 @@ fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Resu
         return Ok(Some(session_ref.to_owned()));
     }
     Ok(None)
+}
+
+/// Fail-closed entity materialization door for off-record fences.
+///
+/// Every ordinary, typed, claim-candidate, and replicated entity put reaches
+/// this probe through `batch::apply_put` before it can stage bytes, index
+/// rows, or gate receipts. A live fence permits only the local
+/// tag-before-write flow; a replicated write, or a closing, closed, malformed,
+/// or mismatched fence rejects with a typed error. The retained post-close
+/// marker is sessionless, so this guard never needs to surface or preserve an
+/// evaporated session ref.
+pub(crate) fn guard_off_record_entity_put(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    replicated: bool,
+) -> Result<()> {
+    let fence_key = off_record_fence_key(id);
+    let Some(fence_value) = store.vault_meta.get(wtxn, &fence_key)? else {
+        return Ok(());
+    };
+
+    let rejected = || Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    };
+    let Some(session_ref) = std::str::from_utf8(fence_value)
+        .ok()
+        .filter(|session_ref| !session_ref.is_empty())
+    else {
+        return Err(rejected());
+    };
+    let Some(record) = session_record_in_txn(store, wtxn, session_ref)? else {
+        return Err(rejected());
+    };
+    if replicated || record.closing || !record.fenced_turns.contains(id.as_bytes()) {
+        return Err(rejected());
+    }
+    Ok(())
 }
 
 /// Loads the record for a mutator: errors when the session is unknown, and
@@ -474,6 +513,8 @@ impl Vault {
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
                 if existing == session_ref.as_bytes() {
+                    #[cfg(feature = "sync")]
+                    crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());
                 }
                 return Err(Error::InvariantViolation(
@@ -494,8 +535,41 @@ impl Vault {
                 &off_record_session_key(session_ref),
                 &encode_off_record_session(&record)?,
             )?;
+            #[cfg(feature = "sync")]
+            crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
             Ok(())
-        })
+        })?;
+
+        // The fence is durable before touching the CRDT. If this turn was
+        // already present in a registry-owned window, scrub its body and
+        // incident edges now instead of waiting for a later packing pass.
+        // Export paths also run the same scrub as a fail-closed backstop; a
+        // refresh failure therefore must not turn the committed tag into an
+        // ambiguous error response.
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.scrub_tagged_turn_in_live_window(turn_id) {
+            tracing::warn!(
+                turn = %turn_id.to_hex(),
+                error = %error,
+                "off-record fence committed but live-window carrier scrub deferred to export"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Scrubs a newly fenced turn from every registry-owned live window.
+    /// Incident edges live in their source entity's month, which can differ
+    /// from the fenced target's month. This never faults a closed window into
+    /// memory; persistence/VV export performs the same whole-doc backstop.
+    #[cfg(feature = "sync")]
+    fn scrub_tagged_turn_in_live_window(&self, _turn_id: &EntityId) -> Result<()> {
+        use crate::sync::window::scrub_off_record_fenced_carriers;
+
+        for window in self.live_windows() {
+            scrub_off_record_fenced_carriers(self, &window.key, &window.doc)?;
+        }
+        Ok(())
     }
 
     /// Whether `id` is currently fenced off-record (public probe over the
@@ -553,7 +627,7 @@ impl Vault {
         turn_id: &EntityId,
     ) -> Result<OffRecordPromoteReceipt> {
         vet_off_record_session_ref(session_ref)?;
-        self.with_write_txn(|wtxn| {
+        let receipt = self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             let position = record
                 .fenced_turns
@@ -586,7 +660,53 @@ impl Vault {
                 &encode_off_record_session(&record)?,
             )?;
             Ok(receipt)
-        })
+        })?;
+
+        // A window that was already open deferred this turn's `pm:` marker
+        // while its fence was active. Refresh that registry-owned doc after
+        // the durable fence lift so the explicit promotion is visible to sync
+        // immediately, rather than only after the window is unloaded and
+        // opened again. The receipt/fence transaction is authoritative and
+        // already committed here; a refresh failure leaves the `pm:` marker
+        // durable for normal open-time recovery, so it must not turn a
+        // completed user promotion into an ambiguous error response.
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.refresh_promoted_turn_in_live_window(turn_id) {
+            tracing::warn!(
+                turn = %turn_id.to_hex(),
+                error = %error,
+                "off-record promotion committed but live-window sync refresh deferred to recovery"
+            );
+        }
+
+        Ok(receipt)
+    }
+
+    /// Catches a promoted turn up in its already-loaded sync window, if any.
+    ///
+    /// The live window is a registry lookup only: promotion must never fault
+    /// an older month into memory. `pm:` replay comes before reverse
+    /// re-materialization, matching the pinned open-time recovery order.
+    #[cfg(feature = "sync")]
+    fn refresh_promoted_turn_in_live_window(&self, turn_id: &EntityId) -> Result<()> {
+        use crate::sync::window::{replay_pending_mirrors, reverse_rematerialize};
+
+        // The promoted body lives in its learned-at window, but incident
+        // edges are packed by SOURCE window. Refresh every window that is
+        // already live so a cross-month source edge appears immediately;
+        // closed windows remain untouched and recover through normal open.
+        for window in self.live_windows() {
+            let replayed = replay_pending_mirrors(self, &window.doc, &window.key)?;
+            let mirrored = reverse_rematerialize(self, &window.doc, &window.key)?;
+            tracing::debug!(
+                turn = %turn_id.to_hex(),
+                window = %window.key,
+                replayed,
+                mirrored,
+                "off-record promotion refreshed live sync window"
+            );
+        }
+        Ok(())
     }
 
     /// Reads the durable promote receipt for `turn_id`, if the turn was ever
@@ -643,12 +763,12 @@ impl Vault {
     /// hard-delete a just-promoted, user-consented turn). The FINAL
     /// transaction re-reads the record and fails closed on drift instead of
     /// trusting the snapshot. Fence rows for turns that were MISSING at
-    /// delete time are RETAINED: a tag-before-write turn whose write lands
-    /// after close stays permanently fenced instead of silently rejoining
-    /// retrieval. Fence rows for deleted turns and the session record are
-    /// removed LAST, so a close interrupted mid-way can simply be called
-    /// again (mint a fresh empty log via [`Vault::off_record_receipt_log`]
-    /// to retry).
+    /// delete time become sessionless closed-fence markers: a tag-before-write
+    /// turn whose write lands after close is rejected at the entity write
+    /// door instead of silently rejoining retrieval. Fence rows for deleted
+    /// turns and the session record are removed LAST, so a close interrupted
+    /// mid-way can simply be called again (mint a fresh empty log via
+    /// [`Vault::off_record_receipt_log`] to retry).
     pub fn close_off_record_session(
         &self,
         session_ref: &str,
@@ -697,9 +817,23 @@ impl Vault {
             if outcome.existed {
                 turns_deleted += 1;
             } else {
-                // Fully-missing id: the ARCH-0038 delete is a strict no-op
-                // (no tombstone) — remember it so its fence row is retained.
-                missing_turns.push(*bytes);
+                let rtxn = self.store.env.read_txn()?;
+                let already_hard_deleted =
+                    self.local_hard_delete_marker_exists_in_txn(&rtxn, &id)?;
+                drop(rtxn);
+                if already_hard_deleted {
+                    // A crash can land after PolicyDelete's purge transaction
+                    // (which writes the permanent `dt:` marker) but before this
+                    // close path removes the fence row. On retry the entity is
+                    // absent, but it was a written turn already deleted by this
+                    // close; treating it as tag-before-write would retain a
+                    // permanent closed fence and misreport the outcome.
+                    turns_deleted += 1;
+                } else {
+                    // Fully-missing id: the ARCH-0038 delete is a strict no-op
+                    // (no tombstone) — remember it so its fence row is retained.
+                    missing_turns.push(*bytes);
+                }
             }
             if let Some(receipt_id) = outcome.receipt_id {
                 redaction_receipt_ids.push(receipt_id);
@@ -713,8 +847,8 @@ impl Vault {
 
         // Final txn: re-read and fail closed on drift (defense-in-depth —
         // the closing flag already blocks mutators), then remove fence rows
-        // for DELETED turns only and drop the record. A missing turn keeps
-        // its fence row so a late-landing write stays fenced.
+        // for DELETED turns only and drop the record. A missing turn keeps a
+        // sessionless marker so every late entity write is rejected.
         self.with_write_txn(|wtxn| {
             let current =
                 session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
@@ -732,10 +866,25 @@ impl Vault {
                 ));
             }
             for bytes in &record.fenced_turns {
+                let id = EntityId::from_bytes(*bytes)?;
                 if missing_turns.contains(bytes) {
+                    // Keep the write-door denial without retaining the
+                    // session ref after close (session metadata evaporates).
+                    // A standalone claim preflight can have recorded a gate
+                    // decision while this fence was live, before close won
+                    // the race and prevented the actual entity write. That
+                    // receipt names a turn which never entered the vault, so
+                    // delete it with the closed-fence marker rather than
+                    // leaking an off-record artifact.
+                    self.store
+                        .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &id)?;
+                    self.store.vault_meta.put(
+                        wtxn,
+                        &off_record_fence_key(&id),
+                        OFF_RECORD_CLOSED_FENCE_VALUE,
+                    )?;
                     continue;
                 }
-                let id = EntityId::from_bytes(*bytes)?;
                 self.store
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(&id))?;

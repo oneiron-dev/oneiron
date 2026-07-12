@@ -221,6 +221,11 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::ReceiptAttestationInvalid
         | ErrorKind::ReceiptLeaseUnknown
         | ErrorKind::ReceiptLeaseRevoked
+        // OFRC-2i: a replicated turn landing after its off-record session
+        // closed is a rejection of that remote op. It must take the same
+        // Observer-B / forward-remat quarantine-and-continue path as the
+        // other typed remote write-door rejections.
+        | ErrorKind::OffRecordFencedTurnWriteRejected
         // ONE-1326: a known-key maintenance-band flood that passes origin
         // validation but exceeds this device's local ingest budget is a
         // remote-op rejection. Quarantine keeps evidence and lets a later
@@ -1022,10 +1027,11 @@ pub(crate) fn drain_reassert_markers_for_window(
     window_key: &WindowKey,
 ) -> Result<bool> {
     use crate::sync::bridge::BRIDGE_ORIGIN;
-    use crate::sync::loro_support::{doc_version_vector, export_snapshot};
+    use crate::sync::loro_support::doc_version_vector;
     use crate::sync::window::{
-        apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
-        merge_persisted_state_into_doc, persist_window_doc_in_txn, rebuild_window_from_updates,
+        apply_tombstone_to_window_doc, export_scrubbed_window_snapshot,
+        export_tombstone_commit_delta, load_window_from_state, merge_persisted_state_into_doc,
+        persist_window_doc_in_txn, rebuild_window_from_updates,
     };
     use loro::CommitOptions;
 
@@ -1061,7 +1067,7 @@ pub(crate) fn drain_reassert_markers_for_window(
             let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
             (
                 delete_update,
-                export_snapshot(&window.doc)?,
+                export_scrubbed_window_snapshot(vault, window_key, &window.doc)?,
                 doc_version_vector(&window.doc),
             )
         }
@@ -1086,7 +1092,7 @@ pub(crate) fn drain_reassert_markers_for_window(
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
             (
                 delete_update,
-                export_snapshot(&doc)?,
+                export_scrubbed_window_snapshot(vault, window_key, &doc)?,
                 doc_version_vector(&doc),
             )
         }

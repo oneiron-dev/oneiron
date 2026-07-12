@@ -843,6 +843,18 @@ fn preflight_gate_decisions_in_txn(
         return Ok(());
     }
 
+    // #493 now owns this caller-provided transaction: gate receipts remain
+    // atomic with phase-2 apply and metrics are emitted only after commit.
+    // Run #498's entity write door in that SAME transaction before any gate
+    // receipt is appended, so a closed off-record fence cannot leave a
+    // decision behind when the later materialization is rejected.
+    for op in ops {
+        let id = match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
+            _ => continue,
+        };
+        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false)?;
+    }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
         let mut recorded_decision = None;
@@ -2516,6 +2528,12 @@ fn apply_put(
     include_source_in_gate_input: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
+    // OFRC-2i: this is the shared entity materialization choke point for
+    // public/typed puts, claim candidates, and replicated replay. A live
+    // fence admits only the local tag-before-write path; replicated writes
+    // and closed fences reject before any validation or side effect can mint
+    // an index row, gate receipt, or late entity body.
+    crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
     // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at
     // one of them would resolve at the gate as a system preset with its

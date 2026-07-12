@@ -1768,6 +1768,43 @@ impl Store {
         Ok(None)
     }
 
+    /// Removes gate decisions for an id that remained unwritten when an
+    /// off-record session closed. Such decisions can only be standalone
+    /// preflight artifacts: retaining one would leave an accountability row
+    /// for a fenced turn that never entered the vault.
+    pub(crate) fn delete_gate_decisions_for_missing_off_record_turn_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        turn_id: &EntityId,
+    ) -> Result<usize> {
+        let upper = gate_decision_upper_bound();
+        let mut keys = Vec::new();
+        for row in self.vault_meta.rev_range(
+            wtxn,
+            &(
+                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
+                break;
+            }
+            let decision_id = gate_decision_id_from_key(key)?;
+            let record = decode_gate_decision(value)?;
+            if record.decision_id != decision_id {
+                return Err(Error::CorruptedIndex("gate decision ledger"));
+            }
+            if record.claim_id == Some(*turn_id.as_bytes()) {
+                keys.push(key.to_vec());
+            }
+        }
+        for key in &keys {
+            self.vault_meta.delete(wtxn, key)?;
+        }
+        Ok(keys.len())
+    }
+
     /// Persists the opaque gate-surface bytes for a scheduled outbound job id
     /// (its own committed write txn). Overwrites any prior value for the id.
     pub(crate) fn put_outbound_gate_binding(&self, job_id: &[u8; 16], value: &[u8]) -> Result<()> {
