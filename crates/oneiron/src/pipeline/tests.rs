@@ -1843,18 +1843,54 @@ fn recency_boost_orders_text_channel_before_truncation() -> Result<()> {
     put_text_at(&vault, old, "limitrecencyneedle", 1)?;
     put_text_at(&vault, fresh, "limitrecencyneedle", now)?;
 
-    let baseline = vault.query().search_text("limitrecencyneedle", 1).run()?;
+    let baseline = vault
+        .query()
+        .search_text("limitrecencyneedle", 1)
+        .filter_types(&[1])
+        .run()?;
     assert_eq!(baseline[0].id, old, "baseline tie breaks by entity id");
 
     let boosted = vault
         .query()
         .search_text("limitrecencyneedle", 1)
+        .filter_types(&[1])
         .boost_recency(0.01)
         .run()?;
     assert_eq!(
         boosted[0].id, fresh,
         "fresh text hit must win before the BM25 channel is truncated"
     );
+    Ok(())
+}
+
+#[test]
+fn scoped_recency_text_overfetch_is_bounded_after_filtering() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let now = crate::unix_seconds_now();
+    let old = [
+        entity_id(0x10),
+        entity_id(0x20),
+        entity_id(0x30),
+        entity_id(0x40),
+    ];
+    let fresh_beyond_overfetch = entity_id(0x50);
+
+    for id in old {
+        put_text_at(&vault, id, "scopedrecencycap", 1)?;
+    }
+    put_text_at(&vault, fresh_beyond_overfetch, "scopedrecencycap", now)?;
+
+    let results = vault
+        .query()
+        .search_text("scopedrecencycap", 1)
+        .filter_types(&[1])
+        .boost_recency(0.01)
+        .limit(1)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, old[0]);
+    assert_ne!(results[0].id, fresh_beyond_overfetch);
     Ok(())
 }
 
@@ -2020,6 +2056,306 @@ fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, live_exact);
+    Ok(())
+}
+
+#[test]
+fn fenced_text_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    put_text(&vault, fenced_a, "fencechannel fencechannel fencechannel")?;
+    put_text(&vault, fenced_b, "fencechannel fencechannel")?;
+    put_text(&vault, live_a, "fencechannel")?;
+    put_text(&vault, live_b, "fencechannel")?;
+
+    let fence_free_results = vault
+        .query()
+        .search_text("fencechannel", 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "text-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("text-fence", &fenced_a)?;
+    vault.tag_turn_off_record("text-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_text("fencechannel", 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn fenced_recency_text_rows_do_not_exhaust_overfetch_window() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let live = [
+        entity_id(0x10),
+        entity_id(0x11),
+        entity_id(0x12),
+        entity_id(0x13),
+        entity_id(0x14),
+    ];
+    let now = crate::unix_seconds_now();
+
+    for id in fenced {
+        put_text_at(&vault, id, "fencedrecencywindow", now)?;
+    }
+    for id in live {
+        put_text_at(&vault, id, "fencedrecencywindow", now)?;
+    }
+
+    vault.enter_off_record_session(
+        "text-recency-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    for id in fenced {
+        vault.tag_turn_off_record("text-recency-fence", &id)?;
+    }
+
+    let results = vault
+        .query()
+        .search_text("fencedrecencywindow", 1)
+        .boost_recency(0.01)
+        .limit(1)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, live[0]);
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut widened = std::iter::once(fenced[0])
+        .chain(live)
+        .map(|id| ScoredEntity { id, score: 1.0 })
+        .collect();
+    apply_off_record_fence_with_cap(&mut widened, &vault.store, &rtxn, 4)?;
+    assert_eq!(
+        widened.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        live[..4]
+    );
+    Ok(())
+}
+
+#[test]
+fn fenced_vector_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    put_vector(&vault, fenced_a, [1.0, 0.0, 0.0, 0.0])?;
+    put_vector(&vault, fenced_b, [0.99, 0.01, 0.0, 0.0])?;
+    put_vector(&vault, live_a, [0.0, 1.0, 0.0, 0.0])?;
+    put_vector(&vault, live_b, [0.0, 0.0, 1.0, 0.0])?;
+
+    let fence_free_results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "vector-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-fence", &fenced_a)?;
+    vault.tag_turn_off_record("vector-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn unrelated_vector_fence_preserves_scoped_overfetch() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let in_scope_a = entity_id(0x10);
+    let in_scope_b = entity_id(0x11);
+    let repo_a =
+        RepoRef::parse("github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277")?;
+    let repo_b =
+        RepoRef::parse("github:oneiron-dev/other#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+
+    put_codebase_vector(
+        &vault,
+        fenced,
+        "project.alpha",
+        repo_a,
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+    put_codebase_vector(
+        &vault,
+        in_scope_a,
+        "project.beta",
+        repo_b.clone(),
+        [0.9, 0.1, 0.0, 0.0],
+    )?;
+    put_codebase_vector(
+        &vault,
+        in_scope_b,
+        "project.beta",
+        repo_b,
+        [0.8, 0.2, 0.0, 0.0],
+    )?;
+
+    vault.enter_off_record_session(
+        "unrelated-vector-scope-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("unrelated-vector-scope-fence", &fenced)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_project_id("project.beta")
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![in_scope_a, in_scope_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn vector_fence_replacement_does_not_apply_post_fusion_type_filter() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let wrong_type = entity_id(0x10);
+    let deeper_match = entity_id(0x20);
+
+    put_vector(&vault, fenced, [1.0, 0.0, 0.0, 0.0])?;
+    vault
+        .batch()
+        .put(
+            &wrong_type,
+            2,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"payload",
+        )
+        .vector(&wrong_type, &[0.99, 0.01, 0.0, 0.0])
+        .commit()?;
+    put_vector(&vault, deeper_match, [0.98, 0.02, 0.0, 0.0])?;
+
+    vault.enter_off_record_session(
+        "vector-post-filter-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-post-filter-fence", &fenced)?;
+
+    let results = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .filter_types(&[1])
+        .limit(1)
+        .run()?;
+
+    assert!(results.is_empty());
+    Ok(())
+}
+
+#[test]
+fn vector_fence_widening_grows_in_bounded_batches() {
+    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10_000), 20);
+    assert_eq!(next_vector_fence_search_limit(10, 0, 10, 10_000), 20);
+    assert_eq!(next_vector_fence_search_limit(10, 9, 10, 10), 10);
+}
+
+#[test]
+fn temporal_fence_replacement_scan_budget_is_bounded() {
+    assert_eq!(temporal_fence_scan_budget(4, false), 4);
+    assert_eq!(temporal_fence_scan_budget(4, true), 16);
+    assert_eq!(
+        temporal_fence_scan_budget(MAX_TEMPORAL_SEEK_BUFFER, true),
+        MAX_TEMPORAL_SEEK_BUFFER
+    );
+}
+
+#[test]
+fn vector_widening_probe_does_not_export_discarded_claim_gate_decisions() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let fenced = entity_id(0x01);
+    let retracted_claim = entity_id(0x10);
+    let live_result = entity_id(0x20);
+
+    put_vector(&vault, fenced, [1.0, 0.0, 0.0, 0.0])?;
+    vault
+        .batch()
+        .put(
+            &retracted_claim,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &claim_body_bytes(
+                crate::claim::ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Retracted,
+                false,
+            ),
+        )
+        .vector(&retracted_claim, &[0.99, 0.01, 0.0, 0.0])
+        .commit()?;
+    put_vector(&vault, live_result, [0.98, 0.02, 0.0, 0.0])?;
+
+    vault.enter_off_record_session(
+        "vector-claim-gate-probe",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("vector-claim-gate-probe", &fenced)?;
+
+    let output = vault
+        .query()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 1)
+        .limit(1)
+        .run_for_pack()?;
+
+    assert_eq!(output.scores.len(), 1);
+    assert_eq!(output.scores[0].id, live_result);
+    assert_eq!(output.claims_suppressed, 0);
+    assert!(output.claim_bodies.is_empty());
     Ok(())
 }
 
@@ -2648,6 +2984,153 @@ fn recency_boost_auto_skips_when_temporal_search_present() -> Result<()> {
 }
 
 #[test]
+fn fenced_temporal_rows_do_not_consume_channel_limit_slots() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let fenced_a = entity_id(0x01);
+    let fenced_b = entity_id(0x02);
+    let live_a = entity_id(0x10);
+    let live_b = entity_id(0x11);
+
+    for id in [fenced_a, fenced_b, live_a, live_b] {
+        put_entity(&vault, id, 1, anchor, anchor, anchor)?;
+    }
+
+    let fence_free_results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 2)
+        .limit(2)
+        .run()?;
+    assert_eq!(
+        fence_free_results
+            .iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
+        vec![fenced_a, fenced_b]
+    );
+
+    vault.enter_off_record_session(
+        "temporal-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("temporal-fence", &fenced_a)?;
+    vault.tag_turn_off_record("temporal-fence", &fenced_b)?;
+
+    let results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 2)
+        .limit(2)
+        .run()?;
+
+    assert_eq!(
+        results.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        vec![live_a, live_b]
+    );
+    Ok(())
+}
+
+#[test]
+fn fenced_temporal_candidates_do_not_stop_adaptive_widening() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let live = entity_id(0x10);
+
+    for id in fenced {
+        put_entity(&vault, id, 1, anchor, anchor, anchor)?;
+    }
+    put_entity(
+        &vault,
+        live,
+        1,
+        anchor + 8 * 86_400,
+        anchor + 8 * 86_400,
+        anchor,
+    )?;
+
+    vault.enter_off_record_session(
+        "temporal-adaptive-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    for id in fenced {
+        vault.tag_turn_off_record("temporal-adaptive-fence", &id)?;
+    }
+
+    let results = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, live);
+    Ok(())
+}
+
+#[test]
+fn unrelated_temporal_fence_does_not_expand_candidate_window() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = 2_000_000;
+    let old_learned_at = 1;
+    let close = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let outside_cap = entity_id(0x10);
+    let unrelated = entity_id(0x20);
+
+    for id in close {
+        put_entity(&vault, id, 1, anchor, anchor, old_learned_at)?;
+    }
+    put_entity(
+        &vault,
+        outside_cap,
+        1,
+        anchor + 86_400,
+        anchor + 86_400,
+        anchor,
+    )?;
+    put_entity(
+        &vault,
+        unrelated,
+        1,
+        anchor + 30 * 86_400,
+        anchor + 30 * 86_400,
+        anchor,
+    )?;
+
+    let before = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    vault.enter_off_record_session(
+        "unrelated-temporal-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    vault.tag_turn_off_record("unrelated-temporal-fence", &unrelated)?;
+
+    let after = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .with_temporal_now(anchor)
+        .run()?;
+
+    assert_eq!(before, after);
+    assert_eq!(after.len(), 1);
+    assert_ne!(after[0].id, outside_cap);
+    Ok(())
+}
+
+#[test]
 fn three_index_scan_discovers_end_only_candidate() -> Result<()> {
     let (_dir, vault) = open_test_vault();
 
@@ -2748,6 +3231,7 @@ fn long_interval_scan_counts_only_spanners_toward_cap() -> Result<()> {
         TemporalCandidateCollectionContext {
             radius: window,
             per_scan_cap: PER_SCAN_CAP_FACTOR,
+            off_record_fences_present: false,
         },
         &mut metadata_cache,
         &scoring,
@@ -2848,6 +3332,7 @@ fn long_interval_scan_does_not_spend_cap_on_preexisting_ids() -> Result<()> {
         TemporalCandidateCollectionContext {
             radius: 86_400,
             per_scan_cap: PER_SCAN_CAP_FACTOR,
+            off_record_fences_present: false,
         },
         &mut metadata_cache,
         &scoring,
@@ -2872,11 +3357,15 @@ fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
     let mut out = HashSet::new();
     collect_index_candidates(
         &vault.store.temporal_occurred_start,
+        &vault.store,
         &rtxn,
-        0,
-        timestamp,
-        100,
-        4,
+        TemporalIndexCollectionContext {
+            window_start: 0,
+            window_end: timestamp,
+            anchor_mid: 100,
+            cap: 4,
+            off_record_fences_present: false,
+        },
         &mut out,
     )?;
 
@@ -2885,6 +3374,49 @@ fn backward_seek_preserves_lowest_ids_with_same_timestamp() -> Result<()> {
     assert!(out.contains(&entity_id(42)));
     assert!(out.contains(&entity_id(43)));
     assert!(!out.contains(&entity_id(44)));
+    Ok(())
+}
+
+#[test]
+fn backward_boundary_replay_keeps_live_row_behind_fences() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let timestamp = 99;
+    let fenced = [
+        entity_id(0x01),
+        entity_id(0x02),
+        entity_id(0x03),
+        entity_id(0x04),
+    ];
+    let live = entity_id(0x10);
+
+    for id in fenced.into_iter().chain(std::iter::once(live)) {
+        put_entity(&vault, id, 1, timestamp, timestamp, timestamp)?;
+    }
+    vault.enter_off_record_session(
+        "backward-boundary-fence",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    for id in fenced {
+        vault.tag_turn_off_record("backward-boundary-fence", &id)?;
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = HashSet::new();
+    collect_index_candidates(
+        &vault.store.temporal_occurred_start,
+        &vault.store,
+        &rtxn,
+        TemporalIndexCollectionContext {
+            window_start: 0,
+            window_end: timestamp,
+            anchor_mid: 100,
+            cap: 1,
+            off_record_fences_present: true,
+        },
+        &mut out,
+    )?;
+
+    assert_eq!(out, HashSet::from([live]));
     Ok(())
 }
 
@@ -2911,7 +3443,14 @@ fn future_events_are_scored() -> Result<()> {
     };
     let rtxn = vault.store.env.read_txn()?;
     let mut metadata_cache = EntityMetadataCache::default();
-    let results = execute_temporal(&vault.store, &rtxn, &config, now, &mut metadata_cache)?;
+    let results = execute_temporal(
+        &vault.store,
+        &rtxn,
+        &config,
+        false,
+        now,
+        &mut metadata_cache,
+    )?;
 
     let scored = results
         .iter()
@@ -3050,8 +3589,22 @@ fn granularity_sigma_ordering() -> Result<()> {
 
         let rtxn = vault.store.env.read_txn()?;
         let mut metadata_cache = EntityMetadataCache::default();
-        let results_a = execute_temporal(&vault.store, &rtxn, &cfg_a, anchor, &mut metadata_cache)?;
-        let results_b = execute_temporal(&vault.store, &rtxn, &cfg_b, anchor, &mut metadata_cache)?;
+        let results_a = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_a,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
+        let results_b = execute_temporal(
+            &vault.store,
+            &rtxn,
+            &cfg_b,
+            false,
+            anchor,
+            &mut metadata_cache,
+        )?;
 
         let score_a = results_a
             .iter()

@@ -184,6 +184,16 @@ struct TemporalScoringContext {
 struct TemporalCandidateCollectionContext {
     radius: u64,
     per_scan_cap: usize,
+    off_record_fences_present: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TemporalIndexCollectionContext {
+    window_start: u64,
+    window_end: u64,
+    anchor_mid: u64,
+    cap: usize,
+    off_record_fences_present: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -208,6 +218,7 @@ struct PipelineFilterConfig<'a> {
     project_id_filter: Option<&'a str>,
     facet_filter: Option<(EntityId, FacetMode)>,
     world_scope: WorldScope,
+    off_record_fences_present: bool,
 }
 
 #[derive(Default)]
@@ -1077,6 +1088,8 @@ impl<'a> PipelineBuilder<'a> {
             let mut claim_gate = ClaimStatusGateCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let codebase_scope_active = self.has_codebase_scope_filter();
+            let off_record_fences_present =
+                crate::off_record::off_record_fences_present(&self.vault.store, &rtxn)?;
             let filter_config = PipelineFilterConfig {
                 type_filter: self.type_filter.as_deref(),
                 since_filter: self.since_filter,
@@ -1086,6 +1099,7 @@ impl<'a> PipelineBuilder<'a> {
                 project_id_filter: self.project_id_filter.as_deref(),
                 facet_filter: self.facet_filter,
                 world_scope: self.world_scope,
+                off_record_fences_present,
             };
             // D19 is always active. For final-token prefix queries, a dead
             // claim can outrank a live prefix hit in BM25, then be removed
@@ -1180,7 +1194,7 @@ impl<'a> PipelineBuilder<'a> {
                     *limit,
                     codebase_scope_active,
                 )?;
-                let vector_results = crate::hnsw::hnsw_search(
+                let mut vector_results = crate::hnsw::hnsw_search(
                     &self.vault.store,
                     &self.vault.config,
                     &rtxn,
@@ -1188,6 +1202,63 @@ impl<'a> PipelineBuilder<'a> {
                     channel_limit,
                     self.skip_vector_rescore,
                 )?;
+                // OFRC-2iii: preserve the fence-free channel path; widen
+                // only when a returned row would otherwise consume a slot.
+                let mut vector_probe_claim_gate = ClaimStatusGateCache::default();
+                if off_record_fences_present
+                    && contains_off_record_fence(&vector_results, &self.vault.store, &rtxn)?
+                {
+                    if channel_limit > *limit {
+                        apply_off_record_fence(&mut vector_results, &self.vault.store, &rtxn)?;
+                    } else {
+                        let entity_count =
+                            crate::hnsw::hnsw_entity_count(&self.vault.store, &rtxn)?;
+                        let mut search_limit = channel_limit;
+                        loop {
+                            let mut filtered_results = vector_results;
+                            let mut filtered_claim_gate = ClaimStatusGateCache::default();
+                            truncate_vector_fence_replacements(
+                                &mut filtered_results,
+                                &self.vault.store,
+                                &rtxn,
+                                *limit,
+                                &mut metadata_cache,
+                                &mut filtered_claim_gate,
+                            )?;
+                            if filtered_results.len() >= *limit || search_limit >= entity_count {
+                                vector_results = filtered_results;
+                                vector_probe_claim_gate = filtered_claim_gate;
+                                break;
+                            }
+
+                            let next_limit = next_vector_fence_search_limit(
+                                search_limit,
+                                filtered_results.len(),
+                                *limit,
+                                entity_count,
+                            );
+                            if next_limit == search_limit {
+                                vector_results = filtered_results;
+                                vector_probe_claim_gate = filtered_claim_gate;
+                                break;
+                            }
+                            search_limit = next_limit;
+                            vector_results = crate::hnsw::hnsw_search(
+                                &self.vault.store,
+                                &self.vault.config,
+                                &rtxn,
+                                query_vector,
+                                search_limit,
+                                self.skip_vector_rescore,
+                            )?;
+                        }
+                    }
+                }
+                import_claim_gate_decisions_for_scores(
+                    &mut claim_gate,
+                    &mut vector_probe_claim_gate,
+                    &vector_results,
+                );
                 add_signal_score_components(
                     &mut signal_components,
                     RetrievalSignal::Vector,
@@ -1215,16 +1286,16 @@ impl<'a> PipelineBuilder<'a> {
             }
 
             if let Some((query, limit)) = &self.text_search {
-                let scoped_text_channel_limit = scoped_text_channel_limit(
+                let scoped_text_limit = scoped_text_channel_limit(
                     &self.vault.store,
                     &rtxn,
                     *limit,
                     text_scope_widening_active,
                 )?;
                 let text_channel_limit = if recency.is_some() {
-                    scoped_text_channel_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
+                    scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
                 } else {
-                    scoped_text_channel_limit
+                    scoped_text_limit
                 };
                 let mut prefix_probe_claim_gate = claim_gate_widening_probe;
                 let mut exact_posting_matches_scope = |id: &EntityId| {
@@ -1249,16 +1320,62 @@ impl<'a> PipelineBuilder<'a> {
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
                     },
                 )?;
+                // OFRC-2iii: the D19 widening path below already fences
+                // before truncation. For an otherwise exact text limit,
+                // widen only after a fenced hit is observed.
                 if text_channel_limit > *limit && text_scope_widening_active {
-                    truncate_widened_text_results_to_scope(
+                    let scoped_result_limit = if recency.is_some() {
+                        limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+                    } else {
+                        *limit
+                    };
+                    truncate_widened_channel_results_to_scope(
                         &mut text_results,
                         &self.vault.store,
                         &rtxn,
-                        *limit,
+                        scoped_result_limit,
                         filter_config,
                         &mut metadata_cache,
                         &mut prefix_probe_claim_gate,
                     )?;
+                } else if off_record_fences_present
+                    && contains_off_record_fence(&text_results, &self.vault.store, &rtxn)?
+                {
+                    let restore_text_limit = text_channel_limit == *limit;
+                    let widened_limit =
+                        scoped_text_channel_limit(&self.vault.store, &rtxn, *limit, true)?;
+                    if widened_limit > text_channel_limit {
+                        text_results = crate::bm25::search_text_scoped_with_recency(
+                            &self.vault.store,
+                            &rtxn,
+                            &self.vault.analyzer,
+                            &bm25_config,
+                            query,
+                            widened_limit,
+                            crate::bm25::Bm25SearchOptions {
+                                recency: None,
+                                exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                            },
+                        )?;
+                    }
+                    if restore_text_limit {
+                        truncate_widened_channel_results_to_scope(
+                            &mut text_results,
+                            &self.vault.store,
+                            &rtxn,
+                            *limit,
+                            filter_config,
+                            &mut metadata_cache,
+                            &mut prefix_probe_claim_gate,
+                        )?;
+                    } else {
+                        apply_off_record_fence_with_cap(
+                            &mut text_results,
+                            &self.vault.store,
+                            &rtxn,
+                            text_channel_limit,
+                        )?;
+                    }
                 }
                 import_claim_gate_decisions_for_scores(
                     &mut claim_gate,
@@ -1330,6 +1447,7 @@ impl<'a> PipelineBuilder<'a> {
                     &self.vault.store,
                     &rtxn,
                     &scoped_config,
+                    off_record_fences_present,
                     temporal_now,
                     &mut metadata_cache,
                 )?;
@@ -2498,7 +2616,7 @@ fn scoped_text_channel_limit(
     Ok(requested.max(indexed_docs))
 }
 
-fn truncate_widened_text_results_to_scope(
+fn truncate_widened_channel_results_to_scope(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -2558,6 +2676,67 @@ fn filter_retrieval_trace_scores(
         }
     }
     Ok(filtered)
+}
+
+fn contains_off_record_fence(
+    scores: &[ScoredEntity],
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+) -> Result<bool> {
+    for scored in scores {
+        if crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn truncate_vector_fence_replacements(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    requested: usize,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+) -> Result<()> {
+    let mut filtered = Vec::with_capacity(requested.min(scores.len()));
+    for scored in scores.iter().copied() {
+        if crate::off_record::off_record_fence_active(store, rtxn, &scored.id)? {
+            continue;
+        }
+        if !claim_status_gate_allows(store, rtxn, &scored.id, metadata_cache, claim_gate)? {
+            continue;
+        }
+        filtered.push(scored);
+        if filtered.len() == requested {
+            break;
+        }
+    }
+
+    *scores = filtered;
+    Ok(())
+}
+
+fn next_vector_fence_search_limit(
+    current: usize,
+    filtered: usize,
+    requested: usize,
+    entity_count: usize,
+) -> usize {
+    let missing = requested.saturating_sub(filtered).max(1);
+    current
+        .saturating_add(current.max(missing))
+        .min(entity_count)
+}
+
+fn temporal_fence_scan_budget(cap: usize, off_record_fences_present: bool) -> usize {
+    if off_record_fences_present {
+        cap.saturating_mul(PER_SCAN_CAP_FACTOR)
+            .min(MAX_TEMPORAL_SEEK_BUFFER)
+            .max(cap)
+    } else {
+        cap
+    }
 }
 
 fn scoped_vector_channel_limit(
@@ -3027,6 +3206,7 @@ fn execute_temporal(
     store: &Store,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
+    off_record_fences_present: bool,
     now: u64,
     metadata_cache: &mut EntityMetadataCache,
 ) -> Result<Vec<ScoredEntity>> {
@@ -3061,6 +3241,7 @@ fn execute_temporal(
             let collection = TemporalCandidateCollectionContext {
                 radius,
                 per_scan_cap,
+                off_record_fences_present,
             };
             let scoring = TemporalScoringContext {
                 sigma,
@@ -3100,6 +3281,14 @@ fn execute_temporal(
     let mut scored = Vec::<TemporalCandidateScore>::new();
 
     for id in candidates {
+        // OF-326 THE FENCE: temporal candidate collection deliberately
+        // overfetches before this per-channel limit is applied. Drop fenced
+        // entities first so they cannot consume the channel's result slots.
+        if off_record_fences_present
+            && crate::off_record::off_record_fence_active(store, rtxn, &id)?
+        {
+            continue;
+        }
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
@@ -3129,6 +3318,7 @@ fn collect_temporal_candidates(
 ) -> Result<()> {
     let radius = collection.radius;
     let per_scan_cap = collection.per_scan_cap;
+    let off_record_fences_present = collection.off_record_fences_present;
     let occurred_window_start = config.anchor_start.saturating_sub(radius);
     let occurred_window_end = config.anchor_end.saturating_add(radius);
     let occurred_mid = midpoint(config.anchor_start, config.anchor_end);
@@ -3139,46 +3329,41 @@ fn collect_temporal_candidates(
     let learned_window_end = learned_anchor_end.saturating_add(radius);
     let learned_mid = midpoint(learned_anchor_start, learned_anchor_end);
 
+    let occurred_collection = TemporalIndexCollectionContext {
+        window_start: occurred_window_start,
+        window_end: occurred_window_end,
+        anchor_mid: occurred_mid,
+        cap: per_scan_cap,
+        off_record_fences_present,
+    };
+    let learned_collection = TemporalIndexCollectionContext {
+        window_start: learned_window_start,
+        window_end: learned_window_end,
+        anchor_mid: learned_mid,
+        cap: per_scan_cap,
+        off_record_fences_present,
+    };
+
     match config.anchor_mode {
         TemporalAnchorMode::Occurred => {
-            collect_occurred_candidates(
-                store,
-                rtxn,
-                occurred_window_start,
-                occurred_window_end,
-                occurred_mid,
-                per_scan_cap,
-                out,
-            )?;
+            collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
         }
         TemporalAnchorMode::Learned => {
             collect_index_candidates(
                 &store.temporal_learned,
+                store,
                 rtxn,
-                learned_window_start,
-                learned_window_end,
-                learned_mid,
-                per_scan_cap,
+                learned_collection,
                 out,
             )?;
         }
         TemporalAnchorMode::Auto | TemporalAnchorMode::Both => {
-            collect_occurred_candidates(
-                store,
-                rtxn,
-                occurred_window_start,
-                occurred_window_end,
-                occurred_mid,
-                per_scan_cap,
-                out,
-            )?;
+            collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
             collect_index_candidates(
                 &store.temporal_learned,
+                store,
                 rtxn,
-                learned_window_start,
-                learned_window_end,
-                learned_mid,
-                per_scan_cap,
+                learned_collection,
                 out,
             )?;
         }
@@ -3204,6 +3389,11 @@ fn collect_temporal_candidates(
             let (key, value) = entry?;
             let (id, occurred_start, _) = decode_long_interval_row(key, value)?;
             if occurred_start >= occurred_window_start {
+                continue;
+            }
+            if off_record_fences_present
+                && crate::off_record::off_record_fence_active(store, rtxn, &id)?
+            {
                 continue;
             }
 
@@ -3303,42 +3493,28 @@ fn sort_temporal_candidate_scores(scores: &mut [TemporalCandidateScore]) {
 fn collect_occurred_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    window_start: u64,
-    window_end: u64,
-    anchor_mid: u64,
-    cap: usize,
+    collection: TemporalIndexCollectionContext,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    collect_index_candidates(
-        &store.temporal_occurred_start,
-        rtxn,
-        window_start,
-        window_end,
-        anchor_mid,
-        cap,
-        out,
-    )?;
-    collect_index_candidates(
-        &store.temporal_occurred_end,
-        rtxn,
-        window_start,
-        window_end,
-        anchor_mid,
-        cap,
-        out,
-    )?;
+    collect_index_candidates(&store.temporal_occurred_start, store, rtxn, collection, out)?;
+    collect_index_candidates(&store.temporal_occurred_end, store, rtxn, collection, out)?;
     Ok(())
 }
 
 fn collect_index_candidates(
     db: &Database<Bytes, Bytes>,
+    store: &Store,
     rtxn: &RoTxn<'_>,
-    window_start: u64,
-    window_end: u64,
-    anchor_mid: u64,
-    cap: usize,
+    collection: TemporalIndexCollectionContext,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
+    let TemporalIndexCollectionContext {
+        window_start,
+        window_end,
+        anchor_mid,
+        cap,
+        off_record_fences_present,
+    } = collection;
     if cap == 0 || window_start > window_end {
         return Ok(());
     }
@@ -3357,10 +3533,18 @@ fn collect_index_candidates(
             std::ops::Bound::Included(&window_end_key[..]),
         ),
     )?;
-    for _ in 0..cap {
+    let scan_budget = temporal_fence_scan_budget(cap, off_record_fences_present);
+    let mut scanned = 0_usize;
+    while rows.len() < cap && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(&mut forward)? else {
             break;
         };
+        scanned = scanned.saturating_add(1);
+        if off_record_fences_present
+            && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
+        {
+            continue;
+        }
         rows.push(row);
     }
 
@@ -3371,8 +3555,15 @@ fn collect_index_candidates(
             std::ops::Bound::Excluded(&anchor_key[..]),
         ),
     )?;
-    let mut backward_rows = collect_temporal_index_rows(&mut backward, cap)?;
-    normalize_backward_boundary_bucket(db, rtxn, &mut backward_rows)?;
+    let mut backward_rows =
+        collect_temporal_index_rows(&mut backward, cap, store, rtxn, off_record_fences_present)?;
+    normalize_backward_boundary_bucket(
+        db,
+        store,
+        rtxn,
+        &mut backward_rows,
+        off_record_fences_present,
+    )?;
     rows.extend(backward_rows);
 
     rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
@@ -3413,16 +3604,30 @@ fn decode_temporal_index_row(key: &[u8]) -> Result<TemporalIndexRow> {
     Ok(TemporalIndexRow { timestamp, id })
 }
 
-fn collect_temporal_index_rows<'a, I>(iter: &mut I, cap: usize) -> Result<Vec<TemporalIndexRow>>
+fn collect_temporal_index_rows<'a, I>(
+    iter: &mut I,
+    cap: usize,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    off_record_fences_present: bool,
+) -> Result<Vec<TemporalIndexRow>>
 where
     I: Iterator<Item = std::result::Result<(&'a [u8], &'a [u8]), heed::Error>>,
 {
     let mut rows = Vec::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
+    let scan_budget = temporal_fence_scan_budget(cap, off_record_fences_present);
+    let mut scanned = 0_usize;
 
-    while rows.len() < cap {
+    while rows.len() < cap && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(iter)? else {
             return Ok(rows);
         };
+        scanned = scanned.saturating_add(1);
+        if off_record_fences_present
+            && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
+        {
+            continue;
+        }
         rows.push(row);
     }
 
@@ -3431,8 +3636,10 @@ where
 
 fn normalize_backward_boundary_bucket(
     db: &Database<Bytes, Bytes>,
+    store: &Store,
     rtxn: &RoTxn<'_>,
     rows: &mut Vec<TemporalIndexRow>,
+    off_record_fences_present: bool,
 ) -> Result<()> {
     let Some(boundary_timestamp) = rows.last().map(|row| row.timestamp) else {
         return Ok(());
@@ -3447,7 +3654,7 @@ fn normalize_backward_boundary_bucket(
         return Ok(());
     }
 
-    rows.truncate(rows.len().saturating_sub(boundary_count));
+    let original_boundary_rows = rows.split_off(rows.len().saturating_sub(boundary_count));
 
     let boundary_start_key = temporal_key_bound(boundary_timestamp, 0x00);
     let boundary_end_key = temporal_key_bound(boundary_timestamp, 0xFF);
@@ -3459,12 +3666,27 @@ fn normalize_backward_boundary_bucket(
             std::ops::Bound::Included(&boundary_end_key[..]),
         ),
     )?;
-    for _ in 0..boundary_count {
+    let scan_budget = temporal_fence_scan_budget(boundary_count, off_record_fences_present);
+    let mut scanned = 0_usize;
+    while boundary_rows.len() < boundary_count && scanned < scan_budget {
         let Some(row) = next_temporal_index_row(&mut boundary_iter)? else {
             break;
         };
+        scanned = scanned.saturating_add(1);
+        if off_record_fences_present
+            && crate::off_record::off_record_fence_active(store, rtxn, &row.id)?
+        {
+            continue;
+        }
         boundary_rows.push(row);
     }
+    for row in original_boundary_rows {
+        if !boundary_rows.iter().any(|candidate| candidate.id == row.id) {
+            boundary_rows.push(row);
+        }
+    }
+    boundary_rows.sort_unstable_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
+    boundary_rows.truncate(boundary_count);
     rows.extend(boundary_rows);
     Ok(())
 }
@@ -3598,6 +3820,17 @@ fn apply_off_record_fence(
     Ok(())
 }
 
+fn apply_off_record_fence_with_cap(
+    scores: &mut Vec<ScoredEntity>,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    cap: usize,
+) -> Result<()> {
+    apply_off_record_fence(scores, store, rtxn)?;
+    scores.truncate(cap);
+    Ok(())
+}
+
 fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &Store,
@@ -3699,7 +3932,9 @@ fn pipeline_candidate_matches_filters_and_gate(
     // to any retrieval/extraction consumer of this filter, independent of
     // the owning session's current mode — the tag outlives a same-session
     // flip back on-record, and only promote or delete-at-close lifts it.
-    if crate::off_record::off_record_fence_active(store, rtxn, id)? {
+    if filters.off_record_fences_present
+        && crate::off_record::off_record_fence_active(store, rtxn, id)?
+    {
         return Ok(false);
     }
 
