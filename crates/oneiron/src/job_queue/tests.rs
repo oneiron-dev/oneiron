@@ -123,6 +123,76 @@ fn job_queue_enqueue_persists_required_fields() -> Result<()> {
 }
 
 #[test]
+fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = JobQueue::new(&vault);
+
+    let mut later_input = enqueue("indexed-worker", None, 30);
+    later_input.run_id = Some("run-indexed".to_owned());
+    let EnqueueOutcome::Enqueued(later) = queue.enqueue(later_input)? else {
+        panic!("expected later indexed job");
+    };
+    let other = queue.enqueue(enqueue("other-worker", None, 5))?;
+    let mut earlier_input = enqueue("indexed-worker", None, 20);
+    earlier_input.run_id = Some("run-indexed".to_owned());
+    let EnqueueOutcome::Enqueued(earlier) = queue.enqueue(earlier_input)? else {
+        panic!("expected earlier indexed job");
+    };
+    assert!(matches!(other, EnqueueOutcome::Enqueued(_)));
+
+    let indexed = queue.list_run("run-indexed")?;
+    let baseline: Vec<JobRecord> = queue
+        .list()?
+        .into_iter()
+        .filter(|record| record.run_id.as_deref() == Some("run-indexed"))
+        .collect();
+    assert_eq!(indexed, baseline);
+    assert_eq!(
+        indexed.iter().map(|record| record.id).collect::<Vec<_>>(),
+        vec![earlier.id, later.id]
+    );
+
+    let tree = crate::RunTreeAdapter::new(&vault).read_run("run-indexed")?;
+    assert!(tree.repairs.is_empty());
+    assert_eq!(
+        tree.roots
+            .iter()
+            .map(|root| root.job_id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            crate::entity_id::bytes_to_hex_lower(earlier.id.as_bytes()),
+            crate::entity_id::bytes_to_hex_lower(later.id.as_bytes()),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn list_run_rejects_a_dangling_run_index_row() -> Result<()> {
+    let (_dir, vault) = open_queue();
+    let queue = JobQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("indexed-worker", None, 10))? else {
+        panic!("expected indexed job");
+    };
+
+    // This bypasses the index-maintaining removal seam to model actual index
+    // corruption. `list_run` must fail closed rather than silently dropping
+    // the dangling row.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .job_records
+        .delete(&mut wtxn, job.id.as_bytes())?;
+    wtxn.commit()?;
+
+    assert!(matches!(
+        queue.list_run("run-10"),
+        Err(Error::CorruptedIndex("job run index"))
+    ));
+    Ok(())
+}
+
+#[test]
 fn job_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
     let (_dir, vault) = open_queue();
     let queue = JobQueue::new(&vault);
