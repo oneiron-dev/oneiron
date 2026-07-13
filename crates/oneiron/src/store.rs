@@ -109,7 +109,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::batch::secret_scan;
+use crate::batch::{EntityMetadataHeader, secret_scan};
 use crate::companion::{
     COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
 };
@@ -162,7 +162,12 @@ pub const MAX_DBS: u32 = 32;
 /// v4 (ONE-299): `text_postings` became a DUP_SORT database holding one
 /// posting entry per (term, entity) duplicate item, and `text_forward`
 /// records dropped the dead `tf` u32.
-pub const STORAGE_ABI_VERSION: u16 = 11;
+///
+/// Receipt-family ABI-pin rule: changing
+/// `GATE_DECISION_LEDGER_VERSION`, `JOB_RECORD_VERSION`,
+/// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
+/// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
+pub const STORAGE_ABI_VERSION: u16 = 12;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
@@ -255,6 +260,8 @@ const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 const RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION: u8 = 1;
 const RETRIEVAL_BLEND_TUNER_ALGORITHM: &str = "ret010d.reward_weighted_bandit.v1";
 const RETRIEVAL_BLEND_BOOTSTRAP_SOURCE: &str = "ret010b.bootstrap";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
 pub(crate) const GATE_DECISION_LEDGER_VERSION: u8 = 0;
 const GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_decision:v0:";
 const PENDING_GATE_CONSENT_KEY_PREFIX: &[u8] = b"gate_pending:v0:";
@@ -268,6 +275,23 @@ const PENDING_DELETION_GATE_DECISION_KEY_PREFIX: &[u8] = b"gate_delete_pending:v
 /// of being mistaken for a legitimate sidecar-free remote tombstone.
 const DELETION_GATE_REQUIRED_KEY_PREFIX: &[u8] = b"gate_delete_required:v0:";
 const PENDING_DELETION_GATE_DECISION_VERSION: u8 = 0;
+// RCPT-1 keeps its materialized lookup rows in the existing `vault_meta`
+// family.  These are additive sidecars, not named LMDB databases: older
+// readers already ignore unknown `vault_meta` prefixes, while a current
+// reader backfills them before exposing the store.
+const RECEIPT_FAMILY_INDEX_VERSION_KEY: &[u8] = b"receipt_family_index:v1:version";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
+const RECEIPT_FAMILY_INDEX_VERSION: u8 = 1;
+const GATE_DECISION_GRANT_REF_INDEX_PREFIX: &[u8] = b"gate_decision:grant_ref_index:v1:";
+const PENDING_GATE_CONSENT_RUN_INDEX_PREFIX: &[u8] = b"gate_pending:run_index:v1:";
+const PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX: &[u8] = b"gate_pending:group_index:v1:";
+const PENDING_GATE_CONSENT_HASH_INDEX_PREFIX: &[u8] = b"gate_pending:hash_index:v1:";
+const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_state:v1:";
+/// Receipt-family ABI-pin rule: changing this requires a
+/// [`STORAGE_ABI_VERSION`] bump.
+const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
+const JOB_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
 /// Maps a scheduled outbound job id to the gate surface its first dispatch
@@ -750,6 +774,21 @@ pub struct PendingGateConsentRecord {
     pub dreamer_run_id: Option<String>,
 }
 
+/// Internal RCPT-1 deletion state for one run-scoped pending-consent row.
+///
+/// The primary pending row deliberately keeps its receipt-facing shape.  The
+/// sidecar records the derived lookup keys so a later close/delete removes
+/// exactly the index entries minted for the original pending body, even if a
+/// stale proposal's claim has changed since it was queued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingGateConsentIndexState {
+    version: u8,
+    run_id: String,
+    group_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    semantic_claim_hash: Option<[u8; 32]>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingGateConsentGroup {
     pub dreamer_run_id: Option<String>,
@@ -1135,6 +1174,23 @@ impl Drop for Store {
 impl Store {
     /// Opens or creates a store at `path` and initializes all named databases.
     pub fn open(path: impl AsRef<Path>, config: &VaultConfig) -> Result<Self> {
+        Self::open_with_storage_abi_version(path, config, STORAGE_ABI_VERSION)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_with_storage_abi_version_for_test(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        storage_abi_version: u16,
+    ) -> Result<Self> {
+        Self::open_with_storage_abi_version(path, config, storage_abi_version)
+    }
+
+    fn open_with_storage_abi_version(
+        path: impl AsRef<Path>,
+        config: &VaultConfig,
+        storage_abi_version: u16,
+    ) -> Result<Self> {
         let (env, registered_path, is_new_vault) = {
             let _vault_root_open_guard = vault_root_open_guard()?;
 
@@ -1181,7 +1237,7 @@ impl Store {
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
         let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
-        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault)?;
+        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault, storage_abi_version)?;
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -1254,7 +1310,7 @@ impl Store {
             persist_model_id_if_missing(&env, &hnsw_meta, &vectors, &hnsw_neighbors, requested)?;
         }
 
-        Ok(Self {
+        let store = Self {
             env,
             entities,
             edges_out,
@@ -1290,11 +1346,150 @@ impl Store {
                 .fetch_add(1, AtomicOrdering::Relaxed),
             created_new_vault: is_new_vault,
             _registered_path: registered_path,
-        })
+        };
+        store.ensure_receipt_family_indexes_on_open()?;
+        Ok(store)
     }
 
     pub(crate) fn created_new_vault(&self) -> bool {
         self.created_new_vault
+    }
+
+    /// Builds RCPT-1's additive `vault_meta` sidecars before an opened store
+    /// becomes visible.  The marker and every sidecar commit together, so an
+    /// interrupted backfill is retried in full on the next open.
+    fn ensure_receipt_family_indexes_on_open(&self) -> Result<()> {
+        {
+            let rtxn = self.env.read_txn()?;
+            match self
+                .vault_meta
+                .get(&rtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?
+            {
+                Some(version) if version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
+                Some(_) => return Err(Error::CorruptedIndex("receipt family index version")),
+                None => {}
+            }
+        }
+
+        let mut wtxn = self.env.write_txn()?;
+        match self
+            .vault_meta
+            .get(&wtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?
+        {
+            Some(version) if version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
+            Some(_) => return Err(Error::CorruptedIndex("receipt family index version")),
+            None => {}
+        }
+
+        // The group aliases below resolve through the job run index, so build
+        // it first.  Collect before writing to avoid mutating a DB while its
+        // iterator is live.
+        let mut jobs = Vec::new();
+        for row in self.job_records.iter(&wtxn)? {
+            let (key, raw) = row?;
+            let id = crate::job_queue::JobId::from_bytes(key)?;
+            jobs.push(crate::job_queue::decode_record(raw, id)?);
+        }
+        for job in &jobs {
+            self.put_job_run_index_in_txn(&mut wtxn, job.run_id.as_deref(), job.id.as_bytes())?;
+        }
+
+        let mut decisions = Vec::new();
+        let upper = gate_decision_upper_bound();
+        for row in self.vault_meta.range(
+            &wtxn,
+            &(
+                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            let decision_id = gate_decision_id_from_key(key)?;
+            let record = decode_gate_decision(value)?;
+            if record.decision_id != decision_id {
+                return Err(Error::CorruptedIndex("gate decision ledger"));
+            }
+            decisions.push(record);
+        }
+        for decision in &decisions {
+            self.put_gate_decision_grant_ref_index_in_txn(&mut wtxn, decision)?;
+        }
+
+        let mut pending = Vec::new();
+        let upper = pending_gate_consent_upper_bound();
+        for row in self.vault_meta.range(
+            &wtxn,
+            &(
+                std::ops::Bound::Included(PENDING_GATE_CONSENT_KEY_PREFIX),
+                std::ops::Bound::Excluded(upper.as_slice()),
+            ),
+        )? {
+            let (key, value) = row?;
+            let claim_id = pending_gate_consent_claim_id_from_key(key)?;
+            let record = decode_pending_gate_consent(value)?;
+            if record.claim_id != claim_id {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            pending.push(record);
+        }
+        for record in &pending {
+            self.put_pending_gate_consent_indexes_in_txn(&mut wtxn, record)?;
+        }
+
+        self.vault_meta.put(
+            &mut wtxn,
+            RECEIPT_FAMILY_INDEX_VERSION_KEY,
+            &[RECEIPT_FAMILY_INDEX_VERSION],
+        )?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn put_job_run_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: Option<&str>,
+        job_id: &[u8; 16],
+    ) -> Result<()> {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        self.vault_meta
+            .put(wtxn, &job_run_index_key(run_id, job_id), b"1")?;
+        self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
+        Ok(())
+    }
+
+    /// Removes the run sidecar for a test fixture's intentionally deleted
+    /// primary job row in the same transaction. Readers remain fail-closed
+    /// when a dangling sidecar is observed.
+    #[cfg(test)]
+    pub(crate) fn delete_job_run_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: Option<&str>,
+        job_id: &[u8; 16],
+    ) -> Result<()> {
+        let Some(run_id) = run_id else {
+            return Ok(());
+        };
+        self.vault_meta
+            .delete(wtxn, &job_run_index_key(run_id, job_id))?;
+        Ok(())
+    }
+
+    pub(crate) fn job_ids_for_run_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        run_id: &str,
+    ) -> Result<Vec<[u8; 16]>> {
+        let prefix = job_run_index_prefix(run_id);
+        let mut ids = Vec::new();
+        for row in self.vault_meta.prefix_iter(txn, &prefix)? {
+            let (key, _) = row?;
+            ids.push(index_suffix_id(key, &prefix, "job run index")?);
+        }
+        Ok(ids)
     }
 
     /// Encodes an edge key as `[src(16) | kind(1) | tgt(16)]`.
@@ -1574,6 +1769,7 @@ impl Store {
         }
         let value = encode_gate_decision(record)?;
         self.vault_meta.put(wtxn, &key, &value)?;
+        self.put_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         Ok(())
     }
 
@@ -1739,6 +1935,39 @@ impl Store {
         Ok(())
     }
 
+    /// Returns every gate decision carrying this grant reference, newest
+    /// first, without scanning the global decision ledger.
+    pub(crate) fn gate_decisions_for_grant_ref(
+        &self,
+        grant_ref: &str,
+    ) -> Result<Vec<GateDecisionRecord>> {
+        let rtxn = self.env.read_txn()?;
+        let prefix = gate_decision_grant_ref_index_prefix(grant_ref);
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
+            let (key, _) = row?;
+            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
+                key,
+                &prefix,
+                "gate decision grant ref index",
+            )?);
+            let Some(record) = self.gate_decision_in_txn(&rtxn, decision_id)? else {
+                return Err(Error::CorruptedIndex("gate decision grant ref index"));
+            };
+            if record.grant_ref.as_deref() != Some(grant_ref) {
+                return Err(Error::CorruptedIndex("gate decision grant ref index"));
+            }
+            records.push(record);
+        }
+        records.sort_by(|left, right| {
+            right
+                .decision_id
+                .as_bytes()
+                .cmp(&left.decision_id.as_bytes())
+        });
+        Ok(records)
+    }
+
     pub(crate) fn matching_gate_decision_in_txn(
         &self,
         txn: &RwTxn<'_>,
@@ -1861,8 +2090,16 @@ impl Store {
     ) -> Result<()> {
         vet_pending_gate_consent_record(record)?;
         let key = pending_gate_consent_key(&record.claim_id);
+        if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
+            let existing = decode_pending_gate_consent(existing)?;
+            if existing.claim_id != record.claim_id {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            self.delete_pending_gate_consent_indexes_in_txn(wtxn, &existing)?;
+        }
         let value = encode_pending_gate_consent(record)?;
         self.vault_meta.put(wtxn, &key, &value)?;
+        self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
         Ok(())
     }
 
@@ -1889,8 +2126,197 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<()> {
-        self.vault_meta
-            .delete(wtxn, &pending_gate_consent_key(claim_id.as_bytes()))?;
+        let key = pending_gate_consent_key(claim_id.as_bytes());
+        if let Some(value) = self.vault_meta.get(&*wtxn, &key)? {
+            let record = decode_pending_gate_consent(value)?;
+            if record.claim_id != *claim_id.as_bytes() {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
+            self.delete_pending_gate_consent_indexes_in_txn(wtxn, &record)?;
+        }
+        self.vault_meta.delete(wtxn, &key)?;
+        Ok(())
+    }
+
+    fn put_gate_decision_grant_ref_index_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        let Some(grant_ref) = record.grant_ref.as_deref() else {
+            return Ok(());
+        };
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            b"1",
+        )?;
+        Ok(())
+    }
+
+    fn pending_gate_consent_index_state_for_record_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<Option<PendingGateConsentIndexState>> {
+        let Some(run_id) = record.dreamer_run_id.as_deref() else {
+            return Ok(None);
+        };
+        let claim_id = EntityId::from_bytes(record.claim_id)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        // Low-level receipt tests and generic pending asks can legitimately
+        // lack a claim body. They remain run-indexed; only readable CLAIM
+        // rows participate in the inbox's semantic duplicate sidecar.
+        let semantic_claim_hash = match self.entities.get(wtxn, claim_id.as_bytes())? {
+            None => None,
+            Some(raw) => {
+                let Some(header) = EntityMetadataHeader::parse(raw) else {
+                    return Err(Error::CorruptedIndex("entity header"));
+                };
+                if header.entity_type != ENTITY_TYPE_CLAIM {
+                    None
+                } else {
+                    let body = raw
+                        .get(ENTITY_BODY_OFFSET..)
+                        .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+                    Some(crate::inbox::inbox_claim_hash(
+                        &crate::claim::decode_claim_body(body, true)?,
+                    )?)
+                }
+            }
+        };
+        let group_key = crate::job_queue::dreamer_run_root_id_in_txn(self, wtxn, run_id)?
+            .map_or_else(
+                || run_id.to_owned(),
+                |root| bytes_to_hex_lower(root.as_bytes()),
+            );
+        Ok(Some(PendingGateConsentIndexState {
+            version: PENDING_GATE_CONSENT_INDEX_STATE_VERSION,
+            run_id: run_id.to_owned(),
+            group_key,
+            semantic_claim_hash,
+        }))
+    }
+
+    fn put_pending_gate_consent_indexes_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<()> {
+        let Some(state) = self.pending_gate_consent_index_state_for_record_in_txn(wtxn, record)?
+        else {
+            return Ok(());
+        };
+        self.vault_meta.put(
+            wtxn,
+            &pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
+            b"1",
+        )?;
+        self.vault_meta.put(
+            wtxn,
+            &pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
+            b"1",
+        )?;
+        if let Some(semantic_claim_hash) = state.semantic_claim_hash.as_ref() {
+            self.vault_meta.put(
+                wtxn,
+                &pending_gate_consent_hash_index_key(semantic_claim_hash, &record.claim_id),
+                b"1",
+            )?;
+        }
+        let encoded = encode_pending_gate_consent_index_state(&state)?;
+        self.vault_meta.put(
+            wtxn,
+            &pending_gate_consent_index_state_key(&record.claim_id),
+            &encoded,
+        )?;
+        Ok(())
+    }
+
+    /// Recomputes the derived group aliases after a run gains a job. A
+    /// pending consent can predate its durable root, so its old alias may no
+    /// longer match the run tree that the inbox projection resolves.
+    fn refresh_pending_gate_consent_group_aliases_for_run_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        run_id: &str,
+    ) -> Result<()> {
+        let prefix = pending_gate_consent_run_index_prefix(run_id);
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(&*wtxn, &prefix)? {
+            let (key, _) = row?;
+            let claim_id = EntityId::from_bytes(index_suffix_id(
+                key,
+                &prefix,
+                "pending gate consent run index",
+            )?)
+            .map_err(|_| Error::CorruptedIndex("pending gate consent run index"))?;
+            let Some(record) = self.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            };
+            let Some(state) = self.pending_gate_consent_index_state_in_txn(&*wtxn, &record)? else {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            };
+            if state.run_id != run_id {
+                return Err(Error::CorruptedIndex("pending gate consent run index"));
+            }
+            records.push(record);
+        }
+
+        for record in &records {
+            self.delete_pending_gate_consent_indexes_in_txn(wtxn, record)?;
+            self.put_pending_gate_consent_indexes_in_txn(wtxn, record)?;
+        }
+        Ok(())
+    }
+
+    fn pending_gate_consent_index_state_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<Option<PendingGateConsentIndexState>> {
+        let Some(raw) = self
+            .vault_meta
+            .get(txn, &pending_gate_consent_index_state_key(&record.claim_id))?
+        else {
+            return Ok(None);
+        };
+        let state = decode_pending_gate_consent_index_state(raw)?;
+        if record.dreamer_run_id.as_deref() != Some(state.run_id.as_str()) {
+            return Err(Error::CorruptedIndex("pending gate consent index state"));
+        }
+        Ok(Some(state))
+    }
+
+    fn delete_pending_gate_consent_indexes_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &PendingGateConsentRecord,
+    ) -> Result<()> {
+        let Some(state) = self.pending_gate_consent_index_state_in_txn(&*wtxn, record)? else {
+            if record.dreamer_run_id.is_some() {
+                return Err(Error::CorruptedIndex("pending gate consent index state"));
+            }
+            return Ok(());
+        };
+        self.vault_meta.delete(
+            wtxn,
+            &pending_gate_consent_run_index_key(&state.run_id, &record.claim_id),
+        )?;
+        self.vault_meta.delete(
+            wtxn,
+            &pending_gate_consent_group_index_key(&state.group_key, &record.claim_id),
+        )?;
+        if let Some(semantic_claim_hash) = state.semantic_claim_hash.as_ref() {
+            self.vault_meta.delete(
+                wtxn,
+                &pending_gate_consent_hash_index_key(semantic_claim_hash, &record.claim_id),
+            )?;
+        }
+        self.vault_meta.delete(
+            wtxn,
+            &pending_gate_consent_index_state_key(&record.claim_id),
+        )?;
         Ok(())
     }
 
@@ -2005,6 +2431,88 @@ impl Store {
                 .then_with(|| left.claim_id.cmp(&right.claim_id))
         });
         records.truncate(limit);
+        Ok(records)
+    }
+
+    /// Reads all pending consent rows stamped with one exact run id through
+    /// the RCPT-1 run-scope sidecar.
+    pub(crate) fn pending_gate_consents_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
+        let rtxn = self.env.read_txn()?;
+        let prefix = pending_gate_consent_run_index_prefix(run_id);
+        self.pending_gate_consents_for_index_in_txn(
+            &rtxn,
+            &prefix,
+            "pending gate consent run index",
+            |state| state.run_id == run_id,
+        )
+    }
+
+    /// Reads the raw-run rows behind one canonical Dreamer root group.  This
+    /// alias is part of the same run-scope index family and lets an RS3 door
+    /// use its root job hex without falling back to a table scan.
+    pub(crate) fn pending_gate_consents_for_group_key(
+        &self,
+        group_key: &str,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
+        let rtxn = self.env.read_txn()?;
+        let prefix = pending_gate_consent_group_index_prefix(group_key);
+        self.pending_gate_consents_for_index_in_txn(
+            &rtxn,
+            &prefix,
+            "pending gate consent group index",
+            |state| state.group_key == group_key,
+        )
+    }
+
+    /// Reads every open pending row with the inbox's semantic claim hash.
+    /// This is a subordinate sidecar of the pending-consent family: it keeps
+    /// #386's cross-run duplicate collapse exact without reopening the whole
+    /// pending table for an explicit group.
+    pub(crate) fn pending_gate_consents_for_semantic_claim_hash(
+        &self,
+        semantic_claim_hash: &[u8; 32],
+    ) -> Result<Vec<PendingGateConsentRecord>> {
+        let rtxn = self.env.read_txn()?;
+        let prefix = pending_gate_consent_hash_index_prefix(semantic_claim_hash);
+        self.pending_gate_consents_for_index_in_txn(
+            &rtxn,
+            &prefix,
+            "pending gate consent hash index",
+            |state| state.semantic_claim_hash.as_ref() == Some(semantic_claim_hash),
+        )
+    }
+
+    fn pending_gate_consents_for_index_in_txn<F>(
+        &self,
+        txn: &RoTxn<'_>,
+        prefix: &[u8],
+        index_name: &'static str,
+        state_matches: F,
+    ) -> Result<Vec<PendingGateConsentRecord>>
+    where
+        F: Fn(&PendingGateConsentIndexState) -> bool,
+    {
+        let mut records = Vec::new();
+        for row in self.vault_meta.prefix_iter(txn, prefix)? {
+            let (key, _) = row?;
+            let claim_id = EntityId::from_bytes(index_suffix_id(key, prefix, index_name)?)
+                .map_err(|_| Error::CorruptedIndex(index_name))?;
+            let Some(record) = self.pending_gate_consent_in_txn(txn, &claim_id)? else {
+                return Err(Error::CorruptedIndex(index_name));
+            };
+            let state = self.pending_gate_consent_index_state_in_txn(txn, &record)?;
+            let Some(state) = state else {
+                return Err(Error::CorruptedIndex(index_name));
+            };
+            if !state_matches(&state) {
+                return Err(Error::CorruptedIndex(index_name));
+            }
+            records.push(record);
+        }
+        sort_pending_gate_consents(&mut records);
         Ok(records)
     }
 
@@ -3007,6 +3515,101 @@ fn pending_gate_consent_upper_bound() -> Vec<u8> {
     key
 }
 
+fn string_index_prefix(prefix: &[u8], value: &str) -> Vec<u8> {
+    let value = value.as_bytes();
+    let mut key = Vec::with_capacity(prefix.len() + std::mem::size_of::<u64>() + value.len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(&(value.len() as u64).to_be_bytes());
+    key.extend_from_slice(value);
+    key
+}
+
+fn index_key_with_id(prefix: &[u8], id: &[u8; 16]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + id.len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(id);
+    key
+}
+
+fn index_suffix_id(key: &[u8], prefix: &[u8], index_name: &'static str) -> Result<[u8; 16]> {
+    key.strip_prefix(prefix)
+        .ok_or(Error::CorruptedIndex(index_name))?
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(index_name))
+}
+
+fn gate_decision_grant_ref_index_prefix(grant_ref: &str) -> Vec<u8> {
+    string_index_prefix(GATE_DECISION_GRANT_REF_INDEX_PREFIX, grant_ref)
+}
+
+fn gate_decision_grant_ref_index_key(grant_ref: &str, decision_id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(
+        &gate_decision_grant_ref_index_prefix(grant_ref),
+        &decision_id.as_bytes(),
+    )
+}
+
+fn pending_gate_consent_run_index_prefix(run_id: &str) -> Vec<u8> {
+    string_index_prefix(PENDING_GATE_CONSENT_RUN_INDEX_PREFIX, run_id)
+}
+
+fn pending_gate_consent_run_index_key(run_id: &str, claim_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(&pending_gate_consent_run_index_prefix(run_id), claim_id)
+}
+
+fn pending_gate_consent_group_index_prefix(group_key: &str) -> Vec<u8> {
+    string_index_prefix(PENDING_GATE_CONSENT_GROUP_INDEX_PREFIX, group_key)
+}
+
+fn pending_gate_consent_group_index_key(group_key: &str, claim_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(
+        &pending_gate_consent_group_index_prefix(group_key),
+        claim_id,
+    )
+}
+
+fn pending_gate_consent_hash_index_prefix(semantic_claim_hash: &[u8; 32]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(PENDING_GATE_CONSENT_HASH_INDEX_PREFIX.len() + 32);
+    key.extend_from_slice(PENDING_GATE_CONSENT_HASH_INDEX_PREFIX);
+    key.extend_from_slice(semantic_claim_hash);
+    key
+}
+
+fn pending_gate_consent_hash_index_key(
+    semantic_claim_hash: &[u8; 32],
+    claim_id: &[u8; 16],
+) -> Vec<u8> {
+    index_key_with_id(
+        &pending_gate_consent_hash_index_prefix(semantic_claim_hash),
+        claim_id,
+    )
+}
+
+fn pending_gate_consent_index_state_key(claim_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(PENDING_GATE_CONSENT_INDEX_STATE_PREFIX, claim_id)
+}
+
+fn job_run_index_prefix(run_id: &str) -> Vec<u8> {
+    string_index_prefix(JOB_RUN_INDEX_PREFIX, run_id)
+}
+
+fn job_run_index_key(run_id: &str, job_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(&job_run_index_prefix(run_id), job_id)
+}
+
+fn sort_pending_gate_consents(records: &mut [PendingGateConsentRecord]) {
+    records.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| {
+                left.decision_id
+                    .as_bytes()
+                    .cmp(&right.decision_id.as_bytes())
+            })
+            .then_with(|| left.claim_id.cmp(&right.claim_id))
+    });
+}
+
 fn channel_identity_lifecycle_key(receipt_id: ChannelIdentityLifecycleReceiptId) -> Vec<u8> {
     let mut key = Vec::with_capacity(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX);
@@ -3093,6 +3696,25 @@ fn decode_pending_gate_consent(raw: &[u8]) -> Result<PendingGateConsentRecord> {
         rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
     vet_pending_gate_consent_record(&record)?;
     Ok(record)
+}
+
+fn encode_pending_gate_consent_index_state(
+    state: &PendingGateConsentIndexState,
+) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(state)
+        .map_err(|_| Error::InvariantViolation("pending gate consent index state encode failed"))
+}
+
+fn decode_pending_gate_consent_index_state(raw: &[u8]) -> Result<PendingGateConsentIndexState> {
+    let state: PendingGateConsentIndexState = rmp_serde::from_slice(raw)
+        .map_err(|_| Error::CorruptedIndex("pending gate consent index state"))?;
+    if state.version != PENDING_GATE_CONSENT_INDEX_STATE_VERSION
+        || state.run_id.trim().is_empty()
+        || state.group_key.trim().is_empty()
+    {
+        return Err(Error::CorruptedIndex("pending gate consent index state"));
+    }
+    Ok(state)
 }
 
 fn encode_channel_identity_lifecycle_receipt(
@@ -3925,6 +4547,7 @@ fn gate_storage_versions(
     vault_meta: &Database<Bytes, Bytes>,
     wtxn: &mut RwTxn<'_>,
     new_vault: bool,
+    storage_abi_version: u16,
 ) -> Result<()> {
     let stored_abi = read_vault_meta_u16(
         vault_meta,
@@ -3932,11 +4555,11 @@ fn gate_storage_versions(
         STORAGE_ABI_VERSION_KEY,
         "storage ABI version",
     )?;
-    if gate_storage_abi_value(stored_abi, STORAGE_ABI_VERSION, new_vault)? {
+    if gate_storage_abi_value(stored_abi, storage_abi_version, new_vault)? {
         vault_meta.put(
             wtxn,
             STORAGE_ABI_VERSION_KEY,
-            &STORAGE_ABI_VERSION.to_le_bytes(),
+            &storage_abi_version.to_le_bytes(),
         )?;
     }
 

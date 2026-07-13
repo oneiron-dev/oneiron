@@ -7,7 +7,7 @@ use crate::edge::EdgeActorClass;
 use crate::job_queue::{EnqueueJob, EnqueueOutcome, JobId};
 use crate::receipt::ReceiptQuery;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::store::GateDecisionId;
+use crate::store::{GateDecisionId, PendingGateConsentRecord};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteEnvelope;
 use crate::write_envelope::WriteProvenance;
@@ -26,6 +26,16 @@ fn entity(seed: u8) -> EntityId {
 
 fn time(ts: u64) -> TimeRange {
     TimeRange { start: ts, end: ts }
+}
+
+fn synthetic_pending_id(prefix: u8, value: u64) -> [u8; 16] {
+    let mut bytes = [prefix; 16];
+    bytes[8..].copy_from_slice(&value.to_be_bytes());
+    bytes
+}
+
+fn synthetic_gate_decision_id(prefix: u8, value: u64) -> GateDecisionId {
+    GateDecisionId::from_bytes(synthetic_pending_id(prefix, value))
 }
 
 fn dreamer_envelope(actor: EntityId, run_id: &str) -> WriteEnvelope {
@@ -336,6 +346,59 @@ fn bundle_receipt_reopens_group_after_accept_all() -> Result<()> {
 }
 
 #[test]
+fn stale_semantic_hash_sidecar_keeps_current_member_visible_and_clearable() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim_id = entity(0x91);
+    let actor = entity(0x92);
+    let subject = entity(0x93);
+    let run_id = "run-stale-semantic-hash";
+    write_dreamer_proposal(
+        &vault,
+        claim_id,
+        actor,
+        subject,
+        "profile.hobby",
+        "chess",
+        run_id,
+        20,
+        &[REASON_CEILING],
+    )?;
+
+    vault
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.hobby",
+                ClaimSubject::Entity(subject),
+                Value::from("go"),
+                0.9,
+            ),
+            &dreamer_envelope(actor, run_id),
+            time(21),
+            21,
+        )
+        .commit()?;
+
+    vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+    assert_eq!(vault.inbox_groups(InboxQuery::at(50, 10))?.len(), 1);
+    assert!(
+        vault
+            .reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{run_id}"), 50)?
+            .open_group
+            .is_some()
+    );
+    assert!(matches!(
+        vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 50),
+        Err(Error::GateConsentStale { claim_id: stale }) if stale == claim_id
+    ));
+    let rejected = vault.resolve_inbox_group_at(run_id, InboxBulkVerb::RejectAll, None, 51)?;
+    assert_eq!(rejected.item_receipts.len(), 1);
+    assert!(vault.store.pending_gate_consents(10)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn reject_all_emits_per_item_receipts_and_keeps_proposal_history() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let run_id = "run-reject";
@@ -473,6 +536,294 @@ fn cross_run_same_claim_hash_dups_collapse_into_earliest_open_group() -> Result<
     assert_eq!(groups[0].run_id, "run-late");
     assert_eq!(groups[0].members.len(), 1);
     assert!(groups[0].pointer_rows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn indexed_explicit_group_matches_scan_for_raw_and_branch_root_aliases() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let root = enqueue_dreamer_job(
+        &vault,
+        "orchestrator",
+        None,
+        Value::Map(vec![(
+            Value::from("intent"),
+            Value::from("Indexed branch root"),
+        )]),
+        "run-parent",
+        10,
+    )?;
+    let branch = enqueue_dreamer_job(
+        &vault,
+        "entity-sweep",
+        Some(root),
+        Value::from("branch input"),
+        "run-branch",
+        20,
+    )?;
+    let subject = entity(0xC1);
+    let original = entity(0x61);
+    let duplicate = entity(0x62);
+    write_dreamer_proposal(
+        &vault,
+        original,
+        entity(0xB1),
+        subject,
+        "profile.diet",
+        "vegan",
+        "run-parent",
+        30,
+        &[REASON_CEILING],
+    )?;
+    write_dreamer_proposal(
+        &vault,
+        duplicate,
+        entity(0xB2),
+        subject,
+        "profile.diet",
+        "vegan",
+        "run-branch",
+        40,
+        &[REASON_CEILING],
+    )?;
+
+    let root_key = bytes_to_hex_lower(root.as_bytes());
+    let scan_groups = inbox_groups_projection(
+        &vault,
+        InboxQuery::at(100, 10),
+        InboxReviewDial::ReviewEverything,
+        10,
+    )?;
+    let expected_parent = scan_groups
+        .iter()
+        .find(|group| group.run_id == "run-parent")
+        .expect("scan parent group")
+        .clone();
+    let expected_branch = scan_groups
+        .iter()
+        .find(|group| group.run_id == "run-branch")
+        .expect("scan branch group")
+        .clone();
+    assert_eq!(expected_parent.group_key, root_key);
+    assert_ne!(
+        expected_branch.group_key,
+        bytes_to_hex_lower(branch.as_bytes())
+    );
+    assert_eq!(
+        explicit_inbox_group(&vault, "run-parent", 100)?,
+        Some(expected_parent.clone())
+    );
+    assert_eq!(
+        explicit_inbox_group(&vault, "run-branch", 100)?,
+        Some(expected_branch)
+    );
+    // A canonical root door follows the former projection's first matching
+    // raw run, so it picks the parent row and carries the duplicate.
+    assert_eq!(
+        explicit_inbox_group(&vault, &root_key, 100)?,
+        Some(expected_parent.clone())
+    );
+    assert_eq!(
+        expected_parent.members[0].duplicate_claim_ids,
+        vec![duplicate.to_hex()]
+    );
+
+    let semantic_hash = inbox_claim_hash(&vault.get_claim(&original)?.expect("original"))?;
+    let resolution =
+        vault.resolve_inbox_group_at(&root_key, InboxBulkVerb::AcceptAll, None, 110)?;
+    assert_eq!(resolution.item_receipts.len(), 2);
+    assert_eq!(
+        vault
+            .get_claim(&original)?
+            .expect("original claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(
+        vault
+            .get_claim(&duplicate)?
+            .expect("duplicate claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    // The deletion state removes every lookup alias that powered this
+    // resolution, including the branch root and semantic duplicate rows.
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_run("run-parent")?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_run("run-branch")?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_group_key(&root_key)?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_semantic_claim_hash(&semantic_hash)?
+            .is_empty()
+    );
+    assert!(explicit_inbox_group(&vault, &root_key, 120)?.is_none());
+    assert!(
+        inbox_groups_projection(
+            &vault,
+            InboxQuery::at(120, 10),
+            InboxReviewDial::ReviewEverything,
+            10,
+        )?
+        .is_empty()
+    );
+
+    let reopened =
+        vault.reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{root_key}"), 120)?;
+    assert!(reopened.open_group.is_none());
+    let outcomes: Vec<&str> = reopened
+        .resolution_receipts
+        .iter()
+        .map(|receipt| receipt.outcome.as_str())
+        .collect();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| **outcome == "approved")
+            .count(),
+        2
+    );
+    assert!(outcomes.contains(&"bundle_accepted"));
+    Ok(())
+}
+
+#[test]
+fn late_root_insertion_rekeys_pending_group_aliases() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let run_id = "run-late-root";
+    let claim_id = entity(0x61);
+
+    // A generated proposal can be durable before its run root. The group
+    // sidecar must follow the root once that job is subsequently persisted.
+    write_dreamer_proposal(
+        &vault,
+        claim_id,
+        entity(0xB1),
+        entity(0xC1),
+        "profile.diet",
+        "vegan",
+        run_id,
+        10,
+        &[REASON_CEILING],
+    )?;
+    let root = enqueue_dreamer_job(
+        &vault,
+        "orchestrator",
+        None,
+        Value::Map(vec![(Value::from("intent"), Value::from("Late root"))]),
+        run_id,
+        20,
+    )?;
+    let root_key = bytes_to_hex_lower(root.as_bytes());
+
+    vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+    let expected = vault
+        .inbox_groups(InboxQuery::at(100, 10))?
+        .into_iter()
+        .next()
+        .expect("browse surfaces the late-root group");
+    assert_eq!(expected.group_key, root_key);
+
+    assert_eq!(
+        explicit_inbox_group(&vault, &root_key, 100)?,
+        Some(expected.clone())
+    );
+    let reopened =
+        vault.reopen_inbox_group_at(&format!("{INBOX_GROUP_DOOR_PREFIX}{root_key}"), 100)?;
+    assert_eq!(reopened.open_group, Some(expected));
+
+    let resolution =
+        vault.resolve_inbox_group_at(&root_key, InboxBulkVerb::AcceptAll, None, 110)?;
+    assert_eq!(resolution.group_key, root_key);
+    assert_eq!(resolution.item_receipts.len(), 1);
+    assert_eq!(
+        vault
+            .get_claim(&claim_id)?
+            .expect("resolved claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_resolution_reaches_a_run_beyond_the_legacy_pending_scan_budget() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    // Generic, non-Dreamer pending asks remain in the primary tray but have
+    // no run sidecar.  They model the old global scan being saturated without
+    // changing the target group's semantics.
+    vault.with_write_txn(|wtxn| {
+        for offset in 0..=crate::receipt::MAX_RECEIPT_QUERY_SCAN {
+            let pending = PendingGateConsentRecord {
+                version: GATE_DECISION_LEDGER_VERSION,
+                claim_id: synthetic_pending_id(0xE1, offset as u64),
+                decision_id: synthetic_gate_decision_id(0xE2, offset as u64),
+                created_at: offset as u64,
+                diff_handle: vec![0xE3],
+                read_frontier_hash: [0xE4; 32],
+                reason_codes: vec!["gate.pending.synthetic".to_owned()],
+                dreamer_run_id: None,
+            };
+            vault
+                .store
+                .put_pending_gate_consent_in_txn(wtxn, &pending)?;
+        }
+        Ok(())
+    })?;
+
+    let run_id = "run-after-legacy-pending-scan";
+    let target = entity(0x61);
+    write_dreamer_proposal(
+        &vault,
+        target,
+        entity(0xB1),
+        entity(0xC1),
+        "profile.diet",
+        "vegan",
+        run_id,
+        crate::receipt::MAX_RECEIPT_QUERY_SCAN as u64 + 10,
+        &[REASON_CEILING],
+    )?;
+
+    let legacy_scan = vault
+        .store
+        .pending_gate_consents(crate::receipt::MAX_RECEIPT_QUERY_SCAN)?;
+    assert_eq!(legacy_scan.len(), crate::receipt::MAX_RECEIPT_QUERY_SCAN);
+    assert!(
+        legacy_scan
+            .iter()
+            .all(|record| record.claim_id != *target.as_bytes())
+    );
+    assert_eq!(vault.store.pending_gate_consents_for_run(run_id)?.len(), 1);
+
+    let resolution =
+        vault.resolve_inbox_group_at(run_id, InboxBulkVerb::AcceptAll, None, 200_000)?;
+    assert_eq!(resolution.item_receipts.len(), 1);
+    assert_eq!(
+        vault.get_claim(&target)?.expect("target claim").approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(
+        vault
+            .store
+            .pending_gate_consents_for_run(run_id)?
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -823,6 +1174,56 @@ fn run_root_ignores_non_dreamer_jobs_sharing_the_run_id() -> Result<()> {
         bytes_to_hex_lower(webhook.id.as_bytes())
     );
     assert_eq!(groups[0].headline, "Mixed run: 1 new claim");
+    Ok(())
+}
+
+#[test]
+fn run_root_preserves_creation_order_when_a_run_has_multiple_roots() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let run_id = "run-multiple-roots";
+    // The job IDs follow enqueue order, but `list_run` has always selected
+    // roots in the persisted creation-time order.  Keep that distinction
+    // visible so the run-id sidecar cannot accidentally choose by key order.
+    let later_root = enqueue_dreamer_job(
+        &vault,
+        "orchestrator",
+        None,
+        Value::Map(vec![(Value::from("intent"), Value::from("Later root"))]),
+        run_id,
+        20,
+    )?;
+    let earlier_root = enqueue_dreamer_job(
+        &vault,
+        "orchestrator",
+        None,
+        Value::Map(vec![(Value::from("intent"), Value::from("Earlier root"))]),
+        run_id,
+        10,
+    )?;
+    write_dreamer_proposal(
+        &vault,
+        entity(0x61),
+        entity(0xB1),
+        entity(0xC1),
+        "profile.diet",
+        "vegan",
+        run_id,
+        30,
+        &[REASON_CEILING],
+    )?;
+
+    vault.set_inbox_review_dial(InboxReviewDial::ReviewEverything)?;
+    let groups = vault.inbox_groups(InboxQuery::at(100, 10))?;
+    assert_eq!(groups.len(), 1);
+    assert_eq!(
+        groups[0].group_key,
+        bytes_to_hex_lower(earlier_root.as_bytes())
+    );
+    assert_ne!(
+        groups[0].group_key,
+        bytes_to_hex_lower(later_root.as_bytes())
+    );
+    assert_eq!(groups[0].headline, "Earlier root: 1 new claim");
     Ok(())
 }
 

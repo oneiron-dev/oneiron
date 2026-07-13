@@ -496,9 +496,9 @@ pub use crate::identity_reputation::{
 };
 pub use crate::inbox::{
     INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
-    INBOX_RESOLVE_PENDING_SCAN_LIMIT, INBOX_SUBCLUSTER_MIN_MEMBERS, InboxBulkVerb,
-    InboxBundleResolution, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupReopen,
-    InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
+    INBOX_SUBCLUSTER_MIN_MEMBERS, InboxBulkVerb, InboxBundleResolution, InboxExceptionClass,
+    InboxGroup, InboxGroupMember, InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial,
+    InboxSubCluster,
 };
 pub use crate::ingest::{
     INGEST_SOURCE_REGISTRY, IngestError, IngestHarnessConfig, IngestResult, IngestSource,
