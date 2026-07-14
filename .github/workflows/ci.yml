@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+    tags: ['v*']
 
 env:
   CARGO_TERM_COLOR: always
@@ -102,7 +103,12 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # PRs test on ARM (0.625x cost) — the agent/logic code is arch-portable, so
+    # PR-CI's real job runs fine there. main pushes + release tags test on x86,
+    # the production arch. Both hand-written SIMD paths (AVX2 on x86, NEON on
+    # arm — crates/oneiron/src/distance.rs) thus get CI coverage across the
+    # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
+    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-8vcpu-ubuntu-2404-arm' || 'blacksmith-8vcpu-ubuntu-2404' }}
     needs: changes
     # Always on main pushes (record of truth) — always() keeps that true
     # even if the detector job itself fails; on PRs only for rust diffs.
@@ -128,20 +134,29 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
-          key: ${{ github.repository }}-target-test
+          # Arch-specific: the PR (arm) and main-push (x86) lanes must not share
+          # a target dir, or cargo rebuilds cold every switch. -arm on PRs.
+          key: ${{ github.repository }}-target-test${{ github.event_name == 'pull_request' && '-arm' || '' }}
           path: ./target
       - uses: taiki-e/install-action@nextest
-      # Canonical runner (ONE-1144): process-per-test isolation, full tier.
-      - run: cargo nextest run --workspace --all-features --profile full
+      # Canonical runner (ONE-1144): process-per-test isolation. Main pushes
+      # run the full tier (record of truth); PRs run the fast `ci-pr` tier
+      # (skips the ~130s slow set but keeps retries=2 — the `default` tier is
+      # retries=0 for the local fail-fast loop, which we must NOT inherit on
+      # CI). A slow-set regression surfaces on the next main-push full run.
+      - run: cargo nextest run --workspace --all-features --profile ${{ github.event_name == 'push' && 'full' || 'ci-pr' }}
       # nextest does not run doctests; keep them covered separately.
       - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
     name: Package oneiron-server
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Publish-integrity check (missing files in the shipped crate) — only
-    # meaningful on main, not per-PR.
-    if: github.event_name == 'push'
+    # Publish-integrity + standalone-build check. Not needed per-merge at
+    # 0.1.0 (we don't publish every merge) — gate to release tags only, so
+    # it stops billing on every main push. A packaging/standalone break
+    # surfaces when a `v*` tag is cut; revisit (weekly cron / paths-gate) if
+    # that release-window ever bites.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
     env:
