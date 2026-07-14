@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+    tags: ['v*']
 
 env:
   CARGO_TERM_COLOR: always
@@ -143,9 +144,12 @@ jobs:
   package:
     name: Package oneiron-server
     runs-on: blacksmith-4vcpu-arm-ubuntu-2404
-    # Publish-integrity check (missing files in the shipped crate) — only
-    # meaningful on main, not per-PR.
-    if: github.event_name == 'push'
+    # Publish-integrity + standalone-build check. Not needed per-merge at
+    # 0.1.0 (we don't publish every merge) — gate to release tags only, so
+    # it stops billing on every main push. A packaging/standalone break
+    # surfaces when a `v*` tag is cut; revisit (weekly cron / paths-gate) if
+    # that release-window ever bites.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
     env:
