@@ -43,3 +43,18 @@ not (
 # tier uses nextest's built-in retries = 0 and fails fast on the inner loop.
 retries = 2
 default-filter = "all()"
+
+[profile.ci-pr]
+# PR-CI tier: the fast `default` filter (skips the slow set) BUT retries = 2,
+# so a transient flake doesn't red a PR. `default` stays retries = 0 for the
+# local fail-fast inner loop (ONE-1144) — CI must NOT inherit that. Selected
+# for pull_request events in .github/workflows/ci.yml; main pushes use `full`.
+retries = 2
+default-filter = """
+not (
+  test(=tests::vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(=tests::hnsw_recall_at_10_vs_bruteforce)
+  | test(=tests::hnsw_recall_at_10_after_refresh_churn)
+  | binary(=sync_convergence_props)
+)
+"""
