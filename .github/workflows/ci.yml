@@ -26,7 +26,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: blacksmith-2vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     # paths-filter reads PR changed-files via the REST API — grant it
     # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
     permissions:
@@ -59,7 +59,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: blacksmith-2vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
@@ -72,7 +72,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: blacksmith-2vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
@@ -103,7 +103,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
     needs: changes
     # Always on main pushes (record of truth) — always() keeps that true
     # even if the detector job itself fails; on PRs only for rust diffs.
@@ -143,7 +143,7 @@ jobs:
 
   package:
     name: Package oneiron-server
-    runs-on: blacksmith-4vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     # Publish-integrity + standalone-build check. Not needed per-merge at
     # 0.1.0 (we don't publish every merge) — gate to release tags only, so
     # it stops billing on every main push. A packaging/standalone break
@@ -186,7 +186,7 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: blacksmith-2vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +196,7 @@ jobs:
 
   typos:
     name: typos
-    runs-on: blacksmith-2vcpu-arm-ubuntu-2404
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
