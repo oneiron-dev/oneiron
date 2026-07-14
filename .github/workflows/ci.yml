@@ -26,7 +26,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     # paths-filter reads PR changed-files via the REST API — grant it
     # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
     permissions:
@@ -59,7 +59,7 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
@@ -72,7 +72,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.rust == 'true'
     steps:
@@ -97,13 +97,13 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
-          key: ${{ github.repository }}-target-clippy-arm
+          key: ${{ github.repository }}-target-clippy
           path: ./target
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     needs: changes
     # Always on main pushes (record of truth) — always() keeps that true
     # even if the detector job itself fails; on PRs only for rust diffs.
@@ -129,21 +129,21 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
-          key: ${{ github.repository }}-target-test-arm
+          key: ${{ github.repository }}-target-test
           path: ./target
       - uses: taiki-e/install-action@nextest
       # Canonical runner (ONE-1144): process-per-test isolation. Main pushes
-      # run the full tier (record of truth); PRs run the fast `default` tier
-      # (skips the ~130s slow set — hnsw-recall pair, 600-cycle vault, sync
-      # convergence-props). A regression in the slow set surfaces on the very
-      # next main-push full run (one-merge window).
-      - run: cargo nextest run --workspace --all-features --profile ${{ github.event_name == 'push' && 'full' || 'default' }}
+      # run the full tier (record of truth); PRs run the fast `ci-pr` tier
+      # (skips the ~130s slow set but keeps retries=2 — the `default` tier is
+      # retries=0 for the local fail-fast loop, which we must NOT inherit on
+      # CI). A slow-set regression surfaces on the next main-push full run.
+      - run: cargo nextest run --workspace --all-features --profile ${{ github.event_name == 'push' && 'full' || 'ci-pr' }}
       # nextest does not run doctests; keep them covered separately.
       - run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
     name: Package oneiron-server
-    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # Publish-integrity + standalone-build check. Not needed per-merge at
     # 0.1.0 (we don't publish every merge) — gate to release tags only, so
     # it stops billing on every main push. A packaging/standalone break
@@ -174,7 +174,7 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
-          key: ${{ github.repository }}-target-package-arm
+          key: ${{ github.repository }}-target-package
           path: ./target
       - run: rm -rf target/package/oneiron-server-*
       - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
@@ -186,7 +186,7 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +196,7 @@ jobs:
 
   typos:
     name: typos
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
