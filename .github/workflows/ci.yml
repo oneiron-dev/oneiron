@@ -103,7 +103,12 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # PRs test on ARM (0.625x cost) — the agent/logic code is arch-portable, so
+    # PR-CI's real job runs fine there. main pushes + release tags test on x86,
+    # the production arch. Both hand-written SIMD paths (AVX2 on x86, NEON on
+    # arm — crates/oneiron/src/distance.rs) thus get CI coverage across the
+    # PR -> merge -> release lifecycle. cargo-deny/clippy/package stay x86.
+    runs-on: ${{ github.event_name == 'pull_request' && 'blacksmith-8vcpu-ubuntu-2404-arm' || 'blacksmith-8vcpu-ubuntu-2404' }}
     needs: changes
     # Always on main pushes (record of truth) — always() keeps that true
     # even if the detector job itself fails; on PRs only for rust diffs.
@@ -129,7 +134,9 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: useblacksmith/stickydisk@4c034ba57b706cf0e3b4b0ce098c2a3b1071580c # v1.4.0
         with:
-          key: ${{ github.repository }}-target-test
+          # Arch-specific: the PR (arm) and main-push (x86) lanes must not share
+          # a target dir, or cargo rebuilds cold every switch. -arm on PRs.
+          key: ${{ github.repository }}-target-test${{ github.event_name == 'pull_request' && '-arm' || '' }}
           path: ./target
       - uses: taiki-e/install-action@nextest
       # Canonical runner (ONE-1144): process-per-test isolation. Main pushes

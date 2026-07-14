@@ -27,11 +27,16 @@ jobs:
         uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
         with:
           delete-key: ${{ github.repository }}-target-clippy
-      - name: Delete test target disk
+      - name: Delete test target disk (x86 main-push lane)
         continue-on-error: true
         uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
         with:
           delete-key: ${{ github.repository }}-target-test
+      - name: Delete arm test target disk (PR lane)
+        continue-on-error: true
+        uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
+        with:
+          delete-key: ${{ github.repository }}-target-test-arm
       - name: Delete package target disk (retired key — no-op once gone)
         continue-on-error: true
         uses: useblacksmith/stickydisk-delete@b41313d28b8647d72114c9ba3c96bb04061562b6 # v1
