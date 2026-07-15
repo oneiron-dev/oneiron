@@ -36,9 +36,11 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
 
 fn temp_vault_with_embeddings() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let mut config = VaultConfig::default();
-    config.embedding_model = Some("test-model-v1".to_owned());
-    config.dimensions = 4;
+    let config = VaultConfig {
+        embedding_model: Some("test-model-v1".to_owned()),
+        dimensions: 4,
+        ..VaultConfig::default()
+    };
     let vault = Vault::open(tmp.path(), config).expect("open vault");
     (tmp, vault)
 }
@@ -495,7 +497,7 @@ fn same_batch_inheritance_chain_sidecars_summary_until_close_or_promotion() {
             .expect("sidecar inventory")
             .len(),
         4,
-        "both MESSAGEs and both transitively-derived SUMMARYs need sidecars"
+        "both MESSAGE rows and both transitively-derived SUMMARY rows need sidecars"
     );
     let rtxn = vault.store.env.read_txn().expect("summary root read");
     assert_eq!(

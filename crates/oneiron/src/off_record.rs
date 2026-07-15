@@ -691,7 +691,7 @@ fn inherited_off_record_carriers_for_close(
     Ok(carriers)
 }
 
-/// Finds session-owned fresh conversation shells reached by MESSAGEs in one
+/// Finds session-owned fresh conversation shells reached by MESSAGE rows in one
 /// materialized turn. Promotion uses the raw graph inside its write
 /// transaction so releasing the turn, carriers, and container fence is
 /// atomic and cannot race close.
