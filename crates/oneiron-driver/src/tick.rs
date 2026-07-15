@@ -12,10 +12,12 @@
 //!
 //! [`HybridTick`] selects over both with deadline priority: when a deadline
 //! and a push are ready in the same poll, the deadline wins. Push bursts
-//! coalesce (capacity 1 per signal class) into one follow-up pass, while a
-//! missed deadline can never be dropped — deadlines are never buffered
-//! here, they are re-read from the attempt queue on every cycle, so a deadline
-//! that lost one race simply re-surfaces on the next call.
+//! coalesce (capacity 1 per wake lane and plain-hint slot; session hints
+//! ride a bounded ORDERED queue that coalesces only adjacent same-kind
+//! hints — lifecycle causality is never reordered) into follow-up passes,
+//! while a missed deadline can never be dropped — deadlines are never
+//! buffered here, they are re-read from the attempt queue on every cycle, so
+//! a deadline that lost one race simply re-surfaces on the next call.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -29,6 +31,8 @@ use oneiron::{
     WakeTrigger,
 };
 use tokio::sync::Notify;
+
+use crate::session::SessionHint;
 
 /// Millisecond wall-clock read, injectable for tests.
 pub type NowMillis = Arc<dyn Fn() -> u64 + Send + Sync>;
@@ -76,8 +80,18 @@ pub struct WakeSignal {
 /// a hint producer cannot shape — and in particular cannot escalate — the
 /// pass its hint provokes (H-S4). The hint/wake split is enforced by the
 /// type system at the channel's send surface, not by convention.
+///
+/// The optional session-lifecycle fact (ONE-1685) is NOT pass-shaping
+/// authority: the supervisor still maps every hint to the least-privileged
+/// pass shape, and lifecycle consequences (including a session close's
+/// Meso consolidation) are decided by DRIVER policy in
+/// [`SessionTicks`](crate::SessionTicks), never by the producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct HintSignal {}
+pub struct HintSignal {
+    /// Session-lifecycle fact, if this hint carries one. `None` is the
+    /// plain advisory hint ("something may have happened, check micro").
+    pub session: Option<SessionHint>,
+}
 
 /// Source of wakeups for the supervisor. Signature pinned by the
 /// agent-runtime design doc: `async fn next_tick(&mut self) -> Option<Tick>`.
@@ -86,6 +100,17 @@ pub struct HintSignal {}
 #[allow(async_fn_in_trait)]
 pub trait TickSource {
     async fn next_tick(&mut self) -> Option<Tick>;
+
+    /// Pops the OLDEST buffered session-lifecycle hint without waiting, if
+    /// this source buffers any. The session decorator
+    /// ([`SessionTicks`](crate::SessionTicks)) drains these BEFORE trusting
+    /// durable expiry state, so an activity hint that arrived ahead of a
+    /// close deadline is applied before the close decision reads the clock
+    /// it bumps (ONE-1685). Sources without a hint buffer keep the default:
+    /// no buffered hints, ever.
+    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +278,7 @@ impl<D: DeadlineSource> TimerTick<D> {
 
 /// Sleeps until `due_at_ms` on the given clock; returns immediately for a
 /// deadline already in the past (a missed deadline fires, never drops).
-async fn sleep_until_due(now_ms: &NowMillis, due_at_ms: u64) {
+pub(crate) async fn sleep_until_due(now_ms: &NowMillis, due_at_ms: u64) {
     let now = (*now_ms)();
     if due_at_ms > now {
         tokio::time::sleep(Duration::from_millis(due_at_ms - now)).await;
@@ -279,10 +304,23 @@ fn scope_lane(scope: DreamerConsolidationScope) -> usize {
     }
 }
 
+/// Bound of the ordered SESSION-hint queue. Arrival order IS lifecycle
+/// causality (end-then-open is a reopen; open-end-open is two sittings), so
+/// session hints are queued in order and NEVER reordered; only ADJACENT
+/// same-kind hints coalesce (a typing burst is one bump). On overflow the
+/// OLDEST hint drops with a journal line — bounded like every other lane,
+/// and the durable idle-floor/ceiling backstop still closes whatever a
+/// dropped hint would have.
+const SESSION_HINT_QUEUE_CAP: usize = 8;
+
 #[derive(Debug, Default)]
 struct PushState {
     wake: [Option<WakeSignal>; SCOPE_LANES],
-    hint: Option<HintSignal>,
+    /// Plain advisory hints: one coalescing slot (unchanged wave-1 shape).
+    plain_hint: Option<HintSignal>,
+    /// Session-lifecycle hints in ARRIVAL order (see
+    /// [`SESSION_HINT_QUEUE_CAP`]).
+    session_hints: std::collections::VecDeque<SessionHint>,
 }
 
 #[derive(Debug)]
@@ -316,12 +354,13 @@ impl fmt::Display for TickPushError {
 
 impl std::error::Error for TickPushError {}
 
-/// Receiving half of the push channel: ONE bounded coalescing mailbox
-/// (capacity 1 per signal class — one hint slot plus one wake slot per
-/// consolidation lane), drained wake-first with a rotating scan start so
-/// a lane that refills every pass cannot starve older buffered wakes.
-/// Bursts therefore collapse into one follow-up pass per class while
-/// distinct signals are never dropped.
+/// Receiving half of the push channel: ONE bounded coalescing mailbox —
+/// one wake slot per consolidation lane (drained first with a rotating scan
+/// start so a lane that refills every pass cannot starve older buffered
+/// wakes), an ORDERED bounded session-hint queue (arrival order preserved;
+/// only adjacent same-kind hints coalesce — lifecycle causality is never
+/// rewritten), and one coalescing slot for the plain advisory hint. Bursts
+/// therefore collapse while distinct signals keep their order.
 pub struct PushTick {
     shared: Arc<PushShared>,
     /// Next wake-lane index to try first (round-robin). Advances after each
@@ -375,7 +414,15 @@ impl PushTick {
                 return Some(Tick::Wake(signal));
             }
         }
-        state.hint.take().map(Tick::Hint)
+        // Session hints drain in ARRIVAL order: reordering lifecycle facts
+        // rewrites causality (an end-then-open burst is a reopen, not an
+        // open that ends itself). The plain advisory slot drains last.
+        if let Some(hint) = state.session_hints.pop_front() {
+            return Some(Tick::Hint(HintSignal {
+                session: Some(hint),
+            }));
+        }
+        state.plain_hint.take().map(Tick::Hint)
     }
 
     /// Waits for the next pushed signal. The mailbox is level-triggered:
@@ -418,6 +465,10 @@ impl Drop for PushTick {
 impl TickSource for PushTick {
     async fn next_tick(&mut self) -> Option<Tick> {
         self.recv().await
+    }
+
+    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+        self.shared.lock_state().session_hints.pop_front()
     }
 }
 
@@ -491,16 +542,45 @@ pub struct HintPusher {
 }
 
 impl HintPusher {
-    /// Pushes an advisory hint. Hints coalesce into one pending slot: a
-    /// burst of hints provokes at most one follow-up pass.
+    /// Pushes a plain advisory hint. Plain hints coalesce into one pending
+    /// slot: a burst provokes at most one follow-up pass.
     pub fn push_hint(&self) -> Result<(), TickPushError> {
         if !self.shared.receiver_alive.load(Ordering::Acquire) {
             return Err(TickPushError::Closed);
         }
         {
             let mut state = self.shared.lock_state();
-            if state.hint.is_none() {
-                state.hint = Some(HintSignal {});
+            if state.plain_hint.is_none() {
+                state.plain_hint = Some(HintSignal::default());
+            }
+        }
+        self.shared.notify.notify_one();
+        Ok(())
+    }
+
+    /// Pushes a session-lifecycle hint (ONE-1685) onto the bounded ORDERED
+    /// queue. Arrival order is preserved end-to-end — lifecycle causality
+    /// (open → end → open is two sittings) is never rewritten by
+    /// coalescing; only ADJACENT same-kind hints coalesce (a typing burst
+    /// is one bump). On overflow the oldest buffered hint is dropped and
+    /// journaled. Carrying a lifecycle fact grants NO pass-shaping
+    /// authority — the driver's session policy decides what, if anything,
+    /// results (H-S4).
+    pub fn push_session_hint(&self, hint: SessionHint) -> Result<(), TickPushError> {
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TickPushError::Closed);
+        }
+        {
+            let mut state = self.shared.lock_state();
+            if state.session_hints.back() != Some(&hint) {
+                if state.session_hints.len() == SESSION_HINT_QUEUE_CAP {
+                    let dropped = state.session_hints.pop_front();
+                    tracing::warn!(
+                        ?dropped,
+                        "session hint queue overflow; dropped the oldest hint"
+                    );
+                }
+                state.session_hints.push_back(hint);
             }
         }
         self.shared.notify.notify_one();
@@ -581,6 +661,10 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
             // exhausted.
             None => self.push.recv().await,
         }
+    }
+
+    fn take_buffered_session_hint(&mut self) -> Option<SessionHint> {
+        self.push.take_buffered_session_hint()
     }
 }
 
@@ -672,10 +756,83 @@ mod tests {
         ));
         assert_eq!(
             receiver.take_pending(),
-            Some(Tick::Hint(HintSignal {})),
+            Some(Tick::Hint(HintSignal::default())),
             "hint burst coalesced to one, delivered after the wake"
         );
         assert_eq!(receiver.take_pending(), None);
+    }
+
+    #[test]
+    fn session_hints_preserve_arrival_order_and_coalesce_only_adjacent_same_kind() {
+        let (mut receiver, _wake, hint) = PushTick::channel();
+        // Arrival sequence: open, a typing burst (adjacent → ONE bump),
+        // end, REOPEN, plain advisory. The second AppOpen is same-kind but
+        // NOT adjacent to the first — collapsing them would erase a whole
+        // sitting (the C4/G1 causality bug).
+        hint.push_session_hint(SessionHint::AppOpen)
+            .expect("open channel");
+        for _ in 0..3 {
+            hint.push_session_hint(SessionHint::Activity)
+                .expect("open channel");
+        }
+        hint.push_session_hint(SessionHint::ExplicitEnd)
+            .expect("open channel");
+        hint.push_session_hint(SessionHint::AppOpen)
+            .expect("open channel");
+        hint.push_hint().expect("open channel");
+
+        let mut drained = Vec::new();
+        while let Some(tick) = receiver.take_pending() {
+            let Tick::Hint(signal) = tick else {
+                panic!("only hints were pushed, got {tick:?}");
+            };
+            drained.push(signal.session);
+        }
+        assert_eq!(
+            drained,
+            vec![
+                Some(SessionHint::AppOpen),
+                Some(SessionHint::Activity),
+                Some(SessionHint::ExplicitEnd),
+                Some(SessionHint::AppOpen),
+                None,
+            ],
+            "arrival order preserved; only the adjacent typing burst coalesced"
+        );
+    }
+
+    #[test]
+    fn session_hint_queue_overflow_drops_the_oldest_and_keeps_order() {
+        let (mut receiver, _wake, hint) = PushTick::channel();
+        // 10 alternating (never-adjacent-same-kind) hints against a cap of
+        // 8: the two OLDEST drop, the surviving 8 keep arrival order.
+        for index in 0..10 {
+            let kind = if index % 2 == 0 {
+                SessionHint::AppOpen
+            } else {
+                SessionHint::ExplicitEnd
+            };
+            hint.push_session_hint(kind).expect("open channel");
+        }
+
+        let mut drained = Vec::new();
+        while let Some(tick) = receiver.take_pending() {
+            let Tick::Hint(signal) = tick else {
+                panic!("only hints were pushed, got {tick:?}");
+            };
+            drained.push(signal.session.expect("session hints only"));
+        }
+        assert_eq!(drained.len(), 8, "bounded: exactly the cap survives");
+        let expected: Vec<SessionHint> = (2..10)
+            .map(|index| {
+                if index % 2 == 0 {
+                    SessionHint::AppOpen
+                } else {
+                    SessionHint::ExplicitEnd
+                }
+            })
+            .collect();
+        assert_eq!(drained, expected, "oldest dropped, order preserved");
     }
 
     #[test]

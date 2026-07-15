@@ -1097,9 +1097,28 @@ mod tests {
 
     #[test]
     fn hint_ticks_map_to_least_privileged_pass_shape() {
-        let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal {}));
+        let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal::default()));
         assert_eq!(scope, DreamerConsolidationScope::Micro);
         assert_eq!(trigger, WakeTrigger::Event);
+    }
+
+    #[test]
+    fn session_hint_ticks_carry_no_pass_shaping_authority() {
+        // H-S4 (ONE-1685): a lifecycle fact on a hint never escalates the
+        // pass it provokes — even "explicit end" maps least-privileged
+        // here; the Meso consolidation on close is driver policy (a
+        // DURABLE queue attempt), not producer authority.
+        for hint in [
+            crate::SessionHint::AppOpen,
+            crate::SessionHint::Activity,
+            crate::SessionHint::ExplicitEnd,
+        ] {
+            let (scope, trigger) = pass_shape(&Tick::Hint(crate::tick::HintSignal {
+                session: Some(hint),
+            }));
+            assert_eq!(scope, DreamerConsolidationScope::Micro);
+            assert_eq!(trigger, WakeTrigger::Event);
+        }
     }
 
     #[tokio::test]

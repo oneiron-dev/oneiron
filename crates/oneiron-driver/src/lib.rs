@@ -14,7 +14,12 @@
 //! * [`PushTick`] — one bounded coalescing push mailbox whose producer
 //!   handles are typed by role ([`WakePusher`] vs [`HintPusher`], H-S4),
 //! * [`HybridTick`] — a biased select over both, deadline priority, burst
-//!   coalescing that can never drop a distinct missed deadline.
+//!   coalescing that can never drop a distinct missed deadline,
+//! * [`SessionTicks`] — a decorator over any source that runs the RT-03
+//!   SESSION lifecycle (ONE-1685): app hints mint/bump, the idle floor and
+//!   the hard lifetime ceiling close, and a close enqueues its DURABLE
+//!   SessionEnd → Meso consolidation round ATOMICALLY with the end — the
+//!   deadline lane then surfaces the planned jobs.
 //!
 //! It is deliberately NOT an actor framework and NOT an attempt-worker crate —
 //! the queue lives in `oneiron::attempt_queue` and stays there. Budget
@@ -23,9 +28,14 @@
 //! egress unless a host injects a remote one) and the per-pass budget
 //! machinery, and never touches runner-store rows itself.
 
+mod session;
 mod supervisor;
 mod tick;
 
+pub use session::{
+    DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint, SessionHintEffect, SessionLifecycleConfig,
+    SessionLifecycleDriver, SessionTicks,
+};
 pub use supervisor::{
     ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
     RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
