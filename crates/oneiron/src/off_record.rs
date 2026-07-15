@@ -614,19 +614,26 @@ fn persist_existing_inherited_carriers_for_root_in_txn(
             for row in store.edges_in.prefix_iter(&*wtxn, &prefix)? {
                 let (key, value) = row?;
                 let child = crate::vault::parse_edge_record(key, value)?.target;
-                let Some(raw) = store.entities.get(&*wtxn, child.as_bytes())? else {
+                if visited.contains(&child) {
                     continue;
-                };
-                let header = EntityMetadataHeader::parse(raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                if header.entity_type != entity_type || visited.contains(&child) {
-                    continue;
+                }
+                let raw = store.entities.get(&*wtxn, child.as_bytes())?;
+                if let Some(raw) = raw {
+                    let header = EntityMetadataHeader::parse(raw)
+                        .ok_or(Error::CorruptedIndex("entity header"))?;
+                    if header.entity_type != entity_type {
+                        continue;
+                    }
                 }
                 if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
                     return Err(Error::CorruptedIndex(
                         "off-record fence inheritance graph exceeds bound",
                     ));
                 }
+                // An inheritance edge may predate its source entity. Persist
+                // the pending sidecar now so a later MESSAGE/SUMMARY put is
+                // hidden immediately, and keep walking raw inbound edges so
+                // an entirely edge-first descendant chain is covered too.
                 visited.insert(child);
                 pending.push(child);
                 carriers.push(child);
@@ -837,6 +844,13 @@ pub(crate) fn guard_off_record_entity_put_preflight(
 ) -> Result<()> {
     guard_direct_off_record_entity_write(store, wtxn, id, replicated)?;
     if inherited_off_record_fence_roots_in_txn(store, wtxn, id)?.is_empty() {
+        return Ok(());
+    }
+    // A pending sidecar can predate its carrier (tag-time backfill covers
+    // edge-first children). The carrier's first LOCAL put materializes it
+    // hidden under that sidecar; replicated puts and re-puts of an already
+    // materialized carrier keep rejecting.
+    if !replicated && store.entities.get(wtxn, id.as_bytes())?.is_none() {
         return Ok(());
     }
     Err(Error::OffRecordFencedTurnWriteRejected {

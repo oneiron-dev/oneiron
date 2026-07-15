@@ -1516,6 +1516,152 @@ fn denied_and_halted_error_responses_carry_budget() {
 }
 
 #[test]
+fn message_witness_non_gate_failure_records_failed_response_with_budget() {
+    let (_dir, vault) = open_test_vault();
+    let session_ref = "sess-message-failed-response";
+    vault
+        .enter_off_record_session(session_ref, crate::OffRecordBackendClass::Local)
+        .expect("enter off-record session");
+    let backend = FixtureBackend::new(["await self.speak({ content: 'private' });"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake-pass",
+        10_000,
+        100,
+        crate::BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = crate::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 30_000));
+    let captured = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let call = SelfCall::Speak(crate::facade::WitnessTurn {
+        conversation_ref: entity(0xD1).to_hex(),
+        // Off-record message turns must be omitted so the executor owns the
+        // deterministic id. This caller-supplied ref is a non-Gate write error.
+        turn_ref: Some(entity(0xD2).to_hex()),
+        messages: vec![crate::facade::WitnessMessage {
+            id: None,
+            author: crate::facade::WitnessAuthor::User,
+            message_type: "guest-controlled".to_owned(),
+            content: "must not abort before Failed response".to_owned(),
+            metadata: None,
+            is_visible: true,
+            order: 0,
+        }],
+        occurred_at: 100,
+    });
+    let mut runtime = DeniedCaptureRuntime {
+        calls: vec![call.clone()],
+        captured: std::sync::Arc::clone(&captured),
+    };
+    let gated_write = gated_actor_write(&vault, "run-message-failed-response");
+    let mut config = executor_config(
+        entity(0xD3),
+        EngineExecutorLimits {
+            soft_steps: 1,
+            hard_steps: 1,
+        },
+    );
+    config.off_record_session_ref = Some(session_ref.to_owned());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write)
+            .with_legibility(ExecutorLegibility {
+                guard: &guard,
+                deadline: &deadline,
+            });
+    let err = block_on_ready(executor.run(&config))
+        .expect_err("the step fails only after returning the typed response");
+    assert_eq!(
+        [err]
+            .iter()
+            .filter(|error| {
+                matches!(
+                    error,
+                    EngineExecutorError::Engine(Error::InvalidClaimBody(
+                        "off-record self message turn_ref must be omitted and executor-owned"
+                    ))
+                )
+            })
+            .count(),
+        1
+    );
+
+    let captured = captured.lock().expect("captured response lock");
+    assert_eq!(captured.len(), 1, "dispatch returned one guest response");
+    assert_eq!(
+        captured
+            .iter()
+            .filter(|response| response
+                .get(GUEST_BUDGET_RESPONSE_KEY)
+                .is_some_and(|v| v.is_object()))
+            .count(),
+        1,
+        "the Failed guest response carries the budget envelope"
+    );
+    drop(captured);
+
+    let stored = vault
+        .get_off_record_code_run_replay_record(session_ref, &config.run_id)
+        .expect("load scoped failed replay")
+        .expect("stored scoped failed replay");
+    assert_eq!(stored.bridge_calls.len(), 1);
+    assert_eq!(stored.bridge_calls[0].effect, SelfEffect::Speak);
+    assert_eq!(
+        stored
+            .bridge_calls
+            .iter()
+            .filter(|row| bridge_outcome_kind(row) == "failed")
+            .count(),
+        1
+    );
+    assert_eq!(stored.step_checkpoints.len(), 1);
+
+    let gate_error = Error::GateWriteRejected {
+        outcome: "pending",
+        reason_codes: vec!["gate.pending.actor_ceiling"],
+    };
+    let gate_outcome = dispatch_error_outcome(&call, &gate_error).expect("typed gate outcome");
+    assert_eq!(
+        [gate_outcome]
+            .iter()
+            .filter(|outcome| matches!(outcome, SelfDispatchOutcome::Denied(_)))
+            .count(),
+        1,
+        "message-witness Gate rejection must remain Denied, not Failed"
+    );
+}
+
+#[test]
+fn failed_write_trap_matrix_covers_every_self_effect() {
+    let effects = [
+        SelfEffect::MemorySearch,
+        SelfEffect::MemoryWriteFixture,
+        SelfEffect::MemoryPutClaim,
+        SelfEffect::MemorySupersedeClaim,
+        SelfEffect::MemoryPutEdge,
+        SelfEffect::Speak,
+        SelfEffect::Think,
+        SelfEffect::Express,
+        SelfEffect::AskHuman,
+        SelfEffect::DestructiveFixture,
+        SelfEffect::OutboundFixture,
+    ];
+    assert_eq!(
+        effects
+            .into_iter()
+            .filter(|effect| records_failed_write_trap(*effect))
+            .count(),
+        6
+    );
+    assert_eq!(
+        effects
+            .into_iter()
+            .filter(|effect| !records_failed_write_trap(*effect))
+            .count(),
+        5
+    );
+}
+
+#[test]
 fn executor_binds_replay_artifacts_to_off_record_session_and_close_sweeps_them() {
     let (_dir, vault) = open_test_vault();
     let session_ref = "sess-exec-offrecord";
@@ -1669,8 +1815,20 @@ fn executor_off_record_speak_registers_minted_turn_and_close_deletes_message() {
             .entities_by_type(ENTITY_TYPE_MESSAGE)
             .expect("message rows")
             .len(),
-        1
+        0,
+        "public type index hides the fenced MESSAGE during the live session"
     );
+    let rtxn = vault.store.env.read_txn().expect("raw row audit");
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, message_id.as_bytes())
+            .expect("raw message row")
+            .is_some(),
+        "the hidden MESSAGE row still exists physically until close"
+    );
+    drop(rtxn);
 
     let log = vault
         .off_record_receipt_log(session_ref)

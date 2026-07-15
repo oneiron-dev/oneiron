@@ -577,6 +577,109 @@ fn same_batch_inheritance_chain_sidecars_summary_until_close_or_promotion() {
 }
 
 #[test]
+fn tag_time_backfill_persists_pending_edge_first_children_until_close_or_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let close_turn = seed_turn(&vault, 1000);
+    let promote_turn = seed_turn(&vault, 1001);
+    let close_message = EntityId::now();
+    let promote_message = EntityId::now();
+
+    for (message, turn) in [(close_message, close_turn), (promote_message, promote_turn)] {
+        vault
+            .batch()
+            .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+            .commit()
+            .expect("seed edge before source entity");
+    }
+
+    vault
+        .enter_off_record_session("sess-tag-edge-first", OffRecordBackendClass::Local)
+        .expect("enter");
+    for turn in [close_turn, promote_turn] {
+        vault
+            .tag_turn_off_record("sess-tag-edge-first", &turn)
+            .expect("tag root after edge");
+    }
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("pending sidecar inventory")
+            .len(),
+        2,
+        "tagging must persist one pending sidecar per edge-first child"
+    );
+
+    for (message, body, learned_at) in [
+        (close_message, b"private close edge-first".as_slice(), 1000),
+        (
+            promote_message,
+            b"private promote edge-first".as_slice(),
+            1001,
+        ),
+    ] {
+        vault
+            .put_entity(
+                &message,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                body,
+            )
+            .expect("materialize edge-first child");
+    }
+    assert_eq!(
+        [close_message, promote_message]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("hidden public get").is_some())
+            .count(),
+        0
+    );
+    assert_eq!(surfaced_messages(&vault).len(), 0);
+
+    vault
+        .promote_off_record_turn(
+            "sess-tag-edge-first",
+            &promote_turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote edge-first child root");
+    assert_eq!(
+        [close_message, promote_message]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("post-promotion public get").is_some())
+            .count(),
+        1
+    );
+    assert_eq!(surfaced_messages(&vault).len(), 1);
+
+    let log = vault
+        .off_record_receipt_log("sess-tag-edge-first")
+        .expect("receipt log");
+    let outcome = vault
+        .close_off_record_session("sess-tag-edge-first", log)
+        .expect("close remaining edge-first root");
+    assert_eq!(outcome.turns_deleted, 1);
+    assert_eq!(outcome.promoted_turns_kept, 1);
+    assert_eq!(
+        [close_turn, close_message]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("closed raw row").is_some())
+            .count(),
+        0
+    );
+    assert_eq!(
+        [promote_turn, promote_message]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("promoted public row").is_some())
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn off_record_close_cascades_preexisting_derived_summaries_recursively() {
     let (_tmp, vault) = temp_vault();
     let turn = seed_turn(&vault, 1000);
@@ -1462,6 +1565,272 @@ fn neighbors_facade_hides_fenced_anchor_and_peers() {
             .expect("hidden-anchor neighbors")
             .len(),
         0
+    );
+}
+
+#[test]
+fn tree_walks_stop_at_hidden_child_chain_until_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let root = seed_turn(&vault, 1000);
+    let hidden_child = seed_turn(&vault, 1001);
+    let visible_sibling = seed_turn(&vault, 1002);
+    let hidden_grandchild = EntityId::now();
+    vault
+        .batch()
+        .edge(&hidden_child, EdgeKind::ChildOf, &root, 1.0)
+        .edge(&visible_sibling, EdgeKind::ChildOf, &root, 1.0)
+        .commit()
+        .expect("seed visible first-level tree");
+
+    vault
+        .enter_off_record_session("sess-hidden-tree", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-hidden-tree", &hidden_child)
+        .expect("tag child root");
+    vault
+        .batch()
+        .put(
+            &hidden_grandchild,
+            ENTITY_TYPE_MESSAGE,
+            TimeRange {
+                start: 1003,
+                end: 1003,
+            },
+            1003,
+            b"private tree grandchild",
+        )
+        .edge(&hidden_grandchild, EdgeKind::PartOf, &hidden_child, 1.0)
+        .edge(&hidden_grandchild, EdgeKind::ChildOf, &hidden_child, 1.0)
+        .commit()
+        .expect("seed inherited-hidden grandchild");
+
+    let live_subtree = vault.subtree(&root, 8).expect("live subtree");
+    assert_eq!(live_subtree.len(), 1);
+    assert_eq!(
+        live_subtree
+            .iter()
+            .filter(|(id, depth)| *id == visible_sibling && *depth == 1)
+            .count(),
+        1
+    );
+    assert_eq!(
+        vault
+            .ancestors(&hidden_grandchild)
+            .expect("hidden ancestors")
+            .len(),
+        0,
+        "a hidden anchor must not expose the ancestor path above it"
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-hidden-tree",
+            &hidden_child,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote hidden tree root");
+    let promoted_subtree = vault.subtree(&root, 8).expect("promoted subtree");
+    assert_eq!(promoted_subtree.len(), 3);
+    assert_eq!(
+        promoted_subtree
+            .iter()
+            .filter(|(id, depth)| {
+                [
+                    (hidden_child, 1_u32),
+                    (visible_sibling, 1_u32),
+                    (hidden_grandchild, 2_u32),
+                ]
+                .contains(&(*id, *depth))
+            })
+            .count(),
+        3
+    );
+    let promoted_ancestors = vault
+        .ancestors(&hidden_grandchild)
+        .expect("promoted ancestors");
+    assert_eq!(promoted_ancestors.len(), 2);
+    assert_eq!(
+        promoted_ancestors
+            .iter()
+            .filter(|id| [hidden_child, root].contains(id))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn public_entity_index_helpers_hide_carrier_until_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let hidden = EntityId::now();
+    let control = EntityId::now();
+    for (id, learned_at, body) in [
+        (hidden, 1002, b"private indexed message".as_slice()),
+        (control, 1001, b"ordinary indexed message".as_slice()),
+    ] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: learned_at,
+                    end: learned_at,
+                },
+                learned_at,
+                body,
+            )
+            .expect("seed indexed message");
+    }
+    vault
+        .put_edge(&hidden, EdgeKind::PartOf, &turn, 1.0)
+        .expect("attach hidden message");
+    vault
+        .enter_off_record_session("sess-index-readers", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-index-readers", &turn)
+        .expect("tag root");
+
+    assert_eq!(
+        [hidden, control]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("public existence"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        [(hidden, 1002_u64), (control, 1001_u64)]
+            .into_iter()
+            .filter(|(id, learned_at)| vault.get_learned_at(id).ok() == Some(*learned_at))
+            .count(),
+        1
+    );
+    let live_by_type = vault
+        .entities_by_type(ENTITY_TYPE_MESSAGE)
+        .expect("live type index");
+    assert_eq!(live_by_type.len(), 1);
+    assert_eq!(live_by_type.iter().filter(|id| **id == control).count(), 1);
+    let live_range = vault
+        .entities_in_learned_range(1001, 1003)
+        .expect("live learned range");
+    assert_eq!(live_range.len(), 1);
+    assert_eq!(live_range.iter().filter(|id| **id == control).count(), 1);
+    assert_eq!(
+        vault
+            .entities_by_type_page(ENTITY_TYPE_MESSAGE, None, 8)
+            .expect("live type page")
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("live type count"),
+        1
+    );
+    assert_eq!(
+        vault
+            .latest_entity_bodies_by_type(ENTITY_TYPE_MESSAGE, 8, 32)
+            .expect("live latest bodies")
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault.get_entity_type(&hidden).expect("live entity type"),
+        None
+    );
+    assert_eq!(
+        vault.latest_learned_at().expect("live latest learned"),
+        Some(1001)
+    );
+    assert_eq!(
+        vault
+            .latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_TURN])
+            .expect("live latest learned excluding turn"),
+        Some(1001)
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-index-readers",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote indexed carrier");
+    assert_eq!(
+        [hidden, control]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("promoted existence"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        [(hidden, 1002_u64), (control, 1001_u64)]
+            .into_iter()
+            .filter(|(id, learned_at)| vault.get_learned_at(id).ok() == Some(*learned_at))
+            .count(),
+        2
+    );
+    let promoted_by_type = vault
+        .entities_by_type(ENTITY_TYPE_MESSAGE)
+        .expect("promoted type index");
+    assert_eq!(promoted_by_type.len(), 2);
+    assert_eq!(
+        promoted_by_type
+            .iter()
+            .filter(|id| [hidden, control].contains(id))
+            .count(),
+        2
+    );
+    let promoted_range = vault
+        .entities_in_learned_range(1001, 1003)
+        .expect("promoted learned range");
+    assert_eq!(promoted_range.len(), 2);
+    assert_eq!(
+        promoted_range
+            .iter()
+            .filter(|id| [hidden, control].contains(id))
+            .count(),
+        2
+    );
+    assert_eq!(
+        vault
+            .entities_by_type_page(ENTITY_TYPE_MESSAGE, None, 8)
+            .expect("promoted type page")
+            .len(),
+        2
+    );
+    assert_eq!(
+        vault
+            .count_entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("promoted type count"),
+        2
+    );
+    assert_eq!(
+        vault
+            .latest_entity_bodies_by_type(ENTITY_TYPE_MESSAGE, 8, 32)
+            .expect("promoted latest bodies")
+            .len(),
+        2
+    );
+    assert_eq!(
+        vault
+            .get_entity_type(&hidden)
+            .expect("promoted entity type"),
+        Some(ENTITY_TYPE_MESSAGE)
+    );
+    assert_eq!(
+        vault.latest_learned_at().expect("promoted latest learned"),
+        Some(1002)
+    );
+    assert_eq!(
+        vault
+            .latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_TURN])
+            .expect("promoted latest learned excluding turn"),
+        Some(1002)
     );
 }
 

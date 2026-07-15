@@ -3006,11 +3006,28 @@ impl MemoryFacade<'_> {
         reference: &str,
         expected_type: u8,
     ) -> FacadeResult<(EntityId, bool)> {
+        // Write-path resolver: witness replay to a live-fenced turn is legal,
+        // so a hidden container must resolve as EXISTING here — treating it
+        // as new would re-materialize a different body and trip the strict
+        // fence door. The visibility policy is enforced by the put guards,
+        // not by this lookup. (A typed rejection on a fenced id already
+        // discloses existence; this adds no new oracle.)
+        let raw_type = |id: &EntityId| -> FacadeResult<Option<u8>> {
+            let rtxn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|err| FacadeError::from(Error::from(err)))?;
+            self.vault
+                .get_entity_type_in_txn(&rtxn, id)
+                .map_err(FacadeError::from)
+        };
         let trimmed = reference.trim();
         if trimmed.len() == 32 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
             let id = EntityId::from_hex(trimmed)
                 .map_err(|_| FacadeError::bad_request(format!("invalid entity id {trimmed:?}")))?;
-            return match self.vault.get_entity_type(&id).map_err(FacadeError::from)? {
+            return match raw_type(&id)? {
                 Some(entity_type) if entity_type == expected_type => Ok((id, false)),
                 Some(entity_type) => Err(FacadeError::bad_request(format!(
                     "ref {trimmed:?} resolves to kind {} but {} was expected",
@@ -3021,7 +3038,7 @@ impl MemoryFacade<'_> {
             };
         }
         let id = self.resolve_ref(reference)?;
-        match self.vault.get_entity_type(&id).map_err(FacadeError::from)? {
+        match raw_type(&id)? {
             Some(entity_type) if entity_type == expected_type => Ok((id, false)),
             Some(entity_type) => Err(FacadeError::bad_request(format!(
                 "ref {reference:?} resolves to kind {} but {} was expected",

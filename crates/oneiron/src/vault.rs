@@ -1200,10 +1200,15 @@ impl Vault {
         MaintenanceBuilder::new(self)
     }
 
-    /// Checks if an entity exists in the LMDB vault.
+    /// Checks if a publicly visible entity exists in the LMDB vault.
     pub fn entity_exists(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.entities.get(&rtxn, id.as_bytes())?.is_some())
+        if self.store.entities.get(&rtxn, id.as_bytes())?.is_none()
+            || crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, id)?
+        {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// Checks if a directed edge exists in the LMDB vault.
@@ -1213,9 +1218,13 @@ impl Vault {
         Ok(self.store.edges_out.get(&rtxn, &key)?.is_some())
     }
 
-    /// Returns the `learned_at` timestamp from an entity's header (bytes 17-24).
+    /// Returns the `learned_at` timestamp from a visible entity's header.
+    /// Hidden entities are indistinguishable from missing entities.
     pub fn get_learned_at(&self, id: &EntityId) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, id)? {
+            return Err(Error::EntityNotFound);
+        }
         let raw = self
             .store
             .entities
@@ -1226,16 +1235,9 @@ impl Vault {
         Ok(header.learned_at)
     }
 
-    /// Returns the greatest `learned_at` timestamp present in the temporal index.
+    /// Returns the greatest visible `learned_at` timestamp in the temporal index.
     pub fn latest_learned_at(&self) -> Result<Option<u64>> {
-        let rtxn = self.store.env.read_txn()?;
-        let Some((key, _)) = self.store.temporal_learned.last(&rtxn)? else {
-            return Ok(None);
-        };
-        require_key_len(key, 24, "temporal learned key")?;
-        Ok(Some(u64::from_be_bytes(key[..8].try_into().map_err(
-            |_| Error::CorruptedIndex("temporal learned key"),
-        )?)))
+        self.latest_learned_at_excluding_entity_types(&[])
     }
 
     /// Returns the greatest `learned_at` timestamp whose entity type is not excluded.
@@ -1265,7 +1267,9 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
             let header =
                 EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if !excluded_types.contains(&header.entity_type) {
+            if !excluded_types.contains(&header.entity_type)
+                && !crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)?
+            {
                 return Ok(Some(learned_at));
             }
         }
@@ -1294,18 +1298,20 @@ impl Vault {
         )? {
             let (key, _) = entry?;
             require_key_len(key, 24, "temporal learned key")?;
-            // Cap check BEFORE push so an exact-MAX result set returns Ok,
-            // matching scan_edges semantics. Only an MAX+1-th in-range row
-            // triggers IndexOverflow.
-            if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
-                return Err(Error::IndexOverflow("entities_in_learned_range"));
-            }
             let id = EntityId::from_bytes(
                 key[8..24]
                     .try_into()
                     .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
             )
             .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+                continue;
+            }
+            // Cap visible results rather than raw index rows so a hidden row
+            // cannot consume public enumeration budget.
+            if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
+                return Err(Error::IndexOverflow("entities_in_learned_range"));
+            }
             ids.push(id);
         }
         Ok(ids)
@@ -1578,11 +1584,15 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut ids = Vec::new();
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
+            let (key, _) = entry?;
+            let id = entity_id_from_type_index_key(key)?;
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+                continue;
+            }
             if ids.len() >= MAX_TYPE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("entities_by_type"));
             }
-            let (key, _) = entry?;
-            ids.push(entity_id_from_type_index_key(key)?);
+            ids.push(id);
         }
         Ok(ids)
     }
@@ -1625,7 +1635,11 @@ impl Vault {
             if key.first() != Some(&entity_type) {
                 break;
             }
-            ids.push(entity_id_from_type_index_key(key)?);
+            let id = entity_id_from_type_index_key(key)?;
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+                continue;
+            }
+            ids.push(id);
             if ids.len() >= limit {
                 break;
             }
@@ -1675,6 +1689,9 @@ impl Vault {
                     .map_err(|_| Error::CorruptedIndex("temporal learned key"))?,
             )
             .map_err(|_| Error::CorruptedIndex("temporal learned key"))?;
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+                continue;
+            }
 
             let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
                 continue;
@@ -1708,7 +1725,10 @@ impl Vault {
         let mut total = 0_u64;
         for entry in self.store.type_index.prefix_iter(&rtxn, &[entity_type])? {
             let (key, _) = entry?;
-            entity_id_from_type_index_key(key)?;
+            let id = entity_id_from_type_index_key(key)?;
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+                continue;
+            }
             total = total
                 .checked_add(1)
                 .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
@@ -1716,13 +1736,18 @@ impl Vault {
         Ok(total)
     }
 
-    /// Returns the entity type byte for a stored entity, or None if not found.
+    /// Returns the entity type byte for a visible entity, or None if hidden/missing.
     pub fn get_entity_type(&self, id: &EntityId) -> Result<Option<u8>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         self.get_entity_type_in_txn(&rtxn, id)
     }
 
-    /// Transaction-composable body of [`Vault::get_entity_type`].
+    /// Raw transaction-composable type lookup for internal write validation.
+    /// Unlike [`Vault::get_entity_type`], this deliberately does not apply the
+    /// public off-record visibility policy.
     pub(crate) fn get_entity_type_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1992,6 +2017,9 @@ impl Vault {
     /// result set or pending frontier would exceed `MAX_SUBTREE_RESULTS`.
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, root)? {
+            return Ok(Vec::new());
+        }
         let mut result = Vec::new();
         let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);
         let mut visited = std::collections::HashSet::new();
@@ -2013,12 +2041,18 @@ impl Vault {
             for entry in self.store.edges_in.prefix_iter(&rtxn, &child_prefix)? {
                 let (key, value) = entry?;
                 let child = parse_edge_record(key, value)?.target;
-                if visited.insert(child) {
-                    if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
-                        return Err(Error::IndexOverflow("subtree"));
-                    }
-                    frontier.push_back((child, depth + 1));
+                if visited.contains(&child)
+                    || crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &child)?
+                {
+                    // Hidden nodes are traversal barriers: returning or
+                    // descending through one would reveal its private branch.
+                    continue;
                 }
+                visited.insert(child);
+                if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
+                    return Err(Error::IndexOverflow("subtree"));
+                }
+                frontier.push_back((child, depth + 1));
             }
         }
 
@@ -2038,12 +2072,18 @@ impl Vault {
     /// `MAX_ANCESTOR_DEPTH` bounds pathological acyclic chains.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, node)? {
+            return Ok(Vec::new());
+        }
         let mut result = Vec::new();
         let mut current = *node;
         let mut visited = std::collections::HashSet::new();
         visited.insert(current);
 
         while let Some(parent) = first_child_of_parent(&self.store, &rtxn, &current)? {
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &parent)? {
+                break;
+            }
             if !visited.insert(parent) {
                 break; // Cycle detected — stop walking but don't error
             }

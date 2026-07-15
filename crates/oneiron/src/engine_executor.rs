@@ -929,7 +929,12 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
 fn records_failed_write_trap(effect: SelfEffect) -> bool {
     matches!(
         effect,
-        SelfEffect::MemoryPutClaim | SelfEffect::MemorySupersedeClaim | SelfEffect::MemoryPutEdge
+        SelfEffect::MemoryPutClaim
+            | SelfEffect::MemorySupersedeClaim
+            | SelfEffect::MemoryPutEdge
+            | SelfEffect::Speak
+            | SelfEffect::Think
+            | SelfEffect::Express
     )
 }
 
