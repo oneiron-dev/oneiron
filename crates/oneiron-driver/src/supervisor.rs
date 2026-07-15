@@ -41,7 +41,7 @@ use oneiron::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerJobExecutor,
     DreamerWakeDriver, LlmBackend, ModelId, Result, RunWakePass, Vault, WakeCancellation,
-    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakeTrigger, WriteActor,
+    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 use tokio::sync::{Semaphore, watch};
@@ -100,12 +100,18 @@ impl RestartBackoff {
     }
 }
 
-/// Static supervisor configuration. One wake budget id + lease owner per
-/// supervisor; every pass gets a fresh wall-clock deadline and a fresh
-/// wake-budget counter under this identity.
+/// Static supervisor configuration. One base wake budget id + lease owner
+/// per supervisor; every pass gets a fresh wall-clock deadline, a fresh
+/// in-memory wake-budget counter, and a **per-pass durable runner-store
+/// budget row** derived from [`Self::budget_id`] (see
+/// [`durable_pass_budget_id`]).
 #[derive(Clone)]
 pub struct WakeSupervisorConfig {
-    /// Durable runner-store budget id (also the per-pass counter's job id).
+    /// Base durable runner-store budget id. Each pass appends a monotonic
+    /// pass index (`{budget_id}:p{n}`) so a long-lived supervisor never
+    /// reuses a spent budget row across passes. Note: each pass therefore
+    /// leaves one budget row in the runner store; this crate does not GC
+    /// them.
     pub budget_id: String,
     /// Lease owner stamped on admissions and parks.
     pub lease_owner: String,
@@ -122,7 +128,9 @@ pub struct WakeSupervisorConfig {
     pub exhaustion_policy: BudgetExhaustionPolicy,
     /// Durable Started/Done milestone authorship, if the host wants it.
     pub milestones: Option<WakeMilestoneAuthor>,
-    /// Restart-backoff shape for failed/panicked passes.
+    /// Restart-backoff shape for failed/panicked passes and for
+    /// zero-progress [`WakePassStop::BudgetExhausted`] (admitted == 0),
+    /// which would otherwise hot-loop under HybridTick deadline redelivery.
     pub backoff: RestartBackoffConfig,
 }
 
@@ -357,6 +365,10 @@ where
 
         let mut report = WakeSupervisorReport::default();
         let mut backoff = RestartBackoff::new(config.backoff);
+        // Monotonic pass index used only to mint a fresh durable budget id
+        // per pass. Deterministic (no clock/random) so restart bookkeeping
+        // stays inspectable.
+        let mut pass_index: u64 = 0;
 
         loop {
             // ONE biased select: shutdown always beats a ready tick.
@@ -379,9 +391,12 @@ where
                     Err(_closed) => break,
                 },
             };
+            let pass_budget_id = durable_pass_budget_id(&config.budget_id, pass_index);
+            pass_index = pass_index.saturating_add(1);
             let outcome = run_pass_supervised(
                 vault,
                 &config,
+                &pass_budget_id,
                 &now_secs,
                 &mut factory,
                 &mut shutdown,
@@ -392,10 +407,28 @@ where
 
             match outcome {
                 PassOutcome::Completed(pass) => {
-                    backoff.reset();
                     report.passes_completed += 1;
                     report.jobs_completed += u64::from(pass.completed);
                     report.jobs_parked += u64::from(pass.parked);
+                    // Zero-progress BudgetExhausted (e.g. total < reserve,
+                    // or a still-shared spent row): HybridTick re-surfaces
+                    // the same due deadline immediately. Back off so we
+                    // never hot-loop when a pass cannot make durable
+                    // progress. With per-pass budget ids a spent row is
+                    // not reused, so a productive BudgetExhausted
+                    // (admitted > 0) continues straight into the next
+                    // pass and drains remaining work.
+                    if pass.stop == WakePassStop::BudgetExhausted && pass.admitted == 0 {
+                        tracing::warn!(
+                            "wake pass stopped on BudgetExhausted without admitting work; \
+                             backing off before the next tick"
+                        );
+                        if !wait_backoff(&mut shutdown, backoff.advance()).await {
+                            break;
+                        }
+                    } else {
+                        backoff.reset();
+                    }
                 }
                 PassOutcome::Failed(error) => {
                     report.passes_failed += 1;
@@ -429,6 +462,7 @@ where
 async fn run_pass_supervised<F: PassExecutorFactory>(
     vault: &Vault,
     config: &WakeSupervisorConfig,
+    pass_budget_id: &str,
     now_secs: &NowSeconds,
     factory: &mut F,
     shutdown: &mut ShutdownListener,
@@ -436,7 +470,13 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
 ) -> PassOutcome {
     let cancel = WakeCancellation::new();
     let mut pass = CatchUnwind::new(run_one_pass(
-        vault, config, now_secs, factory, tick, &cancel,
+        vault,
+        config,
+        pass_budget_id,
+        now_secs,
+        factory,
+        tick,
+        &cancel,
     ));
     loop {
         tokio::select! {
@@ -458,12 +498,37 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
     }
 }
 
+/// Derives the durable runner-store budget id for one pass from the
+/// supervisor's static base id and a monotonic pass index.
+///
+/// DreamerRunnerStore only initializes a budget row when it is absent, so
+/// reusing `config.budget_id` across passes would leave later ticks stuck
+/// on `BudgetExhausted` against a spent row. A per-pass id gives each pass
+/// a fresh row without requiring this crate to renew or otherwise write
+/// runner-store budget state (admission/settle stay inside `run_wake_pass`).
+///
+/// Trade-off: one durable budget row leaks per pass for the life of the
+/// vault (no GC here). That is intentional and cheaper than a shared-row
+/// spin; hosts that care about row growth can GC by base-prefix if needed.
+///
+/// Single-supervisor assumption: concurrent supervisors over one vault
+/// already share the pass gate when configured via
+/// [`WakeSupervisor::with_pass_gate`]; independent supervisors minting
+/// distinct pass sequences under the same base id would each get their own
+/// rows and would not clobber each other (unlike an in-place renew).
+#[must_use]
+fn durable_pass_budget_id(base: &str, pass_index: u64) -> String {
+    format!("{base}:p{pass_index}")
+}
+
 /// One wake pass: fresh deadline, fresh wake-budget counter, per-pass
-/// executor, then `run_wake_pass`. Budget admission/settle stays entirely
-/// inside the engine call — this function never touches the runner store.
+/// durable budget id, per-pass executor, then `run_wake_pass`. Budget
+/// admission/settle stays entirely inside the engine call — this function
+/// never touches the runner store.
 async fn run_one_pass<F: PassExecutorFactory>(
     vault: &Vault,
     config: &WakeSupervisorConfig,
+    pass_budget_id: &str,
     now_secs: &NowSeconds,
     factory: &mut F,
     tick: &Tick,
@@ -472,14 +537,16 @@ async fn run_one_pass<F: PassExecutorFactory>(
     let (scope, trigger) = pass_shape(tick);
     let deadline = WakePassDeadline::new(config.pass_ceiling_ms);
     // ONE wake-budget counter per pass (the LLM-4 guard), shared between
-    // the driver's legibility reads and the executor's admissions.
+    // the driver's legibility reads and the executor's admissions. The
+    // durable store id matches so settle/reserve land on the pass's own
+    // row.
     let guard = BudgetGuard::with_reserve_units(
-        config.budget_id.clone(),
+        pass_budget_id.to_owned(),
         config.budget_total_units,
         config.reserve_units,
         config.exhaustion_policy,
     );
-    let mut driver = DreamerWakeDriver::new(vault, config.budget_id.clone(), deadline)
+    let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
         driver = driver.with_milestone_author(author);
@@ -681,8 +748,9 @@ mod tests {
         assert_eq!(report.passes_failed, 0);
 
         // The pass settled its budget through the engine, not this crate.
+        // Pass index 0 → durable id `{base}:p0`.
         let budget = DreamerRunnerStore::new(&vault)
-            .budget("driver-budget")
+            .budget("driver-budget:p0")
             .expect("budget read")
             .expect("budget row");
         assert_eq!(budget.reserved_units, 0);
@@ -747,8 +815,10 @@ mod tests {
             "park reason names the panic: {}",
             parked.reason
         );
+        // Completing pass was pass index 1 (`:p1`); the failed pass spent
+        // nothing durable after the park+refund.
         let budget = store
-            .budget("driver-budget")
+            .budget("driver-budget:p1")
             .expect("budget read")
             .expect("budget row");
         assert_eq!(budget.reserved_units, 0, "no reservation leaked");
@@ -881,5 +951,202 @@ mod tests {
         handle.shutdown();
         let report = supervisor.run().await;
         assert_eq!(report, WakeSupervisorReport::default(), "no pass ran");
+    }
+
+    #[tokio::test]
+    async fn second_pass_runs_jobs_after_first_pass_budget_exhausts() {
+        // P1 (codex): a static config.budget_id was shared across passes, so
+        // DreamerRunnerStore's init-if-absent left pass 2 stuck on a spent
+        // row. Per-pass durable ids (`{base}:p{n}`) give each pass a fresh
+        // budget so remaining work drains.
+        let (_dir, vault) = open_vault();
+        let first = enqueue_micro(&vault, "exhaust-first", 10);
+        let second = enqueue_micro(&vault, "needs-fresh-budget", 11);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        let ticks = ScriptedTicks {
+            // Two passes: first exhausts after one job; second must still
+            // be able to admit the remaining job.
+            ticks: vec![wake, wake],
+        };
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            // Spend 100 of the 150-unit grant so the second reservation in
+            // the same pass is denied (remaining 50 < reserve 100).
+            completed_units: 100,
+        };
+        let mut config = test_config();
+        config.budget_total_units = 150;
+        config.reserve_units = 100;
+        // Keep default backoff for any zero-progress path; this test expects
+        // productive BudgetExhausted then a fresh second pass.
+        let supervisor = WakeSupervisor::new(&vault, ticks, factory, config);
+        let report = supervisor.run().await;
+
+        assert_eq!(
+            report.passes_completed, 2,
+            "both passes complete (first BudgetExhausted, second drains)"
+        );
+        assert_eq!(
+            report.jobs_completed, 2,
+            "second pass must admit under a fresh durable budget row"
+        );
+        assert_eq!(report.passes_failed, 0);
+        assert_eq!(report.passes_panicked, 0);
+
+        let store = DreamerRunnerStore::new(&vault);
+        for (id, pass_id, spent) in [
+            (first, "driver-budget:p0", 100u64),
+            (second, "driver-budget:p1", 100u64),
+        ] {
+            let status = store.status(id).expect("status read").expect("status");
+            assert_eq!(status.job.state, JobState::Completed, "job under {pass_id}");
+            let budget = store
+                .budget(pass_id)
+                .expect("budget read")
+                .expect("per-pass budget row");
+            assert_eq!(budget.reserved_units, 0);
+            assert_eq!(budget.remaining_units, 150 - spent);
+            assert_eq!(budget.total_units, 150);
+        }
+        // The static base id must NOT have been written as a shared row —
+        // that was the spin root cause.
+        assert!(
+            store
+                .budget("driver-budget")
+                .expect("base budget read")
+                .is_none(),
+            "base budget_id is only a prefix; rows live at :p{{n}}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn budget_exhausted_with_due_deadline_does_not_busy_loop() {
+        // Regression: HybridTick re-surfaces an already-due deadline on
+        // every cycle. With a shared spent budget that spun forever (hot
+        // BudgetExhausted passes, zero progress). Per-pass ids let work
+        // drain; zero-progress BudgetExhausted backs off so a permanently
+        // un-admittable grant cannot hot-loop either.
+        let (_dir, vault) = open_vault();
+        let job_a = enqueue_micro(&vault, "due-a", 10);
+        let job_b = enqueue_micro(&vault, "due-b", 11);
+
+        // Jobs are due at created_at * 1000 ms; clock is far past that so
+        // HybridTick short-circuits to Deadline every cycle until empty.
+        let now_ms: crate::tick::NowMillis = Arc::new(|| 1_000_000);
+        let timer = crate::TimerTick::with_clock(
+            crate::JobQueueDeadlines::new(&vault, 1),
+            Arc::clone(&now_ms),
+        );
+        let (push, wake, hint) = PushTick::channel();
+        // No push producers: once the queue is empty the hybrid source
+        // exhausts and the supervisor must stop.
+        drop(wake);
+        drop(hint);
+        let hybrid = crate::HybridTick::new(timer, push);
+
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            completed_units: 100,
+        };
+        let mut config = test_config();
+        config.budget_total_units = 150;
+        config.reserve_units = 100;
+        // Tiny backoff so the zero-progress arm (if hit) is still bounded
+        // under the paused clock without making the happy path wait.
+        config.backoff = RestartBackoffConfig {
+            initial: Duration::from_millis(1),
+            max: Duration::from_millis(1),
+        };
+
+        let supervisor = WakeSupervisor::new(&vault, hybrid, factory, config);
+        // Under the pre-fix shared-budget spin this would never resolve.
+        // Bound wall-polls via a generous virtual-time cap: productive
+        // draining finishes in a handful of passes.
+        let report = tokio::time::timeout(Duration::from_secs(5), supervisor.run())
+            .await
+            .expect("supervisor must not busy-loop on due HybridTick redelivery");
+
+        assert_eq!(
+            report.jobs_completed, 2,
+            "due work must drain across per-pass budgets"
+        );
+        // Exactly two productive passes (one job each under the 150-unit
+        // grant) — not an unbounded series of empty BudgetExhausted polls.
+        assert_eq!(report.passes_completed, 2);
+        assert_eq!(report.passes_failed, 0);
+        assert_eq!(report.passes_panicked, 0);
+
+        let store = DreamerRunnerStore::new(&vault);
+        for id in [job_a, job_b] {
+            let status = store.status(id).expect("status read").expect("status");
+            assert_eq!(status.job.state, JobState::Completed, "queue fully drained");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_progress_budget_exhausted_backs_off_instead_of_hot_looping() {
+        // Permanently un-admittable grant (total < reserve): every pass
+        // hits BudgetExhausted with admitted == 0. Without the zero-progress
+        // backoff, a HybridTick due-deadline redelivery would hot-loop;
+        // with it, each empty pass sleeps before the next tick is consumed.
+        // Under start_paused the backoff sleeps auto-advance, so a fixed
+        // tick count finishes in bounded virtual time with exact tallies.
+        let (_dir, vault) = open_vault();
+        let stuck = enqueue_micro(&vault, "stuck-due", 10);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        const EMPTY_PASSES: u64 = 5;
+        let ticks = ScriptedTicks {
+            ticks: vec![wake; EMPTY_PASSES as usize],
+        };
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            completed_units: 0,
+        };
+        let mut config = test_config();
+        config.budget_total_units = 50;
+        config.reserve_units = 100;
+        config.backoff = RestartBackoffConfig {
+            initial: Duration::from_millis(10),
+            max: Duration::from_millis(10),
+        };
+
+        let supervisor = WakeSupervisor::new(&vault, ticks, factory, config);
+        let report = supervisor.run().await;
+
+        assert_eq!(
+            report.passes_completed, EMPTY_PASSES,
+            "exactly one completed empty pass per scripted tick"
+        );
+        assert_eq!(report.jobs_completed, 0, "nothing was admittable");
+        assert_eq!(report.passes_failed, 0);
+        assert_eq!(report.passes_panicked, 0);
+        // Job remains queued — BudgetExhausted before reserve does not
+        // claim or park, so the due work is still waiting for a usable grant.
+        let status = DreamerRunnerStore::new(&vault)
+            .status(stuck)
+            .expect("status read")
+            .expect("status");
+        assert_eq!(status.job.state, JobState::Queued);
+    }
+
+    #[test]
+    fn durable_pass_budget_id_is_deterministic_per_index() {
+        assert_eq!(durable_pass_budget_id("wake", 0), "wake:p0");
+        assert_eq!(durable_pass_budget_id("wake", 1), "wake:p1");
+        assert_eq!(
+            durable_pass_budget_id("driver-budget", 42),
+            "driver-budget:p42"
+        );
     }
 }
