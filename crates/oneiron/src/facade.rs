@@ -1370,11 +1370,8 @@ impl MemoryFacade<'_> {
             let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &*wtxn)?;
             let write_actor = WriteActor::new(self.actor, self.actor_class);
             let mut message_approvals = Vec::with_capacity(turn.messages.len());
-            for ((message, metadata), message_id) in turn
-                .messages
-                .iter()
-                .zip(&gate_metadata)
-                .zip(&message_ids)
+            for ((message, metadata), message_id) in
+                turn.messages.iter().zip(&gate_metadata).zip(&message_ids)
             {
                 message_approvals.push(crate::gate::check_message_envelope_ceiling(
                     &self.vault.store,
@@ -1411,11 +1408,12 @@ impl MemoryFacade<'_> {
                     &container_body,
                 );
             }
-            for ((message, metadata), (approval, (id, body))) in turn
-                .messages
-                .iter()
-                .zip(&gate_metadata)
-                .zip(message_approvals.iter().zip(message_ids.iter().zip(&bodies)))
+            for ((message, metadata), (approval, (id, body))) in
+                turn.messages.iter().zip(&gate_metadata).zip(
+                    message_approvals
+                        .iter()
+                        .zip(message_ids.iter().zip(&bodies)),
+                )
             {
                 approval.authorizes(&crate::gate::MessageEnvelopeCeilingInput {
                     actor: write_actor,
@@ -3092,12 +3090,12 @@ impl MemoryFacade<'_> {
         else {
             return Ok(None);
         };
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+        let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or_else(|| FacadeError::from(Error::CorruptedIndex("entity header")))?;
         let body = decode_body_json(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
         Ok(Some(EntityView {
             id_hex: id.to_hex(),
-            short_ref: self.short_ref_of(id)?,
+            short_ref: self.short_ref_of_in(&rtxn, id)?,
             kind: kind_string_for_type(header.entity_type),
             occurred_start: header.occurred_start,
             occurred_end: header.occurred_end,
@@ -3141,11 +3139,19 @@ impl MemoryFacade<'_> {
             .env
             .read_txn()
             .map_err(|err| FacadeError::from(Error::from(err)))?;
+        self.short_ref_of_in(&rtxn, id)
+    }
+
+    fn short_ref_of_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> FacadeResult<Option<String>> {
         let Some(raw) = self
             .vault
             .store
             .short_ids_reverse
-            .get(&rtxn, id.as_bytes())
+            .get(rtxn, id.as_bytes())
             .map_err(|err| FacadeError::from(Error::from(err)))?
         else {
             return Ok(None);

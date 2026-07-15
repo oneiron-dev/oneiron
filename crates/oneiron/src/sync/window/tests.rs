@@ -440,11 +440,7 @@ fn window_scrub_inherits_turn_fence_from_remote_message_part_of_edge() -> Result
     map_insert_bytes(
         &entities,
         &private_message.to_hex(),
-        &make_entity_blob(
-            ENTITY_TYPE_MESSAGE,
-            learned_at,
-            b"remote private message",
-        ),
+        &make_entity_blob(ENTITY_TYPE_MESSAGE, learned_at, b"remote private message"),
     )?;
     map_insert_bytes(
         &entities,

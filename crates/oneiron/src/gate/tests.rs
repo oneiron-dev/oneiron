@@ -45,13 +45,7 @@ fn message_ceiling_token_binds_author_type_metadata_visibility_and_order() -> Re
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
     let actor_id = test_id(0x4A);
-    vault.put_entity(
-        &actor_id,
-        ENTITY_TYPE_PERSON,
-        test_time(1),
-        1,
-        b"owner",
-    )?;
+    vault.put_entity(&actor_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
     let actor = WriteActor::new(actor_id, EdgeActorClass::Human);
     let metadata = Value::Map(vec![(Value::from("tone"), Value::from("calm"))]);
     let changed_metadata = Value::Map(vec![(Value::from("tone"), Value::from("urgent"))]);

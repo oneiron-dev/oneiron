@@ -627,7 +627,9 @@ fn code_run_speak_think_express_emit_interleaved_gated_message_bubbles() -> Resu
         let message_ref = result
             .message_short_ids
             .first()
-            .ok_or(Error::InvariantViolation("message witness receipt is empty"))?;
+            .ok_or(Error::InvariantViolation(
+                "message witness receipt is empty",
+            ))?;
         let view = vault
             .memory_facade(actor, EdgeActorClass::Agent)
             .get_entity(message_ref)
@@ -650,14 +652,57 @@ fn code_run_speak_think_express_emit_interleaved_gated_message_bubbles() -> Resu
         let body = view
             .body
             .ok_or(Error::InvariantViolation("message body missing"))?;
-        assert_eq!(body.get("author").and_then(serde_json::Value::as_str), Some("companion"));
-        assert_eq!(body.get("type").and_then(serde_json::Value::as_str), Some(message_type));
+        assert_eq!(
+            body.get("author").and_then(serde_json::Value::as_str),
+            Some("companion")
+        );
+        assert_eq!(
+            body.get("type").and_then(serde_json::Value::as_str),
+            Some(message_type)
+        );
         assert_eq!(
             body.get("is_visible").and_then(serde_json::Value::as_bool),
             Some(is_visible)
         );
-        assert_eq!(body.get("order").and_then(serde_json::Value::as_u64), Some(order));
+        assert_eq!(
+            body.get("order").and_then(serde_json::Value::as_u64),
+            Some(order)
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn code_run_message_witness_preserves_bad_turn_ref_error_kinds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:bad-message-turn-ref",
+    )?;
+    let conversation = EntityId::from_bytes([0xC6; 16])?.to_hex();
+
+    for (turn_ref, expected) in [
+        ("not-a-turn-ref", crate::error::ErrorKind::InvalidClaimBody),
+        ("tn999:00", crate::error::ErrorKind::EntityNotFound),
+    ] {
+        let error = dispatcher
+            .dispatch(SelfCall::Speak(message_turn(
+                &conversation,
+                turn_ref,
+                "must not persist",
+                0,
+            )))
+            .expect_err("bad turn ref must remain a typed guest error");
+        assert_eq!(error.kind(), expected, "turn ref {turn_ref:?}");
+    }
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+            .is_empty(),
+        "bad turn refs must be rejected before witness persistence"
+    );
     Ok(())
 }
 

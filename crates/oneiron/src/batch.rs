@@ -1896,7 +1896,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                 provenance,
             } => {
                 apply_edge_with_created_at(
-                    store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
+                    store, wtxn, src, kind, tgt, weight, created_at, vad, provenance, true,
                 )?;
                 ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                 had_graph_mutation = true;
@@ -3208,6 +3208,7 @@ fn apply_edge(
         crate::unix_seconds_now(),
         vad,
         None,
+        false,
     )
 }
 
@@ -3247,7 +3248,9 @@ fn apply_public_edge_with_created_at(
     vad: Vad,
 ) -> Result<()> {
     reject_if_existing_edge_is_provenanced(store, wtxn, src, kind, tgt)?;
-    apply_edge_with_created_at(store, wtxn, src, kind, tgt, weight, created_at, vad, None)
+    apply_edge_with_created_at(
+        store, wtxn, src, kind, tgt, weight, created_at, vad, None, false,
+    )
 }
 
 /// Reads the existing edge value for an operational setter (ONE-1113):
@@ -3352,13 +3355,15 @@ fn apply_edge_with_created_at(
     created_at: u64,
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
+    replicated: bool,
 ) -> Result<()> {
-    // A local live fence permits the tag-before-write path, but a closing or
-    // closed fence rejects here. In particular, this makes a MESSAGE PartOf
-    // edge atomic with close's child snapshot: once close stamps `closing`,
-    // no late child can attach to the fenced TURN and escape the cascade.
-    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &src, false)?;
-    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &tgt, false)?;
+    // A local live fence permits the tag-before-write path, while replicated
+    // writes and closing/closed fences reject here. In particular, this makes
+    // a MESSAGE PartOf edge atomic with close's child snapshot: once close
+    // stamps `closing`, no late child can attach to the fenced TURN and escape
+    // the cascade.
+    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &src, replicated)?;
+    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &tgt, replicated)?;
     validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });

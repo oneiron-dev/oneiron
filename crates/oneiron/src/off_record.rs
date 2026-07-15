@@ -278,11 +278,7 @@ pub(crate) fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
     Ok(())
 }
 
-fn direct_off_record_fence_active(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+fn direct_off_record_fence_active(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
     let mut key = [0_u8; PREFIX_LEN + 16];
     key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
@@ -318,8 +314,7 @@ fn off_record_fence_active_at_depth(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(false);
     };
-    let header =
-        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let inherited_edge = match header.entity_type {
         ENTITY_TYPE_MESSAGE => EdgeKind::PartOf,
         ENTITY_TYPE_SUMMARY => EdgeKind::DerivedFrom,

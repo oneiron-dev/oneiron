@@ -279,7 +279,10 @@ fn witness_create_or_get_reuses_containers_and_rejects_system_author_escalation(
     assert!(kinds.contains(&EdgeKind::AuthoredBy));
     assert!(kinds.contains(&EdgeKind::PartOf));
     assert_eq!(
-        vault.entities_by_type(ENTITY_TYPE_MESSAGE).expect("messages").len(),
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("messages")
+            .len(),
         2
     );
 

@@ -459,7 +459,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
         ),
         (
             Value::from(KEY_OFF_RECORD_SESSION_REF),
-            record.off_record_session_ref.as_deref().map_or(Value::Nil, Value::from),
+            record
+                .off_record_session_ref
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
         ),
     ]);
     encode_value(&value, "code-run replay record MessagePack encode failed")
@@ -573,10 +576,8 @@ impl Vault {
     /// Persists the replay record for `record.run_id`.
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let encoded = encode_code_run_replay_record(record)?;
-        let key = code_run_replay_record_key(
-            &record.run_id,
-            record.off_record_session_ref.as_deref(),
-        )?;
+        let key =
+            code_run_replay_record_key(&record.run_id, record.off_record_session_ref.as_deref())?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(session_ref) = record.off_record_session_ref.as_deref() {
             crate::off_record::register_code_run_artifact_in_txn(
@@ -598,10 +599,8 @@ impl Vault {
     ) -> Result<CodeRunReplayGeneration> {
         let encoded = encode_code_run_replay_record(record)?;
         let next_generation = record.generation()?;
-        let key = code_run_replay_record_key(
-            &record.run_id,
-            record.off_record_session_ref.as_deref(),
-        )?;
+        let key =
+            code_run_replay_record_key(&record.run_id, record.off_record_session_ref.as_deref())?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self
             .store
@@ -609,9 +608,10 @@ impl Vault {
             .get(&wtxn, &key)?
             .map(decode_code_run_replay_record)
             .transpose()?;
-        if current.as_ref().is_some_and(|stored| {
-            stored.off_record_session_ref != record.off_record_session_ref
-        }) {
+        if current
+            .as_ref()
+            .is_some_and(|stored| stored.off_record_session_ref != record.off_record_session_ref)
+        {
             return Err(invalid_code_run_replay(
                 "stored replay session binding does not match its key",
             ));
@@ -645,7 +645,8 @@ impl Vault {
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
         let key = code_run_replay_record_key(run_id, None)?;
-        let record = self.store
+        let record = self
+            .store
             .vault_meta
             .get(&rtxn, &key)?
             .map(decode_code_run_replay_record)
@@ -670,14 +671,16 @@ impl Vault {
         crate::off_record::vet_off_record_session_ref(session_ref)?;
         let rtxn = self.store.env.read_txn()?;
         let key = code_run_replay_record_key(run_id, Some(session_ref))?;
-        let record = self.store
+        let record = self
+            .store
             .vault_meta
             .get(&rtxn, &key)?
             .map(decode_code_run_replay_record)
             .transpose()?;
-        if record.as_ref().is_some_and(|stored| {
-            stored.off_record_session_ref.as_deref() != Some(session_ref)
-        }) {
+        if record
+            .as_ref()
+            .is_some_and(|stored| stored.off_record_session_ref.as_deref() != Some(session_ref))
+        {
             return Err(invalid_code_run_replay(
                 "off-record replay key contains mismatched session binding",
             ));
@@ -717,12 +720,7 @@ impl Vault {
         validate_raw_output(output)?;
         let rtxn = self.store.env.read_txn()?;
         let key = code_run_raw_output_key(output)?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &key)?
-            .map(<[u8]>::to_vec)
-        else {
+        let Some(raw) = self.store.vault_meta.get(&rtxn, &key)?.map(<[u8]>::to_vec) else {
             return Ok(None);
         };
         let expected = CodeRunRawOutput::from_bytes_with_session(
@@ -1105,9 +1103,7 @@ fn witness_turn_request_value(turn: &crate::facade::WitnessTurn) -> Value {
         ),
         (
             "turn_ref",
-            turn.turn_ref
-                .as_deref()
-                .map_or(Value::Nil, Value::from),
+            turn.turn_ref.as_deref().map_or(Value::Nil, Value::from),
         ),
         (
             "messages",
@@ -1116,10 +1112,7 @@ fn witness_turn_request_value(turn: &crate::facade::WitnessTurn) -> Value {
                     .iter()
                     .map(|message| {
                         request_map(vec![
-                            (
-                                "id",
-                                message.id.as_deref().map_or(Value::Nil, Value::from),
-                            ),
+                            ("id", message.id.as_deref().map_or(Value::Nil, Value::from)),
                             ("author", Value::from(message.author.as_str())),
                             ("message_type", Value::from(message.message_type.as_str())),
                             ("content", Value::from(message.content.as_str())),
@@ -1598,10 +1591,7 @@ fn append_off_record_key_scope(key: &mut Vec<u8>, session_ref: Option<&str>) -> 
     Ok(())
 }
 
-fn code_run_replay_record_key(
-    run_id: &EntityId,
-    session_ref: Option<&str>,
-) -> Result<Vec<u8>> {
+fn code_run_replay_record_key(run_id: &EntityId, session_ref: Option<&str>) -> Result<Vec<u8>> {
     let mut key = Vec::with_capacity(
         CODE_RUN_REPLAY_RECORD_KEY_PREFIX.len()
             + session_ref.map_or(0, |value| value.len() + 12)
@@ -1896,10 +1886,7 @@ impl<'a> HostSelfDispatcher<'a> {
         // not authoritative and cannot open a TOCTOU gap.
         let envelope = self.write_envelope(effect)?;
         self.validate_write_actor_binding(&envelope)?;
-        let metadata = message
-            .metadata
-            .as_ref()
-            .map(crate::facade::json_to_rmpv);
+        let metadata = message.metadata.as_ref().map(crate::facade::json_to_rmpv);
         let rtxn = self.vault.store.env.read_txn()?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         let gate_input = crate::gate::MessageEnvelopeCeilingInput {
@@ -1925,15 +1912,16 @@ impl<'a> HostSelfDispatcher<'a> {
             .vault
             .memory_facade(self.actor.entity_ref(), self.actor.actor_class())
             .witness(&turn)
-            .map_err(|error| {
-                if error.code == crate::facade::FACADE_CODE_FORBIDDEN {
-                    Error::GateWriteRejected {
-                        outcome: "pending",
-                        reason_codes: vec!["gate.pending.actor_ceiling"],
-                    }
-                } else {
-                    Error::InvariantViolation("self message witness failed")
+            .map_err(|error| match error.code.as_str() {
+                crate::facade::FACADE_CODE_BAD_REQUEST => {
+                    Error::InvalidClaimBody("self message witness request was invalid")
                 }
+                crate::facade::FACADE_CODE_NOT_FOUND => Error::EntityNotFound,
+                crate::facade::FACADE_CODE_FORBIDDEN => Error::GateWriteRejected {
+                    outcome: "pending",
+                    reason_codes: vec!["gate.pending.actor_ceiling"],
+                },
+                _ => Error::InvariantViolation("self message witness failed"),
             })?;
 
         Ok(SelfDispatchOutcome::MessageWitness(receipt))

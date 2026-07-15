@@ -1,4 +1,5 @@
 use super::*;
+use crate::code_run::{CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord};
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::error::{Error, ErrorKind};
@@ -16,7 +17,6 @@ use crate::store::{GateDecisionId, GateDecisionRecord};
 #[cfg(feature = "sync")]
 use crate::sync::queue::SyncQueue;
 use crate::temporal::TimeRange;
-use crate::code_run::{CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord};
 
 const TEST_OWNER_REF: &str = "principal:test-owner";
 
@@ -281,8 +281,16 @@ fn off_record_turn_fence_hides_and_close_cascades_message_children() {
     vault
         .tag_turn_off_record("sess-message-cascade", &turn)
         .expect("tag");
-    assert!(vault.is_turn_off_record_fenced(&message_a).expect("child fence"));
-    assert!(vault.is_turn_off_record_fenced(&message_b).expect("child fence"));
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&message_a)
+            .expect("child fence")
+    );
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&message_b)
+            .expect("child fence")
+    );
     assert!(
         surfaced_messages(&vault).is_empty(),
         "MESSAGE children must inherit the TURN retrieval fence"
@@ -339,12 +347,11 @@ fn off_record_summary_gate_covers_fenced_sources_and_existing_derivations() {
     let rejected = vault
         .ensure_summary_sources_on_record(&[source])
         .expect_err("fenced source must suppress summary creation");
-    assert_eq!(
-        rejected.kind(),
-        ErrorKind::OffRecordFencedTurnWriteRejected
-    );
+    assert_eq!(rejected.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
     assert!(
-        vault.is_turn_off_record_fenced(&summary).expect("summary fence"),
+        vault
+            .is_turn_off_record_fenced(&summary)
+            .expect("summary fence"),
         "an existing SUMMARY must inherit a later source fence"
     );
 }
@@ -359,12 +366,9 @@ fn off_record_close_sweeps_session_bound_code_run_replay_and_raw_output() {
         .enter_off_record_session(session_ref, OffRecordBackendClass::Local)
         .expect("enter");
 
-    let output = CodeRunRawOutput::for_off_record_session(
-        session_ref,
-        "/mnt/outputs/private.txt",
-        raw,
-    )
-    .expect("raw metadata");
+    let output =
+        CodeRunRawOutput::for_off_record_session(session_ref, "/mnt/outputs/private.txt", raw)
+            .expect("raw metadata");
     vault
         .put_code_run_raw_output(&output, raw)
         .expect("put raw output");
@@ -584,7 +588,11 @@ fn off_record_promote_writes_exactly_one_turn() {
         .expect("session record");
     assert!(unchanged.fenced_turns.contains(kept.as_bytes()));
     assert!(unchanged.promoted_turns.is_empty());
-    assert!(vault.is_turn_off_record_fenced(&kept).expect("fence remains"));
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&kept)
+            .expect("fence remains")
+    );
     assert!(
         vault
             .off_record_promote_receipt(&kept)
@@ -682,12 +690,7 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .expect_err("tag during close");
     assert_eq!(tag.kind(), ErrorKind::OffRecordSessionClosing);
     let promote = vault
-        .promote_off_record_turn(
-            "sess-toctou",
-            &fenced,
-            TEST_OWNER_REF,
-            &test_owner_actor(),
-        )
+        .promote_off_record_turn("sess-toctou", &fenced, TEST_OWNER_REF, &test_owner_actor())
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
     let note = vault
@@ -709,6 +712,47 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
     assert_eq!(outcome.turns_deleted, 1);
     assert!(vault.get(&fenced).expect("read fenced").is_none());
     assert!(vault.get(&late).expect("read late").is_some());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn off_record_live_fence_rejects_replicated_edge_to_fenced_turn() {
+    let (_tmp, vault) = temp_vault();
+    let source = seed_turn(&vault, 999);
+    let fenced = seed_turn(&vault, 1000);
+    vault
+        .enter_off_record_session("sess-replicated-edge", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-replicated-edge", &fenced)
+        .expect("tag fenced turn");
+
+    let rejected = vault
+        .batch()
+        .edge_with_value_fields(
+            &source,
+            EdgeKind::Mentions,
+            &fenced,
+            crate::batch::EdgeValueFields {
+                weight: 1.0,
+                created_at: 1001,
+                vad: crate::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()
+        .expect_err("replicated edge must not cross a live off-record fence");
+    assert!(matches!(
+        rejected,
+        Error::OffRecordFencedTurnWriteRejected { turn_ref } if turn_ref == fenced.to_hex()
+    ));
+    assert!(
+        vault
+            .targets(&source, EdgeKind::Mentions, None)
+            .expect("read rejected edge")
+            .is_empty(),
+        "rejected replay must not leave an edge side effect"
+    );
 }
 
 /// Tag-before-write turn whose entity write lands AFTER close: the
