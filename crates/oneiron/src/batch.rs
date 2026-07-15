@@ -31,9 +31,10 @@ use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS
 use crate::ppr;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG,
-    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE,
+    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TURN,
 };
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -1608,6 +1609,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
 
     secret_scan::scan_batch_ops(&ops)?;
+    let ops = validate_and_filter_off_record_edge_ops(store, &*wtxn, ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
@@ -1988,6 +1990,178 @@ pub(crate) fn apply_ops_with_gate_mode(
     }
 
     Ok(())
+}
+
+fn edge_op_fields(op: &BatchOp) -> Option<(EntityId, EdgeKind, EntityId, bool)> {
+    match op {
+        BatchOp::Edge { src, kind, tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. } => {
+            Some((*src, *kind, *tgt, false))
+        }
+        BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. } => Some((*src, *kind, *tgt, true)),
+        _ => None,
+    }
+}
+
+fn effective_batch_entity_type(
+    store: &Store,
+    rtxn: &heed::RwTxn<'_>,
+    put_types: &HashMap<EntityId, u8>,
+    id: &EntityId,
+) -> Result<Option<u8>> {
+    if let Some(entity_type) = put_types.get(id) {
+        return Ok(Some(*entity_type));
+    }
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+    Ok(Some(header.entity_type))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fence decision needs both typed edge endpoints and replay mode"
+)]
+fn guard_off_record_edge_op(
+    store: &Store,
+    rtxn: &heed::RwTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+    replicated: bool,
+    src_type: Option<u8>,
+    tgt_type: Option<u8>,
+) -> Result<bool> {
+    // Preserve the direct-fence state checks (replicated, closing, closed,
+    // malformed) before consulting the inherited probe.
+    crate::off_record::guard_off_record_entity_put(store, rtxn, src, replicated)?;
+    crate::off_record::guard_off_record_entity_put(store, rtxn, tgt, replicated)?;
+
+    let src_fenced = crate::off_record::off_record_fence_active(store, rtxn, src)?;
+    let tgt_fenced = crate::off_record::off_record_fence_active(store, rtxn, tgt)?;
+    if !src_fenced && !tgt_fenced {
+        return Ok(false);
+    }
+
+    // One local structural edge is the fence-establishing write itself:
+    // MESSAGE PartOf a live fenced TURN. The batch's remaining incident
+    // edges are handled below; SUMMARY DerivedFrom deliberately has no such
+    // exception, so compaction from a fenced source fails atomically.
+    let src_direct = crate::off_record::direct_off_record_fence_active(store, rtxn, src)?;
+    let tgt_direct = crate::off_record::direct_off_record_fence_active(store, rtxn, tgt)?;
+
+    let establishes_message_fence = !replicated
+        && kind == EdgeKind::PartOf
+        && src_type == Some(ENTITY_TYPE_MESSAGE)
+        && tgt_type == Some(ENTITY_TYPE_TURN)
+        && !src_direct
+        && tgt_direct;
+    if establishes_message_fence {
+        return Ok(true);
+    }
+
+    // SUMMARY DerivedFrom deliberately has no local allowance: compaction
+    // from any fenced source fails atomically.
+    if kind == EdgeKind::DerivedFrom && src_type == Some(ENTITY_TYPE_SUMMARY) && tgt_fenced {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: tgt.to_hex(),
+        });
+    }
+
+    // A directly-fenced entity may be named by other local edges: canonical
+    // readers filter direct fences and the window scrub keeps those edges off
+    // the wire until promotion releases them. Inherited-fenced carriers get no
+    // such allowance — canonical edge readers do not apply the inherited
+    // filter, so any extra incident edge would expose the hidden id.
+    let src_inherited = src_fenced && !src_direct;
+    let tgt_inherited = tgt_fenced && !tgt_direct;
+    if let Some(hidden) = src_inherited
+        .then_some(src)
+        .or_else(|| tgt_inherited.then_some(tgt))
+    {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: hidden.to_hex(),
+        });
+    }
+    Ok(false)
+}
+
+/// Validates edge endpoints against the full direct + inherited fence before
+/// any operation stages bytes. This initial-snapshot pass deliberately avoids
+/// treating an earlier op in the same batch as pre-existing graph truth.
+///
+/// Witness creates a MESSAGE and all of its structural edges atomically. If
+/// that batch establishes a `PartOf` fence, non-inheritance incident edges are
+/// privacy-suppressed so canonical edge readers cannot expose the hidden id,
+/// while the MESSAGE + `PartOf` pair still commits for close-cascade deletion.
+/// An already-existing carrier gets no initialization allowance: any other
+/// incident edge in the same batch rejects the entire transaction.
+fn validate_and_filter_off_record_edge_ops(
+    store: &Store,
+    rtxn: &heed::RwTxn<'_>,
+    mut ops: Vec<BatchOp>,
+) -> Result<Vec<BatchOp>> {
+    let mut put_types = HashMap::new();
+    let mut new_puts = HashSet::new();
+    for op in &ops {
+        if let BatchOp::Put {
+            id, entity_type, ..
+        } = op
+        {
+            put_types.insert(*id, *entity_type);
+            if store.entities.get(rtxn, id.as_bytes())?.is_none() {
+                new_puts.insert(*id);
+            }
+        }
+    }
+
+    let mut prospective_message_carriers = HashSet::new();
+    let mut allowed_inheritance_edges = HashSet::new();
+    for op in &ops {
+        let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
+            continue;
+        };
+        let src_type = effective_batch_entity_type(store, rtxn, &put_types, &src)?;
+        let tgt_type = effective_batch_entity_type(store, rtxn, &put_types, &tgt)?;
+        if guard_off_record_edge_op(
+            store, rtxn, &src, kind, &tgt, replicated, src_type, tgt_type,
+        )? {
+            prospective_message_carriers.insert(src);
+            allowed_inheritance_edges.insert((src, kind, tgt));
+        }
+    }
+
+    for op in &ops {
+        let Some((src, kind, tgt, _)) = edge_op_fields(op) else {
+            continue;
+        };
+        if allowed_inheritance_edges.contains(&(src, kind, tgt)) {
+            continue;
+        }
+        let fenced_endpoint = prospective_message_carriers
+            .contains(&src)
+            .then_some(src)
+            .or_else(|| prospective_message_carriers.contains(&tgt).then_some(tgt));
+        if let Some(carrier) = fenced_endpoint
+            && !new_puts.contains(&carrier)
+        {
+            return Err(Error::OffRecordFencedTurnWriteRejected {
+                turn_ref: carrier.to_hex(),
+            });
+        }
+    }
+
+    ops.retain(|op| {
+        let Some((src, kind, tgt, _)) = edge_op_fields(op) else {
+            return true;
+        };
+        allowed_inheritance_edges.contains(&(src, kind, tgt))
+            || (!prospective_message_carriers.contains(&src)
+                && !prospective_message_carriers.contains(&tgt))
+    });
+    Ok(ops)
 }
 
 fn contains_text_op(ops: &[BatchOp]) -> bool {

@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayGeneration,
     CodeRunReplayRecord, CodeRunStepCheckpoint, encode_code_run_replay_value,
+    stamp_self_message_ids_for_bridge_call,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
 use crate::llm::BudgetGuard;
@@ -424,6 +425,7 @@ impl<'a> EngineNativeExecutor<'a> {
             let bridge_start = record.bridge_calls.len();
             let mut host = RecordingJsHost::new(
                 self.gated_write,
+                config.run_id,
                 bridge_start as u64,
                 config.determinism,
                 self.legibility,
@@ -787,6 +789,7 @@ impl<'a> EngineNativeExecutor<'a> {
 
 struct RecordingJsHost<'a> {
     gated_write: &'a GatedActorWrite<'a>,
+    run_id: EntityId,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
@@ -802,12 +805,14 @@ struct RecordingJsHost<'a> {
 impl<'a> RecordingJsHost<'a> {
     fn new(
         gated_write: &'a GatedActorWrite<'a>,
+        run_id: EntityId,
         next_seq: u64,
         determinism: CodeRunDeterminism,
         legibility: Option<ExecutorLegibility<'a>>,
     ) -> Self {
         Self {
             gated_write,
+            run_id,
             next_seq,
             determinism,
             legibility,
@@ -857,7 +862,9 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome));
         }
-        let outcome = match self.gated_write.dispatch(call.clone()) {
+        let mut dispatch_call = call.clone();
+        stamp_self_message_ids_for_bridge_call(&mut dispatch_call, &self.run_id, seq)?;
+        let outcome = match self.gated_write.dispatch(dispatch_call) {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {

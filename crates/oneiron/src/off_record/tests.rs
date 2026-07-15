@@ -318,11 +318,77 @@ fn off_record_turn_fence_hides_and_close_cascades_message_children() {
 }
 
 #[test]
-fn off_record_summary_gate_covers_fenced_sources_and_existing_derivations() {
+fn off_record_close_pages_past_one_reverse_carrier_page() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let mut messages = Vec::new();
+    let mut batch = vault.batch();
+    for index in 0..=OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE {
+        let message = EntityId::now();
+        messages.push(message);
+        batch = batch
+            .put(
+                &message,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: 1000,
+                    end: 1000,
+                },
+                1000,
+                format!("private page child {index}").as_bytes(),
+            )
+            .edge(&message, EdgeKind::PartOf, &turn, 1.0);
+    }
+    batch.commit().expect("seed paged message children");
+    assert_eq!(
+        vault
+            .sources(&turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))
+            .expect("message children")
+            .len(),
+        OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE + 1
+    );
+
+    vault
+        .enter_off_record_session("sess-paged-close", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-paged-close", &turn)
+        .expect("tag");
+    let log = vault
+        .off_record_receipt_log("sess-paged-close")
+        .expect("receipt log");
+    let outcome = vault
+        .close_off_record_session("sess-paged-close", log)
+        .expect("close must traverse every page");
+    assert_eq!(outcome.turns_deleted, 1);
+
+    let rtxn = vault.store.env.read_txn().expect("read entities");
+    let remaining = messages
+        .iter()
+        .filter(|message| {
+            vault
+                .store
+                .entities
+                .get(&rtxn, message.as_bytes())
+                .expect("message row")
+                .is_some()
+        })
+        .count();
+    assert_eq!(remaining, 0, "every paged child must be purged");
+}
+
+#[test]
+fn production_summary_batch_rejects_a_live_fenced_source_atomically() {
     let (_tmp, vault) = temp_vault();
     let source = seed_turn(&vault, 1000);
     let summary = EntityId::now();
     vault
+        .enter_off_record_session("sess-summary", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-summary", &source)
+        .expect("tag");
+    let rejected = vault
         .batch()
         .put(
             &summary,
@@ -336,23 +402,16 @@ fn off_record_summary_gate_covers_fenced_sources_and_existing_derivations() {
         )
         .edge(&summary, EdgeKind::DerivedFrom, &source, 1.0)
         .commit()
-        .expect("seed summary");
-
-    vault
-        .enter_off_record_session("sess-summary", OffRecordBackendClass::Local)
-        .expect("enter");
-    vault
-        .tag_turn_off_record("sess-summary", &source)
-        .expect("tag");
-    let rejected = vault
-        .ensure_summary_sources_on_record(&[source])
-        .expect_err("fenced source must suppress summary creation");
+        .expect_err("production summary batch must reject a fenced source");
     assert_eq!(rejected.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
-    assert!(
+    assert!(vault.get(&summary).expect("summary lookup").is_none());
+    assert_eq!(
         vault
-            .is_turn_off_record_fenced(&summary)
-            .expect("summary fence"),
-        "an existing SUMMARY must inherit a later source fence"
+            .sources(&source, EdgeKind::DerivedFrom, Some(ENTITY_TYPE_SUMMARY))
+            .expect("derived summaries")
+            .len(),
+        0,
+        "the rejected transaction must leave neither body nor edge"
     );
 }
 

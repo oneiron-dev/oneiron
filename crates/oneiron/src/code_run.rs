@@ -23,6 +23,8 @@ const SELF_PROVENANCE_SURFACE_KEY: &str = "surface";
 const SELF_PROVENANCE_RUN_KEY: &str = "run";
 const SELF_PROVENANCE_CALL_KEY: &str = "call";
 const SELF_MEMORY_EDGE_OPERATION_ID_DOMAIN: &[u8] = b"oneiron:self-memory-edge-operation:v1";
+const SELF_MESSAGE_ENTITY_ID_DOMAIN: &[u8] = b"oneiron:self-message-entity:v1";
+const SELF_MESSAGE_TURN_ID_DOMAIN: &[u8] = b"oneiron:self-message-turn:v1";
 const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
 const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
 const CODE_RUN_OUTPUT_HANDLE_PREFIX: &str = "code-run-output:sha256:";
@@ -1117,6 +1119,10 @@ fn witness_turn_request_value(turn: &crate::facade::WitnessTurn) -> Value {
                             ("message_type", Value::from(message.message_type.as_str())),
                             ("content", Value::from(message.content.as_str())),
                             (
+                                "metadata_present",
+                                Value::Boolean(message.metadata.is_some()),
+                            ),
+                            (
                                 "metadata",
                                 message
                                     .metadata
@@ -1850,6 +1856,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 "self.speak/think/express requires exactly one message bubble",
             ));
         }
+        if turn.turn_ref.is_none() {
+            return Err(Error::InvalidClaimBody(
+                "self message turn id must be stamped by the executor",
+            ));
+        }
         let message = turn.messages.first_mut().ok_or(Error::InvalidClaimBody(
             "self message effect missing bubble",
         ))?;
@@ -1857,9 +1868,9 @@ impl<'a> HostSelfDispatcher<'a> {
             Some(id) => EntityId::from_hex(id)
                 .map_err(|_| Error::InvalidClaimBody("self message id must be 32-hex"))?,
             None => {
-                let id = EntityId::now();
-                message.id = Some(id.to_hex());
-                id
+                return Err(Error::InvalidClaimBody(
+                    "self message id must be stamped by the executor",
+                ));
             }
         };
         message.author = match self.actor.actor_class() {
@@ -2144,6 +2155,67 @@ impl SelfCall {
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
         }
     }
+}
+
+fn deterministic_self_message_id(
+    domain: &[u8],
+    run_id: &EntityId,
+    bridge_seq: u64,
+    message_index: u64,
+) -> Result<EntityId> {
+    let mut material = Vec::with_capacity(domain.len() + 16 + 8 + 8);
+    material.extend_from_slice(domain);
+    material.extend_from_slice(run_id.as_bytes());
+    material.extend_from_slice(&bridge_seq.to_le_bytes());
+    material.extend_from_slice(&message_index.to_le_bytes());
+    let bytes = xxh3_128(&material).to_le_bytes();
+    for tweak in 0..=u8::MAX {
+        let mut candidate = bytes;
+        candidate[0] ^= tweak;
+        if let Ok(id) = EntityId::from_bytes(candidate) {
+            return Ok(id);
+        }
+    }
+    Err(Error::InvariantViolation(
+        "deterministic self message id derivation failed",
+    ))
+}
+
+/// Stamps omitted witness ids from the durable executor identity. The guest
+/// request remains unchanged for replay comparison; only the live dispatch
+/// clone is stamped, so a crash after witness commit but before replay-row
+/// persistence regenerates exactly the same TURN and MESSAGE ids.
+pub(crate) fn stamp_self_message_ids_for_bridge_call(
+    call: &mut SelfCall,
+    run_id: &EntityId,
+    bridge_seq: u64,
+) -> Result<()> {
+    let turn = match call {
+        SelfCall::Speak(turn) | SelfCall::Think(turn) | SelfCall::Express(turn) => turn,
+        _ => return Ok(()),
+    };
+    if turn.turn_ref.is_none() {
+        turn.turn_ref = Some(
+            deterministic_self_message_id(SELF_MESSAGE_TURN_ID_DOMAIN, run_id, bridge_seq, 0)?
+                .to_hex(),
+        );
+    }
+    for (index, message) in turn.messages.iter_mut().enumerate() {
+        if message.id.is_none() {
+            let index = u64::try_from(index)
+                .map_err(|_| Error::ArithmeticOverflow("self message index"))?;
+            message.id = Some(
+                deterministic_self_message_id(
+                    SELF_MESSAGE_ENTITY_ID_DOMAIN,
+                    run_id,
+                    bridge_seq,
+                    index,
+                )?
+                .to_hex(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Host effect class routed by the dispatcher.

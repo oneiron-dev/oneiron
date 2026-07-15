@@ -4,7 +4,7 @@
 //! independent CRDT Doc (Loro). Only 2 windows are loaded by default
 //! (current + previous month); older windows are ON-DISK in sync_state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::bridge::{
@@ -39,6 +39,7 @@ use crate::store::Store;
 use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVector};
 
 const HISTORY_FREE_WINDOW_PREFIX: &str = "hfs:w:";
+const MAX_OFF_RECORD_WINDOW_FENCE_CARRIERS: usize = 65_536;
 
 /// A loaded window Doc with its observer subscriptions.
 pub struct LoadedWindow {
@@ -676,40 +677,126 @@ pub fn scrub_off_record_fenced_carriers(
         }
     });
 
-    let locally_fenced = off_record_fenced_ids(vault, candidates)?;
-    let mut fenced = locally_fenced.clone();
-    let mut orphaned_materialized_carriers = HashSet::new();
+    // A prior scrub may have removed every live CRDT value before an older
+    // process reached its LMDB purge. Durable sidecars retain the carrier id,
+    // so every later window pass can repair that post-commit/pre-purge state.
+    let durable_carriers = crate::off_record::inherited_off_record_fence_carriers(&vault.store)?;
+    candidates.extend(durable_carriers.iter().copied());
+    if candidates.len() > MAX_OFF_RECORD_WINDOW_FENCE_CARRIERS {
+        return Err(Error::CorruptedIndex(
+            "off-record window fence candidates exceed bound",
+        ));
+    }
+
+    let OffRecordWindowFenceState {
+        roots: mut fence_roots,
+        resolved: mut resolved_entities,
+        direct: direct_fences,
+    } = off_record_window_fence_state(vault, &candidates)?;
+    for (id, entity_type) in &carrier_types {
+        if !matches!(*entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY) {
+            resolved_entities.insert(*id);
+        }
+    }
+    let mut fenced: HashSet<EntityId> = fence_roots.keys().copied().collect();
+    let mut unresolved_fenced = HashSet::new();
+    let mut roots_to_persist = HashMap::<EntityId, BTreeSet<EntityId>>::new();
+    let mut orphaned_materialized_carriers = durable_carriers.into_iter().collect::<HashSet<_>>();
+    for (carrier, roots) in &fence_roots {
+        if !direct_fences.contains(carrier) {
+            roots_to_persist.insert(*carrier, roots.clone());
+        }
+    }
     // A remote/current window can contain a MESSAGE body and its PartOf edge
     // even when LMDB rejected that edge because the target TURN is locally
     // fenced. Derive child carriers from the CRDT relationship itself rather
     // than relying only on the local graph. DerivedFrom gives compacted
     // summaries the same creation/egress fence. Iterate to a fixed point so
     // nested derived carriers cannot escape through ordering.
-    loop {
-        let inherited: Vec<EntityId> = inheritance_edges
-            .iter()
-            .filter_map(|(source, kind, target)| {
-                let expected_source_type = match kind {
-                    crate::EdgeKind::PartOf => ENTITY_TYPE_MESSAGE,
-                    crate::EdgeKind::DerivedFrom => ENTITY_TYPE_SUMMARY,
-                    _ => return None,
-                };
-                let is_inheritance_carrier =
-                    carrier_types.get(source).copied() == Some(expected_source_type);
-                (is_inheritance_carrier && fenced.contains(target)).then_some(*source)
-            })
-            .filter(|source| !fenced.contains(source))
-            .collect();
-        if inherited.is_empty() {
-            break;
-        }
-        for source in inherited {
-            fenced.insert(source);
-            if !locally_fenced.contains(&source) {
-                orphaned_materialized_carriers.insert(source);
-            }
+    let mut inheritance_parents = HashMap::<EntityId, Vec<EntityId>>::new();
+    for (source, kind, target) in &inheritance_edges {
+        let expected_source_type = match kind {
+            crate::EdgeKind::PartOf => ENTITY_TYPE_MESSAGE,
+            crate::EdgeKind::DerivedFrom => ENTITY_TYPE_SUMMARY,
+            _ => continue,
+        };
+        if carrier_types.get(source).copied() == Some(expected_source_type) {
+            inheritance_parents
+                .entry(*source)
+                .or_default()
+                .push(*target);
         }
     }
+
+    // First propagate known roots and positively resolved on-record chains to
+    // a fixed point. A carrier is on-record only when ALL of its inheritance
+    // parents are positively resolved; one fenced parent fences the carrier.
+    loop {
+        let mut changed = false;
+        for (source, parents) in &inheritance_parents {
+            let inherited_roots = parents
+                .iter()
+                .filter_map(|target| fence_roots.get(target))
+                .flatten()
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if !inherited_roots.is_empty() {
+                let source_roots = fence_roots.entry(*source).or_default();
+                let prior_len = source_roots.len();
+                source_roots.extend(inherited_roots);
+                if source_roots.len() != prior_len {
+                    roots_to_persist.insert(*source, source_roots.clone());
+                    changed = true;
+                }
+                if fenced.insert(*source) {
+                    changed = true;
+                }
+                orphaned_materialized_carriers.insert(*source);
+                resolved_entities.remove(source);
+            } else if !fenced.contains(source)
+                && parents
+                    .iter()
+                    .all(|target| resolved_entities.contains(target))
+                && resolved_entities.insert(*source)
+            {
+                changed = true;
+            }
+            if fenced.len() > MAX_OFF_RECORD_WINDOW_FENCE_CARRIERS {
+                return Err(Error::CorruptedIndex(
+                    "off-record window fence closure exceeds bound",
+                ));
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // Anything still unresolved may depend on an inheritance edge held in a
+    // different source window. Fail closed for this scrub; known-root rows are
+    // persisted above, while rootless unresolved rows rely on purge-before-
+    // CRDT-commit ordering rather than minting an un-releasable marker.
+    for source in inheritance_parents.keys() {
+        if !fenced.contains(source) && !resolved_entities.contains(source) {
+            fenced.insert(*source);
+            unresolved_fenced.insert(*source);
+            orphaned_materialized_carriers.insert(*source);
+        }
+    }
+
+    // Crash ordering: derive from the untouched CRDT doc, then atomically
+    // persist cross-window roots and purge orphan LMDB bodies BEFORE deleting
+    // or committing CRDT values. A failure before this txn leaves the CRDT
+    // evidence intact for retry; after it commits, the local body is already
+    // absent even if the process stops before the bridge-origin CRDT commit.
+    fenced = persist_inherited_fences_and_purge_orphans(
+        vault,
+        &roots_to_persist,
+        &orphaned_materialized_carriers,
+        &fenced,
+        &unresolved_fenced,
+    )?;
+
     let fences_present = {
         let rtxn = vault.store.env.read_txn()?;
         crate::off_record::off_record_fences_present(&vault.store, &rtxn)?
@@ -723,15 +810,6 @@ pub fn scrub_off_record_fenced_carriers(
         // local privacy scrub back into LMDB; Observer A still durably queues
         // and broadcasts the deletion update to retire any older carrier.
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-
-        // Observer B can materialize a remote MESSAGE/SUMMARY body before its
-        // inheritance edge is rejected for touching a local fence. The bridge
-        // origin above intentionally suppresses observer feedback, so purge
-        // those orphaned active-store carriers explicitly in this scrub flow.
-        // Recheck local graph truth under the write lock: a carrier that has
-        // since acquired a valid local inheritance edge belongs to close's
-        // normal delete cascade and must not be removed early.
-        purge_orphaned_off_record_carriers(vault, &orphaned_materialized_carriers)?;
     }
     if removed || fences_present {
         // Deleting a live value does not erase its prior set operation from
@@ -744,17 +822,100 @@ pub fn scrub_off_record_fenced_carriers(
     Ok(removed || fences_present)
 }
 
-fn purge_orphaned_off_record_carriers(vault: &Vault, candidates: &HashSet<EntityId>) -> Result<()> {
-    if candidates.is_empty() {
-        return Ok(());
+struct OffRecordWindowFenceState {
+    roots: HashMap<EntityId, BTreeSet<EntityId>>,
+    resolved: HashSet<EntityId>,
+    direct: HashSet<EntityId>,
+}
+
+fn off_record_window_fence_state(
+    vault: &Vault,
+    candidates: &HashSet<EntityId>,
+) -> Result<OffRecordWindowFenceState> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut roots = HashMap::new();
+    let mut resolved = HashSet::new();
+    let mut direct = HashSet::new();
+    for id in candidates {
+        if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+            // MESSAGE/SUMMARY rows are not positively on-record merely
+            // because their body exists locally: their inheritance edge may
+            // have been rejected in another window. The current-window fixed
+            // point resolves those carriers from their parents instead.
+            if !matches!(
+                header.entity_type,
+                ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY
+            ) {
+                resolved.insert(*id);
+            }
+        }
+        if crate::off_record::direct_off_record_fence_active(&vault.store, &rtxn, id)? {
+            direct.insert(*id);
+        }
+        let id_roots = crate::off_record::off_record_fence_roots(&vault.store, &rtxn, id)?;
+        if !id_roots.is_empty() {
+            roots.insert(*id, id_roots);
+        }
+    }
+    Ok(OffRecordWindowFenceState {
+        roots,
+        resolved,
+        direct,
+    })
+}
+
+fn persist_inherited_fences_and_purge_orphans(
+    vault: &Vault,
+    roots_to_persist: &HashMap<EntityId, BTreeSet<EntityId>>,
+    candidates: &HashSet<EntityId>,
+    fenced: &HashSet<EntityId>,
+    unresolved: &HashSet<EntityId>,
+) -> Result<HashSet<EntityId>> {
+    if candidates.is_empty() && roots_to_persist.is_empty() && fenced.is_empty() {
+        return Ok(HashSet::new());
     }
     let mut candidates: Vec<EntityId> = candidates.iter().copied().collect();
     candidates.sort_unstable();
+    let mut roots_to_persist: Vec<(EntityId, BTreeSet<EntityId>)> = roots_to_persist
+        .iter()
+        .map(|(carrier, roots)| (*carrier, roots.clone()))
+        .collect();
+    roots_to_persist.sort_unstable_by_key(|(carrier, _)| *carrier);
     vault.with_write_txn(|wtxn| {
+        for (carrier, roots) in &roots_to_persist {
+            crate::off_record::put_inherited_off_record_fence_roots_in_txn(
+                &vault.store,
+                wtxn,
+                carrier,
+                roots,
+            )?;
+        }
+
+        // Revalidate after acquiring the write lock. Promotion/close may
+        // have released a root after the CRDT read snapshot; only carriers
+        // still fenced here may be purged or removed from the doc. Rootless
+        // unresolved chains stay fail-closed for this pass.
+        let mut active_fenced = HashSet::new();
+        for id in fenced {
+            if unresolved.contains(id)
+                || crate::off_record::off_record_fence_active(&vault.store, &*wtxn, id)?
+            {
+                active_fenced.insert(*id);
+            }
+        }
+
         let mut had_vector = false;
         let mut had_graph_mutation = false;
         for id in &candidates {
-            if crate::off_record::off_record_fence_active(&vault.store, &*wtxn, id)? {
+            if !active_fenced.contains(id) {
+                continue;
+            }
+            // Durable roots were written immediately above; recheck only
+            // direct/local graph inheritance here. A valid graph carrier is
+            // owned by close's normal cascade, while an orphan must be purged.
+            if crate::off_record::off_record_graph_fence_active(&vault.store, &*wtxn, id)? {
                 continue;
             }
             let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? else {
@@ -781,7 +942,7 @@ fn purge_orphaned_off_record_carriers(vault: &Vault, candidates: &HashSet<Entity
         if had_vector {
             crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
         }
-        Ok(())
+        Ok(active_fenced)
     })
 }
 

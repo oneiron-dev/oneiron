@@ -91,6 +91,11 @@ use crate::store::{RetrievalRunId, Store};
 const OFF_RECORD_SESSION_KEY_PREFIX: &[u8] = b"offrecord_session:v0:";
 /// `vault_meta` key prefix for per-entity fence rows (value = session ref).
 const OFF_RECORD_FENCE_KEY_PREFIX: &[u8] = b"offrecord_fence:v0:";
+/// `vault_meta` key prefix for inherited-fence sidecars. The key suffix is
+/// the carrier id and the value is the sorted set of direct fenced root ids.
+/// Unlike CRDT window state this row is node-local, so a carrier discovered
+/// in one source window remains fenced when it appears in another window.
+const OFF_RECORD_INHERITED_FENCE_KEY_PREFIX: &[u8] = b"offrecord_inherited_fence:v0:";
 /// `vault_meta` key prefix for durable promote receipts (survive close).
 const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 /// Value replacing a tag-before-write fence after close. An empty value can
@@ -113,6 +118,12 @@ const OFF_RECORD_MAX_CODE_RUN_ARTIFACTS: usize = 65_536;
 /// Backstop for one inherited-fence graph walk. Cycles terminate through the
 /// visited set; exceeding this bound with an unexplored carrier fails closed.
 const OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES: usize = 65_536;
+/// Close enumerates reverse inheritance edges in bounded pages. Unit tests
+/// lower the effective page size so the page-boundary regression stays fast.
+#[cfg(not(test))]
+const OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE: usize = 4_096;
+#[cfg(test)]
+const OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE: usize = 4;
 
 /// The mode line injected into the agent context so both parties know the
 /// session is off-record (OF-326: no secret recording either way).
@@ -248,6 +259,14 @@ fn off_record_fence_key(id: &EntityId) -> Vec<u8> {
     key
 }
 
+fn off_record_inherited_fence_key(id: &EntityId) -> Vec<u8> {
+    let mut key =
+        Vec::with_capacity(OFF_RECORD_INHERITED_FENCE_KEY_PREFIX.len() + id.as_bytes().len());
+    key.extend_from_slice(OFF_RECORD_INHERITED_FENCE_KEY_PREFIX);
+    key.extend_from_slice(id.as_bytes());
+    key
+}
+
 fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
     let mut key = Vec::with_capacity(OFF_RECORD_PROMOTE_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OFF_RECORD_PROMOTE_KEY_PREFIX);
@@ -283,7 +302,11 @@ pub(crate) fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
     Ok(())
 }
 
-fn direct_off_record_fence_active(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(crate) fn direct_off_record_fence_active(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
     const PREFIX_LEN: usize = OFF_RECORD_FENCE_KEY_PREFIX.len();
     let mut key = [0_u8; PREFIX_LEN + 16];
     key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
@@ -291,23 +314,186 @@ fn direct_off_record_fence_active(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId
     Ok(store.vault_meta.get(rtxn, &key)?.is_some())
 }
 
-/// THE FENCE probe consulted by every retrieval/extraction candidate filter.
-///
-/// In addition to an entity's own fence row, MESSAGE children inherit the
-/// fence of their `PartOf` TURN and SUMMARY rows inherit the fence of every
-/// `DerivedFrom` source. Inheritance is computed from existing graph truth;
-/// it does not mint a child fence row or another durable session marker.
-/// Corrupt entity/edge rows fail closed with a typed storage error.
-pub(crate) fn off_record_fence_active(
+fn decode_inherited_off_record_fence_roots(bytes: &[u8]) -> Result<BTreeSet<EntityId>> {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(16) {
+        return Err(Error::CorruptedIndex("off-record inherited fence row"));
+    }
+    let mut roots = BTreeSet::new();
+    for bytes in bytes.chunks_exact(16) {
+        let root = EntityId::from_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("off-record inherited fence row"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("off-record inherited fence row"))?;
+        if !roots.insert(root) {
+            return Err(Error::CorruptedIndex("off-record inherited fence row"));
+        }
+        if roots.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+            return Err(Error::CorruptedIndex(
+                "off-record inherited fence roots exceed bound",
+            ));
+        }
+    }
+    Ok(roots)
+}
+
+fn encode_inherited_off_record_fence_roots(roots: &BTreeSet<EntityId>) -> Result<Vec<u8>> {
+    if roots.is_empty() || roots.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+        return Err(Error::InvariantViolation(
+            "off-record inherited fence roots must be non-empty and bounded",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(roots.len() * 16);
+    for root in roots {
+        bytes.extend_from_slice(root.as_bytes());
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn inherited_off_record_fence_roots_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
-) -> Result<bool> {
+) -> Result<BTreeSet<EntityId>> {
+    let Some(bytes) = store
+        .vault_meta
+        .get(rtxn, &off_record_inherited_fence_key(id))?
+    else {
+        return Ok(BTreeSet::new());
+    };
+    decode_inherited_off_record_fence_roots(bytes)
+}
+
+/// Returns every durable inherited-fence carrier. Window scrubs include this
+/// inventory even when the current CRDT doc no longer contains the body or
+/// inheritance edge, making retries repair the legacy post-commit/pre-purge
+/// crash state.
+pub(crate) fn inherited_off_record_fence_carriers(store: &Store) -> Result<BTreeSet<EntityId>> {
+    let rtxn = store.env.read_txn()?;
+    let mut carriers = BTreeSet::new();
+    for row in store
+        .vault_meta
+        .prefix_iter(&rtxn, OFF_RECORD_INHERITED_FENCE_KEY_PREFIX)?
+    {
+        let (key, value) = row?;
+        let suffix = key
+            .strip_prefix(OFF_RECORD_INHERITED_FENCE_KEY_PREFIX)
+            .ok_or(Error::CorruptedIndex("off-record inherited fence key"))?;
+        let carrier = EntityId::from_bytes(
+            suffix
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("off-record inherited fence key"))?,
+        )
+        .map_err(|_| Error::CorruptedIndex("off-record inherited fence key"))?;
+        decode_inherited_off_record_fence_roots(value)?;
+        if !carriers.insert(carrier) || carriers.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+            return Err(Error::CorruptedIndex(
+                "off-record inherited fence carriers exceed bound",
+            ));
+        }
+    }
+    Ok(carriers)
+}
+
+pub(crate) fn put_inherited_off_record_fence_roots_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    carrier: &EntityId,
+    roots: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if roots.is_empty() {
+        return Err(Error::InvariantViolation(
+            "cannot persist an empty inherited off-record fence",
+        ));
+    }
+    let key = off_record_inherited_fence_key(carrier);
+    let mut merged = store
+        .vault_meta
+        .get(&*wtxn, &key)?
+        .map(decode_inherited_off_record_fence_roots)
+        .transpose()?
+        .unwrap_or_default();
+    merged.extend(roots.iter().copied());
+    let mut live_roots = BTreeSet::new();
+    for root in merged {
+        if direct_off_record_fence_active(store, &*wtxn, &root)? {
+            live_roots.insert(root);
+        }
+    }
+    if live_roots.is_empty() {
+        store.vault_meta.delete(wtxn, &key)?;
+    } else {
+        store.vault_meta.put(
+            wtxn,
+            &key,
+            &encode_inherited_off_record_fence_roots(&live_roots)?,
+        )?;
+    }
+    Ok(())
+}
+
+/// Removes one promoted/deleted direct root from every inherited-fence row.
+/// This runs in the same LMDB transaction that lifts the direct fence, so a
+/// carrier can never observe the root as released while its durable sidecar
+/// still names it (or vice versa).
+fn remove_inherited_off_record_fence_root_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    root: &EntityId,
+) -> Result<()> {
+    let mut updates = Vec::new();
+    for row in store
+        .vault_meta
+        .prefix_iter(&*wtxn, OFF_RECORD_INHERITED_FENCE_KEY_PREFIX)?
+    {
+        let (key, value) = row?;
+        let mut roots = decode_inherited_off_record_fence_roots(value)?;
+        if roots.remove(root) {
+            updates.push((key.to_vec(), roots));
+        }
+        if updates.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+            return Err(Error::CorruptedIndex(
+                "off-record inherited fence cleanup exceeds bound",
+            ));
+        }
+    }
+    for (key, roots) in updates {
+        if roots.is_empty() {
+            store.vault_meta.delete(wtxn, &key)?;
+        } else {
+            store.vault_meta.put(
+                wtxn,
+                &key,
+                &encode_inherited_off_record_fence_roots(&roots)?,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn off_record_fence_roots_impl(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    include_durable_inheritance: bool,
+) -> Result<BTreeSet<EntityId>> {
+    let mut roots = BTreeSet::new();
     let mut visited = BTreeSet::from([*id]);
     let mut pending = vec![*id];
     while let Some(current) = pending.pop() {
         if direct_off_record_fence_active(store, rtxn, &current)? {
-            return Ok(true);
+            roots.insert(current);
+        }
+        if include_durable_inheritance {
+            roots.extend(inherited_off_record_fence_roots_in_txn(
+                store, rtxn, &current,
+            )?);
+        }
+        if roots.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+            return Err(Error::CorruptedIndex(
+                "off-record inherited fence roots exceed bound",
+            ));
         }
 
         let Some(raw) = store.entities.get(rtxn, current.as_bytes())? else {
@@ -336,7 +522,42 @@ pub(crate) fn off_record_fence_active(
             pending.push(parent);
         }
     }
-    Ok(false)
+    Ok(roots)
+}
+
+pub(crate) fn off_record_fence_roots(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    off_record_fence_roots_impl(store, rtxn, id, true)
+}
+
+/// Graph-only probe used by orphan purge. Durable sidecars are deliberately
+/// excluded: the purge transaction writes the sidecar before deleting the
+/// orphan, and treating that new row as local graph truth would skip the body.
+pub(crate) fn off_record_graph_fence_active(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(!off_record_fence_roots_impl(store, rtxn, id, false)?.is_empty())
+}
+
+/// THE FENCE probe consulted by every retrieval/extraction candidate filter.
+///
+/// In addition to an entity's own fence row, MESSAGE children inherit the
+/// fence of their `PartOf` TURN and SUMMARY rows inherit the fence of every
+/// `DerivedFrom` source. Window scrubs also persist node-local inherited-root
+/// sidecars, so a carrier remains covered when its inheritance edge lives in
+/// another CRDT window. Corrupt entity/edge/sidecar rows fail closed with a
+/// typed storage error.
+pub(crate) fn off_record_fence_active(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(!off_record_fence_roots(store, rtxn, id)?.is_empty())
 }
 
 /// Snapshots every carrier that inherits `root`'s fence. The closing flag has
@@ -356,18 +577,33 @@ fn inherited_off_record_carriers_for_close(
             (EdgeKind::PartOf, ENTITY_TYPE_MESSAGE),
             (EdgeKind::DerivedFrom, ENTITY_TYPE_SUMMARY),
         ] {
-            for child in vault.sources(&parent, kind, Some(entity_type))? {
-                if visited.contains(&child) {
-                    continue;
+            let mut after = None;
+            loop {
+                let page = vault.sources_page(
+                    &parent,
+                    kind,
+                    Some(entity_type),
+                    after.as_ref(),
+                    OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE,
+                )?;
+                let page_len = page.len();
+                for child in page {
+                    after = Some(child);
+                    if visited.contains(&child) {
+                        continue;
+                    }
+                    if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+                        return Err(Error::CorruptedIndex(
+                            "off-record close inheritance graph exceeds bound",
+                        ));
+                    }
+                    visited.insert(child);
+                    pending.push(child);
+                    carriers.push(child);
                 }
-                if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
-                    return Err(Error::CorruptedIndex(
-                        "off-record close inheritance graph exceeds bound",
-                    ));
+                if page_len < OFF_RECORD_CLOSE_CARRIER_PAGE_SIZE {
+                    break;
                 }
-                visited.insert(child);
-                pending.push(child);
-                carriers.push(child);
             }
         }
     }
@@ -714,31 +950,6 @@ impl Vault {
         off_record_fence_active(&self.store, &rtxn, id)
     }
 
-    /// Fail-closed creation gate for a SUMMARY derived from source entities.
-    ///
-    /// A compactor must call this before staging the SUMMARY put and its
-    /// `DerivedFrom` edges. An empty source set cannot establish that the
-    /// summary is on-record, and a direct or inherited fence on any source
-    /// suppresses creation. The resulting SUMMARY remains covered by
-    /// [`off_record_fence_active`] through its `DerivedFrom` edges if a source
-    /// is fenced after creation.
-    pub fn ensure_summary_sources_on_record(&self, source_ids: &[EntityId]) -> Result<()> {
-        if source_ids.is_empty() {
-            return Err(Error::InvariantViolation(
-                "summary creation requires at least one source entity",
-            ));
-        }
-        let rtxn = self.store.env.read_txn()?;
-        for source_id in source_ids {
-            if off_record_fence_active(&self.store, &rtxn, source_id)? {
-                return Err(Error::OffRecordFencedTurnWriteRejected {
-                    turn_ref: source_id.to_hex(),
-                });
-            }
-        }
-        Ok(())
-    }
-
     /// Registers one emit-adjacent context receipt (a retrieval-run record —
     /// its `result_ids` are the activated memory ids) as session-local:
     /// RECEIPTS-FOLLOW-TRANSCRIPT, so close deletes it with the transcript.
@@ -820,6 +1031,7 @@ impl Vault {
             self.store
                 .vault_meta
                 .delete(wtxn, &off_record_fence_key(turn_id))?;
+            remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, turn_id)?;
             self.store.vault_meta.put(
                 wtxn,
                 &off_record_promote_key(turn_id),
@@ -1072,6 +1284,7 @@ impl Vault {
                     )?;
                     continue;
                 }
+                remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, &id)?;
                 self.store
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(&id))?;

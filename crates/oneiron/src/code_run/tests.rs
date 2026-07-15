@@ -61,11 +61,16 @@ fn message_turn(
     content: &str,
     order: u32,
 ) -> crate::facade::WitnessTurn {
+    let id_seed = 0xD0_u8.saturating_add(u8::try_from(order).expect("message fixture order"));
     crate::facade::WitnessTurn {
         conversation_ref: conversation_ref.to_owned(),
         turn_ref: Some(turn_ref.to_owned()),
         messages: vec![crate::facade::WitnessMessage {
-            id: None,
+            id: Some(
+                EntityId::from_bytes([id_seed; 16])
+                    .expect("message fixture id")
+                    .to_hex(),
+            ),
             // The dispatcher overwrites all effect-owned envelope fields.
             author: crate::facade::WitnessAuthor::User,
             message_type: "guest-controlled".to_owned(),
@@ -404,6 +409,47 @@ fn code_run_replay_record_round_trips_and_replays_bridge_log_without_dispatch() 
 }
 
 #[test]
+fn code_run_replay_distinguishes_omitted_metadata_from_explicit_null() -> Result<()> {
+    let conversation = EntityId::from_bytes([0x96; 16])?.to_hex();
+    let turn = EntityId::from_bytes([0x97; 16])?.to_hex();
+    let omitted = SelfCall::Speak(message_turn(&conversation, &turn, "metadata presence", 0));
+    let mut explicit_null = omitted.clone();
+    let SelfCall::Speak(explicit_null_turn) = &mut explicit_null else {
+        unreachable!("fixture is speak")
+    };
+    explicit_null_turn.messages[0].metadata = Some(serde_json::Value::Null);
+
+    assert_ne!(
+        self_call_request_value(&omitted)?,
+        self_call_request_value(&explicit_null)?,
+        "canonical request must encode metadata presence separately from its nil value"
+    );
+
+    let outcome = SelfDispatchOutcome::MessageWitness(crate::facade::WitnessReceipt {
+        turn_short_id: "tn1:00".to_owned(),
+        message_short_ids: vec!["msg1:00".to_owned()],
+        receipt_ref: "witness:fixture".to_owned(),
+    });
+    let mut record = CodeRunReplayRecord::new(
+        EntityId::from_bytes([0x98; 16])?,
+        CodeRunDeterminism::new(100, [0x99; 32]),
+    );
+    record
+        .bridge_calls
+        .push(CodeRunBridgeCall::record(0, &omitted, &outcome, 100, 100)?);
+    let replay = record.replay_cursor();
+    let error = replay
+        .dispatch(explicit_null)
+        .expect_err("null versus omitted metadata must be replay drift");
+    assert_eq!(
+        error.kind(),
+        crate::error::ErrorKind::InvalidCodeArtifactBody
+    );
+    assert_eq!(replay.consumed(), 0);
+    Ok(())
+}
+
+#[test]
 fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
     let run_id = EntityId::from_bytes([0x71; 16]).expect("run id");
     let src = EntityId::from_bytes([0x72; 16]).expect("src id");
@@ -669,6 +715,59 @@ fn code_run_speak_think_express_emit_interleaved_gated_message_bubbles() -> Resu
             Some(order)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn code_run_implicit_message_and_turn_ids_are_stable_for_run_and_bridge_sequence() -> Result<()> {
+    let run_id = EntityId::from_bytes([0xCA; 16])?;
+    let conversation = EntityId::from_bytes([0xCB; 16])?.to_hex();
+    let mut first = SelfCall::Speak(message_turn(
+        &conversation,
+        &EntityId::from_bytes([0xCC; 16])?.to_hex(),
+        "deterministic ids",
+        0,
+    ));
+    let SelfCall::Speak(first_turn) = &mut first else {
+        unreachable!("fixture is speak")
+    };
+    first_turn.turn_ref = None;
+    first_turn.messages[0].id = None;
+    let mut retry = first.clone();
+
+    stamp_self_message_ids_for_bridge_call(&mut first, &run_id, 7)?;
+    stamp_self_message_ids_for_bridge_call(&mut retry, &run_id, 7)?;
+    let (SelfCall::Speak(first_turn), SelfCall::Speak(retry_turn)) = (&first, &retry) else {
+        unreachable!("fixtures are speak")
+    };
+    assert_eq!(first_turn.turn_ref, retry_turn.turn_ref);
+    assert_eq!(first_turn.messages[0].id, retry_turn.messages[0].id);
+    assert_ne!(first_turn.turn_ref, first_turn.messages[0].id);
+    EntityId::from_hex(first_turn.turn_ref.as_deref().expect("minted turn id"))?;
+    EntityId::from_hex(
+        first_turn.messages[0]
+            .id
+            .as_deref()
+            .expect("minted message id"),
+    )?;
+
+    let mut next_call = SelfCall::Speak({
+        let mut turn = message_turn(
+            &conversation,
+            &EntityId::from_bytes([0xCD; 16])?.to_hex(),
+            "deterministic ids",
+            0,
+        );
+        turn.turn_ref = None;
+        turn.messages[0].id = None;
+        turn
+    });
+    stamp_self_message_ids_for_bridge_call(&mut next_call, &run_id, 8)?;
+    let SelfCall::Speak(next_turn) = next_call else {
+        unreachable!("fixture is speak")
+    };
+    assert_ne!(first_turn.turn_ref, next_turn.turn_ref);
+    assert_ne!(first_turn.messages[0].id, next_turn.messages[0].id);
     Ok(())
 }
 

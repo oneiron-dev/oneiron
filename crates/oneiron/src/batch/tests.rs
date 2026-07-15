@@ -7,7 +7,9 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::off_record::OffRecordBackendClass;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
@@ -861,6 +863,44 @@ fn replicated_put_is_rejected_while_off_record_fence_is_live() -> Result<()> {
 
     assert_eq!(err.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
     assert!(vault.get(&turn)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn local_edge_from_inherited_fenced_message_is_rejected() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let ordinary = EntityId::now();
+    let occurred = test_time_range(10, 10);
+    vault
+        .batch()
+        .put(&turn, ENTITY_TYPE_TURN, occurred, 10, b"private turn")
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            10,
+            b"private message",
+        )
+        .put(&ordinary, ENTITY_TYPE_PERSON, occurred, 10, b"ordinary")
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()?;
+    vault.enter_off_record_session("sess-inherited-edge", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-inherited-edge", &turn)?;
+    assert!(vault.is_turn_off_record_fenced(&message)?);
+
+    let error = vault
+        .batch()
+        .edge(&message, EdgeKind::Mentions, &ordinary, 0.5)
+        .commit()
+        .expect_err("an inherited-fenced endpoint must reject a local edge");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert_eq!(
+        vault.sources(&ordinary, EdgeKind::Mentions, None)?.len(),
+        0,
+        "canonical inbound edge reads must expose no hidden carrier id"
+    );
     Ok(())
 }
 

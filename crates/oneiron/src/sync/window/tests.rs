@@ -462,6 +462,109 @@ fn window_scrub_inherits_turn_fence_from_remote_message_part_of_edge() -> Result
     Ok(())
 }
 
+#[test]
+fn window_scrub_propagates_durable_inherited_fence_across_source_windows() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-03");
+    let derived_key = WindowKey::new("2026-04");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let derived_at = derived_key.start_timestamp().unwrap() + 60;
+    let fenced_turn = EntityId::from_bytes([0x6A; 16])?;
+    let private_message = EntityId::from_bytes([0x6B; 16])?;
+    let private_summary = EntityId::from_bytes([0x6C; 16])?;
+    let ordinary = EntityId::from_bytes([0x6D; 16])?;
+    vault.put_entity(
+        &fenced_turn,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"local private turn",
+    )?;
+    vault.enter_off_record_session("sess-two-window", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-two-window", &fenced_turn)?;
+
+    let source_doc = create_window_doc("remote", &source_key);
+    map_insert_bytes(
+        &source_doc.get_map("entities"),
+        &private_message.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_MESSAGE, source_at, b"private message"),
+    )?;
+    let part_of = format_edge_key(&private_message, EdgeKind::PartOf, &fenced_turn);
+    map_insert_bytes(&source_doc.get_map("edges"), &part_of, b"PartOf")?;
+    source_doc.commit();
+    assert!(scrub_off_record_fenced_carriers(
+        &vault,
+        &source_key,
+        &source_doc
+    )?);
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::off_record::inherited_off_record_fence_roots_in_txn(
+            &vault.store,
+            &rtxn,
+            &private_message,
+        )?,
+        std::collections::BTreeSet::from([fenced_turn])
+    );
+    drop(rtxn);
+
+    // The derived window has no PartOf edge and the MESSAGE body is absent;
+    // only its node-local sidecar can carry the March fence into April.
+    let derived_doc = create_window_doc("remote", &derived_key);
+    map_insert_bytes(
+        &derived_doc.get_map("entities"),
+        &private_summary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_SUMMARY, derived_at, b"private summary"),
+    )?;
+    map_insert_bytes(
+        &derived_doc.get_map("entities"),
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_TURN, derived_at, b"ordinary control"),
+    )?;
+    let derived_from = format_edge_key(&private_summary, EdgeKind::DerivedFrom, &private_message);
+    map_insert_bytes(&derived_doc.get_map("edges"), &derived_from, b"DerivedFrom")?;
+    derived_doc.commit();
+
+    assert!(scrub_off_record_fenced_carriers(
+        &vault,
+        &derived_key,
+        &derived_doc
+    )?);
+    assert!(map_get_bytes(&derived_doc.get_map("entities"), &private_summary.to_hex()).is_none());
+    assert_eq!(
+        map_get_bytes(&derived_doc.get_map("entities"), &ordinary.to_hex()).as_deref(),
+        Some(make_entity_blob(ENTITY_TYPE_TURN, derived_at, b"ordinary control").as_slice())
+    );
+    let export = export_window_updates_since(
+        &vault,
+        &derived_key,
+        &derived_doc,
+        &VersionVector::default().encode(),
+    )?;
+    let peer = create_window_doc("peer", &derived_key);
+    import_doc(&peer, &export)?;
+    assert!(
+        map_get_bytes(&peer.get_map("entities"), &private_summary.to_hex()).is_none(),
+        "cross-window derived body must not egress"
+    );
+    assert!(map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some());
+    vault.promote_off_record_turn(
+        "sess-two-window",
+        &fenced_turn,
+        TEST_OWNER_REF,
+        &test_owner_actor(),
+    )?;
+    assert_eq!(
+        crate::off_record::inherited_off_record_fence_carriers(&vault.store)?.len(),
+        0,
+        "promotion must atomically release every sidecar rooted at the turn"
+    );
+    Ok(())
+}
+
 /// Tagging an entity that is already present in a registry-owned live window
 /// must remove its body and incident edges before the call returns. The
 /// ordinary neighbor is the legitimate control and must remain exportable.
@@ -725,6 +828,67 @@ fn scrub_purges_remote_carrier_materialized_before_inheritance_edge_rejection() 
     );
     assert!(map_get_bytes(&entities, &remote_message.to_hex()).is_none());
     assert!(map_get_bytes(&edges, &edge_key).is_none());
+    Ok(())
+}
+
+#[test]
+fn scrub_retry_purges_legacy_post_commit_pre_purge_carrier() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced_turn = EntityId::from_bytes([0x6E; 16])?;
+    let orphaned_message = EntityId::from_bytes([0x6F; 16])?;
+    vault.put_entity(
+        &fenced_turn,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"private turn",
+    )?;
+    vault.put_entity(
+        &orphaned_message,
+        ENTITY_TYPE_MESSAGE,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"orphaned message body",
+    )?;
+    vault.enter_off_record_session("sess-retry-purge", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-retry-purge", &fenced_turn)?;
+
+    // Reproduce the old crash boundary: the bridge-origin CRDT deletion is
+    // already committed (the retry doc is empty), but a durable inheritance
+    // row identifies the LMDB body whose purge did not run.
+    vault.with_write_txn(|wtxn| {
+        crate::off_record::put_inherited_off_record_fence_roots_in_txn(
+            &vault.store,
+            wtxn,
+            &orphaned_message,
+            &std::collections::BTreeSet::from([fenced_turn]),
+        )
+    })?;
+    let retry_doc = create_window_doc("remote", &window_key);
+    assert!(vault.get_raw(&orphaned_message)?.is_some());
+
+    assert!(scrub_off_record_fenced_carriers(
+        &vault,
+        &window_key,
+        &retry_doc
+    )?);
+    assert!(
+        vault.get_raw(&orphaned_message)?.is_none(),
+        "retry must purge from the durable carrier inventory without CRDT evidence"
+    );
+    assert_eq!(
+        crate::off_record::inherited_off_record_fence_carriers(&vault.store)?.len(),
+        1,
+        "the root sidecar remains until promotion/close releases the fence"
+    );
     Ok(())
 }
 
