@@ -955,6 +955,57 @@ fn self_unconfirmed_not_consolidatable() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn session_claim_producer_uses_envelope_actor_evidence_fail_closed() -> Result<()> {
+    let producer = EntityId::from_bytes([0x19; 16]).expect("valid producer id");
+    let envelope = WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(producer, crate::edge::EdgeActorClass::Human),
+        ClaimSource::Generated,
+        crate::write_envelope::WriteProvenance::new(Value::from("session-producer-test"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let mut body = ClaimBody::new(
+        "profile.preference",
+        ClaimSubject::Entity(EntityId::from_bytes([0x1A; 16]).expect("valid subject id")),
+        Value::from("concise"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+        &envelope, None,
+    ));
+
+    assert_eq!(session_claim_producer(&body), Some(producer));
+
+    body.evidence = Some(Value::Map(vec![
+        (
+            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+            Value::Binary(producer.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+            Value::Binary(producer.as_bytes().to_vec()),
+        ),
+    ]));
+    assert_eq!(
+        session_claim_producer(&body),
+        None,
+        "duplicate producer stamps must not match a session bundle"
+    );
+
+    body.evidence = Some(Value::Map(vec![(
+        Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+        Value::Binary(vec![0x19; 15]),
+    )]));
+    assert_eq!(
+        session_claim_producer(&body),
+        None,
+        "malformed producer stamps must not match a session bundle"
+    );
+    Ok(())
+}
+
 /// GATE-11 (ONE-1391): generated origin is evidence-inadmissible regardless
 /// of approval status; every non-generated source stays admissible.
 #[test]

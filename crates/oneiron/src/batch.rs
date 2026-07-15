@@ -1551,6 +1551,7 @@ pub(crate) struct ApplyOpsGateMode {
     record_decisions: bool,
     persist_pending_consent: bool,
     include_source_in_gate_input: bool,
+    claim_gate_prechecked: bool,
 }
 
 impl ApplyOpsGateMode {
@@ -1559,6 +1560,7 @@ impl ApplyOpsGateMode {
             record_decisions,
             persist_pending_consent,
             include_source_in_gate_input: false,
+            claim_gate_prechecked: false,
         }
     }
 
@@ -1566,6 +1568,53 @@ impl ApplyOpsGateMode {
         self.include_source_in_gate_input = true;
         self
     }
+
+    /// Marks local CLAIM puts as already authorized in this transaction.
+    /// Structural validation and materialization still run; only the duplicate
+    /// gate evaluation in `apply_put` is skipped.
+    const fn with_prechecked_claim_gate(mut self) -> Self {
+        self.claim_gate_prechecked = true;
+        self
+    }
+}
+
+/// Materializes the already-authorized CLAIM puts from a session-bundle merge.
+///
+/// The narrow operation-shape check prevents the prechecked mode from being
+/// reused as a general batch gate bypass. The caller must have evaluated every
+/// body with `check_claim_policy_for_write_with_record` in this same `wtxn`.
+pub(crate) fn apply_session_bundle_claim_puts(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    ops: Vec<BatchOp>,
+    text_index_trusted: bool,
+) -> Result<()> {
+    if ops.iter().any(|op| {
+        !matches!(
+            op,
+            BatchOp::Put {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                ..
+            }
+        )
+    }) {
+        return Err(Error::InvariantViolation(
+            "session bundle claim batch contains a non-claim put",
+        ));
+    }
+    apply_ops_with_gate_mode(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        ops,
+        text_index_trusted,
+        ApplyOpsGateMode::new(false, false).with_prechecked_claim_gate(),
+    )
 }
 
 /// Applies a list of batch operations to an LMDB write transaction.
@@ -1606,6 +1655,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
+    let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
 
     secret_scan::scan_batch_ops(&ops)?;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
@@ -1614,7 +1664,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     let mut had_vector_mutation = false;
     let mut text_manifest_checked = false;
     let later_text_coverage_by_op = text_coverage_after_op(&ops);
-    let write_policy = if contains_local_claim_put(&ops) {
+    let write_policy = if contains_local_claim_put(&ops) && !claim_gate_prechecked {
         Some(crate::gate::resolve_policy_manifest(store, &*wtxn)?)
     } else {
         None
@@ -1691,6 +1741,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
+                    claim_gate_prechecked,
                     Some(&companion_retired_histories),
                 )?;
                 #[cfg(feature = "sync")]
@@ -1793,6 +1844,7 @@ pub(crate) fn apply_ops_with_gate_mode(
                     persist_gate_pending_consent,
                     pending_gate_consent_at_batch_start.contains(&id),
                     include_source_in_gate_input,
+                    claim_gate_prechecked,
                 )?;
                 if applied.had_graph_mutation {
                     had_graph_mutation = true;
@@ -2390,6 +2442,7 @@ fn apply_claim_candidate(
     persist_gate_pending_consent: bool,
     can_resolve_pending_consent: bool,
     include_source_in_gate_input: bool,
+    claim_gate_prechecked: bool,
 ) -> Result<AppliedClaimCandidate> {
     crate::gate::validate_write_envelope(envelope)?;
 
@@ -2429,6 +2482,7 @@ fn apply_claim_candidate(
         persist_gate_pending_consent,
         can_resolve_pending_consent,
         include_source_in_gate_input,
+        claim_gate_prechecked,
         None,
     )?;
 
@@ -2526,6 +2580,7 @@ fn apply_put(
     persist_gate_pending_consent: bool,
     can_resolve_pending_consent: bool,
     include_source_in_gate_input: bool,
+    claim_gate_prechecked: bool,
     companion_retired_histories: Option<&CompanionRetiredHistoryOverlay>,
 ) -> Result<AppliedPut> {
     // OFRC-2i: this is the shared entity materialization choke point for
@@ -2629,7 +2684,21 @@ fn apply_put(
                 ));
             }
         }
-        if !(replicated || is_lexical_query_hint_claim && internal_lexical_query_hint) {
+        if body.session_tag.is_some()
+            && !replicated
+            && !claim_gate_prechecked
+            && !write_envelope.is_some_and(|envelope| {
+                crate::claim::session_claim_producer(&body) == Some(envelope.actor().entity_ref())
+            })
+        {
+            return Err(Error::InvalidClaimBody(
+                "sess requires an envelope-bound producer actor",
+            ));
+        }
+        if !(replicated
+            || is_lexical_query_hint_claim && internal_lexical_query_hint
+            || claim_gate_prechecked)
+        {
             let policy = write_policy.ok_or(Error::InvariantViolation(
                 "local claim write policy snapshot missing",
             ))?;

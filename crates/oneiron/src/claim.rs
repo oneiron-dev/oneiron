@@ -66,6 +66,7 @@ use crate::vault::edge_kind_prefix;
 use crate::vault::parse_edge_record;
 use crate::vault::require_key_len;
 use crate::write_envelope::ClaimCandidate;
+use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use crate::write_envelope::WriteEnvelope;
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
@@ -1028,8 +1029,9 @@ pub struct SessionClaimBundleClaim {
 
 /// Coherent proposed-claim bundle for one agent session.
 ///
-/// A bundle is a data-native projection over CLAIM rows sharing `sess`; it
-/// does not introduce an independent branch record or storage table.
+/// A bundle is a data-native projection over CLAIM rows sharing `sess` and
+/// the envelope-stamped producer actor; it does not introduce an independent
+/// branch record or storage table.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionClaimBundle {
     /// Stable tag supplied by the writing agent session.
@@ -2228,6 +2230,7 @@ impl Vault {
     pub(crate) fn session_claim_bundle_members_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
+        expected_producer: &EntityId,
         session_tag: &str,
     ) -> Result<Vec<SessionClaimBundleMember>> {
         validate_session_tag(session_tag)?;
@@ -2252,6 +2255,7 @@ impl Vault {
             }
             let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
             if body.session_tag.as_deref() != Some(session_tag)
+                || session_claim_producer(&body).as_ref() != Some(expected_producer)
                 || body.approval != ClaimApprovalStatus::Proposed
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
@@ -2630,6 +2634,30 @@ impl Vault {
         }
         Ok(facets)
     }
+}
+
+/// Reads the immutable writer identity already stamped by `WriteEnvelope`
+/// into candidate evidence. Missing, duplicate, malformed, or reserved actor
+/// refs fail closed by returning no producer match.
+pub(crate) fn session_claim_producer(body: &ClaimBody) -> Option<EntityId> {
+    let Value::Map(entries) = body.evidence.as_ref()? else {
+        return None;
+    };
+    let mut producer = None;
+    for (key, value) in entries {
+        if key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+            continue;
+        }
+        if producer.is_some() {
+            return None;
+        }
+        let Value::Binary(bytes) = value else {
+            return None;
+        };
+        let actor_bytes: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
+        producer = Some(EntityId::from_bytes(actor_bytes).ok()?);
+    }
+    producer
 }
 
 #[cfg(test)]
