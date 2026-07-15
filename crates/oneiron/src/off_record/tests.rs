@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_run::{CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord};
 use crate::config::VaultConfig;
-use crate::edge::EdgeKind;
+use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -353,6 +353,122 @@ fn off_record_summary_gate_covers_fenced_sources_and_existing_derivations() {
             .is_turn_off_record_fenced(&summary)
             .expect("summary fence"),
         "an existing SUMMARY must inherit a later source fence"
+    );
+}
+
+#[test]
+fn off_record_close_cascades_preexisting_derived_summaries_recursively() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let summary = EntityId::now();
+    let nested_summary = EntityId::now();
+    for (id, source, body) in [
+        (summary, turn, b"private summary".as_slice()),
+        (
+            nested_summary,
+            summary,
+            b"private nested summary".as_slice(),
+        ),
+    ] {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_SUMMARY,
+                TimeRange {
+                    start: 1000,
+                    end: 1000,
+                },
+                1000,
+                body,
+            )
+            .edge(&id, EdgeKind::DerivedFrom, &source, 1.0)
+            .commit()
+            .expect("seed derived summary");
+    }
+
+    vault
+        .enter_off_record_session("sess-summary-close", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-summary-close", &turn)
+        .expect("tag");
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&nested_summary)
+            .expect("nested summary fence")
+    );
+
+    let log = vault
+        .off_record_receipt_log("sess-summary-close")
+        .expect("receipt log");
+    vault
+        .close_off_record_session("sess-summary-close", log)
+        .expect("close");
+
+    let rtxn = vault.store.env.read_txn().expect("read entities");
+    for id in [turn, summary, nested_summary] {
+        assert!(
+            vault
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())
+                .expect("entity row")
+                .is_none(),
+            "turn and recursively derived summaries must be absent from LMDB after close"
+        );
+    }
+}
+
+#[test]
+fn off_record_fence_inheritance_cycles_terminate_and_still_find_a_fence() {
+    let (_tmp, vault) = temp_vault();
+    let message_a = EntityId::now();
+    let message_b = EntityId::now();
+    for (id, body) in [
+        (message_a, b"cycle message a".as_slice()),
+        (message_b, b"cycle message b".as_slice()),
+    ] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: 1000,
+                    end: 1000,
+                },
+                1000,
+                body,
+            )
+            .expect("seed cyclic message");
+    }
+    vault
+        .put_edge(&message_a, EdgeKind::PartOf, &message_b, 1.0)
+        .expect("edge a to b");
+    vault
+        .put_edge(&message_b, EdgeKind::PartOf, &message_a, 1.0)
+        .expect("edge b to a");
+
+    let facade = vault.memory_facade(EntityId::now(), EdgeActorClass::Human);
+    assert!(
+        facade
+            .get_entity(&message_a.to_hex())
+            .expect("cyclic unfenced read must succeed")
+            .is_some()
+    );
+
+    vault
+        .enter_off_record_session("sess-cycle", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-cycle", &message_b)
+        .expect("fence cycle member");
+    assert!(
+        facade
+            .get_entity(&message_a.to_hex())
+            .expect("cyclic fenced read must succeed")
+            .is_none(),
+        "a fence reachable through a cycle must still hide the carrier"
     );
 }
 

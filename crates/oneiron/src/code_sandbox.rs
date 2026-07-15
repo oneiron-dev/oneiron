@@ -41,6 +41,31 @@ pub const PLAIN_JS_HOST_VERB_DTS: &str = r#"declare namespace self {
     function put_edge(input: { src: string; kind: string; tgt: string; weight?: number }): Promise<{ src: string; kind: string; tgt: string }>;
   }
 
+  interface MessageBubble {
+    id?: string;
+    author: "user" | "companion" | "system";
+    message_type: string;
+    content: string;
+    metadata?: unknown;
+    is_visible: boolean;
+    order: number;
+  }
+
+  interface MessageTurn {
+    conversation_ref: string;
+    turn_ref?: string;
+    messages: MessageBubble[];
+    occurred_at: number;
+  }
+
+  interface MessageWitnessReceipt {
+    turn_short_id: string;
+    message_short_ids: string[];
+  }
+
+  function speak(input: MessageTurn): Promise<MessageWitnessReceipt>;
+  function think(input: MessageTurn): Promise<MessageWitnessReceipt>;
+  function express(input: MessageTurn): Promise<MessageWitnessReceipt>;
   function askHuman(input: { prompt: string }): Promise<{ waitId: string }>;
   function ask_human(input: { prompt: string }): Promise<{ waitId: string }>;
 }
@@ -217,6 +242,9 @@ impl SandboxLinkedImport {
             (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
                 Some(SelfEffect::MemoryPutEdge)
             }
+            (SandboxImportClass::WriteTrap, "self.speak") => Some(SelfEffect::Speak),
+            (SandboxImportClass::WriteTrap, "self.think") => Some(SelfEffect::Think),
+            (SandboxImportClass::WriteTrap, "self.express") => Some(SelfEffect::Express),
             _ => None,
         }
     }
@@ -240,6 +268,12 @@ const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.supersede_claim", SandboxImportClass::WriteTrap);
 const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
+const SELF_SPEAK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.speak", SandboxImportClass::WriteTrap);
+const SELF_THINK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.think", SandboxImportClass::WriteTrap);
+const SELF_EXPRESS_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.express", SandboxImportClass::WriteTrap);
 const SELF_ASK_HUMAN_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.ask_human", SandboxImportClass::DurableWait);
 const SELF_ASK_HUMAN_CAMEL_IMPORT: SandboxLinkedImport =
@@ -259,6 +293,9 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
+    SELF_SPEAK_IMPORT,
+    SELF_THINK_IMPORT,
+    SELF_EXPRESS_IMPORT,
     SELF_ASK_HUMAN_IMPORT,
     SELF_ASK_HUMAN_CAMEL_IMPORT,
 ];

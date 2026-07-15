@@ -72,6 +72,8 @@
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
 //!   that does not exist today.
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +110,9 @@ const OFF_RECORD_MAX_FENCED_TURNS: usize = 65_536;
 const OFF_RECORD_MAX_CONTEXT_RECEIPTS: usize = 65_536;
 /// Hard cap on session-scoped code-run replay/raw-output rows.
 const OFF_RECORD_MAX_CODE_RUN_ARTIFACTS: usize = 65_536;
+/// Backstop for one inherited-fence graph walk. Cycles terminate through the
+/// visited set; exceeding this bound with an unexplored carrier fails closed.
+const OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES: usize = 65_536;
 
 /// The mode line injected into the agent context so both parties know the
 /// session is off-record (OF-326: no secret recording either way).
@@ -298,42 +303,75 @@ pub(crate) fn off_record_fence_active(
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    off_record_fence_active_at_depth(store, rtxn, id, 0)
-}
-
-fn off_record_fence_active_at_depth(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    id: &EntityId,
-    depth: u8,
-) -> Result<bool> {
-    if direct_off_record_fence_active(store, rtxn, id)? {
-        return Ok(true);
-    }
-
-    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
-        return Ok(false);
-    };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-    let inherited_edge = match header.entity_type {
-        ENTITY_TYPE_MESSAGE => EdgeKind::PartOf,
-        ENTITY_TYPE_SUMMARY => EdgeKind::DerivedFrom,
-        _ => return Ok(false),
-    };
-    let prefix = crate::vault::edge_kind_prefix(id, inherited_edge);
-    for row in store.edges_out.prefix_iter(rtxn, &prefix)? {
-        let (key, value) = row?;
-        let parent = crate::vault::parse_edge_record(key, value)?.target;
-        if depth >= 8 {
-            return Err(Error::CorruptedIndex(
-                "off-record fence inheritance depth exceeded",
-            ));
-        }
-        if off_record_fence_active_at_depth(store, rtxn, &parent, depth + 1)? {
+    let mut visited = BTreeSet::from([*id]);
+    let mut pending = vec![*id];
+    while let Some(current) = pending.pop() {
+        if direct_off_record_fence_active(store, rtxn, &current)? {
             return Ok(true);
+        }
+
+        let Some(raw) = store.entities.get(rtxn, current.as_bytes())? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let inherited_edge = match header.entity_type {
+            ENTITY_TYPE_MESSAGE => EdgeKind::PartOf,
+            ENTITY_TYPE_SUMMARY => EdgeKind::DerivedFrom,
+            _ => continue,
+        };
+        let prefix = crate::vault::edge_kind_prefix(&current, inherited_edge);
+        for row in store.edges_out.prefix_iter(rtxn, &prefix)? {
+            let (key, value) = row?;
+            let parent = crate::vault::parse_edge_record(key, value)?.target;
+            if visited.contains(&parent) {
+                continue;
+            }
+            if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+                return Err(Error::CorruptedIndex(
+                    "off-record fence inheritance graph exceeds bound",
+                ));
+            }
+            visited.insert(parent);
+            pending.push(parent);
         }
     }
     Ok(false)
+}
+
+/// Snapshots every carrier that inherits `root`'s fence. The closing flag has
+/// already frozen new inheritance edges, so this closure cannot grow while the
+/// multi-transaction PolicyDelete cascade runs. Discovery order is parent to
+/// child; callers delete it in reverse so descendants never become visible
+/// merely because deleting an ancestor removed their inheritance edge.
+fn inherited_off_record_carriers_for_close(
+    vault: &Vault,
+    root: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut visited = BTreeSet::from([*root]);
+    let mut pending = vec![*root];
+    let mut carriers = Vec::new();
+    while let Some(parent) = pending.pop() {
+        for (kind, entity_type) in [
+            (EdgeKind::PartOf, ENTITY_TYPE_MESSAGE),
+            (EdgeKind::DerivedFrom, ENTITY_TYPE_SUMMARY),
+        ] {
+            for child in vault.sources(&parent, kind, Some(entity_type))? {
+                if visited.contains(&child) {
+                    continue;
+                }
+                if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+                    return Err(Error::CorruptedIndex(
+                        "off-record close inheritance graph exceeds bound",
+                    ));
+                }
+                visited.insert(child);
+                pending.push(child);
+                carriers.push(child);
+            }
+        }
+    }
+    Ok(carriers)
 }
 
 /// Returns whether the vault has any fence rows at all. Retrieval channels use
@@ -947,14 +985,15 @@ impl Vault {
         for bytes in &record.fenced_turns {
             let id = EntityId::from_bytes(*bytes)?;
 
-            // MESSAGE rows inherit the TURN fence through PartOf and must
-            // evaporate with the transcript. `closing` was committed before
-            // this snapshot, and the shared edge write door rejects a late
-            // PartOf attachment to a closing fence, so this child set cannot
-            // grow underneath the cascade.
-            for message_id in self.sources(&id, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))? {
+            // MESSAGE and SUMMARY rows inherit the fence recursively through
+            // PartOf and DerivedFrom. Snapshot the complete reverse closure
+            // before any PolicyDelete removes graph edges, then delete child
+            // carriers first so every remaining carrier stays fenced for the
+            // entire cascade. `closing` makes this snapshot stable.
+            let inherited_carriers = inherited_off_record_carriers_for_close(self, &id)?;
+            for carrier_id in inherited_carriers.iter().rev() {
                 let child_outcome =
-                    self.delete_entity_with_reason(&message_id, DeleteReason::PolicyDelete)?;
+                    self.delete_entity_with_reason(carrier_id, DeleteReason::PolicyDelete)?;
                 if let Some(receipt_id) = child_outcome.receipt_id {
                     redaction_receipt_ids.push(receipt_id);
                 }

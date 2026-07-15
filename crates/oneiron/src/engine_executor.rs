@@ -48,6 +48,9 @@ const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.put_claim",
     "self.memory.supersede_claim",
     "self.memory.put_edge",
+    "self.speak",
+    "self.think",
+    "self.express",
     "self.ask_human",
     "self.askHuman",
 ];
@@ -120,6 +123,9 @@ pub struct EngineExecutorConfig {
     pub global_tier: ModelTierRef,
     pub determinism: CodeRunDeterminism,
     pub limits: EngineExecutorLimits,
+    /// Active off-record session for this run. Replay and raw-output rows
+    /// inherit this binding and are deleted when the session closes.
+    pub off_record_session_ref: Option<String>,
 }
 
 impl EngineExecutorConfig {
@@ -128,6 +134,9 @@ impl EngineExecutorConfig {
             return Err(
                 Error::InvalidConfig("engine executor task must be non-empty".to_owned()).into(),
             );
+        }
+        if let Some(session_ref) = self.off_record_session_ref.as_deref() {
+            crate::off_record::vet_off_record_session_ref(session_ref)?;
         }
         self.limits.validate()
     }
@@ -368,6 +377,7 @@ impl<'a> EngineNativeExecutor<'a> {
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
         config.validate()?;
+        self.validate_off_record_session_binding(config)?;
         let boundary = executor_boundary_contract()?;
         let loaded = self.load_or_create_record(config)?;
         if let Some(status) = loaded.terminal_status {
@@ -626,7 +636,13 @@ impl<'a> EngineNativeExecutor<'a> {
         &self,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<LoadedReplayRecord> {
-        if let Some(record) = self.vault.get_code_run_replay_record(&config.run_id)? {
+        let stored = match config.off_record_session_ref.as_deref() {
+            Some(session_ref) => self
+                .vault
+                .get_off_record_code_run_replay_record(session_ref, &config.run_id)?,
+            None => self.vault.get_code_run_replay_record(&config.run_id)?,
+        };
+        if let Some(record) = stored {
             if record.determinism != config.determinism {
                 return Err(Error::InvalidConfig(
                     "engine executor determinism changed for existing run".to_owned(),
@@ -642,13 +658,47 @@ impl<'a> EngineNativeExecutor<'a> {
                 terminal_status,
             });
         }
-        let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
+        let mut record = match config.off_record_session_ref.as_deref() {
+            Some(session_ref) => CodeRunReplayRecord::for_off_record_session(
+                config.run_id,
+                config.determinism,
+                session_ref,
+            )?,
+            None => CodeRunReplayRecord::new(config.run_id, config.determinism),
+        };
         record_config_marker(self.vault, &mut record, config)?;
         Ok(LoadedReplayRecord {
             record,
             generation: None,
             terminal_status: None,
         })
+    }
+
+    fn validate_off_record_session_binding(
+        &self,
+        config: &EngineExecutorConfig,
+    ) -> EngineExecutorResult<()> {
+        let Some(session_ref) = config.off_record_session_ref.as_deref() else {
+            return Ok(());
+        };
+        let session = self.vault.off_record_session(session_ref)?.ok_or_else(|| {
+            Error::OffRecordSessionNotFound {
+                session_ref: session_ref.to_owned(),
+            }
+        })?;
+        if session.closing {
+            return Err(Error::OffRecordSessionClosing {
+                session_ref: session_ref.to_owned(),
+            }
+            .into());
+        }
+        if session.mode != crate::off_record::OffRecordMode::OffRecord {
+            return Err(Error::InvariantViolation(
+                "engine executor off-record binding requires an active off-record session",
+            )
+            .into());
+        }
+        Ok(())
     }
 
     fn build_llm_request(
@@ -986,6 +1036,10 @@ fn executor_config_hash(config: &EngineExecutorConfig) -> [u8; 32] {
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
     hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
+    hash_str(
+        &mut hasher,
+        config.off_record_session_ref.as_deref().unwrap_or_default(),
+    );
     *hasher.finalize().as_bytes()
 }
 
@@ -1284,10 +1338,25 @@ fn record_output(
     if record.outputs.iter().any(|output| output.path == path) {
         return Err(Error::InvalidClaimBody("duplicate executor output path").into());
     }
-    let output = CodeRunRawOutput::from_bytes(path, raw)?;
+    let output = raw_output_for_record(record, path, raw)?;
     vault.put_code_run_raw_output(&output, raw)?;
     record.outputs.push(output);
     Ok(())
+}
+
+fn raw_output_for_record(
+    record: &CodeRunReplayRecord,
+    path: String,
+    raw: &[u8],
+) -> EngineExecutorResult<CodeRunRawOutput> {
+    match record.off_record_session_ref.as_deref() {
+        Some(session_ref) => Ok(CodeRunRawOutput::for_off_record_session(
+            session_ref,
+            path,
+            raw,
+        )?),
+        None => Ok(CodeRunRawOutput::from_bytes(path, raw)?),
+    }
 }
 
 fn validate_runtime_outputs(
@@ -1304,7 +1373,7 @@ fn validate_runtime_outputs(
         {
             return Err(Error::InvalidClaimBody("duplicate executor output path").into());
         }
-        let _ = CodeRunRawOutput::from_bytes(path.clone(), &output.bytes)?;
+        let _ = raw_output_for_record(record, path.clone(), &output.bytes)?;
         paths.push(path);
     }
     Ok(paths)

@@ -31,7 +31,10 @@ use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
 use crate::edge::decode_edge_value_for_kind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
+use crate::registry::{
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_SUMMARY,
+};
 use crate::store::Store;
 use loro::{CommitOptions, ExportMode, LoroDoc, LoroMap, Subscription, VersionVector};
 
@@ -652,11 +655,15 @@ pub fn scrub_off_record_fenced_carriers(
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut candidates = HashSet::new();
+    let mut carrier_types = HashMap::new();
     let mut inheritance_edges = Vec::new();
 
-    map_for_each_value_bytes(&entities_map, |key, _| {
+    map_for_each_value_bytes(&entities_map, |key, value| {
         if let Ok(id) = EntityId::from_hex(key) {
             candidates.insert(id);
+            if let Some(header) = value.and_then(EntityMetadataHeader::parse) {
+                carrier_types.insert(id, header.entity_type);
+            }
         }
     });
     map_for_each_value_bytes(&edges_map, |key, _| {
@@ -664,12 +671,14 @@ pub fn scrub_off_record_fenced_carriers(
             candidates.insert(source);
             candidates.insert(target);
             if matches!(kind, crate::EdgeKind::PartOf | crate::EdgeKind::DerivedFrom) {
-                inheritance_edges.push((source, target));
+                inheritance_edges.push((source, kind, target));
             }
         }
     });
 
-    let mut fenced = off_record_fenced_ids(vault, candidates)?;
+    let locally_fenced = off_record_fenced_ids(vault, candidates)?;
+    let mut fenced = locally_fenced.clone();
+    let mut orphaned_materialized_carriers = HashSet::new();
     // A remote/current window can contain a MESSAGE body and its PartOf edge
     // even when LMDB rejected that edge because the target TURN is locally
     // fenced. Derive child carriers from the CRDT relationship itself rather
@@ -679,13 +688,27 @@ pub fn scrub_off_record_fenced_carriers(
     loop {
         let inherited: Vec<EntityId> = inheritance_edges
             .iter()
-            .filter_map(|(source, target)| fenced.contains(target).then_some(*source))
+            .filter_map(|(source, kind, target)| {
+                let expected_source_type = match kind {
+                    crate::EdgeKind::PartOf => ENTITY_TYPE_MESSAGE,
+                    crate::EdgeKind::DerivedFrom => ENTITY_TYPE_SUMMARY,
+                    _ => return None,
+                };
+                let is_inheritance_carrier =
+                    carrier_types.get(source).copied() == Some(expected_source_type);
+                (is_inheritance_carrier && fenced.contains(target)).then_some(*source)
+            })
             .filter(|source| !fenced.contains(source))
             .collect();
         if inherited.is_empty() {
             break;
         }
-        fenced.extend(inherited);
+        for source in inherited {
+            fenced.insert(source);
+            if !locally_fenced.contains(&source) {
+                orphaned_materialized_carriers.insert(source);
+            }
+        }
     }
     let fences_present = {
         let rtxn = vault.store.env.read_txn()?;
@@ -700,6 +723,15 @@ pub fn scrub_off_record_fenced_carriers(
         // local privacy scrub back into LMDB; Observer A still durably queues
         // and broadcasts the deletion update to retire any older carrier.
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+
+        // Observer B can materialize a remote MESSAGE/SUMMARY body before its
+        // inheritance edge is rejected for touching a local fence. The bridge
+        // origin above intentionally suppresses observer feedback, so purge
+        // those orphaned active-store carriers explicitly in this scrub flow.
+        // Recheck local graph truth under the write lock: a carrier that has
+        // since acquired a valid local inheritance edge belongs to close's
+        // normal delete cascade and must not be removed early.
+        purge_orphaned_off_record_carriers(vault, &orphaned_materialized_carriers)?;
     }
     if removed || fences_present {
         // Deleting a live value does not erase its prior set operation from
@@ -710,6 +742,47 @@ pub fn scrub_off_record_fenced_carriers(
         require_history_free_window(vault, key)?;
     }
     Ok(removed || fences_present)
+}
+
+fn purge_orphaned_off_record_carriers(vault: &Vault, candidates: &HashSet<EntityId>) -> Result<()> {
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let mut candidates: Vec<EntityId> = candidates.iter().copied().collect();
+    candidates.sort_unstable();
+    vault.with_write_txn(|wtxn| {
+        let mut had_vector = false;
+        let mut had_graph_mutation = false;
+        for id in &candidates {
+            if crate::off_record::off_record_fence_active(&vault.store, &*wtxn, id)? {
+                continue;
+            }
+            let Some(raw) = vault.store.entities.get(&*wtxn, id.as_bytes())? else {
+                continue;
+            };
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+            if !matches!(
+                header.entity_type,
+                ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY
+            ) {
+                continue;
+            }
+
+            let (_, entity_had_vector, entity_had_graph_mutation, neighbors) =
+                crate::batch::deindex_entity(&vault.store, wtxn, id)?;
+            crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, id, &neighbors)?;
+            had_vector |= entity_had_vector;
+            had_graph_mutation |= entity_had_graph_mutation;
+        }
+        if had_graph_mutation {
+            crate::ppr::increment_graph_version(&vault.store, wtxn)?;
+        }
+        if had_vector {
+            crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
+        }
+        Ok(())
+    })
 }
 
 /// Whether this window has ever carried bytes for a currently fenced turn.

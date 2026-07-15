@@ -654,6 +654,80 @@ fn forward_rematerialization_scrubs_a_fenced_remote_carrier() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn scrub_purges_remote_carrier_materialized_before_inheritance_edge_rejection() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced_turn = EntityId::from_bytes([0x5A; 16])?;
+    let remote_message = EntityId::from_bytes([0x5B; 16])?;
+    vault.put_entity(
+        &fenced_turn,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"local private turn",
+    )?;
+    vault.enter_off_record_session("sess-remote-carrier", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-remote-carrier", &fenced_turn)?;
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &remote_message.to_hex(),
+        &make_entity_blob(
+            ENTITY_TYPE_MESSAGE,
+            learned_at,
+            b"remote materialized private message",
+        ),
+    )?;
+    let edge_key = format_edge_key(&remote_message, EdgeKind::PartOf, &fenced_turn);
+    let edge_value =
+        encode_edge_value_for_crdt(EdgeKind::PartOf, 1.0, learned_at, Some(Vad::NEUTRAL), None)?;
+    map_insert_bytes(&edges, &edge_key, &edge_value)?;
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert!(
+        vault.get_raw(&remote_message)?.is_some(),
+        "entity pass must reproduce body-before-edge materialization"
+    );
+    assert!(
+        !vault.edge_exists(&remote_message, EdgeKind::PartOf, &fenced_turn)?,
+        "edge touching the local fence must be rejected"
+    );
+
+    assert!(scrub_off_record_fenced_carriers(&vault, &window_key, &doc)?);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .entities
+            .get(&rtxn, remote_message.as_bytes())?
+            .is_none(),
+        "scrub must purge the orphaned remote carrier body from LMDB"
+    );
+    assert!(
+        vault
+            .store
+            .edges_out
+            .get(
+                &rtxn,
+                &Store::encode_edge_key(&remote_message, EdgeKind::PartOf, &fenced_turn),
+            )?
+            .is_none(),
+        "scrub must leave no inheritance edge in LMDB"
+    );
+    assert!(map_get_bytes(&entities, &remote_message.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &edge_key).is_none());
+    Ok(())
+}
+
 /// Full snapshot persistence is an outbound carrier boundary: even if a
 /// remote insertion bypassed normal packing and sits in the live Doc, the
 /// returned and durable snapshot must contain the ordinary control only.

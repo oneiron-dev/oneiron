@@ -108,6 +108,7 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
         global_tier: ModelTierRef("executor-tier".to_owned()),
         determinism: determinism(),
         limits,
+        off_record_session_ref: None,
     }
 }
 
@@ -1437,4 +1438,62 @@ fn denied_and_halted_error_responses_carry_budget() {
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[0]), "denied");
     assert_eq!(bridge_outcome_kind(&stored.bridge_calls[1]), "failed");
     assert_eq!(stored.step_checkpoints.len(), 1);
+}
+
+#[test]
+fn executor_binds_replay_artifacts_to_off_record_session_and_close_sweeps_them() {
+    let (_dir, vault) = open_test_vault();
+    let session_ref = "sess-exec-offrecord";
+    vault
+        .enter_off_record_session(session_ref, crate::OffRecordBackendClass::Local)
+        .expect("enter off-record session");
+
+    let backend = FixtureBackend::new(["const answer = 42;"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]);
+    let gated_write = gated_actor_write(&vault, "run-offrecord");
+    let mut config = executor_config(entity(0x8C), EngineExecutorLimits::default());
+    config.off_record_session_ref = Some(session_ref.to_owned());
+
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+
+    // The replay record lives under the session-scoped key namespace only.
+    assert!(
+        vault
+            .get_off_record_code_run_replay_record(session_ref, &config.run_id)
+            .expect("scoped load")
+            .is_some()
+    );
+    assert!(
+        vault
+            .get_code_run_replay_record(&config.run_id)
+            .expect("on-record load")
+            .is_none(),
+        "off-record run must not leave an on-record replay row"
+    );
+    let session = vault
+        .off_record_session(session_ref)
+        .expect("session lookup")
+        .expect("session record");
+    assert!(
+        !session.code_run_artifact_keys.is_empty(),
+        "artifact keys must be registered on the session for close to sweep"
+    );
+
+    let log = vault
+        .off_record_receipt_log(session_ref)
+        .expect("receipt log");
+    vault
+        .close_off_record_session(session_ref, log)
+        .expect("close session");
+    assert!(
+        vault
+            .get_off_record_code_run_replay_record(session_ref, &config.run_id)
+            .expect("post-close load")
+            .is_none(),
+        "close must sweep session-bound replay artifacts"
+    );
 }
