@@ -281,7 +281,7 @@ fn self_budget_read_reports_current_meter() {
         .expect("terminal settlement");
 
     let read = guard.self_budget();
-    assert_eq!(read.job_id, "job");
+    assert_eq!(read.attempt_id, "job");
     assert_eq!(read.used_units, 20);
     assert_eq!(read.reserved_units, 0);
     assert_eq!(read.remaining_units, 80);

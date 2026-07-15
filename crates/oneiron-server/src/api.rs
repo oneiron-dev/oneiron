@@ -645,8 +645,8 @@ fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidCodebaseSnapshotBody
         | ErrorKind::InvalidCodeSymbolManifestBody
-        | ErrorKind::InvalidJobQueueRecord
-        | ErrorKind::InvalidJobQueueTransition
+        | ErrorKind::InvalidAttemptQueueRecord
+        | ErrorKind::InvalidAttemptQueueTransition
         | ErrorKind::MaintenanceKindNotWritable
         | ErrorKind::EntityTypeImmutable
         | ErrorKind::StructuralKindBandViolation

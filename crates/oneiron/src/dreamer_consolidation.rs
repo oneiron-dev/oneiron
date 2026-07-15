@@ -29,10 +29,10 @@ use crate::claim::{
 };
 use crate::dreamer_runner::{
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerRunnerStore, DreamerTurnRole,
-    EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, dreamer_extraction_role_admissible,
-    dreamer_turn_role,
+    EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
+    dreamer_extraction_role_admissible, dreamer_turn_role,
 };
-use crate::dreamer_wake::{DreamerJobExecution, DreamerJobExecutor, WakeJobContext};
+use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -51,7 +51,7 @@ pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
 /// Domain for deterministic, write-once promotion-candidate claim ids. A
-/// candidate's id is a pure function of its identity + the owning job so an
+/// candidate's id is a pure function of its identity + the owning attempt so an
 /// at-least-once re-run of the same durable step re-mints the SAME id.
 pub const DREAMER_CLAIM_ID_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// Domain for swarm evidence content hashes (pinned, design D10).
@@ -59,9 +59,9 @@ pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
 /// A gap not re-observed within this window decays and is never re-surfaced
 /// (escalate-or-let-go, never re-nag nightly).
 pub const DREAMER_GAP_DECAY_MS: u64 = 14 * 24 * 60 * 60 * 1000;
-/// `DreamerJobPayload.job_type` string for reflection gap-scan child jobs
-/// (a payload discriminator, not a new queue kind).
-pub const DREAMER_GAP_SCAN_JOB_TYPE: &str = "dreamer.reflection.gap_scan";
+/// `DreamerAttemptPayload.attempt_type` string for reflection gap-scan child
+/// attempts (a payload discriminator, not a new queue kind).
+pub const DREAMER_GAP_SCAN_ATTEMPT_TYPE: &str = "dreamer.reflection.gap_scan";
 /// Documented OPT-IN turn-body key naming the WORLD entity this turn's
 /// content belongs to (16-byte MessagePack binary; ILD D4 opt-in precedent).
 pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";
@@ -189,7 +189,7 @@ pub fn read_watermark(
     decode_watermark(raw)
 }
 
-/// Advances the per-scope watermark. Call ONLY after the round's jobs are
+/// Advances the per-scope watermark. Call ONLY after the round's attempts are
 /// enqueued+committed — a crash before this re-scans, and idempotency rides
 /// the enqueue dedupe keys (dedupe, never a lock).
 pub fn advance_watermark(
@@ -431,7 +431,7 @@ pub struct ConsolidationCursor {
     pub last_ledger_revision_hint: u64,
 }
 
-/// One planned partition job over the dirty turns that fell into it.
+/// One planned partition attempt over the dirty turns that fell into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsolidationPartitionPlan {
     pub key: ConsolidationPartitionKey,
@@ -579,16 +579,16 @@ fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
     ))
 }
 
-/// Enqueues one consolidation job per partition plan with the advisory
+/// Enqueues one consolidation attempt per partition plan with the advisory
 /// dedupe key `hex(partition_hash):watermark` (idempotency floor — two
 /// devices planning the same partition coalesce, never lock).
-pub fn enqueue_partition_jobs(
+pub fn enqueue_partition_attempts(
     store: &DreamerRunnerStore<'_>,
     scope: DreamerConsolidationScope,
     plans: &[ConsolidationPartitionPlan],
     run_id: &str,
     now: u64,
-) -> Result<Vec<EnqueueDreamerJobOutcome>> {
+) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in plans {
         let dedupe_key = format!(
@@ -596,14 +596,16 @@ pub fn enqueue_partition_jobs(
             bytes_to_hex_lower(&plan.key.partition_hash()),
             plan.watermark_last_learned_at
         );
-        outcomes.push(store.enqueue_consolidation(EnqueueDreamerConsolidationJob {
-            scope,
-            input: encode_partition_payload(plan),
-            parent_job: None,
-            dedupe_key: Some(dedupe_key),
-            run_id: Some(run_id.to_owned()),
-            now,
-        })?);
+        outcomes.push(
+            store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+                scope,
+                input: encode_partition_payload(plan),
+                parent_attempt: None,
+                dedupe_key: Some(dedupe_key),
+                run_id: Some(run_id.to_owned()),
+                now,
+            })?,
+        );
     }
     Ok(outcomes)
 }
@@ -646,7 +648,7 @@ fn encode_partition_payload(plan: &ConsolidationPartitionPlan) -> Value {
     ])
 }
 
-/// Decodes a partition job payload back into its plan facts.
+/// Decodes a partition attempt payload back into its plan facts.
 pub fn decode_partition_payload(
     value: &Value,
 ) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, u64)> {
@@ -1052,17 +1054,17 @@ fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
 }
 
 /// Derives a [`PromotionCandidate`]'s write-once claim id DETERMINISTICALLY
-/// from its identity (owning job, subject, predicate, canonical value, world,
+/// from its identity (owning attempt, subject, predicate, canonical value, world,
 /// facet).
 ///
 /// `EntityId::now()` mints a fresh id on every call, so under the wake
 /// driver's at-least-once re-execution (a crash after `sink.accept` but before
-/// the job completes) a memoized step re-run would hand the promotion writer
+/// the attempt completes) a memoized step re-run would hand the promotion writer
 /// NEW ids for the same beliefs — DUPLICATE claims. A content-addressed id is
 /// stable across re-runs (and independent of `now`), so promotion stays
 /// idempotent (#485-3).
 fn deterministic_claim_id(
-    job_id: crate::job_queue::JobId,
+    attempt_id: crate::attempt_queue::AttemptId,
     subject: EntityId,
     predicate: &str,
     value: &Value,
@@ -1071,7 +1073,7 @@ fn deterministic_claim_id(
 ) -> EntityId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
-    hasher.update(job_id.as_bytes());
+    hasher.update(attempt_id.as_bytes());
     hasher.update(subject.as_bytes());
     hasher.update(&(predicate.len() as u64).to_le_bytes());
     hasher.update(predicate.as_bytes());
@@ -1452,11 +1454,11 @@ fn decode_gap_row(raw: &[u8]) -> Result<ReflectionGap> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 executor — bucket jobs over the step layer
+// Phase 3 executor — bucket attempts over the step layer
 // ---------------------------------------------------------------------------
 
-/// Extraction/merge executor for partition jobs. Implements ONE-1288's
-/// [`DreamerJobExecutor`]: decodes the partition payload, extracts
+/// Extraction/merge executor for partition attempts. Implements ONE-1288's
+/// [`DreamerAttemptExecutor`]: decodes the partition payload, extracts
 /// candidates AS DATA through `call_as_step` (single-pass strategy),
 /// resolves conflicts, and hands survivors to the [`ConsolidationSink`].
 /// The tournament strategy routes through the landed `dreamer_tournament`
@@ -1471,13 +1473,13 @@ pub struct ConsolidationExecutor<'a> {
 }
 
 /// Outcome of the (possibly multi-step) LLM work inside one consolidation
-/// partition job.
+/// partition attempt.
 ///
-/// `Trapped` means a durable `call_as_step` suspended the job — the step layer
-/// has ALREADY parked it for resume. A trapped job must therefore Park, never
+/// `Trapped` means a durable `call_as_step` suspended the attempt — the step layer
+/// has ALREADY parked it for resume. A trapped attempt must therefore Park, never
 /// Complete: no candidates are accepted (the work is not silently dropped-as-
 /// done) and no `ContradictionLeftStanding` gap is written from a merge that
-/// never decided. On resume the memoized steps replay and the job re-runs to a
+/// never decided. On resume the memoized steps replay and the attempt re-runs to a
 /// real decision (#485-1, #485-2).
 enum PartitionRun {
     Completed {
@@ -1541,7 +1543,7 @@ impl ConsolidationExecutor<'_> {
         &self,
         partition: &ConsolidationPartitionKey,
         response: &LlmResponse,
-        job_id: crate::job_queue::JobId,
+        attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
     ) -> Result<Vec<PromotionCandidate>> {
         let text: String = response
@@ -1577,7 +1579,7 @@ impl ConsolidationExecutor<'_> {
                 .unwrap_or(0.5) as f32;
             let value = json_to_rmpv(item.get("value").unwrap_or(&serde_json::Value::Null));
             let claim_id = deterministic_claim_id(
-                job_id,
+                attempt_id,
                 subject,
                 predicate,
                 &value,
@@ -1621,11 +1623,11 @@ impl ConsolidationExecutor<'_> {
         Ok(candidates)
     }
 
-    async fn run_partition_job(
+    async fn run_partition_attempt(
         &mut self,
         payload_input: &Value,
-        ctx: &WakeJobContext<'_>,
-        job_id: crate::job_queue::JobId,
+        ctx: &WakeAttemptContext<'_>,
+        attempt_id: crate::attempt_queue::AttemptId,
         run_id: Option<String>,
     ) -> DurableStepResult<PartitionRun> {
         let run_id_ref = run_id.as_ref();
@@ -1646,7 +1648,7 @@ impl ConsolidationExecutor<'_> {
 
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
-            job_id,
+            attempt_id,
             run_id: run_id_ref.cloned(),
             envelope_actor: self.actor,
             subject: partition.conversation_ref,
@@ -1664,14 +1666,18 @@ impl ConsolidationExecutor<'_> {
                     .saturating_add(response.usage.output.total);
                 (response, spent)
             }
-            // The extraction step suspended: the job is parked. Surface the
+            // The extraction step suspended: the attempt is parked. Surface the
             // trap so `execute` parks it for resume instead of completing an
             // empty extraction (#485-1).
             StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
-        let candidates = self.decode_candidates(&partition, &response, job_id, ctx.now_ms)?;
+        let candidates = self.decode_candidates(&partition, &response, attempt_id, ctx.now_ms)?;
         match self
-            .resolve_conflicts(candidates, ctx, job_id_for_steps(job_id, run_id_ref))
+            .resolve_conflicts(
+                candidates,
+                ctx,
+                attempt_id_for_steps(attempt_id, run_id_ref),
+            )
             .await?
         {
             PartitionRun::Completed {
@@ -1694,8 +1700,8 @@ impl ConsolidationExecutor<'_> {
     async fn resolve_conflicts(
         &mut self,
         candidates: Vec<PromotionCandidate>,
-        ctx: &WakeJobContext<'_>,
-        step_identity: (crate::job_queue::JobId, Option<String>),
+        ctx: &WakeAttemptContext<'_>,
+        step_identity: (crate::attempt_queue::AttemptId, Option<String>),
     ) -> DurableStepResult<PartitionRun> {
         let conflicts = detect_conflicts(&candidates, &[])?;
         if conflicts.is_empty() {
@@ -1719,7 +1725,7 @@ impl ConsolidationExecutor<'_> {
             let request = self.merge_request(&conflict.identity, &members)?;
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
-                job_id: step_identity.0,
+                attempt_id: step_identity.0,
                 run_id: step_identity.1.clone(),
                 envelope_actor: self.actor,
                 subject: conflict.identity.subject,
@@ -1739,7 +1745,7 @@ impl ConsolidationExecutor<'_> {
                     response
                 }
                 StepOutcome::Trapped(_) => {
-                    // Suspended mid-merge: the job is parked. STOP and surface
+                    // Suspended mid-merge: the attempt is parked. STOP and surface
                     // the trap. Writing a contradiction gap here would fabricate
                     // a `ContradictionLeftStanding` for a merge that never
                     // decided (#485-2); accepting partial survivors would drop
@@ -1872,7 +1878,7 @@ fn merged_candidate(
     conflict: &ConflictSet,
     members: &[&PromotionCandidate],
     value: Value,
-    job_id: crate::job_queue::JobId,
+    attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> PromotionCandidate {
     let mut evidence: Vec<EntityId> = Vec::new();
@@ -1888,7 +1894,7 @@ fn merged_candidate(
         confidence = confidence.max(0.5);
     }
     let claim_id = deterministic_claim_id(
-        job_id,
+        attempt_id,
         conflict.identity.subject,
         &conflict.identity.predicate,
         &value,
@@ -1997,22 +2003,22 @@ fn rmpv_to_json(value: &Value) -> serde_json::Value {
     }
 }
 
-fn job_id_for_steps(
-    job_id: crate::job_queue::JobId,
+fn attempt_id_for_steps(
+    attempt_id: crate::attempt_queue::AttemptId,
     run_id: Option<&String>,
-) -> (crate::job_queue::JobId, Option<String>) {
-    (job_id, run_id.cloned())
+) -> (crate::attempt_queue::AttemptId, Option<String>) {
+    (attempt_id, run_id.cloned())
 }
 
-impl DreamerJobExecutor for ConsolidationExecutor<'_> {
+impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
     async fn execute(
         &mut self,
-        job: &crate::dreamer_runner::DreamerAdmittedJob,
-        ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution> {
-        if job.status.payload.job_type == DREAMER_GAP_SCAN_JOB_TYPE {
-            // Gap-scan child job: deterministic detectors + queue upsert.
-            let (_, turn_ids, _) = decode_partition_payload(&job.status.payload.input)?;
+        attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
+            // Gap-scan child attempt: deterministic detectors + queue upsert.
+            let (_, turn_ids, _) = decode_partition_payload(&attempt.status.payload.input)?;
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
                 let facts = read_turn_facts(ctx.vault, turn_id)?;
@@ -2026,33 +2032,42 @@ impl DreamerJobExecutor for ConsolidationExecutor<'_> {
             }
             let gaps = scan_reflection_gaps(ctx.vault, &working_set, ctx.now_ms)?;
             upsert_gap_queue(ctx.vault, gaps, ctx.now_ms)?;
-            return Ok(DreamerJobExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
-        let run_id = job.status.job.run_id.clone();
+        let run_id = attempt.status.attempt.run_id.clone();
         match self
-            .run_partition_job(&job.status.payload.input, ctx, job.status.job.id, run_id)
+            .run_partition_attempt(
+                &attempt.status.payload.input,
+                ctx,
+                attempt.status.attempt.id,
+                run_id,
+            )
             .await
         {
             Ok(PartitionRun::Completed { candidates, spent }) => {
                 self.sink.accept(candidates)?;
-                Ok(DreamerJobExecution::Completed {
+                Ok(DreamerAttemptExecution::Completed {
                     completed_units: spent,
                 })
             }
-            // The step layer already parked the trapped job; Park it for resume
+            // The step layer already parked the trapped attempt; Park it for resume
             // WITHOUT accepting candidates or completing it (#485-1, #485-2).
-            Ok(PartitionRun::Trapped) => Ok(DreamerJobExecution::Park {
+            Ok(PartitionRun::Trapped) => Ok(DreamerAttemptExecution::Park {
                 reason: "durable step trapped for resume".to_owned(),
             }),
-            Err(crate::llm::DurableStepError::DeadlineHardCut) => Ok(DreamerJobExecution::Park {
-                reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-            }),
-            Err(crate::llm::DurableStepError::FinalizeRefused) => Ok(DreamerJobExecution::Park {
-                reason: "wake pass finalize window".to_owned(),
-            }),
+            Err(crate::llm::DurableStepError::DeadlineHardCut) => {
+                Ok(DreamerAttemptExecution::Park {
+                    reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                })
+            }
+            Err(crate::llm::DurableStepError::FinalizeRefused) => {
+                Ok(DreamerAttemptExecution::Park {
+                    reason: "wake pass finalize window".to_owned(),
+                })
+            }
             Err(crate::llm::DurableStepError::Engine(error)) => Err(error),
-            Err(other) => Ok(DreamerJobExecution::Park {
+            Err(other) => Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
             }),
         }

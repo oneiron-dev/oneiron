@@ -42,10 +42,10 @@ pub(crate) struct CoreRunTreeQuery {
     "note": "operator requested a checkpoint"
 }))]
 pub(crate) struct CoreRunTreeInterventionRequest {
-    /// Hex-encoded job id to intervene on.
+    /// Hex-encoded attempt id to intervene on.
     #[serde(rename = "job_id", alias = "jobId")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    job_id: String,
+    attempt_id: String,
     /// Intervention primitive to apply.
     kind: CoreRunTreeInterventionKind,
     /// Optional operator note recorded on the event.
@@ -54,7 +54,7 @@ pub(crate) struct CoreRunTreeInterventionRequest {
     note: Option<String>,
 }
 
-/// Intervention primitive for a runtime job.
+/// Intervention primitive for a runtime attempt.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CoreRunTreeInterventionKind {
@@ -67,10 +67,10 @@ pub(crate) enum CoreRunTreeInterventionKind {
 /// Response from a run-tree intervention.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeInterventionResponse {
-    /// Hex-encoded job id that was targeted.
+    /// Hex-encoded attempt id that was targeted.
     #[serde(rename = "job_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    job_id: String,
+    attempt_id: String,
     /// Run id carried by the affected row, when present.
     #[serde(rename = "run_id")]
     #[schema(example = "run-2026-07-03T12:00:00Z")]
@@ -79,7 +79,7 @@ pub(crate) struct CoreRunTreeInterventionResponse {
     kind: CoreRunTreeInterventionKind,
     /// Durable effect of the request.
     effect: CoreRunTreeInterventionEffect,
-    /// Fresh snapshot for the affected run, when the job row has a run id.
+    /// Fresh snapshot for the affected run, when the attempt row has a run id.
     tree: Option<CoreRunTreeResponse>,
 }
 
@@ -96,27 +96,27 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     AlreadyCancelled,
 }
 
-/// Runtime job tree response.
+/// Runtime attempt tree response.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeResponse {
-    /// Root jobs after non-mutating repair of missing parents or cycles.
+    /// Root attempts after non-mutating repair of missing parents or cycles.
     roots: Vec<CoreRunTreeNode>,
     /// Repairs applied while rendering the tree from queue rows.
     repairs: Vec<CoreRunTreeRepair>,
 }
 
-/// One runtime job in the rendered tree.
+/// One runtime attempt in the rendered tree.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeNode {
-    /// Hex-encoded job id.
+    /// Hex-encoded attempt id.
     #[serde(rename = "job_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
-    job_id: String,
-    /// Runtime run id carried by the backing job row.
+    attempt_id: String,
+    /// Runtime run id carried by the backing attempt row.
     #[serde(rename = "run_id")]
     #[schema(example = "run-2026-07-03T12:00:00Z")]
     run_id: Option<String>,
-    /// Hex-encoded parent job id when the runner recorded one.
+    /// Hex-encoded parent attempt id when the runner recorded one.
     #[serde(rename = "parent_id")]
     #[schema(example = "11111111111111111111111111111111")]
     parent_id: Option<String>,
@@ -124,7 +124,7 @@ pub(crate) struct CoreRunTreeNode {
     #[serde(rename = "worker_kind")]
     #[schema(example = "orchestrator")]
     worker_kind: String,
-    /// The dispatched agent's label for `agent.dispatch` jobs, when the
+    /// The dispatched agent's label for `agent.dispatch` attempts, when the
     /// payload snapshot decodes. Elided when absent.
     #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
     #[schema(example = "eiri.agent.summarizer")]
@@ -137,12 +137,12 @@ pub(crate) struct CoreRunTreeNode {
     failure: Option<CoreRunTreeFailure>,
     /// Lifecycle/operator events projected from the backing queue row.
     events: Vec<CoreRunTreeEvent>,
-    /// Child jobs ordered deterministically by creation time and job id.
+    /// Child attempts ordered deterministically by creation time and attempt id.
     #[schema(no_recursion)]
     children: Vec<CoreRunTreeNode>,
 }
 
-/// Surface lifecycle state for a runtime job.
+/// Surface lifecycle state for a runtime attempt.
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CoreRunTreeStatus {
@@ -154,7 +154,7 @@ pub(crate) enum CoreRunTreeStatus {
     Cancelled,
 }
 
-/// Queue row timestamps for a runtime job.
+/// Queue row timestamps for a runtime attempt.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeTimestamps {
     /// Creation timestamp from the backing queue row.
@@ -175,7 +175,7 @@ pub(crate) struct CoreRunTreeFailure {
     reason: String,
 }
 
-/// Lifecycle/operator event projected for a runtime job.
+/// Lifecycle/operator event projected for a runtime attempt.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeEvent {
     /// Monotonic event sequence in the projected run-tree event stream.
@@ -213,20 +213,20 @@ pub(crate) enum CoreRunTreeEventKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CoreRunTreeRepair {
     MissingParent {
-        /// Job promoted to a root because its recorded parent row was absent.
+        /// Attempt promoted to a root because its recorded parent row was absent.
         #[serde(rename = "job_id")]
         #[schema(example = "22222222222222222222222222222222")]
-        job_id: String,
+        attempt_id: String,
         /// Recorded parent id that was absent from the filtered row set.
         #[serde(rename = "missing_parent_id")]
         #[schema(example = "11111111111111111111111111111111")]
         missing_parent_id: String,
     },
     ParentCycle {
-        /// Job promoted or skipped because following parents would cycle.
+        /// Attempt promoted or skipped because following parents would cycle.
         #[serde(rename = "job_id")]
         #[schema(example = "22222222222222222222222222222222")]
-        job_id: String,
+        attempt_id: String,
         /// Parent edge involved in the cycle.
         #[serde(rename = "parent_id")]
         #[schema(example = "11111111111111111111111111111111")]
@@ -234,13 +234,13 @@ pub(crate) enum CoreRunTreeRepair {
     },
 }
 
-/// Read the runtime job queue as a deterministic run tree.
+/// Read the runtime attempt queue as a deterministic run tree.
 #[utoipa::path(
     get,
     path = "/v1/core/run-tree",
     params(CoreRunTreeQuery),
     responses(
-        (status = 200, description = "Runtime job queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
+        (status = 200, description = "Runtime attempt queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
         (status = 400, description = "Invalid run-tree query.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -266,13 +266,13 @@ pub(crate) async fn core_run_tree(
     Ok(Json(core_run_tree_response(tree)))
 }
 
-/// Observe the runtime job queue as a deterministic run tree.
+/// Observe the runtime attempt queue as a deterministic run tree.
 #[utoipa::path(
     get,
     path = "/v1/core/run-tree/observe",
     params(CoreRunTreeQuery),
     responses(
-        (status = 200, description = "Runtime job queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
+        (status = 200, description = "Runtime attempt queue rendered as a deterministic run tree.", body = CoreRunTreeResponse, content_type = "application/json"),
         (status = 400, description = "Invalid run-tree query.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -298,13 +298,13 @@ pub(crate) async fn core_run_tree_observe(
     Ok(Json(core_run_tree_response(tree)))
 }
 
-/// Intervene on a runtime job and return a fresh run-tree snapshot.
+/// Intervene on a runtime attempt and return a fresh run-tree snapshot.
 #[utoipa::path(
     post,
     path = "/v1/core/run-tree/intervene",
     request_body(content = CoreRunTreeInterventionRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "Intervention applied idempotently and recorded on the backing job row.", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
+        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row.", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
         (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
@@ -318,22 +318,22 @@ pub(crate) async fn core_run_tree_intervene(
 ) -> Result<Json<CoreRunTreeInterventionResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
-    let job_id = parse_job_id_param(&req.job_id, "job_id")?;
-    let kind = job_intervention_kind(req.kind);
-    let outcome = oneiron::JobQueue::new(&server.vault)
-        .intervene(oneiron::InterveneJob {
-            id: job_id,
+    let attempt_id = parse_attempt_id_param(&req.attempt_id, "job_id")?;
+    let kind = attempt_intervention_kind(req.kind);
+    let outcome = oneiron::AttemptQueue::new(&server.vault)
+        .intervene(oneiron::InterveneAttempt {
+            id: attempt_id,
             kind,
             actor: auth.principal().to_owned(),
             note: req.note,
             now: unix_seconds_now(),
         })
         .map_err(|error| {
-            tracing::error!(error = %error, job_id = %req.job_id, "core run tree intervene failed");
+            tracing::error!(error = %error, attempt_id = %req.attempt_id, "core run tree intervene failed");
             core_engine_error("core run tree intervene failed", error)
         })?;
 
-    let response_job_id = hex_bytes(outcome.record.id.as_bytes());
+    let response_attempt_id = hex_bytes(outcome.record.id.as_bytes());
     let run_id = outcome.record.run_id.clone();
     let tree = if let Some(run_id) = run_id.as_deref() {
         let adapter = oneiron::RunTreeAdapter::new(&server.vault);
@@ -348,7 +348,7 @@ pub(crate) async fn core_run_tree_intervene(
     };
 
     Ok(Json(CoreRunTreeInterventionResponse {
-        job_id: response_job_id,
+        attempt_id: response_attempt_id,
         run_id,
         kind: req.kind,
         effect: core_run_tree_intervention_effect(outcome.effect),
@@ -387,7 +387,7 @@ pub(crate) fn core_run_tree_response(tree: oneiron::RunTree) -> CoreRunTreeRespo
 
 pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode {
     CoreRunTreeNode {
-        job_id: node.job_id,
+        attempt_id: node.attempt_id,
         run_id: node.run_id,
         parent_id: node.parent_id,
         worker_kind: node.worker_kind,
@@ -439,32 +439,34 @@ pub(crate) fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreR
     }
 }
 
-pub(crate) fn job_intervention_kind(
+pub(crate) fn attempt_intervention_kind(
     kind: CoreRunTreeInterventionKind,
-) -> oneiron::JobInterventionKind {
+) -> oneiron::AttemptInterventionKind {
     match kind {
-        CoreRunTreeInterventionKind::Interrupt => oneiron::JobInterventionKind::Interrupt,
-        CoreRunTreeInterventionKind::Pause => oneiron::JobInterventionKind::Pause,
-        CoreRunTreeInterventionKind::Resume => oneiron::JobInterventionKind::Resume,
-        CoreRunTreeInterventionKind::Cancel => oneiron::JobInterventionKind::Cancel,
+        CoreRunTreeInterventionKind::Interrupt => oneiron::AttemptInterventionKind::Interrupt,
+        CoreRunTreeInterventionKind::Pause => oneiron::AttemptInterventionKind::Pause,
+        CoreRunTreeInterventionKind::Resume => oneiron::AttemptInterventionKind::Resume,
+        CoreRunTreeInterventionKind::Cancel => oneiron::AttemptInterventionKind::Cancel,
     }
 }
 
 pub(crate) fn core_run_tree_intervention_effect(
-    effect: oneiron::JobInterventionEffect,
+    effect: oneiron::AttemptInterventionEffect,
 ) -> CoreRunTreeInterventionEffect {
     match effect {
-        oneiron::JobInterventionEffect::Interrupted => CoreRunTreeInterventionEffect::Interrupted,
-        oneiron::JobInterventionEffect::Paused => CoreRunTreeInterventionEffect::Paused,
-        oneiron::JobInterventionEffect::AlreadyPaused => {
+        oneiron::AttemptInterventionEffect::Interrupted => {
+            CoreRunTreeInterventionEffect::Interrupted
+        }
+        oneiron::AttemptInterventionEffect::Paused => CoreRunTreeInterventionEffect::Paused,
+        oneiron::AttemptInterventionEffect::AlreadyPaused => {
             CoreRunTreeInterventionEffect::AlreadyPaused
         }
-        oneiron::JobInterventionEffect::Resumed => CoreRunTreeInterventionEffect::Resumed,
-        oneiron::JobInterventionEffect::AlreadyResumed => {
+        oneiron::AttemptInterventionEffect::Resumed => CoreRunTreeInterventionEffect::Resumed,
+        oneiron::AttemptInterventionEffect::AlreadyResumed => {
             CoreRunTreeInterventionEffect::AlreadyResumed
         }
-        oneiron::JobInterventionEffect::Cancelled => CoreRunTreeInterventionEffect::Cancelled,
-        oneiron::JobInterventionEffect::AlreadyCancelled => {
+        oneiron::AttemptInterventionEffect::Cancelled => CoreRunTreeInterventionEffect::Cancelled,
+        oneiron::AttemptInterventionEffect::AlreadyCancelled => {
             CoreRunTreeInterventionEffect::AlreadyCancelled
         }
     }
@@ -473,25 +475,29 @@ pub(crate) fn core_run_tree_intervention_effect(
 pub(crate) fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
     match repair {
         oneiron::RunTreeRepair::MissingParent {
-            job_id,
+            attempt_id,
             missing_parent_id,
         } => CoreRunTreeRepair::MissingParent {
-            job_id,
+            attempt_id,
             missing_parent_id,
         },
-        oneiron::RunTreeRepair::ParentCycle { job_id, parent_id } => {
-            CoreRunTreeRepair::ParentCycle { job_id, parent_id }
-        }
+        oneiron::RunTreeRepair::ParentCycle {
+            attempt_id,
+            parent_id,
+        } => CoreRunTreeRepair::ParentCycle {
+            attempt_id,
+            parent_id,
+        },
     }
 }
 
-pub(crate) fn parse_job_id_param(
+pub(crate) fn parse_attempt_id_param(
     value: &str,
     field: &'static str,
-) -> Result<oneiron::JobId, ApiError> {
+) -> Result<oneiron::AttemptId, ApiError> {
     if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(ApiError::bad_request(
-            format!("{field} must be a 32-character hex job id"),
+            format!("{field} must be a 32-character hex attempt id"),
             Some(field),
         ));
     }
@@ -500,14 +506,14 @@ pub(crate) fn parse_job_id_param(
         let offset = index * 2;
         *slot = u8::from_str_radix(&value[offset..offset + 2], 16).map_err(|_| {
             ApiError::bad_request(
-                format!("{field} must be a 32-character hex job id"),
+                format!("{field} must be a 32-character hex attempt id"),
                 Some(field),
             )
         })?;
     }
-    oneiron::JobId::from_bytes(&bytes).map_err(|_| {
+    oneiron::AttemptId::from_bytes(&bytes).map_err(|_| {
         ApiError::bad_request(
-            format!("{field} must be a 32-character hex job id"),
+            format!("{field} must be a 32-character hex attempt id"),
             Some(field),
         )
     })

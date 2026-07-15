@@ -31,18 +31,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
+use crate::attempt_queue::AttemptQueue;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_CONFLICT_OPEN,
 };
 #[cfg(test)]
-use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
-use crate::dreamer_runner::decode_dreamer_job_payload;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
-use crate::job_queue::JobQueue;
 use crate::receipt::{ReceiptRecord, ReceiptView, gate_decision_receipt, hex_lower};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{
@@ -184,8 +184,8 @@ impl InboxQuery {
 /// One dreamer-run group card over open pending proposals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxGroup {
-    /// Group key: the run-tree ROOT job id (OF-193) when the run resolves in
-    /// the job queue, otherwise the provenance-stamped run id.
+    /// Group key: the run-tree ROOT attempt id (OF-193) when the run resolves in
+    /// the attempt queue, otherwise the provenance-stamped run id.
     pub group_key: String,
     /// The provenance-stamped dreamer run id.
     pub run_id: String,
@@ -538,22 +538,22 @@ fn open_dreamer_members_from_pending(
 }
 
 /// Resolves the OF-193 group identity for one stamped run id: the run-tree
-/// ROOT job id plus the Dreamer-authored intent from the root's run brief.
-/// Only Dreamer job rows can anchor a run tree — other job kinds may share
+/// ROOT attempt id plus the Dreamer-authored intent from the root's run brief.
+/// Only Dreamer attempt rows can anchor a run tree — other attempt kinds may share
 /// a run id and must never be mistaken for the root. When the run's rows
 /// are all branches (a child branch carrying its own run id), the parent
 /// links climb to the root; runs without any Dreamer rows keep the stamped
 /// run id as their key.
 fn resolve_run_identity(vault: &Vault, run_id: &str) -> Result<(String, Option<String>)> {
-    let queue = JobQueue::new(vault);
+    let queue = AttemptQueue::new(vault);
     let Some(root_id) = queue.dreamer_run_root_id(run_id)? else {
         return Ok((run_id.to_owned(), None));
     };
     let Some(root) = queue.get(root_id)? else {
-        return Err(Error::CorruptedIndex("job run index"));
+        return Err(Error::CorruptedIndex("attempt run index"));
     };
-    let payload = decode_dreamer_job_payload(&root.payload)
-        .map_err(|_| Error::CorruptedIndex("job run index"))?;
+    let payload = decode_dreamer_attempt_payload(&root.payload)
+        .map_err(|_| Error::CorruptedIndex("attempt run index"))?;
     Ok((
         bytes_to_hex_lower(root_id.as_bytes()),
         run_brief_intent(&payload.input),

@@ -20,22 +20,22 @@ use std::time::Instant;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
-    AbortDreamerBudgetReservation, AdmitDreamerConsolidationJob, AdmitDreamerJob,
-    CompleteDreamerJob, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
-    DreamerAdmissionOutcome, DreamerAdmittedJob, DreamerClaimAuthoringAdmission,
-    DreamerClaimAuthoringBatchTier, DreamerConsolidationAdmissionOutcome,
-    DreamerConsolidationScope, DreamerJobPayload, DreamerMilestoneClaim, DreamerMilestoneKind,
-    DreamerRunnerStore, EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, ParkDreamerJob,
-    SettleDreamerBudget,
+    AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
+    CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
+    DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
+    DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
+    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneClaim,
+    DreamerMilestoneKind, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    EnqueueDreamerConsolidationAttempt, ParkDreamerAttempt, SettleDreamerBudget,
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{
-    DreamerJobProgressProducer, DreamerJobProgressState, DreamerJobProgressUpdate,
+    DreamerAttemptProgressProducer, DreamerAttemptProgressState, DreamerAttemptProgressUpdate,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::job_queue::JobId;
 use crate::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID, BUDGET_PLAN_PROMPT_TEMPLATE,
     BUDGET_PLAN_PROMPT_TEMPLATE_ID, BudgetGuard, BudgetRead, BudgetSignalDeliveryChannel,
@@ -53,19 +53,19 @@ pub const DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS: u64 = 180_000;
 pub const DREAMER_GRACEFUL_WRAP_WINDOW_MS: u64 = 15_000;
 /// Wrap-up-soon notice threshold (1184-D4-D): counter OR clock percent.
 pub const DREAMER_WRAP_UP_NOTICE_PERCENT: u64 = 80;
-/// Park reason stamped on jobs cut at the wake-pass ceiling.
+/// Park reason stamped on attempts cut at the wake-pass ceiling.
 pub const DREAMER_HARD_CUT_PARK_REASON: &str = "wake-pass hard cut";
 /// Park-owner token for deadline hard-cut parks: the step layer parks the
-/// cut job under this token (no trap is opened at the ceiling), and only a
+/// cut attempt under this token (no trap is opened at the ceiling), and only a
 /// resumer presenting it may clear the row.
 pub const DREAMER_HARD_CUT_PARK_OWNER: &str = "dreamer.step:hard-cut";
-/// Park reason stamped on jobs preempted by a cooperative cancellation
-/// request (ONE-1683 H-S5/R2): the admitted job is parked and its budget
+/// Park reason stamped on attempts preempted by a cooperative cancellation
+/// request (ONE-1683 H-S5/R2): the admitted attempt is parked and its budget
 /// reservation refunded before the pass stops — cancellation never leaks.
 pub const DREAMER_CANCELLED_PARK_REASON: &str = "wake-pass cancelled";
-/// Park reason PREFIX stamped on jobs whose executor returned a
+/// Park reason PREFIX stamped on attempts whose executor returned a
 /// non-deadline error (ONE-1683 H-S5/R2): the error path parks the admitted
-/// job and refunds its reservation before the error propagates.
+/// attempt and refunds its reservation before the error propagates.
 pub const DREAMER_EXECUTOR_ERROR_PARK_REASON: &str = "executor error";
 /// Byte ceiling the runner store enforces on park reasons and progress
 /// messages (`MAX_DREAMER_PARK_REASON_LEN` / `MAX_DREAMER_PROGRESS_MESSAGE_LEN`
@@ -77,7 +77,7 @@ const MAX_WAKE_PARK_REASON_BYTES: usize = 512;
 /// Clamps a park/progress reason to the runner store's validation ceiling,
 /// cutting at a UTF-8 character boundary. An unbounded reason (typically an
 /// executor error `Display`) must never fail park validation — a failed park
-/// after admission would leave the job leased and is exactly the leak the
+/// after admission would leave the attempt leased and is exactly the leak the
 /// executor-error arm exists to close (ONE-1683). Only the durable reason
 /// string is shortened; the full error still propagates to the caller.
 fn clamp_park_reason(mut reason: String) -> String {
@@ -106,8 +106,8 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
 /// One `Pending` poll with an immediate self-wake — the runtime-agnostic
 /// equivalent of `tokio::task::yield_now` (the engine takes no runtime
 /// dependency). [`DreamerWakeDriver::run_wake_pass`] awaits this at every
-/// job boundary so an enclosing `select!` (the ONE-1683 supervisor's
-/// shutdown branch) gets a poll between jobs even when executors complete
+/// attempt boundary so an enclosing `select!` (the ONE-1683 supervisor's
+/// shutdown branch) gets a poll between attempts even when executors complete
 /// synchronously.
 fn yield_once() -> impl std::future::Future<Output = ()> {
     let mut yielded = false;
@@ -227,12 +227,12 @@ impl fmt::Debug for WakePassDeadline {
 /// Cooperative wake-pass cancellation token (ONE-1683, H-S5/R2).
 ///
 /// A supervisor raises the flag with [`cancel`](Self::cancel); the running
-/// pass observes it ONLY at its job-boundary checkpoints (loop top and the
+/// pass observes it ONLY at its attempt-boundary checkpoints (loop top and the
 /// pre-dispatch point after admission) — the same places the deadline stops
 /// admission. Cancellation is never honored mid-await inside the executor or
 /// between a gated write's start and its settle: aborting a pass mid-write
 /// would reopen the S3 off-record fence leak. A cancel that lands after a
-/// job was admitted parks that job and refunds its budget reservation
+/// attempt was admitted parks that attempt and refunds its budget reservation
 /// through the ordinary Park bookkeeping before the pass reports
 /// [`WakePassStop::Cancelled`].
 ///
@@ -328,8 +328,8 @@ pub enum WakePassStop {
     Trapped,
     NotHomeNode,
     NoHomeNode,
-    /// A [`WakeCancellation`] request was honored at a job-boundary
-    /// checkpoint. Any job admitted when the request landed was parked and
+    /// A [`WakeCancellation`] request was honored at an attempt-boundary
+    /// checkpoint. Any attempt admitted when the request landed was parked and
     /// its budget reservation refunded — nothing leaks (H-S5/R2).
     Cancelled,
 }
@@ -344,44 +344,44 @@ pub struct WakePassReport {
     pub stop: WakePassStop,
 }
 
-/// Terminal execution outcome one executor reports for one admitted job.
+/// Terminal execution outcome one executor reports for one admitted attempt.
 ///
 /// There is NO `Trap` variant by design (D18): traps surface at the STEP
-/// layer; a trapped job comes back as `Park` carrying the trap note.
+/// layer; a trapped attempt comes back as `Park` carrying the trap note.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DreamerJobExecution {
+pub enum DreamerAttemptExecution {
     Completed { completed_units: u64 },
     Park { reason: String },
 }
 
-/// Per-job execution context handed to the executor.
-pub struct WakeJobContext<'a> {
+/// Per-attempt execution context handed to the executor.
+pub struct WakeAttemptContext<'a> {
     pub vault: &'a Vault,
     pub deadline: &'a WakePassDeadline,
     pub budget_id: &'a str,
     pub now_ms: u64,
 }
 
-/// Executes one admitted Dreamer job.
+/// Executes one admitted Dreamer attempt.
 ///
-/// AT-LEAST-ONCE contract: the driver may re-execute a job after a crash or
+/// AT-LEAST-ONCE contract: the driver may re-execute an attempt after a crash or
 /// resume — executors MUST be step-based (ONE-1343 `call_as_step`) so
 /// re-execution fast-forwards through memoized steps instead of re-spending.
 /// Milestones mark durable progress; this ticket does not implement step
 /// memoization itself.
 ///
 /// PARK-OWNER contract (design D2): the STEP LAYER is the one park-owner for
-/// trap suspensions — it writes the trap record and parks the job in its own
+/// trap suspensions — it writes the trap record and parks the attempt in its own
 /// wtxn. The executor still returns `Park` carrying the trap note; the
 /// driver detects the existing parked row and only publishes progress,
 /// never parking a second time.
 #[allow(async_fn_in_trait)]
-pub trait DreamerJobExecutor {
+pub trait DreamerAttemptExecutor {
     async fn execute(
         &mut self,
-        job: &DreamerAdmittedJob,
-        ctx: &mut WakeJobContext<'_>,
-    ) -> Result<DreamerJobExecution>;
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution>;
 }
 
 /// Durable milestone authorship for driver-written Started/Done milestones.
@@ -397,7 +397,7 @@ pub struct WakeMilestoneAuthor {
 /// Live-progress lane for the sync build: producer + ephemeral store.
 #[cfg(feature = "sync")]
 pub struct WakeProgressLane<'a> {
-    pub producer: DreamerJobProgressProducer,
+    pub producer: DreamerAttemptProgressProducer,
     pub ephemeral: &'a EphemeralStore,
 }
 
@@ -480,22 +480,22 @@ impl<'a> DreamerWakeDriver<'a> {
     /// rows directly.
     ///
     /// `cancel` is a cooperative preemption request (ONE-1683, H-S5/R2):
-    /// it is polled ONLY at the job-boundary checkpoints — the loop top and
+    /// it is polled ONLY at the attempt-boundary checkpoints — the loop top and
     /// the pre-dispatch point right after admission — never mid-await inside
     /// `exec.execute` and never between a gated write and its settle. A
-    /// cancel that lands after admission parks the admitted job and refunds
+    /// cancel that lands after admission parks the admitted attempt and refunds
     /// its budget reservation before the pass stops
     /// [`WakePassStop::Cancelled`]. Hosts that never cancel pass a fresh
     /// [`WakeCancellation`].
     ///
-    /// The loop yields to the runtime once per job boundary, so a
+    /// The loop yields to the runtime once per attempt boundary, so a
     /// supervisor selecting over this future and a shutdown signal gets a
-    /// poll between jobs — and can raise `cancel` in time — even when every
+    /// poll between attempts — and can raise `cancel` in time — even when every
     /// executor completes synchronously. A panic inside `exec.execute` is
-    /// contained at the same boundary: the admitted job is parked, its
+    /// contained at the same boundary: the admitted attempt is parked, its
     /// reservation refunded, and the pass returns an error instead of
     /// unwinding past the bookkeeping.
-    pub async fn run_wake_pass<E: DreamerJobExecutor + ?Sized>(
+    pub async fn run_wake_pass<E: DreamerAttemptExecutor + ?Sized>(
         &mut self,
         input: RunWakePass,
         exec: &mut E,
@@ -517,16 +517,16 @@ impl<'a> DreamerWakeDriver<'a> {
         };
 
         loop {
-            // Job-boundary yield (ONE-1683): one Pending poll with a
+            // Attempt-boundary yield (ONE-1683): one Pending poll with a
             // self-wake per iteration, so a supervisor selecting over this
-            // pass and its shutdown signal is re-polled between jobs even
+            // pass and its shutdown signal is re-polled between attempts even
             // when the executor completes synchronously — otherwise a
             // shutdown requested mid-pass could not raise the cancellation
             // flag until the whole queue drained.
             yield_once().await;
             if cancel.is_cancelled() {
-                // Cooperative-preemption boundary (H-S5/R2): between jobs
-                // the driver holds no admitted job and no in-flight gated
+                // Cooperative-preemption boundary (H-S5/R2): between attempts
+                // the driver holds no admitted attempt and no in-flight gated
                 // write, so stopping here can never truncate a gated write
                 // or an off-record close.
                 report.stop = WakePassStop::Cancelled;
@@ -541,7 +541,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 break;
             }
             if self.enter_finalize_if_due() {
-                // Graceful wrap: admit NO new jobs and NO new step leases;
+                // Graceful wrap: admit NO new attempts and NO new step leases;
                 // the pass ends under deadline/budget pressure.
                 report.stop = if self.counter_exhausted() {
                     WakePassStop::BudgetExhausted
@@ -554,12 +554,12 @@ impl<'a> DreamerWakeDriver<'a> {
             let admitted =
                 match self
                     .store
-                    .admit_next_consolidation(AdmitDreamerConsolidationJob {
+                    .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
                         scope: input.scope,
                         local_node_id: input.local_node_id,
                         claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
                         claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-                        admission: AdmitDreamerJob {
+                        admission: AdmitDreamerAttempt {
                             lease_owner: input.lease_owner.clone(),
                             now: input.now,
                             budget_id: self.budget_id.clone(),
@@ -578,7 +578,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         break;
                     }
                     DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(_) => {
-                        // The store already paused the job (admission-level trap).
+                        // The store already paused the attempt (admission-level trap).
                         report.stop = WakePassStop::Trapped;
                         break;
                     }
@@ -595,42 +595,42 @@ impl<'a> DreamerWakeDriver<'a> {
                         break;
                     }
                     DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::Admitted(job),
-                    ) => *job,
+                        DreamerAdmissionOutcome::Admitted(attempt),
+                    ) => *attempt,
                 };
 
             report.admitted += 1;
-            let job_id = admitted.status.job.id;
+            let attempt_id = admitted.status.attempt.id;
 
             // Cooperative-preemption checkpoint (H-S5/R2): the ONE point
             // between admission and settle where a cancel is honored is
             // HERE, before the executor dispatch — never mid-await. The
-            // admitted job flows through the ordinary Park arm below, which
+            // admitted attempt flows through the ordinary Park arm below, which
             // refunds its budget reservation and parks it before the pass
             // stops.
             let cancel_requested = cancel.is_cancelled();
             let executed = if cancel_requested {
-                Ok(DreamerJobExecution::Park {
+                Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
                 })
             } else if let Err(publish_error) =
-                self.publish(job_id, ProgressKind::Running, None, input.now)
+                self.publish(attempt_id, ProgressKind::Running, None, input.now)
             {
                 // A Running-progress publish failure after admission flows
                 // through the same release arm as an executor error —
-                // propagating it directly would leave the admitted job
+                // propagating it directly would leave the admitted attempt
                 // leased and its reservation held.
                 Err(publish_error)
             } else {
-                let mut ctx = WakeJobContext {
+                let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
                 };
-                // Panic containment at the per-job boundary (ONE-1683): a
+                // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip
-                // the park/refund bookkeeping below, leaving the job leased
+                // the park/refund bookkeeping below, leaving the attempt leased
                 // and the reservation held until external lease cleanup.
                 // Catch it and route it through the executor-error arm; the
                 // executor is abandoned when the error propagates (a
@@ -651,10 +651,10 @@ impl<'a> DreamerWakeDriver<'a> {
                     Err(panic) => {
                         tracing::error!(
                             panic = panic_message(panic.as_ref()),
-                            "dreamer job executor panicked; parking the admitted job"
+                            "dreamer attempt executor panicked; parking the admitted attempt"
                         );
                         Err(crate::Error::InvariantViolation(
-                            "dreamer job executor panicked",
+                            "dreamer attempt executor panicked",
                         ))
                     }
                 }
@@ -670,19 +670,19 @@ impl<'a> DreamerWakeDriver<'a> {
                     // hard-cut park it is instead of bailing out.
                     let step_layer_parked = self
                         .store
-                        .parked_job(job_id)?
+                        .parked_attempt(attempt_id)?
                         .is_some_and(|row| row.reason == DREAMER_HARD_CUT_PARK_REASON);
                     if !step_layer_parked && !self.deadline.expired() {
                         // H-S5/R2 (ONE-1683): a non-deadline executor error
                         // must release what admission acquired BEFORE the
                         // error propagates — refund the budget reservation
-                        // and park the admitted job, mirroring the Park arm
+                        // and park the admitted attempt, mirroring the Park arm
                         // below. Returning the error first used to leak the
-                        // admitted job (stuck leased) AND its reservation.
+                        // admitted attempt (stuck leased) AND its reservation.
                         self.store
                             .abort_budget_reservation(AbortDreamerBudgetReservation {
                                 budget_id: self.budget_id.clone(),
-                                child_job: job_id,
+                                child_attempt: attempt_id,
                                 now: input.now,
                             })?;
                         // The durable reason is clamped to the store's
@@ -693,70 +693,83 @@ impl<'a> DreamerWakeDriver<'a> {
                         let reason = clamp_park_reason(format!(
                             "{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}"
                         ));
-                        if self.store.parked_job(job_id)?.is_some() {
+                        if self.store.parked_attempt(attempt_id)?.is_some() {
                             // One park-owner: the step layer already parked
-                            // this job (under a non-hard-cut reason) inside
+                            // this attempt (under a non-hard-cut reason) inside
                             // its own wtxn — publish only, never re-park. A
                             // publish failure must not mask the executor
-                            // error: the job is parked either way.
-                            if let Err(publish_error) =
-                                self.publish(job_id, ProgressKind::Parked, Some(reason), input.now)
-                            {
+                            // error: the attempt is parked either way.
+                            if let Err(publish_error) = self.publish(
+                                attempt_id,
+                                ProgressKind::Parked,
+                                Some(reason),
+                                input.now,
+                            ) {
                                 tracing::warn!(
                                     ?publish_error,
                                     "parked-progress publish failed after executor error"
                                 );
                             }
                         } else {
-                            self.park_job(job_id, reason, input.lease_owner.clone(), input.now)?;
+                            self.park_attempt(
+                                attempt_id,
+                                reason,
+                                input.lease_owner.clone(),
+                                input.now,
+                            )?;
                         }
                         return Err(error);
                     }
-                    DreamerJobExecution::Park {
+                    DreamerAttemptExecution::Park {
                         reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                     }
                 }
             };
 
             match execution {
-                DreamerJobExecution::Completed { completed_units } => {
+                DreamerAttemptExecution::Completed { completed_units } => {
                     self.store.settle_budget(SettleDreamerBudget {
                         budget_id: self.budget_id.clone(),
-                        child_job: job_id,
+                        child_attempt: attempt_id,
                         actual_units: completed_units,
                         now: input.now,
                     })?;
-                    self.complete_job(&admitted, input.now)?;
-                    self.write_milestone(job_id, DreamerMilestoneKind::Done, input.now)?;
+                    self.complete_attempt(&admitted, input.now)?;
+                    self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
                 }
-                DreamerJobExecution::Park { reason } => {
+                DreamerAttemptExecution::Park { reason } => {
                     // Executor-authored reasons get the same clamp as the
                     // error arm's: park validation failing on length here
                     // would propagate AFTER the refund but BEFORE the park,
-                    // leaving the job leased.
+                    // leaving the attempt leased.
                     let reason = clamp_park_reason(reason);
                     // The lease is not settled as spent — refund the
                     // reservation.
                     self.store
                         .abort_budget_reservation(AbortDreamerBudgetReservation {
                             budget_id: self.budget_id.clone(),
-                            child_job: job_id,
+                            child_attempt: attempt_id,
                             now: input.now,
                         })?;
                     let hard_cut =
                         reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
-                    if self.store.parked_job(job_id)?.is_some() {
+                    if self.store.parked_attempt(attempt_id)?.is_some() {
                         // One park-owner: the step layer already parked this
-                        // job inside its trap wtxn — publish only.
-                        self.publish(job_id, ProgressKind::Parked, Some(reason), input.now)?;
+                        // attempt inside its trap wtxn — publish only.
+                        self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
                     } else {
-                        self.park_job(job_id, reason, input.lease_owner.clone(), input.now)?;
+                        self.park_attempt(
+                            attempt_id,
+                            reason,
+                            input.lease_owner.clone(),
+                            input.now,
+                        )?;
                     }
                     if hard_cut {
                         // A deadline-cut park leaves a durable resume point.
                         self.write_milestone(
-                            job_id,
+                            attempt_id,
                             DreamerMilestoneKind::CheckpointReached,
                             input.now,
                         )?;
@@ -766,9 +779,9 @@ impl<'a> DreamerWakeDriver<'a> {
             }
 
             if cancel_requested {
-                // The admitted job was parked and its reservation refunded
+                // The admitted attempt was parked and its reservation refunded
                 // through the Park arm above — the pass may now stop at this
-                // job boundary (H-S5/R2).
+                // attempt boundary (H-S5/R2).
                 report.stop = WakePassStop::Cancelled;
                 break;
             }
@@ -847,10 +860,15 @@ impl<'a> DreamerWakeDriver<'a> {
             })
     }
 
-    /// Writes a durable milestone claim for `job_id` through the gate,
+    /// Writes a durable milestone claim for `attempt_id` through the gate,
     /// matching the landed `dreamer.job_milestone` value codec exactly
     /// (pinned keys `schema_version`/`job_id`/`milestone`/`at`).
-    fn write_milestone(&self, job_id: JobId, kind: DreamerMilestoneKind, now: u64) -> Result<()> {
+    fn write_milestone(
+        &self,
+        attempt_id: AttemptId,
+        kind: DreamerMilestoneKind,
+        now: u64,
+    ) -> Result<()> {
         let Some(author) = &self.milestones else {
             return Ok(());
         };
@@ -862,7 +880,7 @@ impl<'a> DreamerWakeDriver<'a> {
             ),
             (
                 Value::from("job_id"),
-                Value::Binary(job_id.as_bytes().to_vec()),
+                Value::Binary(attempt_id.as_bytes().to_vec()),
             ),
             (Value::from("milestone"), Value::from(kind.as_str())),
             (Value::from("at"), Value::from(now)),
@@ -885,11 +903,16 @@ impl<'a> DreamerWakeDriver<'a> {
         })
     }
 
-    fn complete_job(&mut self, admitted: &DreamerAdmittedJob, now: u64) -> Result<()> {
-        let input = CompleteDreamerJob {
-            id: admitted.status.job.id,
-            lease_owner: admitted.status.job.lease_owner.clone().unwrap_or_default(),
-            attempt_count: admitted.status.job.attempt_count,
+    fn complete_attempt(&mut self, admitted: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
+        let input = CompleteDreamerAttempt {
+            id: admitted.status.attempt.id,
+            lease_owner: admitted
+                .status
+                .attempt
+                .lease_owner
+                .clone()
+                .unwrap_or_default(),
+            attempt_count: admitted.status.attempt.attempt_count,
             now,
         };
         #[cfg(feature = "sync")]
@@ -902,15 +925,15 @@ impl<'a> DreamerWakeDriver<'a> {
         Ok(())
     }
 
-    fn park_job(
+    fn park_attempt(
         &mut self,
-        job_id: JobId,
+        attempt_id: AttemptId,
         reason: String,
         park_owner: String,
         now: u64,
     ) -> Result<()> {
-        let input = ParkDreamerJob {
-            job_id,
+        let input = ParkDreamerAttempt {
+            attempt_id,
             reason,
             park_owner,
             now,
@@ -918,10 +941,10 @@ impl<'a> DreamerWakeDriver<'a> {
         #[cfg(feature = "sync")]
         if let Some(lane) = &mut self.progress {
             self.store
-                .park_job_with_progress(input, &mut lane.producer, lane.ephemeral)?;
+                .park_attempt_with_progress(input, &mut lane.producer, lane.ephemeral)?;
             return Ok(());
         }
-        self.store.park_job(input)?;
+        self.store.park_attempt(input)?;
         Ok(())
     }
 
@@ -929,7 +952,7 @@ impl<'a> DreamerWakeDriver<'a> {
     #[cfg_attr(not(feature = "sync"), allow(clippy::unnecessary_wraps))]
     fn publish(
         &mut self,
-        job_id: JobId,
+        attempt_id: AttemptId,
         kind: ProgressKind,
         message: Option<String>,
         now: u64,
@@ -937,14 +960,14 @@ impl<'a> DreamerWakeDriver<'a> {
         #[cfg(feature = "sync")]
         if let Some(lane) = &mut self.progress {
             let state = match kind {
-                ProgressKind::Running => DreamerJobProgressState::Running,
-                ProgressKind::Parked => DreamerJobProgressState::Parked,
+                ProgressKind::Running => DreamerAttemptProgressState::Running,
+                ProgressKind::Parked => DreamerAttemptProgressState::Parked,
             };
             self.store.publish_progress(
                 &mut lane.producer,
                 lane.ephemeral,
-                DreamerJobProgressUpdate {
-                    job_id,
+                DreamerAttemptProgressUpdate {
+                    attempt_id,
                     state,
                     message,
                     completed_units: 0,
@@ -954,21 +977,21 @@ impl<'a> DreamerWakeDriver<'a> {
             )?;
         }
         #[cfg(not(feature = "sync"))]
-        let _ = (job_id, kind, message, now);
+        let _ = (attempt_id, kind, message, now);
         Ok(())
     }
 }
 
 /// Driver-internal progress vocabulary (maps onto the sync-gated
-/// `DreamerJobProgressState` when the progress lane is configured).
+/// `DreamerAttemptProgressState` when the progress lane is configured).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProgressKind {
     Running,
     Parked,
 }
 
-/// Wake scheduling entry: enqueues one consolidation job on the advisory
-/// job-table floor. The engine owns NO timer/cron — hosts call this.
+/// Wake scheduling entry: enqueues one consolidation attempt on the advisory
+/// attempt-table floor. The engine owns NO timer/cron — hosts call this.
 ///
 /// `trigger` carries host intent; the scope is the caller's (typically
 /// `trigger.default_scope()`, which an Event payload may override).
@@ -976,19 +999,19 @@ pub fn request_wake(
     store: &DreamerRunnerStore<'_>,
     trigger: WakeTrigger,
     scope: DreamerConsolidationScope,
-    payload: DreamerJobPayload,
+    payload: DreamerAttemptPayload,
     dedupe_key: Option<String>,
     run_id: Option<String>,
     now: u64,
-) -> Result<EnqueueDreamerJobOutcome> {
+) -> Result<EnqueueDreamerAttemptOutcome> {
     // The trigger's runtime effect is scope derivation, owned by the caller
     // via `WakeTrigger::default_scope`; it is accepted here so hosts express
     // intent at the single wake entry point.
     let _ = trigger;
-    store.enqueue_consolidation(EnqueueDreamerConsolidationJob {
+    store.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
         scope,
         input: payload.input,
-        parent_job: payload.parent_job,
+        parent_attempt: payload.parent_attempt,
         dedupe_key,
         run_id,
         now,

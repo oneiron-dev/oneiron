@@ -2,12 +2,13 @@ use core::assert_matches;
 use heed::types::Bytes;
 
 use super::*;
+use crate::attempt_queue::{
+    AttemptQueue, AttemptQueueRetryReason, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
+    EnqueueOutcome,
+};
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
 use crate::entity_id::ENTITY_ID_LEN;
-use crate::job_queue::{
-    ClaimJob, ClaimOutcome, EnqueueJob, EnqueueOutcome, JobQueue, JobQueueRetryReason,
-};
 use crate::store::{
     GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
 };
@@ -1342,12 +1343,12 @@ fn run_no_operations() -> Result<()> {
 }
 
 #[test]
-fn job_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
+fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(EnqueueJob {
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
         kind: "claim_extraction".to_owned(),
         payload: b"payload".to_vec(),
         dedupe_key: Some("turn:maintenance".to_owned()),
@@ -1357,54 +1358,54 @@ fn job_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 2,
     })?
     else {
         panic!("expected claim");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
-    let report = vault.maintain().cleanup_job_queue_leases(1).run()?;
-    assert_eq!(report.job_queue_cleanup.pending, 1);
-    assert_eq!(report.job_queue_cleanup.running, 0);
-    assert_eq!(report.job_queue_cleanup.failed, 0);
-    assert_eq!(report.job_queue_cleanup.done, 0);
-    assert_eq!(report.job_queue_cleanup.stale_requeued, 1);
+    let report = vault.maintain().cleanup_attempt_queue_leases(1).run()?;
+    assert_eq!(report.attempt_queue_cleanup.pending, 1);
+    assert_eq!(report.attempt_queue_cleanup.running, 0);
+    assert_eq!(report.attempt_queue_cleanup.failed, 0);
+    assert_eq!(report.attempt_queue_cleanup.done, 0);
+    assert_eq!(report.attempt_queue_cleanup.stale_requeued, 1);
     assert_eq!(
         report
-            .job_queue_cleanup
-            .retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+            .attempt_queue_cleanup
+            .retry_reason_count(AttemptQueueRetryReason::LeaseTimeout),
         1
     );
 
-    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
         now: crate::unix_seconds_now(),
     })?
     else {
-        panic!("expected reclaimed job");
+        panic!("expected reclaimed attempt");
     };
-    assert_eq!(reclaimed.id, job.id);
+    assert_eq!(reclaimed.id, attempt.id);
     assert_eq!(reclaimed.lease_owner.as_deref(), Some("worker-b"));
 
     Ok(())
 }
 
 #[test]
-fn job_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
+fn attempt_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let vault = Vault::open(temp_dir.path(), test_config())?;
 
     let err = vault
         .maintain()
-        .cleanup_job_queue_leases(0)
+        .cleanup_attempt_queue_leases(0)
         .run()
         .unwrap_err();
     assert_matches!(
         err,
-        Error::InvalidJobQueueRecord("lease timeout must be > 0")
+        Error::InvalidAttemptQueueRecord("lease timeout must be > 0")
     );
 
     Ok(())

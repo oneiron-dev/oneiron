@@ -106,7 +106,7 @@ impl RemoteRung {
 /// Canonical rung-2 INT8-transport receipt: `codes[i] as f32 * scale`.
 /// Server sends int8+scale; the HOST dequantizes before returning vectors
 /// through `Embedder::embed` (E4: INT8 is transport-only, never stored;
-/// the f16 storage conversion is the EMB-3 row format's job).
+/// the f16 storage conversion is the EMB-3 row format's responsibility).
 #[must_use]
 pub fn dequantize_int8_embedding(codes: &[i8], scale: f32) -> Vec<f32> {
     codes.iter().map(|c| f32::from(*c) * scale).collect()

@@ -8,7 +8,7 @@
 //! ([`WakeSupervisor`]) fed by a [`TickSource`]:
 //!
 //! * [`TimerTick`] — the wake-on-next-commitment-deadline timer lane, read
-//!   from the job queue (never a poll, never a heartbeat). Deliberately
+//!   from the attempt queue (never a poll, never a heartbeat). Deliberately
 //!   NOT a standalone [`TickSource`]: a quiet timer lane is not source
 //!   exhaustion, so it only ships composed into [`HybridTick`],
 //! * [`PushTick`] — one bounded coalescing push mailbox whose producer
@@ -16,8 +16,8 @@
 //! * [`HybridTick`] — a biased select over both, deadline priority, burst
 //!   coalescing that can never drop a distinct missed deadline.
 //!
-//! It is deliberately NOT an actor framework and NOT a job-worker crate —
-//! the queue lives in `oneiron::job_queue` and stays there. Budget
+//! It is deliberately NOT an actor framework and NOT an attempt-worker crate —
+//! the queue lives in `oneiron::attempt_queue` and stays there. Budget
 //! admission stays inside `run_wake_pass`; this crate constructs the
 //! [`LlmBackend`](oneiron::LlmBackend) (local adapter by default — no
 //! egress unless a host injects a remote one) and the per-pass budget
@@ -32,6 +32,6 @@ pub use supervisor::{
     WakeSupervisorReport,
 };
 pub use tick::{
-    CommitmentDeadline, DeadlineSource, HintPusher, HintSignal, HybridTick, JobQueueDeadlines,
+    AttemptQueueDeadlines, CommitmentDeadline, DeadlineSource, HintPusher, HintSignal, HybridTick,
     NowMillis, PushTick, Tick, TickPushError, TickSource, TimerTick, WakePusher, WakeSignal,
 };

@@ -2921,13 +2921,13 @@ async fn v1_core_error_contract_snapshot_matches_fixture() {
 }
 
 #[tokio::test]
-async fn v1_core_run_tree_reads_job_queue_rows() {
+async fn v1_core_run_tree_reads_attempt_queue_rows() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let root = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-api");
-    let _other = enqueue_queue_job(server.vault.as_ref(), "other-run", 20, "run-other");
+    let root = enqueue_queue_attempt(server.vault.as_ref(), "api-worker", 10, "run-api");
+    let _other = enqueue_queue_attempt(server.vault.as_ref(), "other-run", 20, "run-other");
 
     let (status, body) = core_json(
         server.clone(),
@@ -2942,7 +2942,7 @@ async fn v1_core_run_tree_reads_job_queue_rows() {
     assert_eq!(body["repairs"], json!([]));
     let roots = body["roots"].as_array().expect("run tree roots");
     assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(root.id)));
+    assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(root.id)));
     assert_eq!(roots[0]["run_id"], Value::from("run-api"));
     assert_eq!(roots[0]["parent_id"], Value::Null);
     assert_eq!(roots[0]["worker_kind"], Value::from("api-worker"));
@@ -2978,7 +2978,7 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let plain = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-agent-api");
+    let plain = enqueue_queue_attempt(server.vault.as_ref(), "api-worker", 10, "run-agent-api");
 
     let def_id = oneiron::EntityId::now();
     let def = oneiron::AgentDefinition::new(
@@ -3013,7 +3013,7 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
     let oneiron::AgentDispatchOutcome::Dispatched(dispatched) = dispatcher
         .dispatch(oneiron::DispatchAgent {
             target: oneiron::AgentDispatchTarget::Custom(def_id),
-            parent_job: None,
+            parent_attempt: None,
             dedupe_key: None,
             run_id: Some("run-agent-api".to_owned()),
             now: 20,
@@ -3035,14 +3035,14 @@ async fn v1_core_run_tree_includes_agent_id_for_dispatched_agents() {
     assert_eq!(status, StatusCode::OK);
     let roots = body["roots"].as_array().expect("run tree roots");
     assert_eq!(roots.len(), 2);
-    assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(plain.id)));
+    assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(plain.id)));
     assert!(
         roots[0].get("agent_id").is_none(),
         "non-agent nodes must elide agent_id entirely"
     );
     assert_eq!(
         roots[1]["job_id"],
-        Value::from(job_id_hex(dispatched.job.id))
+        Value::from(attempt_id_hex(dispatched.attempt.id))
     );
     assert_eq!(roots[1]["worker_kind"], Value::from("agent.dispatch"));
     assert_eq!(
@@ -3058,9 +3058,9 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let root = enqueue_queue_job(server.vault.as_ref(), "api-worker", 10, "run-api");
+    let root = enqueue_queue_attempt(server.vault.as_ref(), "api-worker", 10, "run-api");
     let request = json!({
-        "job_id": job_id_hex(root.id),
+        "job_id": attempt_id_hex(root.id),
         "kind": "pause",
         "note": "hold branch",
     });
@@ -3086,13 +3086,13 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["job_id"], Value::from(job_id_hex(root.id)));
+    assert_eq!(body["job_id"], Value::from(attempt_id_hex(root.id)));
     assert_eq!(body["run_id"], Value::from("run-api"));
     assert_eq!(body["kind"], Value::from("pause"));
     assert_eq!(body["effect"], Value::from("paused"));
     let roots = body["tree"]["roots"].as_array().expect("snapshot roots");
     assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0]["job_id"], Value::from(job_id_hex(root.id)));
+    assert_eq!(roots[0]["job_id"], Value::from(attempt_id_hex(root.id)));
     assert_eq!(roots[0]["status"], Value::from("paused"));
     assert_eq!(roots[0]["events"].as_array().unwrap().len(), 2);
     assert_eq!(roots[0]["events"][0]["sequence"], Value::from(0));
@@ -3103,7 +3103,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(roots[0]["events"][1]["note"], Value::from("hold branch"));
 
     let repeated = json!({
-        "job_id": job_id_hex(root.id),
+        "job_id": attempt_id_hex(root.id),
         "kind": "pause",
     });
     let (repeat_status, repeat_body) = core_json(
@@ -3122,7 +3122,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(repeat_roots[0]["events"].as_array().unwrap().len(), 2);
 
     let resume = json!({
-        "job_id": job_id_hex(root.id),
+        "job_id": attempt_id_hex(root.id),
         "kind": "resume",
     });
     let (resume_status, resume_body) = core_json(
@@ -3143,7 +3143,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     assert_eq!(resume_roots[0]["events"][2]["kind"], Value::from("resumed"));
 
     let interrupt = json!({
-        "job_id": job_id_hex(root.id),
+        "job_id": attempt_id_hex(root.id),
         "kind": "interrupt",
         "note": "snapshot now",
     });
@@ -3172,7 +3172,7 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
     );
 
     let cancel = json!({
-        "job_id": job_id_hex(root.id),
+        "job_id": attempt_id_hex(root.id),
         "kind": "cancel",
     });
     let (cancel_status, cancel_body) = core_json(
@@ -3213,21 +3213,21 @@ async fn v1_core_run_tree_rejects_unbounded_reads() {
     );
 }
 
-fn enqueue_queue_job(
+fn enqueue_queue_attempt(
     vault: &oneiron::Vault,
     kind: &str,
     now: u64,
     run_id: &str,
-) -> oneiron::JobRecord {
-    match oneiron::JobQueue::new(vault)
-        .enqueue(oneiron::EnqueueJob {
+) -> oneiron::AttemptRecord {
+    match oneiron::AttemptQueue::new(vault)
+        .enqueue(oneiron::EnqueueAttempt {
             kind: kind.to_owned(),
             payload: Vec::new(),
             dedupe_key: None,
             run_id: Some(run_id.to_owned()),
             now,
         })
-        .expect("enqueue job")
+        .expect("enqueue attempt")
     {
         oneiron::EnqueueOutcome::Enqueued(record) | oneiron::EnqueueOutcome::Existing(record) => {
             record
@@ -3236,7 +3236,7 @@ fn enqueue_queue_job(
     }
 }
 
-fn job_id_hex(id: oneiron::JobId) -> String {
+fn attempt_id_hex(id: oneiron::AttemptId) -> String {
     id.as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -5102,7 +5102,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     assert_eq!(
         body["goodbye_artifact"]["job_id"]
             .as_str()
-            .expect("job id")
+            .expect("attempt id")
             .len(),
         32
     );

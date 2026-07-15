@@ -486,10 +486,11 @@ pub(crate) struct CompanionGoodbyeArtifactHookPayload {
     /// Companion task kind for the goodbye-artifact hook.
     #[schema(example = "goodbye_artifact")]
     task: String,
-    /// Durable job id when the hook enqueued or found an existing task.
+    /// Durable attempt id when the hook enqueued or found an existing task.
     #[schema(example = "018f0000000000000000000000000000")]
-    job_id: Option<String>,
-    /// Optional run id stamped onto the durable job row.
+    #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+    attempt_id: Option<String>,
+    /// Optional run id stamped onto the durable attempt row.
     #[schema(example = "eiri-goodbye-artifact-1700000600")]
     run_id: Option<String>,
 }
@@ -1444,7 +1445,7 @@ pub(crate) fn companion_goodbye_artifact_hook_payload(
         task: oneiron::CompanionTaskKind::GoodbyeArtifact
             .as_str()
             .to_owned(),
-        job_id: None,
+        attempt_id: None,
         run_id: None,
     };
 
@@ -1466,8 +1467,8 @@ pub(crate) fn companion_goodbye_artifact_hook_payload(
     CompanionGoodbyeArtifactHookPayload {
         status: status.to_owned(),
         task: task_status.task.kind.as_str().to_owned(),
-        job_id: Some(hex_bytes(task_status.job.id.as_bytes())),
-        run_id: task_status.job.run_id,
+        attempt_id: Some(hex_bytes(task_status.attempt.id.as_bytes())),
+        run_id: task_status.attempt.run_id,
     }
 }
 

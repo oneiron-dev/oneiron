@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DREAMER_RUNNER_JOB_KIND,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DREAMER_RUNNER_ATTEMPT_KIND,
     EdgeActorClass, EntityId, GrantMintIntent, GrantMintIntentScope, GrantReceiptProjection,
     HnswConfig, PendingTrayQuery, ReceiptKind, ReceiptQuery, ReceiptRecord, Result,
     StandingOutboundGrantsLensQuery, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
@@ -290,7 +290,10 @@ fn public_surface_fixture() -> Result<PublicSurfaceFixture> {
         WriteActor::new(actor, EdgeActorClass::Agent),
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(vec![
-            (Value::from("runner"), Value::from(DREAMER_RUNNER_JOB_KIND)),
+            (
+                Value::from("runner"),
+                Value::from(DREAMER_RUNNER_ATTEMPT_KIND),
+            ),
             (Value::from("run_id"), Value::from(PENDING_DREAMER_RUN_ID)),
         ]))?,
         ClaimApprovalStatus::Proposed,

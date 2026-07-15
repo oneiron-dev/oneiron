@@ -443,7 +443,7 @@ fn swept_node_converges_with_fresh_import_and_stale_echo() {
 /// §8c.3 (M4 handoff, folded into the executor scope): a receiver that
 /// NEVER materialized the entity has a `dt:` marker but NO `h:` row and NO
 /// receipt — its obligation is carrier-scrub only. The sweep clears its
-/// imported history without a job and without fabricating a receipt.
+/// imported history without an attempt and without fabricating a receipt.
 #[test]
 fn receiver_that_never_materialized_sweeps_history_8c3() {
     let (_dir_a, vault_a) = open_vault();
@@ -526,7 +526,7 @@ fn receiver_that_never_materialized_sweeps_history_8c3() {
     let report = vault_b.maintain().run_hard_erase_sweep().run().unwrap();
     assert_eq!(
         report.sweep_jobs_processed, 0,
-        "no job — carrier-scrub only"
+        "no attempt — carrier-scrub only"
     );
     assert!(report.sweep_windows_compacted >= 1);
     assert_eq!(report.sweep_receipts_finalized, 0);

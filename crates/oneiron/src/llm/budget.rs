@@ -132,7 +132,8 @@ pub struct BudgetLadderEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetRead {
-    pub job_id: String,
+    #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+    pub attempt_id: String,
     pub limit_units: u64,
     pub cap_units: u64,
     pub used_units: u64,
@@ -173,12 +174,12 @@ pub struct BudgetGuard {
 impl BudgetGuard {
     #[must_use]
     pub fn new(
-        job_id: impl Into<String>,
+        attempt_id: impl Into<String>,
         limit_units: u64,
         on_budget_exhausted: BudgetExhaustionPolicy,
     ) -> Self {
         Self::with_reserve_units(
-            job_id,
+            attempt_id,
             limit_units,
             DEFAULT_BUDGET_RESERVE_UNITS,
             on_budget_exhausted,
@@ -187,14 +188,14 @@ impl BudgetGuard {
 
     #[must_use]
     pub fn with_reserve_units(
-        job_id: impl Into<String>,
+        attempt_id: impl Into<String>,
         limit_units: u64,
         reserve_units: u64,
         on_budget_exhausted: BudgetExhaustionPolicy,
     ) -> Self {
         Self {
             state: Arc::new(Mutex::new(BudgetState {
-                job_id: job_id.into(),
+                attempt_id: attempt_id.into(),
                 limit_units,
                 reserve_units,
                 on_budget_exhausted,
@@ -354,7 +355,7 @@ impl BudgetGuard {
 
 #[derive(Debug)]
 struct BudgetState {
-    job_id: String,
+    attempt_id: String,
     limit_units: u64,
     reserve_units: u64,
     on_budget_exhausted: BudgetExhaustionPolicy,
@@ -405,7 +406,7 @@ impl BudgetState {
 
     fn issue_lease(&mut self, reserve_units: u64, metered: bool, kind: &str) -> BudgetLease {
         self.next_lease_seq = self.next_lease_seq.saturating_add(1);
-        let lease_id = format!("{}:{kind}:{}", self.job_id, self.next_lease_seq);
+        let lease_id = format!("{}:{kind}:{}", self.attempt_id, self.next_lease_seq);
         let lease = BudgetLease::issued(lease_id.clone());
         self.leases.insert(
             lease_id,
@@ -422,7 +423,7 @@ impl BudgetState {
         let cap_units = self.cap_units();
         let committed = self.used_units.saturating_add(self.reserved_units);
         BudgetRead {
-            job_id: self.job_id.clone(),
+            attempt_id: self.attempt_id.clone(),
             limit_units: self.limit_units,
             cap_units,
             used_units: self.used_units,
