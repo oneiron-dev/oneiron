@@ -695,8 +695,10 @@ pub use crate::settings::{
     default_model_stack_registry, try_default_model_stack_registry,
 };
 pub use crate::skill::{
-    SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
-    SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
+    SKILL_CONTENT_HASH_HEX_LEN, SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES,
+    SKILL_MAX_DEPENDENCIES, SKILL_RECORD_BODY_KEYS, SKILL_TREE_HASH_DOMAIN,
+    SKILL_TREE_PATH_MAX_BYTES, SKILL_VERSION_MAX_BYTES, SkillContentHash, SkillDependency,
+    SkillLifecycle, SkillRecord, canonical_skill_tree_hash, cross_check_declared_content_hash,
     decode_skill_record, encode_skill_record,
 };
 pub use crate::speculative::{

@@ -11,7 +11,7 @@ use crate::registry::{
     ENTITY_TYPE_SKILL, EntityClassification, TypeByteBand, band_of, entity_type_registry_entry,
     is_structural_kind, short_id_prefix,
 };
-use crate::skill::{SkillRecord, encode_skill_record};
+use crate::skill::{SkillLifecycle, SkillRecord, encode_skill_record};
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -216,7 +216,7 @@ fn get_missing_is_none_and_wrong_type_errors() -> Result<()> {
         "Human skill fixture",
         "1.0.0",
         ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
+        SkillLifecycle::Candidate,
         ClaimSource::UserStated,
         1.0,
         false,
@@ -555,7 +555,7 @@ fn registry_row_and_type_byte_immutability() -> Result<()> {
         "Human skill fixture",
         "1.0.0",
         ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
+        SkillLifecycle::Candidate,
         ClaimSource::UserStated,
         1.0,
         false,

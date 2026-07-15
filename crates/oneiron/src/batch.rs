@@ -2920,6 +2920,43 @@ fn apply_put(
             let old_learned_key = Store::encode_temporal_key(old_learned, &id);
             store.temporal_learned.delete(wtxn, &old_learned_key)?;
         }
+    } else if entity_type == ENTITY_TYPE_SKILL && !replicated {
+        // ONE-1735 birth law at the chokepoint, LOCAL creates only — sync
+        // remat (`replicated`) keeps writing already-lifecycled records.
+        // Legacy-opaque upgrades take the update arm above (a prior record
+        // exists), so this gate sees genuine creates only. New skills are
+        // born candidate, and fork lineage must name a real type-7 SKILL
+        // parent (the DerivedFrom edge is door-authored and cannot precede
+        // this create in the txn, so it is not required here).
+        let created = new_skill_record
+            .as_ref()
+            .ok_or(Error::InvariantViolation("validated SKILL record missing"))?;
+        if created.lifecycle_status != crate::skill::SkillLifecycle::Candidate {
+            return Err(Error::InvalidSkillBody(
+                "new skills are born candidate; the admission gate activates them",
+            ));
+        }
+        if let Some(parent) = created.forked_from {
+            if parent == id {
+                return Err(Error::InvalidSkillBody(
+                    "forkedFrom cannot name the fork itself",
+                ));
+            }
+            let parent_raw =
+                store
+                    .entities
+                    .get(wtxn, parent.as_bytes())?
+                    .ok_or(Error::InvalidSkillBody(
+                        "forkedFrom parent must exist as a type-7 SKILL",
+                    ))?;
+            let parent_header = EntityMetadataHeader::parse(parent_raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            if parent_header.entity_type != ENTITY_TYPE_SKILL {
+                return Err(Error::InvalidSkillBody(
+                    "forkedFrom parent must exist as a type-7 SKILL",
+                ));
+            }
+        }
     }
 
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
