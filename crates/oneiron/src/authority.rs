@@ -1129,6 +1129,7 @@ struct FoldContext<'a> {
     enforce_seen_time_delay: bool,
     vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
     authority_forks: &'a BTreeMap<(AuthorityKey, u64), AuthorityFork>,
+    authority_fork_vault_ids: &'a BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
     equivocation_groups: &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
     unresolved_equivocation_groups: &'a BTreeSet<(AuthorityKey, u64)>,
     entry_ancestors: Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
@@ -1244,35 +1245,61 @@ fn fold_authority_log_inner(
     enforce_seen_time_delay: bool,
 ) -> AuthorityFold {
     let mut vetoed_widens = BTreeSet::new();
-    let empty_authority_forks = BTreeMap::new();
+    let mut authority_forks = BTreeMap::new();
+    let mut authority_fork_vault_ids = BTreeMap::new();
     let empty_equivocation_groups = BTreeMap::new();
     let empty_unresolved_equivocation_groups = BTreeSet::new();
-    let mut fold = fold_authority_log_once(
+    let (mut fold, mut folded_authority_fork_vault_ids) = fold_authority_log_once(
         entries,
         FoldContext {
             first_seen_at_secs,
             now_secs,
             enforce_seen_time_delay,
             vetoed_widens: &vetoed_widens,
-            authority_forks: &empty_authority_forks,
+            authority_forks: &authority_forks,
+            authority_fork_vault_ids: &authority_fork_vault_ids,
             equivocation_groups: &empty_equivocation_groups,
             unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
             entry_ancestors: None,
         },
     );
     for _ in 0..=entries.len() {
-        if fold.vetoed_widens == vetoed_widens {
+        // A quarantine discovered after a sibling revoke has already folded
+        // must become input to the next pass, so the revoke is checked against
+        // the same survivor set as it would be in quarantine-first hash order.
+        // Resolved rows do not exclude survivors and conflicting roots are
+        // intentionally never shared across vaults as fold context.
+        let mut next_authority_forks = BTreeMap::new();
+        let mut next_authority_fork_vault_ids = BTreeMap::new();
+        if let Some(vault_id) = fold.vault_id {
+            for fork in &fold.authority_forks {
+                let key = (fork.signer.clone(), fork.seq);
+                if fork.status == AuthorityForkStatus::Quarantined
+                    && folded_authority_fork_vault_ids.get(&key) == Some(&vault_id)
+                {
+                    next_authority_forks.insert(key.clone(), fork.clone());
+                    next_authority_fork_vault_ids.insert(key, vault_id);
+                }
+            }
+        }
+        if fold.vetoed_widens == vetoed_widens
+            && next_authority_forks == authority_forks
+            && next_authority_fork_vault_ids == authority_fork_vault_ids
+        {
             return fold;
         }
         vetoed_widens = fold.vetoed_widens.clone();
-        fold = fold_authority_log_once(
+        authority_forks = next_authority_forks;
+        authority_fork_vault_ids = next_authority_fork_vault_ids;
+        (fold, folded_authority_fork_vault_ids) = fold_authority_log_once(
             entries,
             FoldContext {
                 first_seen_at_secs,
                 now_secs,
                 enforce_seen_time_delay,
                 vetoed_widens: &vetoed_widens,
-                authority_forks: &empty_authority_forks,
+                authority_forks: &authority_forks,
+                authority_fork_vault_ids: &authority_fork_vault_ids,
                 equivocation_groups: &empty_equivocation_groups,
                 unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
                 entry_ancestors: None,
@@ -1285,7 +1312,10 @@ fn fold_authority_log_inner(
 fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
-) -> AuthorityFold {
+) -> (
+    AuthorityFold,
+    BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
+) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
     let mut by_signer_seq = BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>::new();
@@ -1317,7 +1347,8 @@ fn fold_authority_log_once(
             equivocation_groups.insert((signer.clone(), seq), hashes);
         }
     }
-    let mut authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
+    let mut authority_forks = context.authority_forks.clone();
+    let mut authority_fork_vault_ids = context.authority_fork_vault_ids.clone();
     let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
     let mut unresolved_equivocation_groups =
         BTreeSet::<(AuthorityKey, u64)>::from_iter(equivocation_groups.keys().cloned());
@@ -1335,6 +1366,7 @@ fn fold_authority_log_once(
                 let group = &equivocation_groups[&group_key];
                 let fold_context = FoldContext {
                     authority_forks: &authority_forks,
+                    authority_fork_vault_ids: &authority_fork_vault_ids,
                     equivocation_groups: &equivocation_groups,
                     unresolved_equivocation_groups: &unresolved_equivocation_groups,
                     entry_ancestors: Some(&entry_ancestors),
@@ -1352,6 +1384,7 @@ fn fold_authority_log_once(
                     EquivocationResolution::Resolved {
                         winner,
                         fork,
+                        fork_vault_id,
                         issues: group_issues,
                     } => {
                         // The per-round hash snapshot can revisit a second
@@ -1364,6 +1397,11 @@ fn fold_authority_log_once(
                         if let Some(fork) = fork {
                             authority_forks.insert(group_key.clone(), fork.clone());
                             reported_authority_forks.insert(group_key.clone(), fork);
+                            if let Some(vault_id) = fork_vault_id {
+                                authority_fork_vault_ids.insert(group_key.clone(), vault_id);
+                            } else {
+                                authority_fork_vault_ids.remove(&group_key);
+                            }
                         }
                         if let Some((winner_hash, state)) = winner {
                             issues.push(AuthorityFoldIssue::EquivocationDetected {
@@ -1383,6 +1421,7 @@ fn fold_authority_log_once(
             }
             let fold_context = FoldContext {
                 authority_forks: &authority_forks,
+                authority_fork_vault_ids: &authority_fork_vault_ids,
                 equivocation_groups: &equivocation_groups,
                 unresolved_equivocation_groups: &unresolved_equivocation_groups,
                 entry_ancestors: Some(&entry_ancestors),
@@ -1419,23 +1458,30 @@ fn fold_authority_log_once(
             });
         }
         for state in states.values() {
-            reconcile_reported_authority_forks(&mut reported_authority_forks, state);
+            reconcile_reported_authority_forks(
+                &mut reported_authority_forks,
+                &authority_fork_vault_ids,
+                state,
+            );
         }
         let authority_forks: Vec<_> = reported_authority_forks.values().cloned().collect();
         let fork_alarms = build_fork_alarms(&authority_forks);
-        return AuthorityFold {
-            vault_id: None,
-            valid_entries: BTreeSet::new(),
-            roster: BTreeMap::new(),
-            tier_floor: None,
-            pending_widens: BTreeMap::new(),
-            vetoed_widens: BTreeSet::new(),
-            authority_forks,
-            fork_alarms,
-            federation_pacts: BTreeMap::new(),
-            federation_grant_bindings: BTreeMap::new(),
-            issues,
-        };
+        return (
+            AuthorityFold {
+                vault_id: None,
+                valid_entries: BTreeSet::new(),
+                roster: BTreeMap::new(),
+                tier_floor: None,
+                pending_widens: BTreeMap::new(),
+                vetoed_widens: BTreeSet::new(),
+                authority_forks,
+                fork_alarms,
+                federation_pacts: BTreeMap::new(),
+                federation_grant_bindings: BTreeMap::new(),
+                issues,
+            },
+            authority_fork_vault_ids,
+        );
     }
 
     let mut merged: Option<FoldState> = None;
@@ -1449,41 +1495,62 @@ fn fold_authority_log_once(
     }
 
     if let Some(state) = &merged {
-        reconcile_reported_authority_forks(&mut reported_authority_forks, state);
+        reconcile_reported_authority_forks(
+            &mut reported_authority_forks,
+            &authority_fork_vault_ids,
+            state,
+        );
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
 
-    AuthorityFold {
-        vault_id: merged.as_ref().map(|state| state.vault_id),
-        valid_entries,
-        roster: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.roster.clone()),
-        tier_floor: merged.as_ref().map(|state| state.tier_floor),
-        pending_widens: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
-        vetoed_widens: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
-        authority_forks,
-        fork_alarms,
-        federation_pacts: merged
-            .as_ref()
-            .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
-        federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
-            state.federation_grant_bindings.clone()
-        }),
-        issues,
-    }
+    (
+        AuthorityFold {
+            vault_id: merged.as_ref().map(|state| state.vault_id),
+            valid_entries,
+            roster: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, |state| state.roster.clone()),
+            tier_floor: merged.as_ref().map(|state| state.tier_floor),
+            pending_widens: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
+            vetoed_widens: merged
+                .as_ref()
+                .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
+            authority_forks,
+            fork_alarms,
+            federation_pacts: merged
+                .as_ref()
+                .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),
+            federation_grant_bindings: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+                state.federation_grant_bindings.clone()
+            }),
+            issues,
+        },
+        authority_fork_vault_ids,
+    )
 }
 
 fn reconcile_reported_authority_forks(
     reported: &mut BTreeMap<(AuthorityKey, u64), AuthorityFork>,
+    authority_fork_vault_ids: &BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
     state: &FoldState,
 ) {
+    for (key, fork) in reported.iter_mut() {
+        if authority_fork_vault_ids.get(key) == Some(&state.vault_id)
+            && state
+                .roster
+                .get(&fork.signer)
+                .is_some_and(|device| device.revoked)
+        {
+            fork.status = AuthorityForkStatus::Resolved;
+        }
+    }
     for (key, fork) in &state.authority_forks {
+        if authority_fork_vault_ids.get(key) != Some(&state.vault_id) {
+            continue;
+        }
         reported
             .entry(key.clone())
             .and_modify(|existing| {
@@ -1513,10 +1580,15 @@ enum EntryFold {
     Invalid(AuthorityFoldIssue),
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "transient per-group resolution value; one instance lives on the stack at a time"
+)]
 enum EquivocationResolution {
     Resolved {
         winner: Option<(AuthorityEntryHash, Box<FoldState>)>,
         fork: Option<AuthorityFork>,
+        fork_vault_id: Option<AuthorityVaultId>,
         issues: Vec<AuthorityFoldIssue>,
     },
     Waiting,
@@ -1569,6 +1641,7 @@ fn resolve_equivocation_group(
         return EquivocationResolution::Resolved {
             winner: None,
             fork,
+            fork_vault_id: authority_fork_vault_id_from_group(group, by_hash, None),
             issues,
         };
     }
@@ -1617,10 +1690,32 @@ fn resolve_equivocation_group(
         .as_ref()
         .and_then(|(_, state)| state.authority_forks.get(group_key).cloned())
         .or_else(|| authority_fork_from_group(&group_key.0, group_key.1, group));
+    let fork_vault_id = authority_fork_vault_id_from_group(
+        group,
+        by_hash,
+        winner.as_ref().map(|(_, state)| state.as_ref()),
+    );
     EquivocationResolution::Resolved {
         winner,
         fork,
+        fork_vault_id,
         issues,
+    }
+}
+
+fn authority_fork_vault_id_from_group(
+    group: &BTreeSet<AuthorityEntryHash>,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    winner: Option<&FoldState>,
+) -> Option<AuthorityVaultId> {
+    let vault_ids: BTreeSet<_> = group
+        .iter()
+        .filter_map(|hash| by_hash.get(hash).and_then(|entry| entry.vault_id))
+        .collect();
+    match vault_ids.len() {
+        0 => winner.map(|state| state.vault_id),
+        1 => vault_ids.into_iter().next(),
+        _ => None,
     }
 }
 
@@ -1754,7 +1849,9 @@ fn resolve_global_forks_for_revoke(
     revoked_key: &AuthorityKey,
 ) {
     for (key, fork) in context.authority_forks {
-        if &key.0 == revoked_key {
+        if &key.0 == revoked_key
+            && context.authority_fork_vault_ids.get(key) == Some(&state.vault_id)
+        {
             state
                 .authority_forks
                 .entry(key.clone())
@@ -1769,10 +1866,11 @@ fn resolve_global_forks_for_revoke(
 
 fn resolve_global_forks_for_recovery_reboot(state: &mut FoldState, context: FoldContext<'_>) {
     for (key, fork) in context.authority_forks {
-        if state
-            .roster
-            .get(&fork.signer)
-            .is_some_and(|device| device.revoked)
+        if context.authority_fork_vault_ids.get(key) == Some(&state.vault_id)
+            && state
+                .roster
+                .get(&fork.signer)
+                .is_some_and(|device| device.revoked)
         {
             state
                 .authority_forks
@@ -1795,13 +1893,24 @@ fn key_is_quarantined_for_entry(
     state
         .authority_forks
         .values()
-        .chain(context.authority_forks.values())
-        .any(|fork| {
-            fork.signer == *key
-                && fork.status == AuthorityForkStatus::Quarantined
-                && !fork_resolved_in_state(state, key, fork.seq)
-                && !entry_is_prefork_or_fork_candidate(context, key, fork.seq, entry_hash)
+        .any(|fork| fork_quarantines_key_for_entry(state, context, fork, key, entry_hash))
+        || context.authority_forks.iter().any(|(fork_key, fork)| {
+            context.authority_fork_vault_ids.get(fork_key) == Some(&state.vault_id)
+                && fork_quarantines_key_for_entry(state, context, fork, key, entry_hash)
         })
+}
+
+fn fork_quarantines_key_for_entry(
+    state: &FoldState,
+    context: FoldContext<'_>,
+    fork: &AuthorityFork,
+    key: &AuthorityKey,
+    entry_hash: AuthorityEntryHash,
+) -> bool {
+    fork.signer == *key
+        && fork.status == AuthorityForkStatus::Quarantined
+        && !fork_resolved_in_state(state, key, fork.seq)
+        && !entry_is_prefork_or_fork_candidate(context, key, fork.seq, entry_hash)
 }
 
 fn fork_resolved_in_state(state: &FoldState, key: &AuthorityKey, seq: u64) -> bool {
@@ -1986,6 +2095,7 @@ fn entry_folds_on_available_ancestry(
     let first_seen_at_secs = BTreeMap::new();
     let vetoed_widens = BTreeSet::new();
     let authority_forks = BTreeMap::new();
+    let authority_fork_vault_ids = BTreeMap::new();
     let equivocation_groups = BTreeMap::new();
     let unresolved_equivocation_groups = BTreeSet::new();
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
@@ -2012,6 +2122,7 @@ fn entry_folds_on_available_ancestry(
                     enforce_seen_time_delay: false,
                     vetoed_widens: &vetoed_widens,
                     authority_forks: &authority_forks,
+                    authority_fork_vault_ids: &authority_fork_vault_ids,
                     equivocation_groups: &equivocation_groups,
                     unresolved_equivocation_groups: &unresolved_equivocation_groups,
                     entry_ancestors: Some(ancestors),
