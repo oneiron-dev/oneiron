@@ -1125,6 +1125,69 @@ fn fold_records_equivocation_loser_denial_fact() {
 }
 
 #[test]
+fn fold_records_signed_invalid_equivocation_candidate_as_loser() {
+    let left = genesis_entry(125, 86_400, 1);
+    let right = genesis_entry(125, 86_400, 2);
+    let signer = ed_key(125);
+    let signer_key = authority_key_from_ed(&signer);
+    let signed_invalid = sign_ed(
+        unsigned_entry(
+            None,
+            0,
+            Vec::new(),
+            AuthorityOp::Genesis {
+                device: device(
+                    authority_key_from_ed(&ed_key(126)),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+                genesis_nonce: [126; 32],
+                tier_floor: AuthorityTier::Software,
+                pending_widen_delay_secs: 86_400,
+            },
+            signer_key.clone(),
+            3,
+        ),
+        &signer,
+    );
+    let mut ordinary_invalid = genesis_entry(127, 86_400, 4);
+    ordinary_invalid.signer.signature[0] ^= 0xff;
+    let left_hash = authority_entry_hash(&left).unwrap();
+    let right_hash = authority_entry_hash(&right).unwrap();
+    let winner_hash = left_hash.min(right_hash);
+    let ready_loser_hash = left_hash.max(right_hash);
+    let signed_invalid_hash = authority_entry_hash(&signed_invalid).unwrap();
+    let ordinary_invalid_hash = authority_entry_hash(&ordinary_invalid).unwrap();
+
+    let fold = fold_authority_log(&[left, right, signed_invalid, ordinary_invalid]);
+
+    assert!(fold.valid_entries.contains(&winner_hash));
+    for loser_hash in [ready_loser_hash, signed_invalid_hash] {
+        assert!(fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::EquivocationLoser {
+                entry,
+                signer,
+                seq: 0,
+                winner,
+            } if *entry == loser_hash && *signer == signer_key && *winner == winner_hash
+        )));
+    }
+    assert!(fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == signed_invalid_hash
+    )));
+    assert!(fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::InvalidEntry(hash) if *hash == ordinary_invalid_hash
+    )));
+    assert!(!fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::EquivocationLoser { entry, .. } if *entry == ordinary_invalid_hash
+    )));
+}
+
+#[test]
 fn multiway_equivocation_alarm_spans_min_and_max_hashes() {
     let owner = ed_key(64);
     let second = ed_key(65);
@@ -1253,12 +1316,19 @@ fn quarantined_key_cannot_widen_enroll_or_set_ceiling_but_prefix_survives() {
     assert!(!fold.valid_entries.contains(&child_enroll_hash));
     assert!(!fold.valid_entries.contains(&child_widen_hash));
     assert!(!fold.valid_entries.contains(&child_ceiling_hash));
-    assert_eq!(fold.authority_forks.len(), 1);
-    assert_eq!(fold.authority_forks[0].signer, owner_key);
+    // The three denied child mutations are themselves a second signed fork at
+    // owner sequence 3, distinct from the original sequence-2 fork.
+    assert_eq!(fold.authority_forks.len(), 2);
     assert_eq!(
-        fold.authority_forks[0].status,
-        AuthorityForkStatus::Quarantined
+        fold.authority_forks
+            .iter()
+            .map(|fork| fork.seq)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
     );
+    assert!(fold.authority_forks.iter().all(|fork| {
+        fork.signer == owner_key && fork.status == AuthorityForkStatus::Quarantined
+    }));
     for child_hash in [child_enroll_hash, child_widen_hash, child_ceiling_hash] {
         assert!(fold.issues.iter().any(|issue| matches!(
             issue,
@@ -1788,7 +1858,7 @@ fn group_internal_parent_still_records_authority_fork() {
 }
 
 #[test]
-fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
+fn all_invalid_same_seq_group_quarantines_later_entry() {
     let owner = ed_key(96);
     let second = ed_key(97);
     let owner_key = authority_key_from_ed(&owner);
@@ -1826,7 +1896,7 @@ fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
         genesis,
     ]);
 
-    assert!(fold.valid_entries.contains(&valid_later_hash));
+    assert!(!fold.valid_entries.contains(&valid_later_hash));
     assert_eq!(
         fold.authority_forks,
         vec![AuthorityFork {
@@ -1852,10 +1922,14 @@ fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
             .iter()
             .any(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
     );
+    assert!(fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == valid_later_hash
+    )));
 }
 
 #[test]
-fn all_invalid_same_seq_group_does_not_resolve_clean_prefix_revoke() {
+fn all_invalid_same_seq_group_resolves_clean_prefix_revoke() {
     let owner = ed_key(103);
     let second = ed_key(104);
     let third = ed_key(105);
@@ -1919,7 +1993,7 @@ fn all_invalid_same_seq_group_does_not_resolve_clean_prefix_revoke() {
             seq: 3,
             first_hash: invalid_ceiling_hash.min(invalid_tier_hash),
             second_hash: invalid_ceiling_hash.max(invalid_tier_hash),
-            status: AuthorityForkStatus::Quarantined,
+            status: AuthorityForkStatus::Resolved,
         }]
     );
     assert_eq!(

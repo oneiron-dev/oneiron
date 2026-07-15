@@ -710,7 +710,7 @@ pub enum AuthorityFoldIssue {
         /// Conflicting signer sequence number.
         seq: u64,
     },
-    /// Entry lost deterministic selection among ready candidates in an equivocation group.
+    /// Entry lost deterministic selection to the winner of its equivocation group.
     EquivocationLoser {
         /// Losing entry hash.
         entry: AuthorityEntryHash,
@@ -1356,6 +1356,7 @@ fn fold_authority_log_once(
                     } => {
                         unresolved_equivocation_groups.remove(&group_key);
                         if let Some(fork) = fork {
+                            authority_forks.insert(group_key.clone(), fork.clone());
                             reported_authority_forks.insert(group_key.clone(), fork);
                         }
                         if let Some((winner_hash, state)) = winner {
@@ -1363,9 +1364,6 @@ fn fold_authority_log_once(
                                 signer: group_key.0.clone(),
                                 seq: group_key.1,
                             });
-                            if let Some(fork) = state.authority_forks.get(&group_key).cloned() {
-                                authority_forks.insert(group_key.clone(), fork);
-                            }
                             states.insert(winner_hash, *state);
                         }
                         issues.extend(group_issues);
@@ -1414,6 +1412,8 @@ fn fold_authority_log_once(
                 vault_id: state.vault_id,
             });
         }
+        let authority_forks: Vec<_> = reported_authority_forks.values().cloned().collect();
+        let fork_alarms = build_fork_alarms(&authority_forks);
         return AuthorityFold {
             vault_id: None,
             valid_entries: BTreeSet::new(),
@@ -1421,16 +1421,8 @@ fn fold_authority_log_once(
             tier_floor: None,
             pending_widens: BTreeMap::new(),
             vetoed_widens: BTreeSet::new(),
-            authority_forks: reported_authority_forks.values().cloned().collect(),
-            fork_alarms: reported_authority_forks
-                .values()
-                .map(|fork| AuthorityForkAlarm {
-                    signer: fork.signer.clone(),
-                    seq: fork.seq,
-                    first_hash: fork.first_hash,
-                    second_hash: fork.second_hash,
-                })
-                .collect(),
+            authority_forks,
+            fork_alarms,
             federation_pacts: BTreeMap::new(),
             federation_grant_bindings: BTreeMap::new(),
             issues,
@@ -1460,15 +1452,7 @@ fn fold_authority_log_once(
         }
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
-    let fork_alarms = authority_forks
-        .iter()
-        .map(|fork| AuthorityForkAlarm {
-            signer: fork.signer.clone(),
-            seq: fork.seq,
-            first_hash: fork.first_hash,
-            second_hash: fork.second_hash,
-        })
-        .collect();
+    let fork_alarms = build_fork_alarms(&authority_forks);
 
     AuthorityFold {
         vault_id: merged.as_ref().map(|state| state.vault_id),
@@ -1495,6 +1479,18 @@ fn fold_authority_log_once(
     }
 }
 
+fn build_fork_alarms(forks: &[AuthorityFork]) -> Vec<AuthorityForkAlarm> {
+    forks
+        .iter()
+        .map(|fork| AuthorityForkAlarm {
+            signer: fork.signer.clone(),
+            seq: fork.seq,
+            first_hash: fork.first_hash,
+            second_hash: fork.second_hash,
+        })
+        .collect()
+}
+
 enum EntryFold {
     Ready(FoldState),
     Waiting,
@@ -1519,6 +1515,7 @@ fn resolve_equivocation_group(
     context: FoldContext<'_>,
 ) -> EquivocationResolution {
     let mut ready = Vec::<(AuthorityEntryHash, FoldState, FoldState)>::new();
+    let mut invalid_candidates = Vec::new();
     let mut issues = Vec::new();
     for hash in group {
         let entry = &by_hash[hash];
@@ -1527,7 +1524,10 @@ fn resolve_equivocation_group(
                 let rank_state = equivocation_rank_state(entry, *hash, &state);
                 ready.push((*hash, state, rank_state));
             }
-            EntryFold::Invalid(issue) => issues.push(issue),
+            EntryFold::Invalid(issue) => {
+                invalid_candidates.push(*hash);
+                issues.push(issue);
+            }
             EntryFold::Waiting
                 if entry_waits_on_pending_parent_outside_group(entry, states, pending, group) =>
             {
@@ -1577,6 +1577,7 @@ fn resolve_equivocation_group(
     if let Some((winner_hash, _)) = &winner {
         for loser in rejected_candidates
             .into_iter()
+            .chain(invalid_candidates)
             .chain(ready.map(|(loser, _, _)| loser))
         {
             issues.push(AuthorityFoldIssue::EquivocationLoser {
@@ -1794,6 +1795,7 @@ fn entry_waits_on_unresolved_equivocation(
                     .iter()
                     .any(|signature| signature.public_key == *fork_key)
                 || matches!(&entry.op, AuthorityOp::RevokeDevice { revoked_key } if revoked_key == fork_key)
+                || matches!(&entry.op, AuthorityOp::RecoveryReboot { .. })
         })
 }
 
