@@ -101,10 +101,12 @@ impl RestartBackoff {
     }
 }
 
-/// Upper bound on the one-shot startup scan for an unused per-pass budget
-/// index (see [`next_pass_budget_index`]). After this many occupied rows
-/// the scan stops and returns the bound itself as the start index —
-/// finite work, no rescan, no hot-loop.
+/// Upper bound on the one-shot startup scan for the next free per-pass
+/// budget index (see [`next_pass_budget_index`]). Scans every index in
+/// `[0, bound)` once (at most 65_536 point-reads via
+/// [`DreamerRunnerStore::budget`]), then returns highest-occupied + 1 —
+/// or the bound itself when the range is full. Finite work, no rescan,
+/// no hot-loop; cost is paid once per [`WakeSupervisor::run`].
 const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 
 /// Static supervisor configuration. One base wake budget id + lease owner
@@ -114,10 +116,12 @@ const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 /// [`durable_pass_budget_id`]).
 ///
 /// On each [`WakeSupervisor::run`] the supervisor probes the runner store
-/// once for existing `{budget_id}:p{n}` rows and resumes at the first
-/// absent index so process restarts do not re-mint spent rows. Concurrent
-/// supervisors sharing one base id remain out of scope (single-supervisor
-/// model; share the pass gate when co-located).
+/// once for existing `{budget_id}:p{n}` rows and resumes at
+/// highest-occupied + 1 (within the scan bound) so process restarts do
+/// not re-mint spent rows or land in a hole that later collides with a
+/// still-occupied higher suffix. Concurrent supervisors sharing one base
+/// id remain out of scope (single-supervisor model; share the pass gate
+/// when co-located).
 #[derive(Clone)]
 pub struct WakeSupervisorConfig {
     /// Base durable runner-store budget id. Each pass appends a monotonic
@@ -379,10 +383,12 @@ where
 
         let mut report = WakeSupervisorReport::default();
         let mut backoff = RestartBackoff::new(config.backoff);
-        // Resume the per-pass durable budget sequence from the first
-        // absent `{base}:p{n}` row. One probe scan at run start only —
-        // not progress, not a rescan per pass — so a process restart
-        // does not re-mint spent p0/p1/… rows under the same base.
+        // Resume the per-pass durable budget sequence after the highest
+        // occupied `{base}:p{n}` row (within the scan bound). One full
+        // bounded probe scan at run start only — not progress, not a
+        // rescan per pass — so a process restart does not re-mint spent
+        // p0/p1/… rows or advance into a later occupied suffix after
+        // filling an earlier hole (empty passes leave no budget row).
         let mut pass_index = next_pass_budget_index(vault, &config.budget_id);
 
         loop {
@@ -526,7 +532,7 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
 /// vault (no GC here). That is intentional and cheaper than a shared-row
 /// spin; hosts that care about row growth can GC by base-prefix if needed.
 ///
-/// Restart: [`next_pass_budget_index`] skip-scans existing `:p{n}` rows at
+/// Restart: [`next_pass_budget_index`] scans existing `:p{n}` rows at
 /// `run` start so a new process under the same base does not re-enter
 /// spent rows. Single-supervisor model only — two supervisors concurrently
 /// sharing one base are out of scope (use [`WakeSupervisor::with_pass_gate`]
@@ -536,21 +542,30 @@ fn durable_pass_budget_id(base: &str, pass_index: u64) -> String {
     format!("{base}:p{pass_index}")
 }
 
-/// First free per-pass budget index under `base` for this vault.
+/// Next free per-pass budget index under `base` for this vault:
+/// **highest occupied suffix + 1** within the scan bound.
 ///
-/// Probes `{base}:p{n}` ascending from `n = 0` via
+/// Probes every `{base}:p{n}` for `n` in `[0, bound)` via
 /// [`DreamerRunnerStore::budget`] (the same existence read tests/guards
-/// already use). Stops at the first absent row. Bound:
-/// [`PASS_BUDGET_INDEX_SCAN_BOUND`] — if every index in
-/// `[0, bound)` exists, returns `bound` and never rescans. That fallback
-/// cannot spin: the scan is finite and runs once per `run`, after which
-/// the in-memory counter advances; even if `{base}:p{bound}` already
-/// exists the next pass may land on a spent row, but the loop still
-/// makes progress (or takes the zero-progress BudgetExhausted backoff)
-/// rather than walking occupied ids forever.
+/// already use) and returns `max(occupied) + 1`, or `0` when none are
+/// occupied. Bound: [`PASS_BUDGET_INDEX_SCAN_BOUND`] — if the highest
+/// occupied index is `bound - 1` (or the range is full), returns `bound`
+/// and never rescans. That fallback cannot spin: the scan is finite and
+/// runs once per `run` (at most 65_536 point-reads), after which the
+/// in-memory counter advances; even if `{base}:p{bound}` already exists
+/// the next pass may land on a spent row, but the loop still makes
+/// progress (or takes the zero-progress BudgetExhausted backoff) rather
+/// than walking occupied ids forever.
 ///
-/// Not progress for restart-backoff purposes: this is pure read bookkeeping
-/// before any pass runs.
+/// Highest-occupied (not first-absent) matters because empty passes leave
+/// no runner-store budget row: a prior run may have written `:p1` after an
+/// empty `:p0`, and first-absent would restart at `0`, fill `:p0`, then
+/// advance into the still-occupied stale `:p1`. Scanning to the max
+/// occupied suffix avoids that collision; holes below the max are skipped.
+///
+/// Unreadable probes count as occupied for the max (do not re-mint a row
+/// we failed to confirm is free). Not progress for restart-backoff
+/// purposes: pure read bookkeeping before any pass runs.
 #[must_use]
 fn next_pass_budget_index(vault: &Vault, base: &str) -> u64 {
     next_pass_budget_index_with_bound(vault, base, PASS_BUDGET_INDEX_SCAN_BOUND)
@@ -561,23 +576,31 @@ fn next_pass_budget_index(vault: &Vault, base: &str) -> u64 {
 #[must_use]
 fn next_pass_budget_index_with_bound(vault: &Vault, base: &str, bound: u64) -> u64 {
     let store = DreamerRunnerStore::new(vault);
+    let mut highest_occupied: Option<u64> = None;
+    // Full bounded scan (not first-absent): holes below a later occupied
+    // row must not become the resume index. Cost: one point-read per index
+    // in [0, bound) once per supervisor run — production bound is 65_536.
     for n in 0..bound {
         let id = durable_pass_budget_id(base, n);
         match store.budget(&id) {
-            Ok(None) => return n,
-            Ok(Some(_)) => {}
-            // Unreadable: treat as occupied so we do not re-mint a row
-            // we failed to confirm is free. The bound still caps the walk.
+            Ok(None) => {}
+            Ok(Some(_)) => highest_occupied = Some(n),
+            // Unreadable: treat as occupied for the max so we do not
+            // resume at-or-below a row we failed to confirm is free.
             Err(error) => {
                 tracing::warn!(
                     ?error,
                     budget_id = %id,
                     "pass-budget index probe failed; treating as occupied"
                 );
+                highest_occupied = Some(n);
             }
         }
     }
-    bound
+    match highest_occupied {
+        None => 0,
+        Some(highest) => highest.saturating_add(1).min(bound),
+    }
 }
 
 /// One wake pass: fresh deadline, fresh wake-budget counter, per-pass
@@ -1235,10 +1258,10 @@ mod tests {
 
     #[tokio::test]
     async fn restart_resumes_pass_budget_index_after_existing_rows() {
-        // P1 (codex r3): pass_index was in-memory only and reset to 0 on
+        // P1 (codex r3/r4): pass_index was in-memory only and reset to 0 on
         // every WakeSupervisor::run, so a process restart re-minted :p0
         // against a spent row (DreamerRunnerStore reuses existing budgets).
-        // Startup skip-scan must resume at the first absent :p{n}.
+        // Startup scan must resume at highest-occupied + 1 (here :p2).
         let (_dir, vault) = open_vault();
         let first = enqueue_micro(&vault, "restart-p0", 10);
         let second = enqueue_micro(&vault, "restart-p1", 11);
@@ -1329,9 +1352,10 @@ mod tests {
 
     #[test]
     fn pass_budget_index_scan_is_bounded_and_falls_back() {
-        // When every index in [0, bound) already has a durable row, the
-        // scan must stop at `bound` — not walk forever. Production uses
-        // PASS_BUDGET_INDEX_SCAN_BOUND (65536); tests pin a tiny bound.
+        // Highest-occupied + 1 within [0, bound). When every index in
+        // [0, bound) already has a durable row, the scan returns `bound`
+        // — not walk forever. Production uses PASS_BUDGET_INDEX_SCAN_BOUND
+        // (65536 point-reads once per run); tests pin a tiny bound.
         let (_dir, vault) = open_vault();
         const BOUND: u64 = 4;
         let base = "scan-bound-budget";
@@ -1351,14 +1375,25 @@ mod tests {
             "full [0, bound) must fall back to bound (no spin)"
         );
 
-        // Hole at p1 while p0 and p2 exist: first absent wins.
+        // Empty :p0 (hole) with only :p1 occupied — the r4 collision:
+        // first-absent would return 0 and later collide with stale :p1;
+        // highest-occupied + 1 resumes at p2.
+        let (_dir_hole, vault_hole) = open_vault();
+        seed_budget_row(&vault_hole, &durable_pass_budget_id(base, 1));
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault_hole, base, BOUND),
+            2,
+            "hole at p0 with occupied p1 → start at p2, not p0/p1"
+        );
+
+        // Hole at p1 while p0 and p2 exist: skip the hole, resume after max.
         let (_dir2, vault2) = open_vault();
         seed_budget_row(&vault2, &durable_pass_budget_id(base, 0));
         seed_budget_row(&vault2, &durable_pass_budget_id(base, 2));
         assert_eq!(
             next_pass_budget_index_with_bound(&vault2, base, BOUND),
-            1,
-            "first absent index, not highest+1"
+            3,
+            "hole at p1 with occupied p2 → start at p3 (highest+1), not p1"
         );
 
         // Production bound is the large fixed constant (inspectable).

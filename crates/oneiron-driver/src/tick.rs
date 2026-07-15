@@ -112,12 +112,15 @@ pub trait DeadlineSource {
 /// is due when the backoff clears. Job stamps are stored in seconds and
 /// surfaced here in milliseconds.
 ///
-/// MACRO jobs are home-node-gated at admission (`NoHomeNode` /
-/// `NotHomeNode` refusals that do not mutate the queued row), so the macro
-/// lane is surfaced only while `local_node_id` matches the elected home
-/// node — surfacing it elsewhere would busy-spin the supervisor on the same
-/// overdue deadline. The election is re-read on every cycle, so macro work
-/// re-surfaces the moment this node becomes home.
+/// MACRO jobs are gated at admission by the full local-admissibility
+/// predicate (`admit_next_consolidation`): `local_node_id` must match both
+/// the vault's stable client identity (`load_or_mint_client_id` via
+/// [`DreamerRunnerStore::local_home_node_candidate`]) and the elected home
+/// designation. Surfacing a due macro when either check would refuse leaves
+/// the queued row unmutated and — deadlines having priority over pushes —
+/// busy-spins the supervisor on the same overdue deadline, starving push
+/// lanes. Both checks are re-read every cycle; an unreadable vault identity
+/// is treated as not-admissible (macro suppressed, other lanes still flow).
 pub struct JobQueueDeadlines<'v> {
     vault: &'v Vault,
     local_node_id: u64,
@@ -133,14 +136,39 @@ impl<'v> JobQueueDeadlines<'v> {
             local_node_id,
         }
     }
+
+    /// Mirrors macro admission: home designation AND vault client identity
+    /// both equal `local_node_id`. Designation read errors propagate (timer
+    /// goes quiet). Identity read errors suppress macro only — same fail-
+    /// closed stance as "not admissible", without starving micro/meso.
+    fn macro_locally_admissible(&self) -> oneiron::Result<bool> {
+        let store = DreamerRunnerStore::new(self.vault);
+        let Some(designation) = store.home_node_designation()? else {
+            return Ok(false);
+        };
+        if designation.node_id != self.local_node_id {
+            return Ok(false);
+        }
+        // Same stable client id admission loads via load_or_mint_client_id
+        // (exposed here through local_home_node_candidate).
+        let vault_node_id = match store.local_home_node_candidate(false, false, false) {
+            Ok(candidate) => candidate.node_id,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "vault client identity unreadable; suppressing macro deadlines"
+                );
+                return Ok(false);
+            }
+        };
+        Ok(vault_node_id == self.local_node_id)
+    }
 }
 
 impl DeadlineSource for JobQueueDeadlines<'_> {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
         let queue = JobQueue::new(self.vault);
-        let macro_admissible = DreamerRunnerStore::new(self.vault)
-            .home_node_designation()?
-            .is_some_and(|designation| designation.node_id == self.local_node_id);
+        let macro_admissible = self.macro_locally_admissible()?;
         let mut next: Option<CommitmentDeadline> = None;
         for job in queue.list()? {
             if job.state != JobState::Queued {
@@ -290,10 +318,16 @@ impl std::error::Error for TickPushError {}
 
 /// Receiving half of the push channel: ONE bounded coalescing mailbox
 /// (capacity 1 per signal class — one hint slot plus one wake slot per
-/// consolidation lane), drained wake-first. Bursts therefore collapse into
-/// one follow-up pass per class while distinct signals are never dropped.
+/// consolidation lane), drained wake-first with a rotating scan start so
+/// a lane that refills every pass cannot starve older buffered wakes.
+/// Bursts therefore collapse into one follow-up pass per class while
+/// distinct signals are never dropped.
 pub struct PushTick {
     shared: Arc<PushShared>,
+    /// Next wake-lane index to try first (round-robin). Advances after each
+    /// returned wake so every occupied lane drains within [`SCOPE_LANES`]
+    /// takes even when a lower index refills between drains.
+    wake_scan_start: usize,
 }
 
 impl PushTick {
@@ -314,6 +348,7 @@ impl PushTick {
         (
             Self {
                 shared: Arc::clone(&shared),
+                wake_scan_start: 0,
             },
             WakePusher {
                 shared: Arc::clone(&shared),
@@ -322,12 +357,21 @@ impl PushTick {
         )
     }
 
-    /// Drains the highest-priority pending signal: wake lanes first
-    /// (micro, meso, macro), then the hint slot.
-    fn take_pending(&self) -> Option<Tick> {
+    /// Drains one pending signal: wake lanes first (round-robin start so
+    /// micro/meso/macro each get a turn), then the hint slot.
+    ///
+    /// Rotation rule: on each returned wake, the scan cursor advances to
+    /// the lane after the one just drained (`(lane + 1) % SCOPE_LANES`).
+    /// Empty lanes are skipped without advancing past the full cycle; a
+    /// hint drain does not move the wake cursor. Deterministic and
+    /// per-instance (not shared across receivers).
+    fn take_pending(&mut self) -> Option<Tick> {
         let mut state = self.shared.lock_state();
-        for lane in &mut state.wake {
-            if let Some(signal) = lane.take() {
+        let start = self.wake_scan_start % SCOPE_LANES;
+        for offset in 0..SCOPE_LANES {
+            let lane = (start + offset) % SCOPE_LANES;
+            if let Some(signal) = state.wake[lane].take() {
+                self.wake_scan_start = (lane + 1) % SCOPE_LANES;
                 return Some(Tick::Wake(signal));
             }
         }
@@ -558,7 +602,7 @@ mod tests {
 
     #[test]
     fn push_coalesces_same_lane_wakes() {
-        let (receiver, wake, _hint) = PushTick::channel();
+        let (mut receiver, wake, _hint) = PushTick::channel();
         for _ in 0..3 {
             wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
                 .expect("open channel");
@@ -575,7 +619,7 @@ mod tests {
 
     #[test]
     fn distinct_lane_wakes_never_collapse() {
-        let (receiver, wake, _hint) = PushTick::channel();
+        let (mut receiver, wake, _hint) = PushTick::channel();
         wake.push_wake(WakeTrigger::Timer, DreamerConsolidationScope::Macro)
             .expect("open channel");
         wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
@@ -601,7 +645,7 @@ mod tests {
 
     #[test]
     fn wake_drains_before_hint() {
-        let (receiver, wake, hint) = PushTick::channel();
+        let (mut receiver, wake, hint) = PushTick::channel();
         hint.push_hint().expect("open channel");
         hint.push_hint().expect("open channel");
         wake.push_wake(WakeTrigger::SessionEnd, DreamerConsolidationScope::Meso)
@@ -619,6 +663,45 @@ mod tests {
             "hint burst coalesced to one, delivered after the wake"
         );
         assert_eq!(receiver.take_pending(), None);
+    }
+
+    #[test]
+    fn wake_lane_round_robin_does_not_starve_buffered_macro_under_micro_refill() {
+        // P2 (codex r4): fixed micro→meso→macro scan always drained a
+        // refilled micro slot first, so a buffered macro/meso wake never
+        // returned under continuous micro push. Rotating scan start after
+        // each returned wake drains every occupied lane within N=3 takes.
+        let (mut receiver, wake, _hint) = PushTick::channel();
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        wake.push_wake(WakeTrigger::Timer, DreamerConsolidationScope::Macro)
+            .expect("open channel");
+
+        let mut scopes = Vec::new();
+        for _ in 0..3 {
+            let Some(Tick::Wake(signal)) = receiver.take_pending() else {
+                panic!("expected a wake within the 3-take fairness window");
+            };
+            scopes.push(signal.scope);
+            // Refill micro after every take — the starvation pattern under
+            // a fixed scan that always preferred lane 0.
+            wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+                .expect("open channel");
+        }
+
+        assert_eq!(
+            scopes,
+            [
+                DreamerConsolidationScope::Micro,
+                DreamerConsolidationScope::Macro,
+                DreamerConsolidationScope::Micro,
+            ],
+            "cursor advances past drained lane: micro, then macro (skip empty meso), then micro"
+        );
+        assert_eq!(
+            receiver.wake_scan_start, 1,
+            "after micro→macro→micro drains, next scan starts at meso (1)"
+        );
     }
 
     #[tokio::test]
@@ -718,20 +801,30 @@ mod tests {
             .expect("elect home node");
     }
 
+    /// Vault stable client identity — the same id macro admission compares
+    /// via `load_or_mint_client_id` / `local_home_node_candidate`.
+    fn vault_client_node_id(vault: &Vault) -> u64 {
+        DreamerRunnerStore::new(vault)
+            .local_home_node_candidate(false, false, false)
+            .expect("vault client identity")
+            .node_id
+    }
+
     #[test]
     fn job_queue_deadlines_hide_macro_until_local_home_election() {
         let (_dir, vault) = open_vault();
+        let local = vault_client_node_id(&vault);
         enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
 
         // No home node elected: macro admission would refuse (NoHomeNode)
         // without mutating the row, so the overdue deadline must not
         // surface and re-tick forever.
-        let mut source = JobQueueDeadlines::new(&vault, 7);
+        let mut source = JobQueueDeadlines::new(&vault, local);
         assert_eq!(source.next_deadline().expect("read"), None);
 
-        // Local node elected home: the same row surfaces on the very next
-        // re-read.
-        elect_home(&vault, 7, 15);
+        // Local vault identity elected home: both admission checks pass and
+        // the same row surfaces on the very next re-read.
+        elect_home(&vault, local, 15);
         assert_eq!(
             source.next_deadline().expect("read"),
             Some(CommitmentDeadline {
@@ -744,20 +837,60 @@ mod tests {
     #[test]
     fn job_queue_deadlines_on_foreign_home_skip_macro_but_keep_other_lanes() {
         let (_dir, vault) = open_vault();
+        let local = vault_client_node_id(&vault);
+        let foreign = local.wrapping_add(1).max(1);
         enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
         enqueue(&vault, DreamerConsolidationScope::Micro, "micro-job", 20);
-        elect_home(&vault, 9, 25);
+        elect_home(&vault, foreign, 25);
 
-        // Node 7 is not the elected home: the earlier macro deadline is
+        // Local node is not the elected home: the earlier macro deadline is
         // filtered (admission would refuse NotHomeNode without progress)
         // while the micro lane keeps flowing — no spin, no starvation.
-        let mut source = JobQueueDeadlines::new(&vault, 7);
+        let mut source = JobQueueDeadlines::new(&vault, local);
         assert_eq!(
             source.next_deadline().expect("read"),
             Some(CommitmentDeadline {
                 due_at_ms: 20_000,
                 scope: DreamerConsolidationScope::Micro,
             })
+        );
+    }
+
+    #[test]
+    fn job_queue_deadlines_skip_macro_when_designation_matches_but_vault_identity_differs() {
+        // P2 (codex r4): a host can pass local_node_id equal to a (stale/
+        // copied) home designation that is NOT this vault's stable client
+        // id. Admission errors with identity-mismatch without mutating the
+        // row; the deadline filter must suppress that macro too.
+        let (_dir, vault) = open_vault();
+        let vault_id = vault_client_node_id(&vault);
+        let spoofed = vault_id.wrapping_add(99).max(1);
+        assert_ne!(spoofed, vault_id);
+        enqueue(&vault, DreamerConsolidationScope::Macro, "macro-spoof", 10);
+        enqueue(&vault, DreamerConsolidationScope::Micro, "micro-ok", 30);
+        // Designation equals the spoofed local_node_id, not vault identity.
+        elect_home(&vault, spoofed, 20);
+
+        let mut source = JobQueueDeadlines::new(&vault, spoofed);
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 30_000,
+                scope: DreamerConsolidationScope::Micro,
+            }),
+            "macro must stay suppressed when vault identity ≠ local_node_id"
+        );
+
+        // Both match (honest local = vault id = designation): macro surfaces.
+        elect_home(&vault, vault_id, 40);
+        let mut honest = JobQueueDeadlines::new(&vault, vault_id);
+        assert_eq!(
+            honest.next_deadline().expect("read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 10_000,
+                scope: DreamerConsolidationScope::Macro,
+            }),
+            "macro surfaces when designation AND vault identity both match"
         );
     }
 
