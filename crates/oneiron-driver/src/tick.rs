@@ -383,13 +383,26 @@ impl PushTick {
     /// lost to `select!` cancellation can never lose a signal. Returns
     /// `None` once every producer handle is dropped and the mailbox is
     /// drained.
+    ///
+    /// Producer drop ordering: `WakePusher` / `HintPusher` store the signal
+    /// under the mailbox mutex **before** `notify_one`, and decrement
+    /// `pushers` only in `Drop` (after the store). A race remains if a
+    /// producer pushes then drops between an empty `take_pending` and the
+    /// `pushers == 0` check: `recv` would otherwise return `None` with a
+    /// buffered wake. The final `take_pending` re-check on the exhaustion
+    /// path closes that window regardless of store-before-decrement order.
     async fn recv(&mut self) -> Option<Tick> {
         loop {
             if let Some(tick) = self.take_pending() {
                 return Some(tick);
             }
             if self.shared.pushers.load(Ordering::Acquire) == 0 {
-                return None;
+                // Final re-check: a producer may have push_wake/push_hint
+                // then Drop between the empty take above and the zero
+                // pusher count (store-before-decrement still loses if we
+                // only check the counter). Drain any last buffered signal
+                // before declaring the source exhausted.
+                return self.take_pending();
             }
             self.shared.notify.notified().await;
         }
@@ -713,6 +726,46 @@ mod tests {
         drop(hint);
         assert!(matches!(receiver.recv().await, Some(Tick::Wake(_))));
         assert_eq!(receiver.recv().await, None, "drained + no producers");
+    }
+
+    #[tokio::test]
+    async fn push_recv_delivers_final_wake_when_producer_drops_immediately() {
+        // P2 (codex r6 / 3585850157): between empty take_pending and the
+        // pushers==0 check a producer can push then Drop. Without a final
+        // take_pending re-check, recv returns None while a wake is buffered.
+        // Producer order: store under mutex, notify_one, Drop decrements
+        // pushers (store-before-decrement). The re-check closes the window
+        // either way. Concurrent push+drop while recv is waiting (and the
+        // sequential push-then-drop case) both deliver exactly one signal.
+        let (mut receiver, wake, hint) = PushTick::channel();
+        // Drop the unused hint first so the last producer can race alone.
+        drop(hint);
+
+        let producer = tokio::spawn(async move {
+            // Let recv park on notified() after an empty take_pending.
+            tokio::task::yield_now().await;
+            wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+                .expect("open channel");
+            drop(wake);
+        });
+
+        let first = receiver.recv().await;
+        producer.await.expect("producer task");
+        assert!(
+            matches!(
+                first,
+                Some(Tick::Wake(WakeSignal {
+                    trigger: WakeTrigger::Compaction,
+                    scope: DreamerConsolidationScope::Micro,
+                }))
+            ),
+            "exactly one buffered wake must be delivered, got {first:?}"
+        );
+        assert_eq!(
+            receiver.recv().await,
+            None,
+            "second recv must exhaust (count: exactly 1 signal)"
+        );
     }
 
     #[test]
