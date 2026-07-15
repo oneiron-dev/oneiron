@@ -45,7 +45,7 @@ use crate::registry::{
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
 use crate::vault::Vault;
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -2568,8 +2568,13 @@ impl Vault {
     /// This is a targeted consent-review door, so it intentionally returns
     /// proposed claims that ordinary retrieval excludes. The returned bundle
     /// is a projection over CLAIM data, not a separately persisted branch.
-    pub fn review_session_bundle(&self, session_tag: &str) -> Result<SessionClaimBundle> {
+    pub fn review_session_bundle(
+        &self,
+        actor: &WriteActor,
+        session_tag: &str,
+    ) -> Result<SessionClaimBundle> {
         let rtxn = self.store.env.read_txn()?;
+        self.validate_session_bundle_actor_in_txn(&rtxn, actor)?;
         let members = self.session_claim_bundle_members_in_txn(&rtxn, session_tag)?;
         Ok(session_claim_bundle(session_tag, members))
     }
@@ -2579,18 +2584,48 @@ impl Vault {
     ///
     /// Any gate denial or stale pending-consent binding aborts the enclosing
     /// write transaction, leaving every member of the session bundle unchanged.
-    pub fn merge_session_bundle(&self, session_tag: &str) -> Result<SessionClaimBundle> {
+    pub fn merge_session_bundle(
+        &self,
+        actor: &WriteActor,
+        session_tag: &str,
+    ) -> Result<SessionClaimBundle> {
         self.with_write_txn(|wtxn| {
+            self.validate_session_bundle_actor_in_txn(&*wtxn, actor)?;
             let members = self.session_claim_bundle_members_in_txn(&*wtxn, session_tag)?;
             if members.is_empty() {
                 return Ok(session_claim_bundle(session_tag, members));
             }
 
+            let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
             let mut merged = Vec::with_capacity(members.len());
             let mut ops = Vec::with_capacity(members.len());
             for member in members {
                 let mut body = member.body;
                 body.approval = ClaimApprovalStatus::Approved;
+                let source = body.source.ok_or(Error::InvalidClaimBody(
+                    "session bundle member missing claim source",
+                ))?;
+                let envelope = WriteEnvelope::new(
+                    *actor,
+                    source,
+                    WriteProvenance::new(Value::from("session-claim-bundle-merge"))?,
+                    ClaimApprovalStatus::Approved,
+                );
+                check_claim_policy_for_write(
+                    &self.store,
+                    wtxn,
+                    &member.id,
+                    &body,
+                    Some(&envelope),
+                    &policy,
+                    GateWriteMode {
+                        record_decision: true,
+                        persist_pending_consent: false,
+                        resolve_pending: false,
+                        can_resolve_pending_consent: false,
+                        include_source_in_gate_input: true,
+                    },
+                )?;
                 let data = encode_claim_body(&body)?;
                 merged.push(SessionClaimBundleClaim {
                     id: member.id,
@@ -2615,7 +2650,7 @@ impl Vault {
                 ops,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
-                true,
+                false,
                 true,
             )?;
 
@@ -2624,6 +2659,21 @@ impl Vault {
                 claims: merged,
             })
         })
+    }
+
+    fn validate_session_bundle_actor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+    ) -> Result<()> {
+        let actor_raw = self
+            .store
+            .entities
+            .get(rtxn, actor.entity_ref().as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header =
+            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
     }
 }
 

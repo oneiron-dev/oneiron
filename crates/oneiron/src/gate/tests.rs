@@ -3677,7 +3677,21 @@ fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
 #[test]
 fn session_bundle_review_merge() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xC2, &encode_policy_manifest(vec![]))?;
+    let reviewer_id = test_id(0xC8);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC2, &policy)?;
+    vault.put_entity(
+        &reviewer_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"session bundle reviewer",
+    )?;
+    let reviewer = WriteActor::new(reviewer_id, EdgeActorClass::Human);
 
     let session_tag = "agent:alpha/session:42";
     let first = test_id(0xC3);
@@ -3698,7 +3712,7 @@ fn session_bundle_review_merge() -> Result<()> {
             .commit()?;
     }
 
-    let review = vault.review_session_bundle(session_tag)?;
+    let review = vault.review_session_bundle(&reviewer, session_tag)?;
     assert_eq!(review.session_tag, session_tag);
     assert_eq!(
         review
@@ -3715,7 +3729,7 @@ fn session_bundle_review_merge() -> Result<()> {
             .all(|claim| claim.body.approval == ClaimApprovalStatus::Proposed)
     );
 
-    let merged = vault.merge_session_bundle(session_tag)?;
+    let merged = vault.merge_session_bundle(&reviewer, session_tag)?;
     assert!(
         merged
             .claims
@@ -3744,14 +3758,74 @@ fn session_bundle_review_merge() -> Result<()> {
     );
     assert!(!has_pending_gate_consent(&vault, &first)?);
     assert!(!has_pending_gate_consent(&vault, &second)?);
-    assert!(vault.review_session_bundle(session_tag)?.claims.is_empty());
+    assert!(
+        vault
+            .review_session_bundle(&reviewer, session_tag)?
+            .claims
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn session_bundle_merge_rejects_unauthorized_caller_with_fresh_consent() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let authorized_id = test_id(0xCC);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &authorized_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC9, &policy)?;
+
+    let session_tag = "agent:alpha/session:unauthorized";
+    let id = test_id(0xCA);
+    let mut proposed = source_trust_claim(ClaimSource::UserStated);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+    let unauthorized = envelope.actor();
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate,
+            &envelope.with_session_tag(session_tag),
+            test_time(3),
+            3,
+        )
+        .commit()?;
+    assert!(has_pending_gate_consent(&vault, &id)?);
+
+    let err = vault
+        .merge_session_bundle(&unauthorized, session_tag)
+        .expect_err("fresh consent must not elevate an unauthorized caller");
+    assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+    assert_eq!(
+        vault.get_claim(&id)?.expect("proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(has_pending_gate_consent(&vault, &id)?);
     Ok(())
 }
 
 #[test]
 fn atomic_bundle_commit() -> Result<()> {
     let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, 0xC5, &encode_policy_manifest(vec![]))?;
+    let reviewer_id = test_id(0xC9);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC5, &policy)?;
+    vault.put_entity(
+        &reviewer_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"session bundle reviewer",
+    )?;
+    let reviewer = WriteActor::new(reviewer_id, EdgeActorClass::Human);
 
     let session_tag = "agent:alpha/session:atomic";
     let first = test_id(0xC6);
@@ -3782,7 +3856,7 @@ fn atomic_bundle_commit() -> Result<()> {
     })?;
 
     let err = vault
-        .merge_session_bundle(session_tag)
+        .merge_session_bundle(&reviewer, session_tag)
         .expect_err("a stale member must abort the whole session bundle");
     assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == second));
     assert_eq!(
