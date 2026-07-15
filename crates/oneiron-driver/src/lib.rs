@@ -27,8 +27,9 @@ mod supervisor;
 mod tick;
 
 pub use supervisor::{
-    ConsolidationExecutorFactory, NowSeconds, PassExecutorFactory, RestartBackoffConfig,
-    ShutdownHandle, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
+    ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
+    RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
+    WakeSupervisorReport,
 };
 pub use tick::{
     CommitmentDeadline, DeadlineSource, HintPusher, HintSignal, HybridTick, JobQueueDeadlines,

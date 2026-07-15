@@ -109,6 +109,20 @@ impl RestartBackoff {
 /// no hot-loop; cost is paid once per [`WakeSupervisor::run`].
 const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 
+/// Mirror of the runner store's private budget-id ceiling
+/// (`MAX_DREAMER_BUDGET_ID_LEN` in `oneiron::dreamer_runner`). Pinned by a
+/// real-store validation test below, so drift breaks the build here.
+const MAX_RUNNER_BUDGET_ID_LEN: usize = 128;
+
+/// Bytes reserved for the derived per-pass suffix: `":p"` plus the widest
+/// `u64` decimal rendering (20 digits).
+const PASS_BUDGET_SUFFIX_RESERVE: usize = 22;
+
+/// Longest base [`WakeSupervisorConfig::budget_id`] whose derived
+/// `{base}:p{n}` id stays within the runner store's ceiling for every
+/// possible pass index.
+pub const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - PASS_BUDGET_SUFFIX_RESERVE;
+
 /// Static supervisor configuration. One base wake budget id + lease owner
 /// per supervisor; every pass gets a fresh wall-clock deadline, a fresh
 /// in-memory wake-budget counter, and a **per-pass durable runner-store
@@ -171,6 +185,23 @@ impl WakeSupervisorConfig {
             milestones: None,
             backoff: RestartBackoffConfig::default(),
         }
+    }
+
+    /// Rejects a base [`Self::budget_id`] whose derived `{base}:p{n}` id
+    /// could exceed the runner store's budget-id ceiling. Without this,
+    /// the startup scan treats the store's validation error as "occupied"
+    /// and admission then fails every pass, so due jobs are redelivered
+    /// and backed off indefinitely instead of failing fast.
+    pub fn validate(&self) -> Result<()> {
+        if self.budget_id.len() > MAX_PASS_BUDGET_BASE_LEN {
+            return Err(oneiron::Error::InvalidConfig(format!(
+                "wake supervisor budget_id is {} bytes; max {} so derived \
+                 per-pass ids fit the runner-store ceiling",
+                self.budget_id.len(),
+                MAX_PASS_BUDGET_BASE_LEN
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -382,6 +413,14 @@ where
         let _shutdown_handle = shutdown_handle;
 
         let mut report = WakeSupervisorReport::default();
+        // An over-long base id would make every derived per-pass id fail the
+        // runner store's validation: the startup scan reads those errors as
+        // "occupied" and admission fails every pass, redelivering due work
+        // forever. No pass can ever succeed, so stop before ticking.
+        if let Err(error) = config.validate() {
+            tracing::error!(?error, "wake supervisor config invalid; refusing to run");
+            return report;
+        }
         let mut backoff = RestartBackoff::new(config.backoff);
         // Resume the per-pass durable budget sequence after the highest
         // occupied `{base}:p{n}` row (within the scan bound). One full
@@ -1254,6 +1293,60 @@ mod tests {
             durable_pass_budget_id("driver-budget", 42),
             "driver-budget:p42"
         );
+    }
+
+    #[test]
+    fn config_validate_rejects_base_ids_that_overflow_derived_length() {
+        let ok = WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN), "owner", 1, 100);
+        assert!(ok.validate().is_ok());
+
+        let over =
+            WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN + 1), "owner", 1, 100);
+        let error = over.validate().expect_err("over-long base must reject");
+        assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
+    }
+
+    /// Pins the mirrored `MAX_RUNNER_BUDGET_ID_LEN` against the real store:
+    /// the widest derived id a valid base can produce must pass runner-store
+    /// validation, and one byte more must fail. If oneiron's private ceiling
+    /// drifts, this test breaks instead of the supervisor spinning at runtime.
+    #[test]
+    fn widest_derived_pass_budget_id_fits_the_runner_store_ceiling() {
+        let (_dir, vault) = open_vault();
+
+        let widest = durable_pass_budget_id(&"b".repeat(MAX_PASS_BUDGET_BASE_LEN), u64::MAX);
+        assert_eq!(widest.len(), MAX_RUNNER_BUDGET_ID_LEN);
+        seed_budget_row(&vault, &widest);
+        assert!(
+            DreamerRunnerStore::new(&vault)
+                .budget(&widest)
+                .expect("probe widest id")
+                .is_some(),
+            "widest derived id must be storable"
+        );
+
+        let over_long = format!("{widest}b");
+        let outcome = DreamerRunnerStore::new(&vault).budget(&over_long);
+        assert!(
+            outcome.is_err(),
+            "one byte past the ceiling must fail store validation"
+        );
+    }
+
+    #[tokio::test]
+    async fn over_long_budget_base_refuses_to_run_instead_of_spinning() {
+        let (_dir, vault) = open_vault();
+        let (push, _wake, _hint) = PushTick::channel();
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            completed_units: 0,
+        };
+        let config =
+            WakeSupervisorConfig::new("b".repeat(MAX_PASS_BUDGET_BASE_LEN + 1), "owner", 1, 100);
+        let supervisor = WakeSupervisor::new(&vault, push, factory, config);
+        let report = supervisor.run().await;
+        assert_eq!(report, WakeSupervisorReport::default(), "no pass may run");
     }
 
     #[tokio::test]
