@@ -160,6 +160,105 @@ fn escalator_selection_emits_grant_mint_intent() -> Result<()> {
 }
 
 #[test]
+fn beneficiary_cannot_confirm_always_this_verb_class() -> Result<()> {
+    let card = ask_card()?.with_counterparty_ref("owner");
+    let request = ConsentActionRequest::new(
+        "ask-1",
+        "escalate_always_this_verb_class",
+        ConsentActionKind::Escalate(ConsentScopeEscalator::AlwaysThisVerbClass),
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "owner".to_owned(),
+        },
+        ConsentSurface::EiriConversation,
+        102,
+    )?;
+
+    let evaluation = card.evaluate_action(&request)?;
+    assert_eq!(
+        evaluation.decision,
+        ConsentActionDecision::NoopBeneficiaryConfirm
+    );
+    assert!(evaluation.grant_mint_intent.is_none());
+    assert_eq!(evaluation.receipt.outcome, "no_op_beneficiary_confirm");
+    assert_eq!(
+        evaluation.receipt.fields.get("reason").map(String::as_str),
+        Some("consent_beneficiary:self_grant")
+    );
+    assert!(
+        evaluation
+            .receipt
+            .policy_trace
+            .contains(&"consent_beneficiary:self_grant".to_owned())
+    );
+
+    Ok(())
+}
+
+#[test]
+fn beneficiary_cannot_confirm_always_this_channel() -> Result<()> {
+    let card = ask_card()?.with_counterparty_ref("owner");
+    let request = ConsentActionRequest::new(
+        "ask-1",
+        "escalate_always_this_channel",
+        ConsentActionKind::Escalate(ConsentScopeEscalator::AlwaysThisChannel),
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "owner".to_owned(),
+        },
+        ConsentSurface::Dashboard,
+        103,
+    )?;
+
+    let evaluation = card.evaluate_action(&request)?;
+    assert_eq!(
+        evaluation.decision,
+        ConsentActionDecision::NoopBeneficiaryConfirm
+    );
+    assert!(evaluation.grant_mint_intent.is_none());
+    assert_eq!(evaluation.receipt.outcome, "no_op_beneficiary_confirm");
+    assert_eq!(
+        evaluation.receipt.fields.get("reason").map(String::as_str),
+        Some("consent_beneficiary:self_grant")
+    );
+    assert!(
+        evaluation
+            .receipt
+            .policy_trace
+            .contains(&"consent_beneficiary:self_grant".to_owned())
+    );
+
+    Ok(())
+}
+
+#[test]
+fn non_beneficiary_can_confirm_widening_scope() -> Result<()> {
+    let card = ask_card()?;
+    let request = ConsentActionRequest::new(
+        "ask-1",
+        "escalate_always_this_channel",
+        ConsentActionKind::Escalate(ConsentScopeEscalator::AlwaysThisChannel),
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "owner".to_owned(),
+        },
+        ConsentSurface::McpUi,
+        104,
+    )?;
+
+    let evaluation = card.evaluate_action(&request)?;
+    assert_eq!(evaluation.decision, ConsentActionDecision::GrantMintIntent);
+    assert_eq!(
+        evaluation
+            .grant_mint_intent
+            .expect("grant mint intent emitted")
+            .scope,
+        GrantMintIntentScope::Channel {
+            channel: "slack".to_owned()
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
 fn bundle_scope_choice_emits_rcpt4_consumable_intent() -> Result<()> {
     let card = bundle_card()?;
     let request = ConsentActionRequest::new(

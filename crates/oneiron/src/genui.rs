@@ -539,7 +539,7 @@ impl ConsentAskCard {
                         "consent_surface:widening_ineligible",
                     ));
                 }
-                if scope == ConsentScopeEscalator::AlwaysThisContact
+                if scope != ConsentScopeEscalator::JustOnce
                     && self.counterparty_ref.as_deref() == Some(request.actor.actor_ref())
                 {
                     return Ok(noop_policy_rejection(
