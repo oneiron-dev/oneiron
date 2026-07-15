@@ -38,11 +38,11 @@ use std::time::Duration;
 
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationExecutor, ConsolidationSink,
-    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
-    DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerJobExecutor,
-    DreamerRunnerStore, DreamerWakeDriver, LlmBackend, ModelId, Result, RunWakePass, Vault,
-    WakeCancellation, WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop,
-    WakeTrigger, WriteActor,
+    DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
+    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DreamerClaimAuthoringStrategy,
+    DreamerConsolidationScope, DreamerJobExecutor, DreamerRunnerStore, DreamerWakeDriver,
+    LlmBackend, ModelId, Result, RunWakePass, Vault, WakeCancellation, WakeMilestoneAuthor,
+    WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 use tokio::sync::{Semaphore, watch};
@@ -101,12 +101,14 @@ impl RestartBackoff {
     }
 }
 
-/// Upper bound on the one-shot startup scan for the next free per-pass
-/// budget index (see [`next_pass_budget_index`]). Scans every index in
-/// `[0, bound)` once (at most 65_536 point-reads via
-/// [`DreamerRunnerStore::budget`]), then returns highest-occupied + 1 —
-/// or the bound itself when the range is full. Finite work, no rescan,
-/// no hot-loop; cost is paid once per [`WakeSupervisor::run`].
+/// Dense-scan window for the one-shot startup probe of the next free
+/// per-pass budget index (see [`next_pass_budget_index`]). Every index in
+/// `[0, bound)` is probed once (at most 65_536 point-reads via
+/// [`DreamerRunnerStore::budget`]). When the window is full, a galloping
+/// probe continues past the bound until a free suffix is found (binary
+/// search between the last occupied and first free), so restart never
+/// clamps onto an already-occupied `{base}:p{bound}`. Finite work, no
+/// rescan per pass, no hot-loop; cost is paid once per [`WakeSupervisor::run`].
 const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
 
 /// Mirror of the runner store's private budget-id ceiling
@@ -131,11 +133,11 @@ pub const MAX_PASS_BUDGET_BASE_LEN: usize = MAX_RUNNER_BUDGET_ID_LEN - PASS_BUDG
 ///
 /// On each [`WakeSupervisor::run`] the supervisor probes the runner store
 /// once for existing `{budget_id}:p{n}` rows and resumes at
-/// highest-occupied + 1 (within the scan bound) so process restarts do
-/// not re-mint spent rows or land in a hole that later collides with a
-/// still-occupied higher suffix. Concurrent supervisors sharing one base
-/// id remain out of scope (single-supervisor model; share the pass gate
-/// when co-located).
+/// highest-occupied + 1 (dense-scanning `[0, bound)` then galloping past
+/// the bound when full) so process restarts do not re-mint spent rows or
+/// land in a hole that later collides with a still-occupied higher
+/// suffix. Concurrent supervisors sharing one base id remain out of
+/// scope (single-supervisor model; share the pass gate when co-located).
 #[derive(Clone)]
 pub struct WakeSupervisorConfig {
     /// Base durable runner-store budget id. Each pass appends a monotonic
@@ -148,21 +150,24 @@ pub struct WakeSupervisorConfig {
     /// Lease owner stamped on admissions and parks.
     pub lease_owner: String,
     /// This node's id (macro-scope admission verifies it against the vault
-    /// identity; must be nonzero).
+    /// identity; must be nonzero — zero is rejected by [`Self::validate`]).
     pub local_node_id: u64,
     /// Total budget units granted to each pass.
     pub budget_total_units: u64,
     /// Units reserved per admitted child job.
     pub reserve_units: u64,
-    /// Per-pass wall-clock ceiling in milliseconds.
+    /// Per-pass wall-clock ceiling in milliseconds. Must exceed
+    /// [`DREAMER_GRACEFUL_WRAP_WINDOW_MS`] so a pass is not born already
+    /// inside the finalize/hard-cut window (see [`Self::validate`]).
     pub pass_ceiling_ms: u64,
     /// Counter behavior at exhaustion. `Suspend` (fail-closed) by default.
     pub exhaustion_policy: BudgetExhaustionPolicy,
     /// Durable Started/Done milestone authorship, if the host wants it.
     pub milestones: Option<WakeMilestoneAuthor>,
     /// Restart-backoff shape for failed/panicked passes and for
-    /// zero-progress [`WakePassStop::BudgetExhausted`] (admitted == 0),
-    /// which would otherwise hot-loop under HybridTick deadline redelivery.
+    /// zero-progress [`WakePassStop::BudgetExhausted`] /
+    /// [`WakePassStop::DeadlineHardCut`] (admitted == 0), which would
+    /// otherwise hot-loop under HybridTick deadline redelivery.
     pub backoff: RestartBackoffConfig,
 }
 
@@ -187,11 +192,16 @@ impl WakeSupervisorConfig {
         }
     }
 
-    /// Rejects a base [`Self::budget_id`] whose derived `{base}:p{n}` id
-    /// could exceed the runner store's budget-id ceiling. Without this,
-    /// the startup scan treats the store's validation error as "occupied"
-    /// and admission then fails every pass, so due jobs are redelivered
-    /// and backed off indefinitely instead of failing fast.
+    /// Rejects configs that would make every pass fail or hard-cut without
+    /// durable progress (fail-fast before the tick loop):
+    ///
+    /// * a base [`Self::budget_id`] whose derived `{base}:p{n}` id could
+    ///   exceed the runner store's budget-id ceiling (startup scan would
+    ///   treat validation errors as "occupied" and spin);
+    /// * `local_node_id == 0` (admission rejects zero before mutating any
+    ///   job row, so every pass would empty-fail under HybridTick);
+    /// * `pass_ceiling_ms <= DREAMER_GRACEFUL_WRAP_WINDOW_MS` (the pass is
+    ///   born already in the finalize/hard-cut window and never admits).
     pub fn validate(&self) -> Result<()> {
         if self.budget_id.len() > MAX_PASS_BUDGET_BASE_LEN {
             return Err(oneiron::Error::InvalidConfig(format!(
@@ -199,6 +209,21 @@ impl WakeSupervisorConfig {
                  per-pass ids fit the runner-store ceiling",
                 self.budget_id.len(),
                 MAX_PASS_BUDGET_BASE_LEN
+            )));
+        }
+        if self.local_node_id == 0 {
+            return Err(oneiron::Error::InvalidConfig(
+                "wake supervisor local_node_id must be nonzero \
+                 (admission rejects zero before mutating any job)"
+                    .into(),
+            ));
+        }
+        if self.pass_ceiling_ms <= DREAMER_GRACEFUL_WRAP_WINDOW_MS {
+            return Err(oneiron::Error::InvalidConfig(format!(
+                "wake supervisor pass_ceiling_ms is {}; must exceed the \
+                 graceful wrap window ({DREAMER_GRACEFUL_WRAP_WINDOW_MS} ms) \
+                 so a pass is not born already in the finalize window",
+                self.pass_ceiling_ms,
             )));
         }
         Ok(())
@@ -337,8 +362,24 @@ pub struct WakeSupervisorReport {
 
 enum PassOutcome {
     Completed(WakePassReport),
+    /// Pass ran (or at least crossed admission setup) and returned Err.
     Failed(oneiron::Error),
+    /// Factory/`run_one_pass` setup failed before any job could be admitted.
+    /// The consumed tick must be re-driven after backoff (PushTick-only hosts
+    /// otherwise lose the wake forever).
+    PreAdmissionFailed(oneiron::Error),
     Panicked,
+}
+
+/// True when a completed pass made no durable progress and HybridTick would
+/// re-surface the same due deadline immediately — back off instead of
+/// hot-looping empty hard-cuts / budget refusals.
+fn zero_progress_should_backoff(pass: &WakePassReport) -> bool {
+    pass.admitted == 0
+        && matches!(
+            pass.stop,
+            WakePassStop::BudgetExhausted | WakePassStop::DeadlineHardCut
+        )
 }
 
 /// The in-process starter motor: waits on its [`TickSource`], runs at most
@@ -423,23 +464,33 @@ where
         }
         let mut backoff = RestartBackoff::new(config.backoff);
         // Resume the per-pass durable budget sequence after the highest
-        // occupied `{base}:p{n}` row (within the scan bound). One full
-        // bounded probe scan at run start only — not progress, not a
-        // rescan per pass — so a process restart does not re-mint spent
-        // p0/p1/… rows or advance into a later occupied suffix after
-        // filling an earlier hole (empty passes leave no budget row).
+        // occupied `{base}:p{n}` row (dense scan + gallop past the bound).
+        // One full probe at run start only — not progress, not a rescan
+        // per pass — so a process restart does not re-mint spent p0/p1/…
+        // rows or advance into a later occupied suffix after filling an
+        // earlier hole (empty passes leave no budget row).
         let mut pass_index = next_pass_budget_index(vault, &config.budget_id);
+        // PushTick drains a wake before the pass runs. A pre-admission
+        // factory failure must re-drive that same tick after backoff or
+        // the signal is gone forever under a push-only source.
+        let mut redrive_tick: Option<Tick> = None;
 
         loop {
             // ONE biased select: shutdown always beats a ready tick.
-            let tick = tokio::select! {
-                biased;
-                () = shutdown.triggered() => break,
-                tick = ticks.next_tick() => match tick {
-                    Some(tick) => tick,
-                    // Source exhausted: nothing can ever wake us again.
-                    None => break,
-                },
+            // A re-drive reuses the last tick without waiting on the source
+            // (and without blocking shutdown — checked after backoff).
+            let tick = if let Some(tick) = redrive_tick.take() {
+                tick
+            } else {
+                tokio::select! {
+                    biased;
+                    () = shutdown.triggered() => break,
+                    tick = ticks.next_tick() => match tick {
+                        Some(tick) => tick,
+                        // Source exhausted: nothing can ever wake us again.
+                        None => break,
+                    },
+                }
             };
 
             // At most ONE pass in flight, ever — even with a shared gate.
@@ -452,7 +503,6 @@ where
                 },
             };
             let pass_budget_id = durable_pass_budget_id(&config.budget_id, pass_index);
-            pass_index = pass_index.saturating_add(1);
             let outcome = run_pass_supervised(
                 vault,
                 &config,
@@ -467,20 +517,21 @@ where
 
             match outcome {
                 PassOutcome::Completed(pass) => {
+                    pass_index = pass_index.saturating_add(1);
                     report.passes_completed += 1;
                     report.jobs_completed += u64::from(pass.completed);
                     report.jobs_parked += u64::from(pass.parked);
-                    // Zero-progress BudgetExhausted (e.g. total < reserve,
-                    // or a still-shared spent row): HybridTick re-surfaces
-                    // the same due deadline immediately. Back off so we
-                    // never hot-loop when a pass cannot make durable
-                    // progress. With per-pass budget ids a spent row is
-                    // not reused, so a productive BudgetExhausted
-                    // (admitted > 0) continues straight into the next
-                    // pass and drains remaining work.
-                    if pass.stop == WakePassStop::BudgetExhausted && pass.admitted == 0 {
+                    // Zero-progress BudgetExhausted / DeadlineHardCut
+                    // (admitted == 0): HybridTick re-surfaces the same due
+                    // deadline immediately. Back off so we never hot-loop
+                    // when a pass cannot make durable progress. With
+                    // per-pass budget ids a spent row is not reused, so a
+                    // productive BudgetExhausted (admitted > 0) continues
+                    // straight into the next pass and drains remaining work.
+                    if zero_progress_should_backoff(&pass) {
                         tracing::warn!(
-                            "wake pass stopped on BudgetExhausted without admitting work; \
+                            ?pass.stop,
+                            "wake pass stopped without admitting work; \
                              backing off before the next tick"
                         );
                         if !wait_backoff(&mut shutdown, backoff.advance()).await {
@@ -491,13 +542,29 @@ where
                     }
                 }
                 PassOutcome::Failed(error) => {
+                    pass_index = pass_index.saturating_add(1);
                     report.passes_failed += 1;
                     tracing::error!(?error, "wake pass failed; backing off before the next tick");
                     if !wait_backoff(&mut shutdown, backoff.advance()).await {
                         break;
                     }
                 }
+                PassOutcome::PreAdmissionFailed(error) => {
+                    // No job row mutated and no durable budget row written —
+                    // keep pass_index, re-drive the same tick after backoff
+                    // so a PushTick-only host does not lose the wake.
+                    report.passes_failed += 1;
+                    tracing::error!(
+                        ?error,
+                        "wake pass failed before admission; backing off then re-driving tick"
+                    );
+                    if !wait_backoff(&mut shutdown, backoff.advance()).await {
+                        break;
+                    }
+                    redrive_tick = Some(tick);
+                }
                 PassOutcome::Panicked => {
+                    pass_index = pass_index.saturating_add(1);
                     report.passes_panicked += 1;
                     tracing::error!("wake pass panicked; restarting with backoff");
                     if !wait_backoff(&mut shutdown, backoff.advance()).await {
@@ -519,6 +586,10 @@ where
 /// arriving mid-pass raises the pass's [`WakeCancellation`] flag and keeps
 /// awaiting — the pass future is NEVER dropped mid-await (H-S5/R2), so a
 /// gated write or off-record close in progress always runs to its boundary.
+///
+/// Factory/`Result` failures before `run_wake_pass` surface as
+/// [`PassOutcome::PreAdmissionFailed`] so the supervisor can re-drive the
+/// tick; panics anywhere in the pass still map to [`PassOutcome::Panicked`].
 async fn run_pass_supervised<F: PassExecutorFactory>(
     vault: &Vault,
     config: &WakeSupervisorConfig,
@@ -550,12 +621,22 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
             result = &mut pass => {
                 return match result {
                     Ok(Ok(pass_report)) => PassOutcome::Completed(pass_report),
-                    Ok(Err(error)) => PassOutcome::Failed(error),
+                    Ok(Err(PassRunError::PreAdmission(error))) => {
+                        PassOutcome::PreAdmissionFailed(error)
+                    }
+                    Ok(Err(PassRunError::Failed(error))) => PassOutcome::Failed(error),
                     Err(_panic) => PassOutcome::Panicked,
                 };
             }
         }
     }
+}
+
+/// Distinguishes setup failures (no job admitted) from in-pass failures so
+/// the supervisor can re-drive a consumed push tick after backoff.
+enum PassRunError {
+    PreAdmission(oneiron::Error),
+    Failed(oneiron::Error),
 }
 
 /// Derives the durable runner-store budget id for one pass from the
@@ -582,19 +663,15 @@ fn durable_pass_budget_id(base: &str, pass_index: u64) -> String {
 }
 
 /// Next free per-pass budget index under `base` for this vault:
-/// **highest occupied suffix + 1** within the scan bound.
+/// **highest occupied suffix + 1**.
 ///
-/// Probes every `{base}:p{n}` for `n` in `[0, bound)` via
-/// [`DreamerRunnerStore::budget`] (the same existence read tests/guards
-/// already use) and returns `max(occupied) + 1`, or `0` when none are
-/// occupied. Bound: [`PASS_BUDGET_INDEX_SCAN_BOUND`] — if the highest
-/// occupied index is `bound - 1` (or the range is full), returns `bound`
-/// and never rescans. That fallback cannot spin: the scan is finite and
-/// runs once per `run` (at most 65_536 point-reads), after which the
-/// in-memory counter advances; even if `{base}:p{bound}` already exists
-/// the next pass may land on a spent row, but the loop still makes
-/// progress (or takes the zero-progress BudgetExhausted backoff) rather
-/// than walking occupied ids forever.
+/// Dense-probes every `{base}:p{n}` for `n` in `[0, bound)` via
+/// [`DreamerRunnerStore::budget`] and returns `max(occupied) + 1`, or `0`
+/// when none are occupied. If the dense window is full (resume index would
+/// be `bound`) and `{base}:p{bound}` (or later) is still occupied, a
+/// galloping probe walks upward and binary-searches the first free suffix
+/// so restart never clamps onto a spent row past the bound. Lookups stay
+/// O(log n) past the dense window; the scan still runs once per `run`.
 ///
 /// Highest-occupied (not first-absent) matters because empty passes leave
 /// no runner-store budget row: a prior run may have written `:p1` after an
@@ -610,42 +687,108 @@ fn next_pass_budget_index(vault: &Vault, base: &str) -> u64 {
     next_pass_budget_index_with_bound(vault, base, PASS_BUDGET_INDEX_SCAN_BOUND)
 }
 
-/// Same as [`next_pass_budget_index`] with an injectable scan bound (tests
-/// pin a small bound; production uses [`PASS_BUDGET_INDEX_SCAN_BOUND`]).
+/// Same as [`next_pass_budget_index`] with an injectable dense-scan bound
+/// (tests pin a small bound; production uses [`PASS_BUDGET_INDEX_SCAN_BOUND`]).
 #[must_use]
 fn next_pass_budget_index_with_bound(vault: &Vault, base: &str, bound: u64) -> u64 {
     let store = DreamerRunnerStore::new(vault);
     let mut highest_occupied: Option<u64> = None;
-    // Full bounded scan (not first-absent): holes below a later occupied
+    // Full dense scan (not first-absent): holes below a later occupied
     // row must not become the resume index. Cost: one point-read per index
     // in [0, bound) once per supervisor run — production bound is 65_536.
     for n in 0..bound {
-        let id = durable_pass_budget_id(base, n);
-        match store.budget(&id) {
-            Ok(None) => {}
-            Ok(Some(_)) => highest_occupied = Some(n),
-            // Unreadable: treat as occupied for the max so we do not
-            // resume at-or-below a row we failed to confirm is free.
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    budget_id = %id,
-                    "pass-budget index probe failed; treating as occupied"
-                );
-                highest_occupied = Some(n);
-            }
+        if pass_budget_row_occupied(&store, base, n) {
+            highest_occupied = Some(n);
         }
     }
-    match highest_occupied {
-        None => 0,
-        Some(highest) => highest.saturating_add(1).min(bound),
+    let start = match highest_occupied {
+        None => return 0,
+        Some(highest) => {
+            let next = highest.saturating_add(1);
+            // Free slot still inside the dense window (we scanned it).
+            if next < bound {
+                return next;
+            }
+            next
+        }
+    };
+    // Dense window full (or highest was bound-1): find first free at/after
+    // `start`, galloping upward then binary-searching so occupied rows past
+    // the bound never clamp the resume index.
+    first_free_pass_budget_index_from(&store, base, start)
+}
+
+/// True when `{base}:p{n}` exists or is unreadable (treat unreadable as
+/// occupied so we never re-mint a row we failed to confirm is free).
+fn pass_budget_row_occupied(store: &DreamerRunnerStore<'_>, base: &str, n: u64) -> bool {
+    let id = durable_pass_budget_id(base, n);
+    match store.budget(&id) {
+        Ok(None) => false,
+        Ok(Some(_)) => true,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                budget_id = %id,
+                "pass-budget index probe failed; treating as occupied"
+            );
+            true
+        }
     }
+}
+
+/// First free suffix at or after `start`. Gallops (doubling) to find an
+/// upper free bound, then binary-searches — O(log n) probes past a dense
+/// occupied prefix. If the entire remaining `u64` domain is occupied,
+/// returns `u64::MAX` (last possible suffix; no further free index exists).
+fn first_free_pass_budget_index_from(
+    store: &DreamerRunnerStore<'_>,
+    base: &str,
+    start: u64,
+) -> u64 {
+    if !pass_budget_row_occupied(store, base, start) {
+        return start;
+    }
+    // `lo` is occupied. Gallop until `hi` is free (or the domain ends).
+    let mut lo = start;
+    let mut step = 1u64;
+    loop {
+        let Some(hi) = lo.checked_add(step) else {
+            // No free index remains in the u64 domain.
+            return u64::MAX;
+        };
+        if !pass_budget_row_occupied(store, base, hi) {
+            return binary_search_first_free_pass_budget(store, base, lo, hi);
+        }
+        lo = hi;
+        step = step.saturating_mul(2);
+    }
+}
+
+/// Least free index in `(lo, hi]` given `lo` occupied and `hi` free.
+fn binary_search_first_free_pass_budget(
+    store: &DreamerRunnerStore<'_>,
+    base: &str,
+    mut lo: u64,
+    mut hi: u64,
+) -> u64 {
+    while lo.saturating_add(1) < hi {
+        let mid = lo + (hi - lo) / 2;
+        if pass_budget_row_occupied(store, base, mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    hi
 }
 
 /// One wake pass: fresh deadline, fresh wake-budget counter, per-pass
 /// durable budget id, per-pass executor, then `run_wake_pass`. Budget
 /// admission/settle stays entirely inside the engine call — this function
 /// never touches the runner store.
+///
+/// Factory errors surface as [`PassRunError::PreAdmission`] (no job row
+/// mutated); errors from `run_wake_pass` as [`PassRunError::Failed`].
 async fn run_one_pass<F: PassExecutorFactory>(
     vault: &Vault,
     config: &WakeSupervisorConfig,
@@ -654,7 +797,7 @@ async fn run_one_pass<F: PassExecutorFactory>(
     factory: &mut F,
     tick: &Tick,
     cancel: &WakeCancellation,
-) -> Result<WakePassReport> {
+) -> std::result::Result<WakePassReport, PassRunError> {
     let (scope, trigger) = pass_shape(tick);
     let deadline = WakePassDeadline::new(config.pass_ceiling_ms);
     // ONE wake-budget counter per pass (the LLM-4 guard), shared between
@@ -672,7 +815,9 @@ async fn run_one_pass<F: PassExecutorFactory>(
     if let Some(author) = config.milestones.clone() {
         driver = driver.with_milestone_author(author);
     }
-    let mut executor = factory.executor(&guard)?;
+    let mut executor = factory
+        .executor(&guard)
+        .map_err(PassRunError::PreAdmission)?;
     let input = RunWakePass {
         trigger,
         scope,
@@ -682,7 +827,10 @@ async fn run_one_pass<F: PassExecutorFactory>(
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
     };
-    driver.run_wake_pass(input, &mut executor, cancel).await
+    driver
+        .run_wake_pass(input, &mut executor, cancel)
+        .await
+        .map_err(PassRunError::Failed)
 }
 
 /// Maps a tick to the pass it may drive. Deadline ticks drain the lane the
@@ -745,9 +893,10 @@ mod tests {
     use crate::tick::{PushTick, WakeSignal};
     use oneiron::job_queue::{JobId, JobState};
     use oneiron::{
-        DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedJob, DreamerBudgetReserveOutcome,
-        DreamerJobExecution, DreamerRunnerStore, EnqueueDreamerConsolidationJob,
-        EnqueueDreamerJobOutcome, ReserveDreamerBudget, VaultConfig, WakeJobContext,
+        DREAMER_EXECUTOR_ERROR_PARK_REASON, DREAMER_GRACEFUL_WRAP_WINDOW_MS, DreamerAdmittedJob,
+        DreamerBudgetReserveOutcome, DreamerJobExecution, DreamerRunnerStore,
+        EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, ReserveDreamerBudget,
+        VaultConfig, WakeJobContext,
     };
 
     /// Seeds a durable budget row at `budget_id` (init-if-absent via reserve).
@@ -839,6 +988,9 @@ mod tests {
     struct TestExecFactory {
         panics_left: u32,
         factory_panics_left: u32,
+        /// Pre-admission `Err` count (not panic): surfaces as
+        /// [`PassOutcome::PreAdmissionFailed`] so the supervisor re-drives.
+        factory_errors_left: u32,
         completed_units: u64,
     }
 
@@ -849,6 +1001,12 @@ mod tests {
             if self.factory_panics_left > 0 {
                 self.factory_panics_left -= 1;
                 panic!("scripted factory panic");
+            }
+            if self.factory_errors_left > 0 {
+                self.factory_errors_left -= 1;
+                return Err(oneiron::Error::InvalidConfig(
+                    "scripted pre-admission factory error".into(),
+                ));
             }
             let panic_now = self.panics_left > 0;
             if panic_now {
@@ -882,6 +1040,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 40,
         };
         let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
@@ -925,6 +1084,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 1,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 40,
         };
         let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
@@ -991,6 +1151,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 1,
+            factory_errors_left: 0,
             completed_units: 40,
         };
         let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
@@ -1089,6 +1250,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 0,
         };
         let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
@@ -1120,6 +1282,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             // Spend 100 of the 150-unit grant so the second reservation in
             // the same pass is denied (remaining 50 < reserve 100).
             completed_units: 100,
@@ -1197,6 +1360,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 100,
         };
         let mut config = test_config();
@@ -1256,6 +1420,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 0,
         };
         let mut config = test_config();
@@ -1340,6 +1505,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 0,
         };
         let config =
@@ -1366,6 +1532,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 100,
         };
         let mut config = test_config();
@@ -1407,6 +1574,7 @@ mod tests {
         let factory = TestExecFactory {
             panics_left: 0,
             factory_panics_left: 0,
+            factory_errors_left: 0,
             completed_units: 40,
         };
         // Fresh grant large enough for one job under the restarted pass.
@@ -1445,10 +1613,10 @@ mod tests {
 
     #[test]
     fn pass_budget_index_scan_is_bounded_and_falls_back() {
-        // Highest-occupied + 1 within [0, bound). When every index in
-        // [0, bound) already has a durable row, the scan returns `bound`
-        // — not walk forever. Production uses PASS_BUDGET_INDEX_SCAN_BOUND
-        // (65536 point-reads once per run); tests pin a tiny bound.
+        // Highest-occupied + 1: dense-scan [0, bound). When every index in
+        // [0, bound) already has a durable row and :p{bound} is free, the
+        // scan returns `bound` (first free past the dense window). Production
+        // uses PASS_BUDGET_INDEX_SCAN_BOUND; tests pin a tiny bound.
         let (_dir, vault) = open_vault();
         const BOUND: u64 = 4;
         let base = "scan-bound-budget";
@@ -1465,7 +1633,7 @@ mod tests {
         assert_eq!(
             next_pass_budget_index_with_bound(&vault, base, BOUND),
             BOUND,
-            "full [0, bound) must fall back to bound (no spin)"
+            "full [0, bound) with free :p{{bound}} resumes at bound"
         );
 
         // Empty :p0 (hole) with only :p1 occupied — the r4 collision:
@@ -1491,5 +1659,276 @@ mod tests {
 
         // Production bound is the large fixed constant (inspectable).
         assert_eq!(PASS_BUDGET_INDEX_SCAN_BOUND, 65_536);
+    }
+
+    // --- r5 codex P2s -------------------------------------------------------
+
+    #[test]
+    fn config_validate_rejects_zero_local_node_id() {
+        let mut config = WakeSupervisorConfig::new("budget", "owner", 0, 100);
+        // Default ceiling is valid; only the node id is wrong.
+        let error = config.validate().expect_err("local_node_id=0 must reject");
+        assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
+
+        config.local_node_id = 1;
+        assert!(config.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn zero_local_node_id_refuses_to_run_instead_of_ticking() {
+        let (_dir, vault) = open_vault();
+        enqueue_micro(&vault, "never-touched", 10);
+        let (push, wake, hint) = PushTick::channel();
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        drop(wake);
+        drop(hint);
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            factory_errors_left: 0,
+            completed_units: 40,
+        };
+        let config = WakeSupervisorConfig::new("driver-budget", "driver-worker", 0, 10_000);
+        let supervisor = WakeSupervisor::new(&vault, push, factory, config);
+        let report = supervisor.run().await;
+        assert_eq!(
+            report,
+            WakeSupervisorReport::default(),
+            "invalid local_node_id must fail-fast with no pass"
+        );
+    }
+
+    #[test]
+    fn config_validate_rejects_pass_ceiling_at_or_below_wrap_window() {
+        let mut config = test_config();
+        config.pass_ceiling_ms = DREAMER_GRACEFUL_WRAP_WINDOW_MS;
+        let error = config
+            .validate()
+            .expect_err("ceiling == wrap window must reject");
+        assert!(matches!(error, oneiron::Error::InvalidConfig(_)));
+
+        config.pass_ceiling_ms = 0;
+        assert!(config.validate().is_err());
+
+        config.pass_ceiling_ms = DREAMER_GRACEFUL_WRAP_WINDOW_MS.saturating_sub(1);
+        assert!(config.validate().is_err());
+
+        config.pass_ceiling_ms = DREAMER_GRACEFUL_WRAP_WINDOW_MS + 1;
+        assert!(config.validate().is_ok());
+    }
+
+    /// Factory that sleeps past the finalize threshold for a
+    /// `pass_ceiling_ms = WRAP + 1` config, so Instant-elapsed hard-cuts
+    /// before any admission (defense path for runtime-induced empty cuts).
+    struct DelayedHardCutFactory {
+        completed_units: u64,
+        delay: Duration,
+    }
+
+    impl PassExecutorFactory for DelayedHardCutFactory {
+        type Exec<'p> = TestExec;
+
+        fn executor<'p>(&'p mut self, _guard: &'p BudgetGuard) -> Result<TestExec> {
+            // Advances the real Instant behind WakePassDeadline::new so the
+            // pass is already in the finalize window when run_wake_pass starts.
+            std::thread::sleep(self.delay);
+            Ok(TestExec {
+                panic_now: false,
+                completed_units: self.completed_units,
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_progress_deadline_hard_cut_backs_off_instead_of_hot_looping() {
+        // Valid ceiling (just above wrap window) + factory delay past the
+        // 1ms finalize threshold → DeadlineHardCut with admitted == 0.
+        // Without the hard-cut arm on the zero-progress backoff path,
+        // HybridTick would re-read the due deadline immediately.
+        let (_dir, vault) = open_vault();
+        let stuck = enqueue_micro(&vault, "hard-cut-stuck", 10);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        const EMPTY_PASSES: u64 = 4;
+        let ticks = ScriptedTicks {
+            ticks: vec![wake; EMPTY_PASSES as usize],
+        };
+        let factory = DelayedHardCutFactory {
+            completed_units: 40,
+            delay: Duration::from_millis(5),
+        };
+        let mut config = test_config();
+        config.pass_ceiling_ms = DREAMER_GRACEFUL_WRAP_WINDOW_MS + 1;
+        config.backoff = RestartBackoffConfig {
+            initial: Duration::from_millis(10),
+            max: Duration::from_millis(10),
+        };
+
+        let supervisor = WakeSupervisor::new(&vault, ticks, factory, config);
+        let report = supervisor.run().await;
+
+        assert_eq!(
+            report.passes_completed, EMPTY_PASSES,
+            "exactly one empty hard-cut pass per scripted tick"
+        );
+        assert_eq!(report.jobs_completed, 0, "hard-cut before admission");
+        assert_eq!(report.passes_failed, 0);
+        assert_eq!(report.passes_panicked, 0);
+        let status = DreamerRunnerStore::new(&vault)
+            .status(stuck)
+            .expect("status read")
+            .expect("status");
+        assert_eq!(status.job.state, JobState::Queued);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pre_admission_factory_error_redrives_push_tick_after_backoff() {
+        // PushTick-only: one wake is drained, factory returns Err before
+        // admission, then succeeds. Without re-drive the wake is lost and
+        // the job stays queued forever.
+        let (_dir, vault) = open_vault();
+        let job = enqueue_micro(&vault, "redrive-after-factory-err", 10);
+
+        let (push, wake, hint) = PushTick::channel();
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        // Drop producers so the source exhausts after the re-driven pass
+        // completes (no second push).
+        drop(wake);
+        drop(hint);
+
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            factory_errors_left: 1,
+            completed_units: 40,
+        };
+        let mut config = test_config();
+        config.backoff = RestartBackoffConfig {
+            initial: Duration::from_millis(10),
+            max: Duration::from_millis(10),
+        };
+        let supervisor = WakeSupervisor::new(&vault, push, factory, config);
+        let report = supervisor.run().await;
+
+        assert_eq!(
+            report.passes_failed, 1,
+            "one pre-admission factory Err counted as failed"
+        );
+        assert_eq!(
+            report.passes_completed, 1,
+            "re-driven tick must run a successful pass"
+        );
+        assert_eq!(
+            report.jobs_completed, 1,
+            "job admitted on the re-driven tick"
+        );
+        assert_eq!(report.passes_panicked, 0);
+
+        let status = DreamerRunnerStore::new(&vault)
+            .status(job)
+            .expect("status read")
+            .expect("status");
+        assert_eq!(status.job.state, JobState::Completed);
+        // Pre-admission failure must not burn a durable budget row: success
+        // lands on :p0 (pass_index kept across the re-drive).
+        let budget = DreamerRunnerStore::new(&vault)
+            .budget("driver-budget:p0")
+            .expect("budget read")
+            .expect("success pass writes :p0");
+        assert_eq!(budget.remaining_units, 10_000 - 40);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_during_preadmission_redrive_exits_cleanly() {
+        // Factory always fails pre-admission; shutdown during the re-drive
+        // backoff must exit without hanging on the next push wait.
+        let (_dir, vault) = open_vault();
+        enqueue_micro(&vault, "shutdown-redrive", 10);
+
+        let (push, wake, hint) = PushTick::channel();
+        wake.push_wake(WakeTrigger::Compaction, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        // Keep producers alive so next_tick would otherwise wait forever —
+        // the only exit is shutdown during re-drive backoff.
+        let _wake = wake;
+        let _hint = hint;
+
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            // Keep failing so every attempt is pre-admission + re-drive.
+            factory_errors_left: u32::MAX,
+            completed_units: 40,
+        };
+        let mut config = test_config();
+        config.backoff = RestartBackoffConfig {
+            initial: Duration::from_millis(50),
+            max: Duration::from_millis(50),
+        };
+        let supervisor = WakeSupervisor::new(&vault, push, factory, config);
+        let handle = supervisor.shutdown_handle();
+        // Let at least one failed attempt start its backoff, then stop.
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            handle.shutdown();
+        });
+        let report = tokio::time::timeout(Duration::from_secs(2), supervisor.run())
+            .await
+            .expect("shutdown during re-drive must not hang");
+        assert!(
+            report.passes_failed >= 1,
+            "at least one pre-admission failure before shutdown"
+        );
+        assert_eq!(report.passes_completed, 0);
+        assert_eq!(report.jobs_completed, 0);
+    }
+
+    #[test]
+    fn restart_scan_gallops_past_occupied_bound() {
+        // P2 (codex r5): when [0, bound) is full AND :p{bound}/later are
+        // occupied, clamp-to-bound reused spent rows. Gallop + binary
+        // search must resume at the first free suffix past the dense window.
+        let (_dir, vault) = open_vault();
+        const BOUND: u64 = 4;
+        let base = "gallop-past-bound";
+
+        // Occupy 0..BOUND+3 → first free is BOUND+3.
+        for n in 0..(BOUND + 3) {
+            seed_budget_row(&vault, &durable_pass_budget_id(base, n));
+        }
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault, base, BOUND),
+            BOUND + 3,
+            "must skip occupied rows past the dense-scan bound"
+        );
+
+        // Sparse occupation past bound: dense full, free gap, then occupied.
+        let (_dir2, vault2) = open_vault();
+        for n in 0..BOUND {
+            seed_budget_row(&vault2, &durable_pass_budget_id(base, n));
+        }
+        seed_budget_row(&vault2, &durable_pass_budget_id(base, BOUND));
+        seed_budget_row(&vault2, &durable_pass_budget_id(base, BOUND + 2));
+        // :p{BOUND+1} free — first free after dense+gallop.
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault2, base, BOUND),
+            BOUND + 1,
+            "binary search must land on the first free past bound"
+        );
+
+        // Only :p{bound} occupied after a full dense window.
+        let (_dir3, vault3) = open_vault();
+        for n in 0..=BOUND {
+            seed_budget_row(&vault3, &durable_pass_budget_id(base, n));
+        }
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault3, base, BOUND),
+            BOUND + 1
+        );
     }
 }
