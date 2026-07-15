@@ -1560,9 +1560,15 @@ fn resolve_equivocation_group(
     }
 
     if ready.is_empty() {
+        let mut fork = authority_fork_from_group(&group_key.0, group_key.1, group);
+        if fork_group_signer_is_revoked_in_folded_ancestry(&group_key.0, group, by_hash, states)
+            && let Some(fork) = &mut fork
+        {
+            fork.status = AuthorityForkStatus::Resolved;
+        }
         return EquivocationResolution::Resolved {
             winner: None,
-            fork: authority_fork_from_group(&group_key.0, group_key.1, group),
+            fork,
             issues,
         };
     }
@@ -1616,6 +1622,39 @@ fn resolve_equivocation_group(
         fork,
         issues,
     }
+}
+
+fn fork_group_signer_is_revoked_in_folded_ancestry(
+    signer: &AuthorityKey,
+    group: &BTreeSet<AuthorityEntryHash>,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> bool {
+    group.iter().all(|hash| {
+        let entry = &by_hash[hash];
+        let mut parent_states = entry.parent_hashes.iter().map(|parent| states.get(parent));
+        let Some(Some(first_parent)) = parent_states.next() else {
+            return false;
+        };
+        let vault_id = first_parent.vault_id;
+        let mut signer_is_revoked = first_parent
+            .roster
+            .get(signer)
+            .is_some_and(|device| device.revoked);
+        for parent_state in parent_states {
+            let Some(parent_state) = parent_state else {
+                return false;
+            };
+            if parent_state.vault_id != vault_id {
+                return false;
+            }
+            signer_is_revoked |= parent_state
+                .roster
+                .get(signer)
+                .is_some_and(|device| device.revoked);
+        }
+        signer_is_revoked
+    })
 }
 
 fn record_authority_fork(
@@ -1814,7 +1853,8 @@ fn entry_waits_on_unresolved_equivocation(
                     .iter()
                     .any(|signature| signature.public_key == *fork_key)
                 || matches!(&entry.op, AuthorityOp::RevokeDevice { revoked_key } if revoked_key == fork_key)
-                || recovery_reboot_is_entangled_with_fork(entry, fork_key)
+                || (*fork_seq < entry.seq
+                    && recovery_reboot_is_entangled_with_fork(entry, fork_key))
         })
 }
 
@@ -1825,9 +1865,9 @@ fn recovery_reboot_is_entangled_with_fork(
     if !matches!(&entry.op, AuthorityOp::RecoveryReboot { .. }) {
         return false;
     }
-    // Resolve groups involving a reboot participant first so quarantined
-    // authority cannot authorize recovery. Unrelated recovery groups do not
-    // affect this candidate's admissibility and must not deadlock each other.
+    // Resolve earlier groups involving a reboot participant first so
+    // quarantined authority cannot authorize recovery. Unrelated groups and
+    // later groups do not affect this candidate's current admissibility.
     std::iter::once(&entry.signer)
         .chain(entry.cosigns.iter())
         .any(|signature| signature.public_key == *fork_key)
