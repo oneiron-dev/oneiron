@@ -7,7 +7,7 @@ use std::task::{Context, Poll, Waker};
 
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
-    AdmitDreamerConsolidationJob, AdmitDreamerJob, DreamerAdmissionOutcome,
+    AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome,
 };
@@ -265,8 +265,11 @@ fn watermark_crash_replay_idempotent() -> Result<()> {
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
     assert_eq!(plans.len(), 1);
-    let outcomes = enqueue_partition_jobs(&store, scope, &plans, "run-1", 20)?;
-    assert!(matches!(outcomes[0], EnqueueDreamerJobOutcome::Enqueued(_)));
+    let outcomes = enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
+    assert!(matches!(
+        outcomes[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
 
     // Simulated crash BEFORE the watermark advanced: the re-run re-scans the
     // same turns and re-plans — the advisory dedupe key absorbs it.
@@ -274,13 +277,16 @@ fn watermark_crash_replay_idempotent() -> Result<()> {
     assert_eq!(watermark.last_learned_at, 0, "crash: watermark untouched");
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
-    let outcomes = enqueue_partition_jobs(&store, scope, &plans, "run-1", 30)?;
-    assert!(matches!(outcomes[0], EnqueueDreamerJobOutcome::Existing(_)));
+    let outcomes = enqueue_partition_attempts(&store, scope, &plans, "run-1", 30)?;
+    assert!(matches!(
+        outcomes[0],
+        EnqueueDreamerAttemptOutcome::Existing(_)
+    ));
     Ok(())
 }
 
 #[test]
-fn partition_jobs_dedupe_advisory() -> Result<()> {
+fn partition_attempts_dedupe_advisory() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let scope = DreamerConsolidationScope::Micro;
@@ -291,10 +297,16 @@ fn partition_jobs_dedupe_advisory() -> Result<()> {
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
 
-    let first = enqueue_partition_jobs(&store, scope, &plans, "run-1", 20)?;
-    let second = enqueue_partition_jobs(&store, scope, &plans, "run-1", 21)?;
-    assert!(matches!(first[0], EnqueueDreamerJobOutcome::Enqueued(_)));
-    assert!(matches!(second[0], EnqueueDreamerJobOutcome::Existing(_)));
+    let first = enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
+    let second = enqueue_partition_attempts(&store, scope, &plans, "run-1", 21)?;
+    assert!(matches!(
+        first[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
+    assert!(matches!(
+        second[0],
+        EnqueueDreamerAttemptOutcome::Existing(_)
+    ));
     Ok(())
 }
 
@@ -327,12 +339,15 @@ fn offset_pager_never_authority() -> Result<()> {
     let rescanned = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     assert_eq!(rescanned, turns, "stale cursor does not change selection");
     let replanned = plan_partitions(&vault, scope, &rescanned, &watermark)?;
-    let first = enqueue_partition_jobs(&store, scope, &replanned, "run-1", 20)?;
-    let second = enqueue_partition_jobs(&store, scope, &replanned, "run-1", 21)?;
-    assert!(matches!(first[0], EnqueueDreamerJobOutcome::Enqueued(_)));
+    let first = enqueue_partition_attempts(&store, scope, &replanned, "run-1", 20)?;
+    let second = enqueue_partition_attempts(&store, scope, &replanned, "run-1", 21)?;
+    assert!(matches!(
+        first[0],
+        EnqueueDreamerAttemptOutcome::Enqueued(_)
+    ));
     assert!(
-        matches!(second[0], EnqueueDreamerJobOutcome::Existing(_)),
-        "a partition scanned twice produces no duplicate jobs"
+        matches!(second[0], EnqueueDreamerAttemptOutcome::Existing(_)),
+        "a partition scanned twice produces no duplicate attempts"
     );
     Ok(())
 }
@@ -643,16 +658,16 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let watermark = read_watermark(&vault, scope)?;
     let turns = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let plans = plan_partitions(&vault, scope, &turns, &watermark)?;
-    enqueue_partition_jobs(&store, scope, &plans, "run-1", 20)?;
+    enqueue_partition_attempts(&store, scope, &plans, "run-1", 20)?;
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted,
-    )) = store.admit_next_consolidation(AdmitDreamerConsolidationJob {
+    )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope,
         local_node_id: node_id,
         claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
         claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-        admission: AdmitDreamerJob {
+        admission: AdmitDreamerAttempt {
             lease_owner: "consolidation-test".to_owned(),
             now: 21,
             budget_id: "wake".to_owned(),
@@ -662,7 +677,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         },
     })?
     else {
-        panic!("expected admitted consolidation job");
+        panic!("expected admitted consolidation attempt");
     };
 
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
@@ -683,7 +698,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
-    let mut ctx = WakeJobContext {
+    let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
         budget_id: "wake",
@@ -692,7 +707,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
         execution,
-        DreamerJobExecution::Completed {
+        DreamerAttemptExecution::Completed {
             completed_units: 120
         }
     ));
@@ -889,13 +904,13 @@ fn text_response(json: String) -> crate::LlmResponse {
     }
 }
 
-fn admitted_job_fixture<'a>(
+fn admitted_attempt_fixture<'a>(
     vault: &'a Vault,
     store: &DreamerRunnerStore<'a>,
     session_seed: u8,
     texts: &[(&str, &str)],
 ) -> Result<(
-    crate::dreamer_runner::DreamerAdmittedJob,
+    crate::dreamer_runner::DreamerAdmittedAttempt,
     Vec<EntityId>,
     EntityId,
 )> {
@@ -915,15 +930,15 @@ fn admitted_job_fixture<'a>(
     let watermark = read_watermark(vault, scope)?;
     let dirty = scan_dirty_turns(vault, scope, &watermark, 10)?;
     let plans = plan_partitions(vault, scope, &dirty, &watermark)?;
-    enqueue_partition_jobs(store, scope, &plans, "run-1", 20)?;
+    enqueue_partition_attempts(store, scope, &plans, "run-1", 20)?;
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted,
-    )) = store.admit_next_consolidation(AdmitDreamerConsolidationJob {
+    )) = store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope,
         local_node_id: node_id,
         claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
         claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-        admission: AdmitDreamerJob {
+        admission: AdmitDreamerAttempt {
             lease_owner: "consolidation-test".to_owned(),
             now: 21,
             budget_id: "wake".to_owned(),
@@ -933,7 +948,7 @@ fn admitted_job_fixture<'a>(
         },
     })?
     else {
-        panic!("expected admitted consolidation job");
+        panic!("expected admitted consolidation attempt");
     };
     Ok((*admitted, turns, conversation))
 }
@@ -942,7 +957,7 @@ fn admitted_job_fixture<'a>(
 fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_job_fixture(
+    let (admitted, turns, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x2A,
@@ -975,7 +990,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
-    let mut ctx = WakeJobContext {
+    let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
         budget_id: "wake",
@@ -995,7 +1010,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
 fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_job_fixture(
+    let (admitted, turns, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x2B,
@@ -1026,7 +1041,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
-    let mut ctx = WakeJobContext {
+    let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
         budget_id: "wake",
@@ -1317,7 +1332,7 @@ fn turn_trust_class_meet_space() {
 fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, _turns, _) = admitted_job_fixture(
+    let (admitted, _turns, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x2C,
@@ -1329,7 +1344,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     // No script: admission is denied up-front, so generate is never called.
     let backend = ScriptedBackend::new(Vec::new());
     // reserve 100 > cap 50 → the extraction step is budget-exhausted, so the
-    // step layer opens a budget trap, parks the job, and returns Trapped.
+    // step layer opens a budget trap, parks the attempt, and returns Trapped.
     let guard =
         crate::BudgetGuard::with_reserve_units("wake", 50, 100, BudgetExhaustionPolicy::Suspend);
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
@@ -1342,7 +1357,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
-    let mut ctx = WakeJobContext {
+    let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
         budget_id: "wake",
@@ -1350,24 +1365,24 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
-    // A trapped job PARKS for resume; it must NOT complete-as-done (#485-1).
+    // A trapped attempt PARKS for resume; it must NOT complete-as-done (#485-1).
     assert!(
-        matches!(execution, DreamerJobExecution::Park { .. }),
+        matches!(execution, DreamerAttemptExecution::Park { .. }),
         "trapped extraction must park, got {execution:?}"
     );
     assert!(
         sink.accepted.is_empty(),
-        "no candidates sink on a trapped job"
+        "no candidates sink on a trapped attempt"
     );
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
         0,
         "admission denied before any generate"
     );
-    // The step layer parked the job (resumable).
+    // The step layer parked the attempt (resumable).
     assert!(
-        store.parked_job(admitted.status.job.id)?.is_some(),
-        "trapped job is parked for resume"
+        store.parked_attempt(admitted.status.attempt.id)?.is_some(),
+        "trapped attempt is parked for resume"
     );
     Ok(())
 }
@@ -1376,7 +1391,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
 fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_job_fixture(
+    let (admitted, turns, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x2D,
@@ -1406,7 +1421,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
     };
-    let mut ctx = WakeJobContext {
+    let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
         budget_id: "wake",
@@ -1416,8 +1431,8 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     // Park, not Complete: the merge never decided (#485-1, #485-2).
     assert!(
-        matches!(execution, DreamerJobExecution::Park { .. }),
-        "merge-trapped job must park, got {execution:?}"
+        matches!(execution, DreamerAttemptExecution::Park { .. }),
+        "merge-trapped attempt must park, got {execution:?}"
     );
     assert!(
         sink.accepted.is_empty(),
@@ -1429,8 +1444,8 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         "only the extraction step ran; the merge was denied at admission"
     );
     assert!(
-        store.parked_job(admitted.status.job.id)?.is_some(),
-        "trapped job is parked for resume"
+        store.parked_attempt(admitted.status.attempt.id)?.is_some(),
+        "trapped attempt is parked for resume"
     );
 
     // No FALSE ContradictionLeftStanding gap was written: a fresh upsert of the
@@ -1456,7 +1471,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, _) =
-        admitted_job_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
+        admitted_attempt_fixture(&vault, &store, 0x2E, &[("user", "my name is Oleksii")])?;
     let actor = EntityId::now();
     vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred(1), 1, b"agent")?;
     let subject = EntityId::from_bytes([0x37; 16]).expect("subject");
@@ -1479,7 +1494,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
         };
-        let mut ctx = WakeJobContext {
+        let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
             budget_id: "wake",
@@ -1516,7 +1531,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
 fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (admitted, turns, _) = admitted_job_fixture(
+    let (admitted, turns, _) = admitted_attempt_fixture(
         &vault,
         &store,
         0x2F,
@@ -1550,7 +1565,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
         };
-        let mut ctx = WakeJobContext {
+        let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
             budget_id: "wake",

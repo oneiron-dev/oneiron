@@ -29,7 +29,7 @@ use crate::counterparty_contact::{
     CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_index_key,
     decode_counterparty_contact_body, decode_counterparty_contact_index_value,
 };
-use crate::dreamer_runner::DREAMER_RUNNER_JOB_KIND;
+use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -3269,7 +3269,7 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
     if !entries.iter().any(|(key, value)| {
         key.as_str().is_some_and(|key| {
             key == DREAMER_PROVENANCE_RUNNER_KEY || key == DREAMER_PROVENANCE_SURFACE_KEY
-        }) && value.as_str() == Some(DREAMER_RUNNER_JOB_KIND)
+        }) && value.as_str() == Some(DREAMER_RUNNER_ATTEMPT_KIND)
     }) {
         return None;
     }

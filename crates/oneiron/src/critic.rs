@@ -2,7 +2,7 @@
 //!
 //! OF-352 models critics as run-tree-scoped artifacts, not vault claims. This
 //! module keeps that split explicit: critiques persist in private `vault_meta`
-//! rows keyed by the Dreamer branch job, while learned reliability can be
+//! rows keyed by the Dreamer branch attempt, while learned reliability can be
 //! surfaced separately as `critic_reliability.*` claims by callers that choose
 //! to write the public calibration state.
 
@@ -12,12 +12,12 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, MAX_PREDICATE_BYTES,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::job_queue::JobId;
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
@@ -189,7 +189,8 @@ pub struct CritiqueArtifact {
     pub schema_version: u64,
     pub artifact_id: String,
     pub run_id: String,
-    pub branch_job: JobId,
+    #[serde(rename = "branch_job")] // storage key pinned pre-rename (ONE-1714)
+    pub branch_attempt: AttemptId,
     pub candidate_ref: String,
     pub lens_id: String,
     pub domain: String,
@@ -211,7 +212,7 @@ impl CritiqueArtifact {
     pub fn new(
         artifact_id: impl Into<String>,
         run_id: impl Into<String>,
-        branch_job: JobId,
+        branch_attempt: AttemptId,
         candidate_ref: impl Into<String>,
         lens: &CriticLens,
         provenance: CritiqueProvenance,
@@ -226,7 +227,7 @@ impl CritiqueArtifact {
             schema_version: CRITIQUE_ARTIFACT_SCHEMA_VERSION,
             artifact_id: artifact_id.into(),
             run_id: run_id.into(),
-            branch_job,
+            branch_attempt,
             candidate_ref: candidate_ref.into(),
             lens_id: lens.id.clone(),
             domain: lens.domain.clone(),
@@ -490,7 +491,7 @@ impl<'a> CritiqueArtifactStore<'a> {
         if artifact.out_of_scope {
             return Ok(());
         }
-        let key = critique_artifact_key(artifact.branch_job, &artifact.artifact_id)?;
+        let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
         let encoded = rmp_serde::to_vec_named(artifact)
             .map_err(|_| invalid_critic_config("critique artifact MessagePack encode failed"))?;
         let mut wtxn = self.vault.store.env.write_txn()?;
@@ -499,9 +500,13 @@ impl<'a> CritiqueArtifactStore<'a> {
         Ok(())
     }
 
-    pub fn get(&self, branch_job: JobId, artifact_id: &str) -> Result<Option<CritiqueArtifact>> {
+    pub fn get(
+        &self,
+        branch_attempt: AttemptId,
+        artifact_id: &str,
+    ) -> Result<Option<CritiqueArtifact>> {
         validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-        let key = critique_artifact_key(branch_job, artifact_id)?;
+        let key = critique_artifact_key(branch_attempt, artifact_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
         let Some(raw) = self.vault.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
@@ -509,9 +514,9 @@ impl<'a> CritiqueArtifactStore<'a> {
         decode_stored_critique_artifact(raw).map(Some)
     }
 
-    pub fn list_branch(&self, branch_job: JobId) -> Result<Vec<CritiqueArtifact>> {
+    pub fn list_branch(&self, branch_attempt: AttemptId) -> Result<Vec<CritiqueArtifact>> {
         let rtxn = self.vault.store.env.read_txn()?;
-        let prefix = critique_branch_prefix(branch_job);
+        let prefix = critique_branch_prefix(branch_attempt);
         let mut artifacts = Vec::new();
         for row in self.vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (_key, raw) = row?;
@@ -580,16 +585,16 @@ fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {
     }
 }
 
-fn critique_branch_prefix(branch_job: JobId) -> Vec<u8> {
+fn critique_branch_prefix(branch_attempt: AttemptId) -> Vec<u8> {
     let mut out = Vec::with_capacity(CRITIQUE_PRIVATE_ARTIFACT_PREFIX.len() + 16);
     out.extend_from_slice(CRITIQUE_PRIVATE_ARTIFACT_PREFIX);
-    out.extend_from_slice(branch_job.as_bytes());
+    out.extend_from_slice(branch_attempt.as_bytes());
     out
 }
 
-fn critique_artifact_key(branch_job: JobId, artifact_id: &str) -> Result<Vec<u8>> {
+fn critique_artifact_key(branch_attempt: AttemptId, artifact_id: &str) -> Result<Vec<u8>> {
     validate_identifier(artifact_id, MAX_ARTIFACT_ID_BYTES, "critique artifact id")?;
-    let mut out = critique_branch_prefix(branch_job);
+    let mut out = critique_branch_prefix(branch_attempt);
     out.extend_from_slice(&(artifact_id.len() as u16).to_be_bytes());
     out.extend_from_slice(artifact_id.as_bytes());
     Ok(out)

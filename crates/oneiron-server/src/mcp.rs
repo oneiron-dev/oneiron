@@ -293,8 +293,8 @@ pub struct McpEditToolArgs {
     pub initial_claims: Option<Vec<Value>>,
     #[serde(default)]
     pub brief: Option<Value>,
-    #[serde(default)]
-    pub job_id: Option<String>,
+    #[serde(default, rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
+    pub attempt_id: Option<String>,
     #[serde(default)]
     pub outcome: Option<String>,
     #[serde(default)]
@@ -630,7 +630,7 @@ impl McpEditToolArgs {
         validate_nonblank(
             tool,
             "job_id",
-            self.job_id
+            self.attempt_id
                 .as_deref()
                 .ok_or_else(|| McpToolValidationError::field(tool, "job_id", "is required"))?,
         )?;
@@ -708,7 +708,7 @@ impl McpEditToolArgs {
             ("data", self.data.is_some()),
             ("initial_claims", self.initial_claims.is_some()),
             ("brief", self.brief.is_some()),
-            ("job_id", self.job_id.is_some()),
+            ("job_id", self.attempt_id.is_some()),
             ("outcome", self.outcome.is_some()),
             ("summary", self.summary.is_some()),
             ("result_claims", self.result_claims.is_some()),

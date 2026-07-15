@@ -102,9 +102,9 @@ fn dump_all_dbs(vault: &Vault) -> DbDump {
         short_ids,
         short_ids_reverse,
         sync_queue,
-        job_records,
-        job_ready,
-        job_dedupe,
+        attempt_records,
+        attempt_ready,
+        attempt_dedupe,
     );
 
     let mut sync_state_rows = Vec::new();

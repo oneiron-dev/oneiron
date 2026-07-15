@@ -204,7 +204,7 @@ fn parity_encode_value(out: &mut Vec<u8>, value: &LoroValue) {
 /// Binary-only filter dropped string/container values from BOTH sides of
 /// the comparison, turning a real divergence into a false green
 /// (ONE-1152). Raw Binary payloads for decoding are [`map_get_bytes`]'s
-/// job.
+/// attempt.
 pub(crate) fn map_entries(map: &LoroMap) -> BTreeMap<String, Vec<u8>> {
     let mut entries = BTreeMap::new();
     map.for_each(|key, value| {
@@ -364,7 +364,7 @@ impl TestNode {
     /// harness fails AT THE WRITE SITE instead: a helper write Observer B
     /// has no contract reason to suppress MUST be readable back from LMDB
     /// immediately after the commit. PRESENCE-only on purpose — byte
-    /// parity stays [`assert_converged`]'s job (LWW displacement and the
+    /// parity stays [`assert_converged`]'s responsibility (LWW displacement and the
     /// ONE-1134 keep-local receipt rule legitimately leave bytes ≠ the
     /// just-written blob).
     ///

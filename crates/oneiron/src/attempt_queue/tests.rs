@@ -74,8 +74,8 @@ fn open_queue() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
 }
 
-fn enqueue(kind: &str, dedupe_key: Option<&str>, now: u64) -> EnqueueJob {
-    EnqueueJob {
+fn enqueue(kind: &str, dedupe_key: Option<&str>, now: u64) -> EnqueueAttempt {
+    EnqueueAttempt {
         kind: kind.to_owned(),
         payload: format!("payload-{now}").into_bytes(),
         dedupe_key: dedupe_key.map(str::to_owned),
@@ -87,7 +87,7 @@ fn enqueue(kind: &str, dedupe_key: Option<&str>, now: u64) -> EnqueueJob {
 fn assert_invalid_transition(err: Error, action: &'static str, state: &'static str) {
     assert!(matches!(
         err,
-        Error::InvalidJobQueueTransition {
+        Error::InvalidAttemptQueueTransition {
             action: got_action,
             state: got_state,
         } if got_action == action && got_state == state
@@ -95,20 +95,20 @@ fn assert_invalid_transition(err: Error, action: &'static str, state: &'static s
 }
 
 #[test]
-fn job_queue_enqueue_persists_required_fields() -> Result<()> {
+fn attempt_queue_enqueue_persists_required_fields() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:1"), 10))?
     else {
-        panic!("expected new job");
+        panic!("expected new attempt");
     };
 
-    let persisted = queue.get(job.id)?.expect("persisted job");
+    let persisted = queue.get(attempt.id)?.expect("persisted attempt");
     assert_eq!(persisted.kind, "claim_extraction");
     assert_eq!(persisted.payload, b"payload-10");
-    assert_eq!(persisted.state, JobState::Queued);
+    assert_eq!(persisted.state, AttemptState::Queued);
     assert_eq!(persisted.lease_owner, None);
     assert_eq!(persisted.attempt_count, 0);
     assert_eq!(persisted.backoff_until, None);
@@ -125,23 +125,23 @@ fn job_queue_enqueue_persists_required_fields() -> Result<()> {
 #[test]
 fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let mut later_input = enqueue("indexed-worker", None, 30);
     later_input.run_id = Some("run-indexed".to_owned());
     let EnqueueOutcome::Enqueued(later) = queue.enqueue(later_input)? else {
-        panic!("expected later indexed job");
+        panic!("expected later indexed attempt");
     };
     let other = queue.enqueue(enqueue("other-worker", None, 5))?;
     let mut earlier_input = enqueue("indexed-worker", None, 20);
     earlier_input.run_id = Some("run-indexed".to_owned());
     let EnqueueOutcome::Enqueued(earlier) = queue.enqueue(earlier_input)? else {
-        panic!("expected earlier indexed job");
+        panic!("expected earlier indexed attempt");
     };
     assert!(matches!(other, EnqueueOutcome::Enqueued(_)));
 
     let indexed = queue.list_run("run-indexed")?;
-    let baseline: Vec<JobRecord> = queue
+    let baseline: Vec<AttemptRecord> = queue
         .list()?
         .into_iter()
         .filter(|record| record.run_id.as_deref() == Some("run-indexed"))
@@ -157,7 +157,7 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
     assert_eq!(
         tree.roots
             .iter()
-            .map(|root| root.job_id.clone())
+            .map(|root| root.attempt_id.clone())
             .collect::<Vec<_>>(),
         vec![
             crate::entity_id::bytes_to_hex_lower(earlier.id.as_bytes()),
@@ -170,9 +170,10 @@ fn run_index_scopes_list_run_and_run_tree_without_returning_other_runs() -> Resu
 #[test]
 fn list_run_rejects_a_dangling_run_index_row() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("indexed-worker", None, 10))? else {
-        panic!("expected indexed job");
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("indexed-worker", None, 10))?
+    else {
+        panic!("expected indexed attempt");
     };
 
     // This bypasses the index-maintaining removal seam to model actual index
@@ -181,21 +182,21 @@ fn list_run_rejects_a_dangling_run_index_row() -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     vault
         .store
-        .job_records
-        .delete(&mut wtxn, job.id.as_bytes())?;
+        .attempt_records
+        .delete(&mut wtxn, attempt.id.as_bytes())?;
     wtxn.commit()?;
 
     assert!(matches!(
         queue.list_run("run-10"),
-        Err(Error::CorruptedIndex("job run index"))
+        Err(Error::CorruptedIndex("attempt run index"))
     ));
     Ok(())
 }
 
 #[test]
-fn job_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
+fn attempt_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(first) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
@@ -216,33 +217,33 @@ fn job_queue_enqueue_is_idempotent_for_dedupe_key() -> Result<()> {
 }
 
 #[test]
-fn job_queue_pause_resume_are_durable_and_idempotent() -> Result<()> {
+fn attempt_queue_pause_resume_are_durable_and_idempotent() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) =
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
     else {
         panic!("expected enqueue");
     };
 
-    let paused = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Pause,
+    let paused = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Pause,
         actor: "dashboard".to_owned(),
         note: Some("hold branch".to_owned()),
         now: 20,
     })?;
 
-    assert_eq!(paused.effect, JobInterventionEffect::Paused);
-    assert_eq!(paused.record.state, JobState::Paused);
+    assert_eq!(paused.effect, AttemptInterventionEffect::Paused);
+    assert_eq!(paused.record.state, AttemptState::Paused);
     assert_eq!(paused.record.lease_owner, None);
     assert_eq!(paused.record.events.len(), 1);
     assert_eq!(paused.record.events[0].sequence, 1);
-    assert_eq!(paused.record.events[0].kind, JobInterventionKind::Pause);
+    assert_eq!(paused.record.events[0].kind, AttemptInterventionKind::Pause);
     assert_eq!(paused.record.events[0].actor, "dashboard");
     assert_eq!(paused.record.events[0].note.as_deref(), Some("hold branch"));
     assert!(matches!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
             now: 21,
         })?,
@@ -253,69 +254,75 @@ fn job_queue_pause_resume_are_durable_and_idempotent() -> Result<()> {
     else {
         panic!("expected paused dedupe hit");
     };
-    assert_eq!(existing.id, job.id);
+    assert_eq!(existing.id, attempt.id);
 
-    let repeated_pause = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Pause,
+    let repeated_pause = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Pause,
         actor: "dashboard".to_owned(),
         note: Some("hold branch".to_owned()),
         now: 23,
     })?;
-    assert_eq!(repeated_pause.effect, JobInterventionEffect::AlreadyPaused);
+    assert_eq!(
+        repeated_pause.effect,
+        AttemptInterventionEffect::AlreadyPaused
+    );
     assert_eq!(repeated_pause.record.events.len(), 1);
     assert_eq!(repeated_pause.record.updated_at, 20);
 
-    let resumed = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Resume,
+    let resumed = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Resume,
         actor: "dashboard".to_owned(),
         note: None,
         now: 30,
     })?;
-    assert_eq!(resumed.effect, JobInterventionEffect::Resumed);
-    assert_eq!(resumed.record.state, JobState::Queued);
+    assert_eq!(resumed.effect, AttemptInterventionEffect::Resumed);
+    assert_eq!(resumed.record.state, AttemptState::Queued);
     assert_eq!(resumed.record.events.len(), 2);
     assert_eq!(resumed.record.events[1].sequence, 2);
-    assert_eq!(resumed.record.events[1].kind, JobInterventionKind::Resume);
+    assert_eq!(
+        resumed.record.events[1].kind,
+        AttemptInterventionKind::Resume
+    );
 
-    let repeated_resume = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Resume,
+    let repeated_resume = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Resume,
         actor: "dashboard".to_owned(),
         note: None,
         now: 31,
     })?;
     assert_eq!(
         repeated_resume.effect,
-        JobInterventionEffect::AlreadyResumed
+        AttemptInterventionEffect::AlreadyResumed
     );
     assert_eq!(repeated_resume.record.events.len(), 2);
     assert_eq!(repeated_resume.record.updated_at, 30);
 
-    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(reclaimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
         now: 40,
     })?
     else {
         panic!("expected resumed claim");
     };
-    assert_eq!(reclaimed.id, job.id);
+    assert_eq!(reclaimed.id, attempt.id);
     assert_eq!(reclaimed.attempt_count, 1);
 
     Ok(())
 }
 
 #[test]
-fn job_queue_pause_and_cancel_reject_leased_jobs() -> Result<()> {
+fn attempt_queue_pause_and_cancel_reject_leased_attempts() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) =
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("leased"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
@@ -324,9 +331,9 @@ fn job_queue_pause_and_cancel_reject_leased_jobs() -> Result<()> {
     };
 
     let pause = queue
-        .intervene(InterveneJob {
-            id: job.id,
-            kind: JobInterventionKind::Pause,
+        .intervene(InterveneAttempt {
+            id: attempt.id,
+            kind: AttemptInterventionKind::Pause,
             actor: "dashboard".to_owned(),
             note: None,
             now: 30,
@@ -335,9 +342,9 @@ fn job_queue_pause_and_cancel_reject_leased_jobs() -> Result<()> {
     assert_invalid_transition(pause, "pause", "leased");
 
     let cancel = queue
-        .intervene(InterveneJob {
-            id: job.id,
-            kind: JobInterventionKind::Cancel,
+        .intervene(InterveneAttempt {
+            id: attempt.id,
+            kind: AttemptInterventionKind::Cancel,
             actor: "dashboard".to_owned(),
             note: None,
             now: 31,
@@ -345,45 +352,48 @@ fn job_queue_pause_and_cancel_reject_leased_jobs() -> Result<()> {
         .unwrap_err();
     assert_invalid_transition(cancel, "cancel", "leased");
 
-    let CompleteOutcome::Completed(completed) = queue.complete(CompleteJob {
-        id: job.id,
+    let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+        id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         now: 40,
     })?
     else {
-        panic!("expected leased job to remain completable");
+        panic!("expected leased attempt to remain completable");
     };
-    assert_eq!(completed.state, JobState::Completed);
+    assert_eq!(completed.state, AttemptState::Completed);
     assert!(completed.events.is_empty());
 
     Ok(())
 }
 
 #[test]
-fn job_queue_cancel_is_terminal_and_clears_dedupe() -> Result<()> {
+fn attempt_queue_cancel_is_terminal_and_clears_dedupe() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) =
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
     else {
         panic!("expected enqueue");
     };
 
-    let cancelled = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Cancel,
+    let cancelled = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Cancel,
         actor: "dashboard".to_owned(),
         note: Some("stop branch".to_owned()),
         now: 20,
     })?;
 
-    assert_eq!(cancelled.effect, JobInterventionEffect::Cancelled);
-    assert_eq!(cancelled.record.state, JobState::Cancelled);
+    assert_eq!(cancelled.effect, AttemptInterventionEffect::Cancelled);
+    assert_eq!(cancelled.record.state, AttemptState::Cancelled);
     assert_eq!(cancelled.record.events.len(), 1);
-    assert_eq!(cancelled.record.events[0].kind, JobInterventionKind::Cancel);
+    assert_eq!(
+        cancelled.record.events[0].kind,
+        AttemptInterventionKind::Cancel
+    );
     assert!(matches!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 21,
         })?,
@@ -394,18 +404,18 @@ fn job_queue_cancel_is_terminal_and_clears_dedupe() -> Result<()> {
     else {
         panic!("expected replacement enqueue after cancelled dedupe");
     };
-    assert_ne!(replacement.id, job.id);
+    assert_ne!(replacement.id, attempt.id);
 
-    let repeated_cancel = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Cancel,
+    let repeated_cancel = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Cancel,
         actor: "dashboard".to_owned(),
         note: None,
         now: 23,
     })?;
     assert_eq!(
         repeated_cancel.effect,
-        JobInterventionEffect::AlreadyCancelled
+        AttemptInterventionEffect::AlreadyCancelled
     );
     assert_eq!(repeated_cancel.record.events.len(), 1);
     assert_eq!(repeated_cancel.record.updated_at, 20);
@@ -414,78 +424,78 @@ fn job_queue_cancel_is_terminal_and_clears_dedupe() -> Result<()> {
 }
 
 #[test]
-fn job_queue_interrupt_records_event_without_changing_claimability() -> Result<()> {
+fn attempt_queue_interrupt_records_event_without_changing_claimability() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("claim_extraction", None, 10))?
     else {
         panic!("expected enqueue");
     };
 
-    let interrupted = queue.intervene(InterveneJob {
-        id: job.id,
-        kind: JobInterventionKind::Interrupt,
+    let interrupted = queue.intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Interrupt,
         actor: "dashboard".to_owned(),
         note: Some("inject observation".to_owned()),
         now: 20,
     })?;
 
-    assert_eq!(interrupted.effect, JobInterventionEffect::Interrupted);
-    assert_eq!(interrupted.record.state, JobState::Queued);
+    assert_eq!(interrupted.effect, AttemptInterventionEffect::Interrupted);
+    assert_eq!(interrupted.record.state, AttemptState::Queued);
     assert_eq!(interrupted.record.events.len(), 1);
     assert_eq!(
         interrupted.record.events[0].kind,
-        JobInterventionKind::Interrupt
+        AttemptInterventionKind::Interrupt
     );
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 21,
     })?
     else {
-        panic!("expected interrupted queued job to remain claimable");
+        panic!("expected interrupted queued attempt to remain claimable");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
     assert_eq!(claimed.events.len(), 1);
 
     Ok(())
 }
 
 #[test]
-fn job_queue_intervention_events_keep_bounded_tail() -> Result<()> {
+fn attempt_queue_intervention_events_keep_bounded_tail() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("claim_extraction", None, 10))?
     else {
         panic!("expected enqueue");
     };
 
     let mut latest = None;
-    for index in 0..(MAX_JOB_EVENTS_PER_RECORD + 2) {
-        latest = Some(queue.intervene(InterveneJob {
-            id: job.id,
-            kind: JobInterventionKind::Interrupt,
+    for index in 0..(MAX_ATTEMPT_EVENTS_PER_RECORD + 2) {
+        latest = Some(queue.intervene(InterveneAttempt {
+            id: attempt.id,
+            kind: AttemptInterventionKind::Interrupt,
             actor: "dashboard".to_owned(),
             note: Some(format!("event-{index}")),
             now: 20 + index as u64,
         })?);
     }
     let latest = latest.expect("intervention outcome");
-    assert_eq!(latest.record.events.len(), MAX_JOB_EVENTS_PER_RECORD);
+    assert_eq!(latest.record.events.len(), MAX_ATTEMPT_EVENTS_PER_RECORD);
     assert_eq!(latest.record.events.first().unwrap().sequence, 3);
     assert_eq!(
         latest.record.events.last().unwrap().sequence,
-        (MAX_JOB_EVENTS_PER_RECORD + 2) as u64
+        (MAX_ATTEMPT_EVENTS_PER_RECORD + 2) as u64
     );
 
     Ok(())
 }
 
 #[test]
-fn job_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
+fn attempt_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
     else {
         panic!("expected enqueue");
@@ -498,20 +508,20 @@ fn job_queue_enqueue_uses_blake3_advisory_dedupe_key() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     let stored_id = vault
         .store
-        .job_dedupe
+        .attempt_dedupe
         .get(&rtxn, &index_key)?
         .expect("dedupe row");
-    assert_eq!(JobId::from_bytes(stored_id)?, job.id);
+    assert_eq!(AttemptId::from_bytes(stored_id)?, attempt.id);
 
     Ok(())
 }
 
 #[test]
-fn job_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
+fn attempt_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
     else {
         panic!("expected enqueue");
@@ -520,11 +530,11 @@ fn job_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
     let legacy_key = legacy_dedupe_index_key("claim_extraction", "same");
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.job_dedupe.delete(&mut wtxn, &blake3_key)?;
+        vault.store.attempt_dedupe.delete(&mut wtxn, &blake3_key)?;
         vault
             .store
-            .job_dedupe
-            .put(&mut wtxn, &legacy_key, job.id.as_bytes())?;
+            .attempt_dedupe
+            .put(&mut wtxn, &legacy_key, attempt.id.as_bytes())?;
         wtxn.commit()?;
     }
 
@@ -533,24 +543,30 @@ fn job_queue_enqueue_self_heals_legacy_dedupe_index_key() -> Result<()> {
     else {
         panic!("expected legacy dedupe hit");
     };
-    assert_eq!(existing.id, job.id);
+    assert_eq!(existing.id, attempt.id);
 
     let rtxn = vault.store.env.read_txn()?;
     let stored_id = vault
         .store
-        .job_dedupe
+        .attempt_dedupe
         .get(&rtxn, &blake3_key)?
         .expect("self-healed BLAKE3 dedupe row");
-    assert_eq!(JobId::from_bytes(stored_id)?, job.id);
-    assert!(vault.store.job_dedupe.get(&rtxn, &legacy_key)?.is_none());
+    assert_eq!(AttemptId::from_bytes(stored_id)?, attempt.id);
+    assert!(
+        vault
+            .store
+            .attempt_dedupe
+            .get(&rtxn, &legacy_key)?
+            .is_none()
+    );
 
     Ok(())
 }
 
 #[test]
-fn job_queue_dedupe_key_is_scoped_by_kind() -> Result<()> {
+fn attempt_queue_dedupe_key_is_scoped_by_kind() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(first) =
         queue.enqueue(enqueue("claim_extraction", Some("same"), 10))?
@@ -576,12 +592,12 @@ fn job_queue_dedupe_key_is_scoped_by_kind() -> Result<()> {
 }
 
 #[test]
-fn job_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
+fn attempt_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 10,
         })?,
@@ -595,33 +611,33 @@ fn job_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
         panic!("expected second enqueue");
     };
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 30,
     })?
     else {
-        panic!("expected claimed job");
+        panic!("expected claimed attempt");
     };
     assert_eq!(claimed.id, first.id);
-    assert_eq!(claimed.state, JobState::Leased);
+    assert_eq!(claimed.state, AttemptState::Leased);
     assert_eq!(claimed.lease_owner.as_deref(), Some("worker-a"));
     assert_eq!(claimed.attempt_count, 1);
     assert_eq!(claimed.updated_at, 30);
 
-    let persisted = queue.get(first.id)?.expect("claimed job persisted");
+    let persisted = queue.get(first.id)?.expect("claimed attempt persisted");
     assert_eq!(persisted, claimed);
 
-    let ClaimOutcome::Claimed(next) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(next) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
         now: 40,
     })?
     else {
-        panic!("expected second claimed job");
+        panic!("expected second claimed attempt");
     };
     assert_eq!(next.id, second.id);
 
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-c".to_owned(),
             now: 50,
         })?,
@@ -632,30 +648,30 @@ fn job_queue_claim_is_atomic_and_returns_typed_states() -> Result<()> {
 }
 
 #[test]
-fn job_queue_claim_kind_skips_other_ready_jobs_without_leasing_them() -> Result<()> {
+fn attempt_queue_claim_kind_skips_other_ready_attempts_without_leasing_them() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(other) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:other"), 10))?
     else {
-        panic!("expected other job enqueue");
+        panic!("expected other attempt enqueue");
     };
     let EnqueueOutcome::Enqueued(companion) =
         queue.enqueue(enqueue("companion_task", Some("companion:task"), 11))?
     else {
-        panic!("expected companion job enqueue");
+        panic!("expected companion attempt enqueue");
     };
 
     let ClaimOutcome::Claimed(claimed_companion) = queue.claim_kind(
         "companion_task",
-        ClaimJob {
+        ClaimAttempt {
             lease_owner: "companion-worker".to_owned(),
             now: 20,
         },
     )?
     else {
-        panic!("expected companion job claim");
+        panic!("expected companion attempt claim");
     };
     assert_eq!(claimed_companion.id, companion.id);
     assert_eq!(claimed_companion.kind, "companion_task");
@@ -664,11 +680,11 @@ fn job_queue_claim_kind_skips_other_ready_jobs_without_leasing_them() -> Result<
         Some("companion-worker")
     );
 
-    let persisted_other = queue.get(other.id)?.expect("other job persisted");
-    assert_eq!(persisted_other.state, JobState::Queued);
+    let persisted_other = queue.get(other.id)?.expect("other attempt persisted");
+    assert_eq!(persisted_other.state, AttemptState::Queued);
     assert_eq!(persisted_other.lease_owner, None);
 
-    let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimAttempt {
         lease_owner: "generic-worker".to_owned(),
         now: 21,
     })?
@@ -683,14 +699,14 @@ fn job_queue_claim_kind_skips_other_ready_jobs_without_leasing_them() -> Result<
 }
 
 #[test]
-fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result<()> {
+fn attempt_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(other) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:stale-skip"), 10))?
     else {
-        panic!("expected other job enqueue");
+        panic!("expected other attempt enqueue");
     };
     {
         let mut stale_record = other.clone();
@@ -700,7 +716,7 @@ fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
+            .attempt_records
             .put(&mut wtxn, other.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
     }
@@ -708,7 +724,7 @@ fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result
     assert_eq!(
         queue.claim_kind(
             "companion_task",
-            ClaimJob {
+            ClaimAttempt {
                 lease_owner: "companion-worker".to_owned(),
                 now: 20,
             },
@@ -716,12 +732,12 @@ fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result
         ClaimOutcome::Empty
     );
 
-    let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed_other) = queue.claim(ClaimAttempt {
         lease_owner: "generic-worker".to_owned(),
         now: 21,
     })?
     else {
-        panic!("expected skipped stale-ready job to remain claimable");
+        panic!("expected skipped stale-ready attempt to remain claimable");
     };
     assert_eq!(claimed_other.id, other.id);
     assert_eq!(claimed_other.kind, "claim_extraction");
@@ -732,23 +748,24 @@ fn job_queue_claim_kind_preserves_stale_ready_index_for_skipped_kind() -> Result
 }
 
 #[test]
-fn job_queue_claim_treats_non_backoff_jobs_as_immediately_ready() -> Result<()> {
+fn attempt_queue_claim_treats_non_backoff_attempts_as_immediately_ready() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("future-created", None, 1_000))?
+    let EnqueueOutcome::Enqueued(attempt) =
+        queue.enqueue(enqueue("future-created", None, 1_000))?
     else {
         panic!("expected enqueue");
     };
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 1,
     })?
     else {
-        panic!("expected future-created job without backoff to be claimable");
+        panic!("expected future-created attempt without backoff to be claimable");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
     assert_eq!(claimed.created_at, 1_000);
     assert_eq!(claimed.backoff_until, None);
     assert_eq!(claimed.attempt_count, 1);
@@ -757,37 +774,37 @@ fn job_queue_claim_treats_non_backoff_jobs_as_immediately_ready() -> Result<()> 
 }
 
 #[test]
-fn job_queue_claim_cleans_ready_key_id_mismatch_and_continues() -> Result<()> {
+fn attempt_queue_claim_cleans_ready_key_id_mismatch_and_continues() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("first", None, 10))? else {
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("first", None, 10))? else {
         panic!("expected enqueue");
     };
-    let stale_ready_key = ready_key(0, JobId { bytes: [0; 16] });
+    let stale_ready_key = ready_key(0, AttemptId { bytes: [0; 16] });
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_ready
-            .put(&mut wtxn, &stale_ready_key, job.id.as_bytes())?;
+            .attempt_ready
+            .put(&mut wtxn, &stale_ready_key, attempt.id.as_bytes())?;
         wtxn.commit()?;
     }
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected claim past stale ready row");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
     let rtxn = vault.store.env.read_txn()?;
     assert!(
         vault
             .store
-            .job_ready
+            .attempt_ready
             .get(&rtxn, &stale_ready_key)?
             .is_none()
     );
@@ -796,43 +813,49 @@ fn job_queue_claim_cleans_ready_key_id_mismatch_and_continues() -> Result<()> {
 }
 
 #[test]
-fn job_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()> {
+fn attempt_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("first", None, 10))? else {
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("first", None, 10))? else {
         panic!("expected enqueue");
     };
     let malformed_key = vec![0];
-    let malformed_value_key = ready_key(0, JobId { bytes: [0; 16] });
+    let malformed_value_key = ready_key(0, AttemptId { bytes: [0; 16] });
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_ready
-            .put(&mut wtxn, &malformed_key, job.id.as_bytes())?;
+            .attempt_ready
+            .put(&mut wtxn, &malformed_key, attempt.id.as_bytes())?;
         vault
             .store
-            .job_ready
+            .attempt_ready
             .put(&mut wtxn, &malformed_value_key, b"bad")?;
         wtxn.commit()?;
     }
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected claim past malformed ready rows");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
     let rtxn = vault.store.env.read_txn()?;
-    assert!(vault.store.job_ready.get(&rtxn, &malformed_key)?.is_none());
     assert!(
         vault
             .store
-            .job_ready
+            .attempt_ready
+            .get(&rtxn, &malformed_key)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .attempt_ready
             .get(&rtxn, &malformed_value_key)?
             .is_none()
     );
@@ -841,19 +864,19 @@ fn job_queue_claim_cleans_malformed_ready_rows_and_continues() -> Result<()> {
 }
 
 #[test]
-fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> Result<()> {
+fn attempt_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:complete"), 10))?
     else {
         panic!("expected enqueue");
     };
 
     let queued_complete = queue
-        .complete(CompleteJob {
-            id: job.id,
+        .complete(CompleteAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             now: 11,
@@ -861,18 +884,18 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
         .unwrap_err();
     assert_invalid_transition(queued_complete, "complete", "queued");
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
-        panic!("expected claimed job");
+        panic!("expected claimed attempt");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
     let wrong_owner_complete = queue
-        .complete(CompleteJob {
-            id: job.id,
+        .complete(CompleteAttempt {
+            id: attempt.id,
             lease_owner: "worker-b".to_owned(),
             attempt_count: claimed.attempt_count,
             now: 25,
@@ -880,8 +903,8 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
         .unwrap_err();
     assert_invalid_transition(wrong_owner_complete, "complete", "leased_by_other");
 
-    let CompleteOutcome::Completed(completed) = queue.complete(CompleteJob {
-        id: job.id,
+    let CompleteOutcome::Completed(completed) = queue.complete(CompleteAttempt {
+        id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         now: 30,
@@ -889,7 +912,7 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
     else {
         panic!("expected complete");
     };
-    assert_eq!(completed.state, JobState::Completed);
+    assert_eq!(completed.state, AttemptState::Completed);
     assert_eq!(completed.lease_owner, None);
     assert_eq!(completed.backoff_until, None);
     assert_eq!(completed.last_error, None);
@@ -898,8 +921,8 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
     assert_eq!(completed.dedupe_key.as_deref(), Some("turn:complete"));
     assert_eq!(completed.updated_at, 30);
 
-    let CompleteOutcome::AlreadyCompleted(again) = queue.complete(CompleteJob {
-        id: job.id,
+    let CompleteOutcome::AlreadyCompleted(again) = queue.complete(CompleteAttempt {
+        id: attempt.id,
         lease_owner: String::new(),
         attempt_count: 0,
         now: 40,
@@ -910,8 +933,8 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
     assert_eq!(again.updated_at, 30);
 
     let completed_fail = queue
-        .fail(FailJob {
-            id: job.id,
+        .fail(FailAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             reason: "boom".to_owned(),
@@ -921,8 +944,8 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
     assert_invalid_transition(completed_fail, "fail", "completed");
 
     let completed_retry = queue
-        .retry(RetryJob {
-            id: job.id,
+        .retry(RetryAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             backoff_until: 60,
@@ -937,25 +960,25 @@ fn job_queue_transitions_complete_is_idempotent_and_rejects_invalid_states() -> 
     else {
         panic!("terminal dedupe key should be reusable");
     };
-    assert_ne!(replacement.id, job.id);
+    assert_ne!(replacement.id, attempt.id);
 
     Ok(())
 }
 
 #[test]
-fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Result<()> {
+fn attempt_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:fail"), 10))?
     else {
         panic!("expected enqueue");
     };
 
     let queued_fail = queue
-        .fail(FailJob {
-            id: job.id,
+        .fail(FailAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             reason: "boom".to_owned(),
@@ -964,18 +987,18 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
         .unwrap_err();
     assert_invalid_transition(queued_fail, "fail", "queued");
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
-        panic!("expected claimed job");
+        panic!("expected claimed attempt");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
     let wrong_owner_fail = queue
-        .fail(FailJob {
-            id: job.id,
+        .fail(FailAttempt {
+            id: attempt.id,
             lease_owner: "worker-b".to_owned(),
             attempt_count: claimed.attempt_count,
             reason: "fatal".to_owned(),
@@ -984,8 +1007,8 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
         .unwrap_err();
     assert_invalid_transition(wrong_owner_fail, "fail", "leased_by_other");
 
-    let FailOutcome::Failed(failed) = queue.fail(FailJob {
-        id: job.id,
+    let FailOutcome::Failed(failed) = queue.fail(FailAttempt {
+        id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         reason: "fatal".to_owned(),
@@ -994,7 +1017,7 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
     else {
         panic!("expected fail");
     };
-    assert_eq!(failed.state, JobState::Failed);
+    assert_eq!(failed.state, AttemptState::Failed);
     assert_eq!(failed.lease_owner, None);
     assert_eq!(failed.backoff_until, None);
     assert_eq!(failed.last_error.as_deref(), Some("fatal"));
@@ -1002,8 +1025,8 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
     assert_eq!(failed.run_id.as_deref(), Some("run-10"));
     assert_eq!(failed.dedupe_key.as_deref(), Some("turn:fail"));
 
-    let FailOutcome::AlreadyFailed(again) = queue.fail(FailJob {
-        id: job.id,
+    let FailOutcome::AlreadyFailed(again) = queue.fail(FailAttempt {
+        id: attempt.id,
         lease_owner: String::new(),
         attempt_count: 0,
         reason: "x".repeat(MAX_FAILURE_REASON_LEN + 1),
@@ -1016,8 +1039,8 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
     assert_eq!(again.last_error.as_deref(), Some("fatal"));
 
     let failed_complete = queue
-        .complete(CompleteJob {
-            id: job.id,
+        .complete(CompleteAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: 0,
             now: 50,
@@ -1030,30 +1053,30 @@ fn job_queue_transitions_fail_is_idempotent_and_rejects_invalid_states() -> Resu
     else {
         panic!("terminal dedupe key should be reusable");
     };
-    assert_ne!(replacement.id, job.id);
+    assert_ne!(replacement.id, attempt.id);
 
     Ok(())
 }
 
 #[test]
-fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
-    fn lease_second_attempt(queue: &JobQueue<'_>, dedupe_key: &str) -> Result<JobRecord> {
-        let EnqueueOutcome::Enqueued(job) =
+fn attempt_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
+    fn lease_second_attempt(queue: &AttemptQueue<'_>, dedupe_key: &str) -> Result<AttemptRecord> {
+        let EnqueueOutcome::Enqueued(attempt) =
             queue.enqueue(enqueue("claim_extraction", Some(dedupe_key), 10))?
         else {
             panic!("expected enqueue");
         };
-        let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimJob {
+        let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
         })?
         else {
             panic!("expected first attempt");
         };
-        assert_eq!(first_attempt.id, job.id);
+        assert_eq!(first_attempt.id, attempt.id);
 
-        let RetryOutcome::Retried(_) = queue.retry(RetryJob {
-            id: job.id,
+        let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: first_attempt.attempt_count,
             backoff_until: 30,
@@ -1061,14 +1084,14 @@ fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
             now: 25,
         })?;
 
-        let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+        let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 30,
         })?
         else {
             panic!("expected second attempt");
         };
-        assert_eq!(second_attempt.id, job.id);
+        assert_eq!(second_attempt.id, attempt.id);
         assert_eq!(
             second_attempt.attempt_count,
             first_attempt.attempt_count + 1
@@ -1077,11 +1100,11 @@ fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
     }
 
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let complete_attempt = lease_second_attempt(&queue, "stale-complete")?;
     let stale_complete = queue
-        .complete(CompleteJob {
+        .complete(CompleteAttempt {
             id: complete_attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: complete_attempt.attempt_count - 1,
@@ -1092,7 +1115,7 @@ fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
 
     let fail_attempt = lease_second_attempt(&queue, "stale-fail")?;
     let stale_fail = queue
-        .fail(FailJob {
+        .fail(FailAttempt {
             id: fail_attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: fail_attempt.attempt_count - 1,
@@ -1104,7 +1127,7 @@ fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
 
     let retry_attempt = lease_second_attempt(&queue, "stale-retry")?;
     let stale_retry = queue
-        .retry(RetryJob {
+        .retry(RetryAttempt {
             id: retry_attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: retry_attempt.attempt_count - 1,
@@ -1119,16 +1142,16 @@ fn job_queue_transitions_reject_stale_attempt_tokens() -> Result<()> {
 }
 
 #[test]
-fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
+fn attempt_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:empty-fail"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(mut claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(mut claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
@@ -1137,8 +1160,8 @@ fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
     };
 
     let err = queue
-        .fail(FailJob {
-            id: job.id,
+        .fail(FailAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: claimed.attempt_count,
             reason: String::new(),
@@ -1147,10 +1170,10 @@ fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
     ));
 
-    claimed.state = JobState::Failed;
+    claimed.state = AttemptState::Failed;
     claimed.lease_owner = None;
     claimed.last_error = Some(String::new());
     let encoded = encode_record(&claimed)?;
@@ -1158,7 +1181,7 @@ fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
+            .attempt_records
             .put(&mut wtxn, claimed.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
     }
@@ -1166,36 +1189,36 @@ fn job_queue_transitions_reject_empty_failure_reasons() -> Result<()> {
     let err = queue.get(claimed.id).unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidJobQueueRecord(ERR_FAILURE_REASON_EMPTY)
+        Error::InvalidAttemptQueueRecord(ERR_FAILURE_REASON_EMPTY)
     ));
 
     Ok(())
 }
 
 #[test]
-fn job_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Result<()> {
+fn attempt_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:retry"), 10))?
     else {
         panic!("expected enqueue");
     };
 
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
-        panic!("expected claimed job");
+        panic!("expected claimed attempt");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
     assert_eq!(claimed.attempt_count, 1);
 
     let wrong_owner_retry = queue
-        .retry(RetryJob {
-            id: job.id,
+        .retry(RetryAttempt {
+            id: attempt.id,
             lease_owner: "worker-b".to_owned(),
             attempt_count: claimed.attempt_count,
             backoff_until: 100,
@@ -1205,16 +1228,16 @@ fn job_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Res
         .unwrap_err();
     assert_invalid_transition(wrong_owner_retry, "retry", "leased_by_other");
 
-    let RetryOutcome::Retried(retried) = queue.retry(RetryJob {
-        id: job.id,
+    let RetryOutcome::Retried(retried) = queue.retry(RetryAttempt {
+        id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         backoff_until: 100,
         last_error: Some("rate limited".to_owned()),
         now: 30,
     })?;
-    assert_eq!(retried.id, job.id);
-    assert_eq!(retried.state, JobState::Queued);
+    assert_eq!(retried.id, attempt.id);
+    assert_eq!(retried.state, AttemptState::Queued);
     assert_eq!(retried.lease_owner, None);
     assert_eq!(retried.attempt_count, 1);
     assert_eq!(retried.backoff_until, Some(100));
@@ -1228,24 +1251,24 @@ fn job_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Res
     else {
         panic!("pending dedupe key should coalesce");
     };
-    assert_eq!(duplicate_pending.id, job.id);
+    assert_eq!(duplicate_pending.id, attempt.id);
 
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
             now: 99,
         })?,
         ClaimOutcome::Empty
     );
 
-    let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
         now: 100,
     })?
     else {
         panic!("expected claim after backoff");
     };
-    assert_eq!(second_attempt.id, job.id);
+    assert_eq!(second_attempt.id, attempt.id);
     assert_eq!(second_attempt.attempt_count, 2);
     assert_eq!(second_attempt.backoff_until, None);
     assert_eq!(second_attempt.last_error.as_deref(), Some("rate limited"));
@@ -1257,9 +1280,9 @@ fn job_queue_transitions_retry_preserves_payload_provenance_and_backoff() -> Res
 }
 
 #[test]
-fn job_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
+fn attempt_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
     let EnqueueOutcome::Enqueued(first) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:missing"), 10))?
@@ -1275,17 +1298,17 @@ fn job_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
+            .attempt_records
             .delete(&mut wtxn, first.id.as_bytes())?;
         vault
             .store
-            .job_records
+            .attempt_records
             .delete(&mut wtxn, second.id.as_bytes())?;
         wtxn.commit()?;
     }
 
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
         })?,
@@ -1296,12 +1319,12 @@ fn job_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
     let second_index_key = dedupe_index_key("claim_extraction", "turn:missing-too");
     {
         let rtxn = vault.store.env.read_txn()?;
-        assert!(vault.store.job_ready.iter(&rtxn)?.next().is_none());
-        assert!(vault.store.job_dedupe.get(&rtxn, &index_key)?.is_none());
+        assert!(vault.store.attempt_ready.iter(&rtxn)?.next().is_none());
+        assert!(vault.store.attempt_dedupe.get(&rtxn, &index_key)?.is_none());
         assert!(
             vault
                 .store
-                .job_dedupe
+                .attempt_dedupe
                 .get(&rtxn, &second_index_key)?
                 .is_none()
         );
@@ -1318,82 +1341,82 @@ fn job_queue_claim_cleans_missing_record_ready_and_dedupe() -> Result<()> {
 }
 
 #[test]
-fn job_queue_decode_fails_closed_on_record_key_id_mismatch() -> Result<()> {
+fn attempt_queue_decode_fails_closed_on_record_key_id_mismatch() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("claim_extraction", None, 10))?
     else {
         panic!("expected enqueue");
     };
-    let mut corrupt = job.clone();
-    corrupt.id = JobId::now();
+    let mut corrupt = attempt.clone();
+    corrupt.id = AttemptId::now();
     let encoded = encode_record(&corrupt)?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
-            .put(&mut wtxn, job.id.as_bytes(), &encoded)?;
+            .attempt_records
+            .put(&mut wtxn, attempt.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
     }
 
     let err = queue
-        .claim(ClaimJob {
+        .claim(ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
         })
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidJobQueueRecord("job_records key/id mismatch")
+        Error::InvalidAttemptQueueRecord("job_records key/id mismatch")
     ));
 
     Ok(())
 }
 
 #[test]
-fn job_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<()> {
+fn attempt_queue_decode_fails_closed_on_lease_owner_state_mismatch() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) = queue.enqueue(enqueue("claim_extraction", None, 10))?
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(enqueue("claim_extraction", None, 10))?
     else {
         panic!("expected enqueue");
     };
-    let mut corrupt = job.clone();
-    corrupt.state = JobState::Leased;
+    let mut corrupt = attempt.clone();
+    corrupt.state = AttemptState::Leased;
     corrupt.lease_owner = None;
     let encoded = encode_record(&corrupt)?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
-            .put(&mut wtxn, job.id.as_bytes(), &encoded)?;
+            .attempt_records
+            .put(&mut wtxn, attempt.id.as_bytes(), &encoded)?;
         wtxn.commit()?;
     }
 
-    let err = queue.get(job.id).unwrap_err();
+    let err = queue.get(attempt.id).unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidJobQueueRecord("leased job must have a lease owner")
+        Error::InvalidAttemptQueueRecord("leased attempt must have a lease owner")
     ));
 
     Ok(())
 }
 
 #[test]
-fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
+fn attempt_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:stale"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(first_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
@@ -1401,7 +1424,7 @@ fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
         panic!("expected first claim");
     };
 
-    let report = queue.cleanup_leases(CleanupJobLeases {
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
         now: 40,
         lease_timeout_secs: 10,
     })?;
@@ -1409,20 +1432,20 @@ fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
     assert_eq!(report.running, 0);
     assert_eq!(report.stale_requeued, 1);
     assert_eq!(
-        report.retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+        report.retry_reason_count(AttemptQueueRetryReason::LeaseTimeout),
         1
     );
 
-    let requeued = queue.get(job.id)?.expect("requeued job");
-    assert_eq!(requeued.state, JobState::Queued);
+    let requeued = queue.get(attempt.id)?.expect("requeued attempt");
+    assert_eq!(requeued.state, AttemptState::Queued);
     assert_eq!(requeued.lease_owner, None);
     assert_eq!(requeued.attempt_count, first_attempt.attempt_count);
     assert_eq!(requeued.last_error.as_deref(), Some("lease_timeout"));
     assert_eq!(requeued.updated_at, 40);
 
     let stale_complete = queue
-        .complete(CompleteJob {
-            id: job.id,
+        .complete(CompleteAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: first_attempt.attempt_count,
             now: 41,
@@ -1430,14 +1453,14 @@ fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
         .unwrap_err();
     assert_invalid_transition(stale_complete, "complete", "queued");
 
-    let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(second_attempt) = queue.claim(ClaimAttempt {
         lease_owner: "worker-b".to_owned(),
         now: 42,
     })?
     else {
         panic!("expected reclaim through claim");
     };
-    assert_eq!(second_attempt.id, job.id);
+    assert_eq!(second_attempt.id, attempt.id);
     assert_eq!(second_attempt.lease_owner.as_deref(), Some("worker-b"));
     assert_eq!(
         second_attempt.attempt_count,
@@ -1448,16 +1471,16 @@ fn job_queue_cleanup_recovers_stale_leases_through_claim() -> Result<()> {
 }
 
 #[test]
-fn job_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> {
+fn attempt_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:zero"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
@@ -1466,29 +1489,29 @@ fn job_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> {
     };
 
     let err = queue
-        .cleanup_leases(CleanupJobLeases {
+        .cleanup_leases(CleanupAttemptLeases {
             now: 20,
             lease_timeout_secs: 0,
         })
         .unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidJobQueueRecord(ERR_LEASE_TIMEOUT_ZERO)
+        Error::InvalidAttemptQueueRecord(ERR_LEASE_TIMEOUT_ZERO)
     ));
 
-    let persisted = queue.get(job.id)?.expect("leased job");
-    assert_eq!(persisted.state, JobState::Leased);
+    let persisted = queue.get(attempt.id)?.expect("leased attempt");
+    assert_eq!(persisted.state, AttemptState::Leased);
     assert_eq!(persisted.lease_owner.as_deref(), Some("worker-a"));
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
             now: 21,
         })?,
         ClaimOutcome::Empty
     );
     assert!(matches!(
-        queue.complete(CompleteJob {
-            id: job.id,
+        queue.complete(CompleteAttempt {
+            id: attempt.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: claimed.attempt_count,
             now: 22,
@@ -1500,24 +1523,24 @@ fn job_queue_cleanup_rejects_zero_timeout_without_requeuing() -> Result<()> {
 }
 
 #[test]
-fn job_queue_cleanup_does_not_duplicate_completed_jobs() -> Result<()> {
+fn attempt_queue_cleanup_does_not_duplicate_completed_attempts() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:done"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected claim");
     };
-    let CompleteOutcome::Completed(_) = queue.complete(CompleteJob {
-        id: job.id,
+    let CompleteOutcome::Completed(_) = queue.complete(CompleteAttempt {
+        id: attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: claimed.attempt_count,
         now: 30,
@@ -1526,7 +1549,7 @@ fn job_queue_cleanup_does_not_duplicate_completed_jobs() -> Result<()> {
         panic!("expected complete");
     };
 
-    let report = queue.cleanup_leases(CleanupJobLeases {
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
         now: 1_000,
         lease_timeout_secs: 1,
     })?;
@@ -1535,7 +1558,7 @@ fn job_queue_cleanup_does_not_duplicate_completed_jobs() -> Result<()> {
     assert_eq!(report.running, 0);
     assert_eq!(report.stale_requeued, 0);
     assert_eq!(
-        queue.claim(ClaimJob {
+        queue.claim(ClaimAttempt {
             lease_owner: "worker-b".to_owned(),
             now: 1_001,
         })?,
@@ -1546,24 +1569,24 @@ fn job_queue_cleanup_does_not_duplicate_completed_jobs() -> Result<()> {
 }
 
 #[test]
-fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
+fn attempt_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(backoff_job) =
+    let EnqueueOutcome::Enqueued(backoff_attempt) =
         queue.enqueue(enqueue("backoff", Some("turn:backoff"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(backoff_claim) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(backoff_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-a".to_owned(),
         now: 11,
     })?
     else {
         panic!("expected claim");
     };
-    let RetryOutcome::Retried(_) = queue.retry(RetryJob {
-        id: backoff_job.id,
+    let RetryOutcome::Retried(_) = queue.retry(RetryAttempt {
+        id: backoff_attempt.id,
         lease_owner: "worker-a".to_owned(),
         attempt_count: backoff_claim.attempt_count,
         backoff_until: 80,
@@ -1571,11 +1594,11 @@ fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         now: 12,
     })?;
     let InterveneOutcome {
-        effect: JobInterventionEffect::Paused,
+        effect: AttemptInterventionEffect::Paused,
         ..
-    } = queue.intervene(InterveneJob {
-        id: backoff_job.id,
-        kind: JobInterventionKind::Pause,
+    } = queue.intervene(InterveneAttempt {
+        id: backoff_attempt.id,
+        kind: AttemptInterventionKind::Pause,
         actor: "cleanup-test".to_owned(),
         note: None,
         now: 13,
@@ -1584,49 +1607,49 @@ fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         panic!("expected pause");
     };
 
-    let EnqueueOutcome::Enqueued(stale_job) =
+    let EnqueueOutcome::Enqueued(stale_attempt) =
         queue.enqueue(enqueue("stale", Some("turn:stale"), 13))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(stale_claim) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(stale_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-stale".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected stale claim");
     };
-    assert_eq!(stale_claim.id, stale_job.id);
+    assert_eq!(stale_claim.id, stale_attempt.id);
 
-    let EnqueueOutcome::Enqueued(live_job) =
+    let EnqueueOutcome::Enqueued(live_attempt) =
         queue.enqueue(enqueue("live", Some("turn:live"), 21))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(live_claim) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(live_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-live".to_owned(),
         now: 30,
     })?
     else {
         panic!("expected live claim");
     };
-    assert_eq!(live_claim.id, live_job.id);
+    assert_eq!(live_claim.id, live_attempt.id);
 
-    let EnqueueOutcome::Enqueued(done_job) =
+    let EnqueueOutcome::Enqueued(done_attempt) =
         queue.enqueue(enqueue("done", Some("turn:done"), 31))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(done_claim) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(done_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-done".to_owned(),
         now: 32,
     })?
     else {
         panic!("expected done claim");
     };
-    assert_eq!(done_claim.id, done_job.id);
-    let CompleteOutcome::Completed(_) = queue.complete(CompleteJob {
-        id: done_job.id,
+    assert_eq!(done_claim.id, done_attempt.id);
+    let CompleteOutcome::Completed(_) = queue.complete(CompleteAttempt {
+        id: done_attempt.id,
         lease_owner: "worker-done".to_owned(),
         attempt_count: done_claim.attempt_count,
         now: 33,
@@ -1635,21 +1658,21 @@ fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         panic!("expected complete");
     };
 
-    let EnqueueOutcome::Enqueued(failed_job) =
+    let EnqueueOutcome::Enqueued(failed_attempt) =
         queue.enqueue(enqueue("failed", Some("turn:failed"), 34))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(failed_claim) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(failed_claim) = queue.claim(ClaimAttempt {
         lease_owner: "worker-failed".to_owned(),
         now: 35,
     })?
     else {
         panic!("expected failed claim");
     };
-    assert_eq!(failed_claim.id, failed_job.id);
-    let FailOutcome::Failed(_) = queue.fail(FailJob {
-        id: failed_job.id,
+    assert_eq!(failed_claim.id, failed_attempt.id);
+    let FailOutcome::Failed(_) = queue.fail(FailAttempt {
+        id: failed_attempt.id,
         lease_owner: "worker-failed".to_owned(),
         attempt_count: failed_claim.attempt_count,
         reason: "fatal".to_owned(),
@@ -1659,13 +1682,13 @@ fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
         panic!("expected fail");
     };
 
-    let EnqueueOutcome::Enqueued(queued_job) =
+    let EnqueueOutcome::Enqueued(queued_attempt) =
         queue.enqueue(enqueue("queued", Some("turn:queued"), 37))?
     else {
         panic!("expected enqueue");
     };
 
-    let report = queue.cleanup_leases(CleanupJobLeases {
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
         now: 39,
         lease_timeout_secs: 10,
     })?;
@@ -1675,63 +1698,65 @@ fn job_queue_cleanup_reports_counts_and_retry_reasons() -> Result<()> {
     assert_eq!(report.done, 1);
     assert_eq!(report.stale_requeued, 1);
     assert_eq!(
-        report.retry_reason_count(JobQueueRetryReason::LeaseTimeout),
+        report.retry_reason_count(AttemptQueueRetryReason::LeaseTimeout),
         1
     );
     assert_eq!(
-        report.retry_reason_count(JobQueueRetryReason::RetryBackoff),
+        report.retry_reason_count(AttemptQueueRetryReason::RetryBackoff),
         1
     );
 
-    let requeued = queue.get(stale_job.id)?.expect("stale job persisted");
-    assert_eq!(requeued.state, JobState::Queued);
+    let requeued = queue
+        .get(stale_attempt.id)?
+        .expect("stale attempt persisted");
+    assert_eq!(requeued.state, AttemptState::Queued);
     assert_eq!(requeued.lease_owner, None);
     assert_eq!(
-        queue.get(live_job.id)?.expect("live job").state,
-        JobState::Leased
+        queue.get(live_attempt.id)?.expect("live attempt").state,
+        AttemptState::Leased
     );
     assert_eq!(
-        queue.get(done_job.id)?.expect("done job").state,
-        JobState::Completed
+        queue.get(done_attempt.id)?.expect("done attempt").state,
+        AttemptState::Completed
     );
     assert_eq!(
-        queue.get(failed_job.id)?.expect("failed job").state,
-        JobState::Failed
+        queue.get(failed_attempt.id)?.expect("failed attempt").state,
+        AttemptState::Failed
     );
     assert_eq!(
-        queue.get(queued_job.id)?.expect("queued job").state,
-        JobState::Queued
+        queue.get(queued_attempt.id)?.expect("queued attempt").state,
+        AttemptState::Queued
     );
 
     Ok(())
 }
 
 #[test]
-fn job_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<()> {
+fn attempt_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
-    let before = job_queue_cleanup_metrics_snapshot();
+    let queue = AttemptQueue::new(&vault);
+    let before = attempt_queue_cleanup_metrics_snapshot();
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:metrics"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-secret-owner".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected claim");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
-    queue.cleanup_leases(CleanupJobLeases {
+    queue.cleanup_leases(CleanupAttemptLeases {
         now: 40,
         lease_timeout_secs: 10,
     })?;
 
-    let after = job_queue_cleanup_metrics_snapshot();
+    let after = attempt_queue_cleanup_metrics_snapshot();
     assert!(after.runs > before.runs);
     assert!(after.stale_requeued > before.stale_requeued);
     let labels = after
@@ -1741,35 +1766,35 @@ fn job_queue_cleanup_metrics_have_stable_privacy_preserving_labels() -> Result<(
         .collect::<Vec<_>>();
     assert_eq!(labels, ["lease_timeout", "retry_backoff"]);
     assert!(
-        after.retry_reasons[JobQueueRetryReason::LeaseTimeout.metric_index()].count
-            > before.retry_reasons[JobQueueRetryReason::LeaseTimeout.metric_index()].count
+        after.retry_reasons[AttemptQueueRetryReason::LeaseTimeout.metric_index()].count
+            > before.retry_reasons[AttemptQueueRetryReason::LeaseTimeout.metric_index()].count
     );
 
     Ok(())
 }
 
 #[test]
-fn job_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Result<()> {
+fn attempt_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Result<()> {
     let (_dir, vault) = open_queue();
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
     let capture = TelemetryCapture::default();
 
-    let EnqueueOutcome::Enqueued(job) =
+    let EnqueueOutcome::Enqueued(attempt) =
         queue.enqueue(enqueue("claim_extraction", Some("turn:logs"), 10))?
     else {
         panic!("expected enqueue");
     };
-    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
         lease_owner: "worker-secret-owner".to_owned(),
         now: 20,
     })?
     else {
         panic!("expected claim");
     };
-    assert_eq!(claimed.id, job.id);
+    assert_eq!(claimed.id, attempt.id);
 
     tracing::subscriber::with_default(capture.clone(), || {
-        queue.cleanup_leases(CleanupJobLeases {
+        queue.cleanup_leases(CleanupAttemptLeases {
             now: 40,
             lease_timeout_secs: 10,
         })
@@ -1778,7 +1803,7 @@ fn job_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Result<(
     let records = capture.records.lock().unwrap();
     let span = records
         .iter()
-        .find(|record| record.kind == "span" && record.name == "job_queue_cleanup")
+        .find(|record| record.kind == "span" && record.name == "attempt_queue_cleanup")
         .unwrap_or_else(|| panic!("cleanup span records={records:?}"));
     assert!(span.fields.contains_key("pending"));
     assert!(span.fields.contains_key("running"));
@@ -1808,7 +1833,7 @@ fn job_queue_cleanup_log_span_has_stable_privacy_preserving_fields() -> Result<(
 
 #[test]
 fn ready_key_round_trips() -> Result<()> {
-    let id = JobId::now();
+    let id = AttemptId::now();
     let key = ready_key(42, id);
     assert_eq!(decode_ready_key(&key)?, (42, id));
     Ok(())

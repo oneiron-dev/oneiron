@@ -2,7 +2,9 @@ use rmpv::Value as Mp;
 
 use crate::claim::{ClaimSubject, claim_consolidatable};
 use crate::config::VaultConfig;
-use crate::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerJob, EnqueueDreamerJobOutcome};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::gate::GateOutcome;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
@@ -64,23 +66,22 @@ fn fixture(vault: &Vault) -> Result<PromotionFixture> {
         .commit()?;
 
     let runner = DreamerRunnerStore::new(vault);
-    let status = match runner.enqueue(EnqueueDreamerJob {
-        job_type: "promotion-test".to_owned(),
+    let status = match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "promotion-test".to_owned(),
         input: Mp::from("input"),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: None,
         run_id: Some("run-promo".to_owned()),
         now: 6,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            status
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
     };
 
     Ok(PromotionFixture {
         run: DreamerRunContext {
             run_id: "run-promo".to_owned(),
-            job_id: status.job.id,
+            attempt_id: status.attempt.id,
             agent_actor: WriteActor::new(actor, EdgeActorClass::Agent),
             now_ms: 10_000,
         },
@@ -416,7 +417,7 @@ fn landed_verification_blocks_ack() -> Result<()> {
     let fixture = fixture(&vault)?;
 
     // Drive the verification leg directly: a claim that "landed" but is
-    // gone at re-read time is a rejection (caller must fail the job).
+    // gone at re-read time is a rejection (caller must fail the attempt).
     let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
     let claim_id = promoted.claim_id;
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;

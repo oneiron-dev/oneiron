@@ -145,12 +145,12 @@ pub const MAX_DBS: u32 = 32;
 /// so v8 vaults fail closed at the ABI gate — there is no silent migration;
 /// rebuild the vault.
 ///
-/// v8 (ONE-1213): job queue rows gained durable terminal states (`Completed`
+/// v8 (ONE-1213): attempt queue rows gained durable terminal states (`Completed`
 /// and `Failed`) plus retry backoff metadata. v7 queue readers only understand
 /// `Queued`/`Leased`, so v7 vaults fail closed at the ABI gate — there is no
 /// silent migration; rebuild the vault.
 ///
-/// v7 (ONE-1206): generic LMDB-backed job queue landed as three named DBs:
+/// v7 (ONE-1206): generic LMDB-backed attempt queue landed as three named DBs:
 /// `job_records`, `job_ready`, and `job_dedupe`. v6 vaults fail closed at
 /// the ABI gate — there is no silent migration; rebuild the vault.
 ///
@@ -168,7 +168,7 @@ pub const MAX_DBS: u32 = 32;
 /// records dropped the dead `tf` u32.
 ///
 /// Receipt-family ABI-pin rule: changing
-/// `GATE_DECISION_LEDGER_VERSION`, `JOB_RECORD_VERSION`,
+/// `GATE_DECISION_LEDGER_VERSION`, `ATTEMPT_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 pub const STORAGE_ABI_VERSION: u16 = 13;
@@ -295,10 +295,11 @@ const PENDING_GATE_CONSENT_INDEX_STATE_PREFIX: &[u8] = b"gate_pending:index_stat
 /// Receipt-family ABI-pin rule: changing this requires a
 /// [`STORAGE_ABI_VERSION`] bump.
 const PENDING_GATE_CONSENT_INDEX_STATE_VERSION: u8 = 1;
-const JOB_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
+// Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code only.
+const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 const CHANNEL_IDENTITY_LIFECYCLE_LEDGER_VERSION: u8 = 0;
 const CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX: &[u8] = b"channel_identity_lifecycle:v0:";
-/// Maps a scheduled outbound job id to the gate surface its first dispatch
+/// Maps a scheduled outbound attempt id to the gate surface its first dispatch
 /// produced, so an idempotent replay can re-surface the original decision.
 const OUTBOUND_GATE_BINDING_KEY_PREFIX: &[u8] = b"outbound_gate_binding:v0:";
 const GATE_DIFF_HANDLE_MAX_LEN: usize = 128;
@@ -1008,6 +1009,9 @@ pub const DB_MANIFEST: [DbManifestEntry; 28] = [
         name: "sync_queue",
         group: "Sync",
     },
+    // Storage/wire keys keep the legacy "job" spelling; ONE-1714 renamed code
+    // only. Group strings are embedded in export manifests and validated
+    // exactly on import, so they are wire too.
     DbManifestEntry {
         n: 26,
         name: "job_records",
@@ -1150,12 +1154,12 @@ pub struct Store {
     pub(crate) sync_state: Database<Str, Bytes>,
     /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
-    /// Generic background job records keyed by job id.
-    pub(crate) job_records: Database<Bytes, Bytes>,
-    /// Ready-job ordering index keyed by ready-at time then job id.
-    pub(crate) job_ready: Database<Bytes, Bytes>,
-    /// Advisory dedupe index keys mapped to job ids.
-    pub(crate) job_dedupe: Database<Bytes, Bytes>,
+    /// Generic background attempt records keyed by attempt id.
+    pub(crate) attempt_records: Database<Bytes, Bytes>,
+    /// Ready-attempt ordering index keyed by ready-at time then attempt id.
+    pub(crate) attempt_ready: Database<Bytes, Bytes>,
+    /// Advisory dedupe index keys mapped to attempt ids.
+    pub(crate) attempt_dedupe: Database<Bytes, Bytes>,
     /// Process-local clock domain for monotonic authority first-seen windows.
     pub(crate) authority_clock_domain: usize,
     /// True only for the open call that created a previously absent LMDB root.
@@ -1270,9 +1274,9 @@ impl Store {
         let phonetic_forward = create_manifest_db(&env, &mut wtxn, 22)?;
         let sync_state = create_manifest_str_db(&env, &mut wtxn, 23)?;
         let sync_queue = create_manifest_db(&env, &mut wtxn, 24)?;
-        let job_records = create_manifest_db(&env, &mut wtxn, 25)?;
-        let job_ready = create_manifest_db(&env, &mut wtxn, 26)?;
-        let job_dedupe = create_manifest_db(&env, &mut wtxn, 27)?;
+        let attempt_records = create_manifest_db(&env, &mut wtxn, 25)?;
+        let attempt_ready = create_manifest_db(&env, &mut wtxn, 26)?;
+        let attempt_dedupe = create_manifest_db(&env, &mut wtxn, 27)?;
         if is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -1343,9 +1347,9 @@ impl Store {
             short_ids_reverse,
             sync_state,
             sync_queue,
-            job_records,
-            job_ready,
-            job_dedupe,
+            attempt_records,
+            attempt_ready,
+            attempt_dedupe,
             authority_clock_domain: NEXT_AUTHORITY_CLOCK_DOMAIN
                 .fetch_add(1, AtomicOrdering::Relaxed),
             created_new_vault: is_new_vault,
@@ -1385,17 +1389,21 @@ impl Store {
             None => {}
         }
 
-        // The group aliases below resolve through the job run index, so build
+        // The group aliases below resolve through the attempt run index, so build
         // it first.  Collect before writing to avoid mutating a DB while its
         // iterator is live.
-        let mut jobs = Vec::new();
-        for row in self.job_records.iter(&wtxn)? {
+        let mut attempts = Vec::new();
+        for row in self.attempt_records.iter(&wtxn)? {
             let (key, raw) = row?;
-            let id = crate::job_queue::JobId::from_bytes(key)?;
-            jobs.push(crate::job_queue::decode_record(raw, id)?);
+            let id = crate::attempt_queue::AttemptId::from_bytes(key)?;
+            attempts.push(crate::attempt_queue::decode_record(raw, id)?);
         }
-        for job in &jobs {
-            self.put_job_run_index_in_txn(&mut wtxn, job.run_id.as_deref(), job.id.as_bytes())?;
+        for attempt in &attempts {
+            self.put_attempt_run_index_in_txn(
+                &mut wtxn,
+                attempt.run_id.as_deref(),
+                attempt.id.as_bytes(),
+            )?;
         }
 
         let mut decisions = Vec::new();
@@ -1449,49 +1457,49 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn put_job_run_index_in_txn(
+    pub(crate) fn put_attempt_run_index_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         run_id: Option<&str>,
-        job_id: &[u8; 16],
+        attempt_id: &[u8; 16],
     ) -> Result<()> {
         let Some(run_id) = run_id else {
             return Ok(());
         };
         self.vault_meta
-            .put(wtxn, &job_run_index_key(run_id, job_id), b"1")?;
+            .put(wtxn, &attempt_run_index_key(run_id, attempt_id), b"1")?;
         self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
         Ok(())
     }
 
     /// Removes the run sidecar for a test fixture's intentionally deleted
-    /// primary job row in the same transaction. Readers remain fail-closed
+    /// primary attempt row in the same transaction. Readers remain fail-closed
     /// when a dangling sidecar is observed.
     #[cfg(test)]
-    pub(crate) fn delete_job_run_index_in_txn(
+    pub(crate) fn delete_attempt_run_index_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         run_id: Option<&str>,
-        job_id: &[u8; 16],
+        attempt_id: &[u8; 16],
     ) -> Result<()> {
         let Some(run_id) = run_id else {
             return Ok(());
         };
         self.vault_meta
-            .delete(wtxn, &job_run_index_key(run_id, job_id))?;
+            .delete(wtxn, &attempt_run_index_key(run_id, attempt_id))?;
         Ok(())
     }
 
-    pub(crate) fn job_ids_for_run_in_txn(
+    pub(crate) fn attempt_ids_for_run_in_txn(
         &self,
         txn: &RoTxn<'_>,
         run_id: &str,
     ) -> Result<Vec<[u8; 16]>> {
-        let prefix = job_run_index_prefix(run_id);
+        let prefix = attempt_run_index_prefix(run_id);
         let mut ids = Vec::new();
         for row in self.vault_meta.prefix_iter(txn, &prefix)? {
             let (key, _) = row?;
-            ids.push(index_suffix_id(key, &prefix, "job run index")?);
+            ids.push(index_suffix_id(key, &prefix, "attempt run index")?);
         }
         Ok(ids)
     }
@@ -2038,19 +2046,23 @@ impl Store {
         Ok(keys.len())
     }
 
-    /// Persists the opaque gate-surface bytes for a scheduled outbound job id
+    /// Persists the opaque gate-surface bytes for a scheduled outbound attempt id
     /// (its own committed write txn). Overwrites any prior value for the id.
-    pub(crate) fn put_outbound_gate_binding(&self, job_id: &[u8; 16], value: &[u8]) -> Result<()> {
-        let key = outbound_gate_binding_key(job_id);
+    pub(crate) fn put_outbound_gate_binding(
+        &self,
+        attempt_id: &[u8; 16],
+        value: &[u8],
+    ) -> Result<()> {
+        let key = outbound_gate_binding_key(attempt_id);
         let mut wtxn = self.env.write_txn()?;
         self.vault_meta.put(&mut wtxn, &key, value)?;
         wtxn.commit()?;
         Ok(())
     }
 
-    /// Reads the persisted gate-surface bytes for a scheduled outbound job id.
-    pub(crate) fn outbound_gate_binding(&self, job_id: &[u8; 16]) -> Result<Option<Vec<u8>>> {
-        let key = outbound_gate_binding_key(job_id);
+    /// Reads the persisted gate-surface bytes for a scheduled outbound attempt id.
+    pub(crate) fn outbound_gate_binding(&self, attempt_id: &[u8; 16]) -> Result<Option<Vec<u8>>> {
+        let key = outbound_gate_binding_key(attempt_id);
         let rtxn = self.env.read_txn()?;
         Ok(self.vault_meta.get(&rtxn, &key)?.map(<[u8]>::to_vec))
     }
@@ -2189,7 +2201,7 @@ impl Store {
                 }
             }
         };
-        let group_key = crate::job_queue::dreamer_run_root_id_in_txn(self, wtxn, run_id)?
+        let group_key = crate::attempt_queue::dreamer_run_root_id_in_txn(self, wtxn, run_id)?
             .map_or_else(
                 || run_id.to_owned(),
                 |root| bytes_to_hex_lower(root.as_bytes()),
@@ -2237,7 +2249,7 @@ impl Store {
         Ok(())
     }
 
-    /// Recomputes the derived group aliases after a run gains a job. A
+    /// Recomputes the derived group aliases after a run gains an attempt. A
     /// pending consent can predate its durable root, so its old alias may no
     /// longer match the run tree that the inbox projection resolves.
     fn refresh_pending_gate_consent_group_aliases_for_run_in_txn(
@@ -2456,7 +2468,7 @@ impl Store {
 
     /// Reads the raw-run rows behind one canonical Dreamer root group.  This
     /// alias is part of the same run-scope index family and lets an RS3 door
-    /// use its root job hex without falling back to a table scan.
+    /// use its root attempt hex without falling back to a table scan.
     pub(crate) fn pending_gate_consents_for_group_key(
         &self,
         group_key: &str,
@@ -3464,10 +3476,10 @@ fn deletion_gate_required_key(decision_id: GateDecisionId) -> Vec<u8> {
     key
 }
 
-fn outbound_gate_binding_key(job_id: &[u8; 16]) -> Vec<u8> {
+fn outbound_gate_binding_key(attempt_id: &[u8; 16]) -> Vec<u8> {
     let mut key = Vec::with_capacity(OUTBOUND_GATE_BINDING_KEY_PREFIX.len() + 16);
     key.extend_from_slice(OUTBOUND_GATE_BINDING_KEY_PREFIX);
-    key.extend_from_slice(job_id);
+    key.extend_from_slice(attempt_id);
     key
 }
 
@@ -3593,12 +3605,12 @@ fn pending_gate_consent_index_state_key(claim_id: &[u8; 16]) -> Vec<u8> {
     index_key_with_id(PENDING_GATE_CONSENT_INDEX_STATE_PREFIX, claim_id)
 }
 
-fn job_run_index_prefix(run_id: &str) -> Vec<u8> {
-    string_index_prefix(JOB_RUN_INDEX_PREFIX, run_id)
+fn attempt_run_index_prefix(run_id: &str) -> Vec<u8> {
+    string_index_prefix(ATTEMPT_RUN_INDEX_PREFIX, run_id)
 }
 
-fn job_run_index_key(run_id: &str, job_id: &[u8; 16]) -> Vec<u8> {
-    index_key_with_id(&job_run_index_prefix(run_id), job_id)
+fn attempt_run_index_key(run_id: &str, attempt_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(&attempt_run_index_prefix(run_id), attempt_id)
 }
 
 fn sort_pending_gate_consents(records: &mut [PendingGateConsentRecord]) {

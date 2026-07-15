@@ -233,7 +233,7 @@ impl ReceiptQuery {
         self
     }
 
-    /// Adds a brief/job filter for brief-rooted receipt projections.
+    /// Adds a brief/attempt filter for brief-rooted receipt projections.
     #[must_use]
     pub fn with_job_ref(mut self, job_ref: impl Into<String>) -> Self {
         self.job_ref = Some(job_ref.into());
@@ -858,7 +858,7 @@ impl Vault {
 ///
 /// The helper keeps `job_ref` propagation explicit for brief-rooted runs while
 /// preserving legacy compatibility: callers that pass an older intent without a
-/// job ref still emit a receipt with `job_ref: None`.
+/// attempt ref still emit a receipt with `job_ref: None`.
 #[must_use]
 pub fn outbound_intent_receipt(
     receipt_id: impl Into<String>,

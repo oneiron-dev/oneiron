@@ -5,7 +5,7 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
-use crate::{EnqueueJob, EnqueueOutcome, JobQueue, JobState, Vault, VaultConfig};
+use crate::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome, Vault, VaultConfig};
 
 fn entity(seed: u8) -> EntityId {
     let mut bytes = [seed; 16];
@@ -100,9 +100,9 @@ fn companion_task_payload_round_trips_all_task_kinds() -> Result<()> {
 fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let companion_queue = CompanionQueue::new(&vault);
-    let generic_queue = JobQueue::new(&vault);
+    let generic_queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(generic) = generic_queue.enqueue(EnqueueJob {
+    let EnqueueOutcome::Enqueued(generic) = generic_queue.enqueue(EnqueueAttempt {
         kind: "claim_extraction".to_owned(),
         payload: b"generic".to_vec(),
         dedupe_key: Some("turn:generic".to_owned()),
@@ -128,10 +128,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected context enqueue");
     };
-    assert_eq!(context_status.job.kind, COMPANION_TASK_JOB_KIND);
-    assert_eq!(context_status.job.state, JobState::Queued);
+    assert_eq!(context_status.attempt.kind, COMPANION_TASK_ATTEMPT_KIND);
+    assert_eq!(context_status.attempt.state, AttemptState::Queued);
     assert_eq!(
-        context_status.job.dedupe_key.as_deref(),
+        context_status.attempt.dedupe_key.as_deref(),
         Some(context_dedupe_key.as_str())
     );
     assert_eq!(context_status.task, context_task);
@@ -145,7 +145,7 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected context dedupe hit");
     };
-    assert_eq!(duplicate_context.job.id, context_status.job.id);
+    assert_eq!(duplicate_context.attempt.id, context_status.attempt.id);
 
     let ClaimCompanionTaskOutcome::Claimed(claimed_context) =
         companion_queue.claim(ClaimCompanionTask {
@@ -155,33 +155,36 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected context claim");
     };
-    assert_eq!(claimed_context.job.id, context_status.job.id);
-    assert_eq!(claimed_context.job.state, JobState::Leased);
-    assert_eq!(claimed_context.job.attempt_count, 1);
+    assert_eq!(claimed_context.attempt.id, context_status.attempt.id);
+    assert_eq!(claimed_context.attempt.state, AttemptState::Leased);
+    assert_eq!(claimed_context.attempt.attempt_count, 1);
     assert_eq!(
-        generic_queue.get(generic.id)?.expect("generic job").state,
-        JobState::Queued,
-        "companion claim must skip non-companion jobs"
+        generic_queue
+            .get(generic.id)?
+            .expect("generic attempt")
+            .state,
+        AttemptState::Queued,
+        "companion claim must skip non-companion attempts"
     );
 
     let CompleteCompanionTaskOutcome::Completed(completed_context) =
         companion_queue.complete(CompleteCompanionTask {
-            id: claimed_context.job.id,
+            id: claimed_context.attempt.id,
             lease_owner: "companion-worker".to_owned(),
-            attempt_count: claimed_context.job.attempt_count,
+            attempt_count: claimed_context.attempt.attempt_count,
             now: 21,
         })?
     else {
         panic!("expected context complete");
     };
-    assert_eq!(completed_context.job.state, JobState::Completed);
+    assert_eq!(completed_context.attempt.state, AttemptState::Completed);
     assert_eq!(
         companion_queue
-            .status(completed_context.job.id)?
+            .status(completed_context.attempt.id)?
             .expect("context status")
-            .job
+            .attempt
             .state,
-        JobState::Completed
+        AttemptState::Completed
     );
 
     let profile_task = companion_task(
@@ -205,28 +208,28 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected profile claim");
     };
-    assert_eq!(claimed_profile.job.id, profile_status.job.id);
+    assert_eq!(claimed_profile.attempt.id, profile_status.attempt.id);
 
     let RetryCompanionTaskOutcome::Retried(retried_profile) =
         companion_queue.retry(RetryCompanionTask {
-            id: claimed_profile.job.id,
+            id: claimed_profile.attempt.id,
             lease_owner: "companion-worker".to_owned(),
-            attempt_count: claimed_profile.job.attempt_count,
+            attempt_count: claimed_profile.attempt.attempt_count,
             backoff_until: 40,
             last_error: Some("profile model unavailable".to_owned()),
             now: 32,
         })?;
-    assert_eq!(retried_profile.job.state, JobState::Queued);
-    assert_eq!(retried_profile.job.backoff_until, Some(40));
+    assert_eq!(retried_profile.attempt.state, AttemptState::Queued);
+    assert_eq!(retried_profile.attempt.backoff_until, Some(40));
     assert_eq!(
-        retried_profile.job.last_error.as_deref(),
+        retried_profile.attempt.last_error.as_deref(),
         Some("profile model unavailable")
     );
     assert_eq!(
         companion_queue
-            .status(retried_profile.job.id)?
+            .status(retried_profile.attempt.id)?
             .expect("profile status")
-            .job
+            .attempt
             .last_error
             .as_deref(),
         Some("profile model unavailable")
@@ -247,19 +250,19 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected profile reclaim");
     };
-    assert_eq!(reclaimed_profile.job.id, profile_status.job.id);
-    assert_eq!(reclaimed_profile.job.attempt_count, 2);
+    assert_eq!(reclaimed_profile.attempt.id, profile_status.attempt.id);
+    assert_eq!(reclaimed_profile.attempt.attempt_count, 2);
     let CompleteCompanionTaskOutcome::Completed(completed_profile) =
         companion_queue.complete(CompleteCompanionTask {
-            id: reclaimed_profile.job.id,
+            id: reclaimed_profile.attempt.id,
             lease_owner: "companion-worker".to_owned(),
-            attempt_count: reclaimed_profile.job.attempt_count,
+            attempt_count: reclaimed_profile.attempt.attempt_count,
             now: 41,
         })?
     else {
         panic!("expected profile complete");
     };
-    assert_eq!(completed_profile.job.state, JobState::Completed);
+    assert_eq!(completed_profile.attempt.state, AttemptState::Completed);
     assert_eq!(completed_profile.task, profile_task);
 
     let memory_task = companion_task(
@@ -283,31 +286,31 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     else {
         panic!("expected memory claim");
     };
-    assert_eq!(claimed_memory.job.id, memory_status.job.id);
+    assert_eq!(claimed_memory.attempt.id, memory_status.attempt.id);
     let FailCompanionTaskOutcome::Failed(failed_memory) =
         companion_queue.fail(FailCompanionTask {
-            id: claimed_memory.job.id,
+            id: claimed_memory.attempt.id,
             lease_owner: "companion-worker".to_owned(),
-            attempt_count: claimed_memory.job.attempt_count,
+            attempt_count: claimed_memory.attempt.attempt_count,
             reason: "memory task exhausted retries".to_owned(),
             now: 52,
         })?
     else {
         panic!("expected memory fail");
     };
-    assert_eq!(failed_memory.job.state, JobState::Failed);
+    assert_eq!(failed_memory.attempt.state, AttemptState::Failed);
     assert_eq!(
         companion_queue
-            .status(failed_memory.job.id)?
+            .status(failed_memory.attempt.id)?
             .expect("memory status")
-            .job
+            .attempt
             .last_error
             .as_deref(),
         Some("memory task exhausted retries")
     );
     assert_eq!(failed_memory.task, memory_task);
 
-    let ClaimOutcome::Claimed(claimed_generic) = generic_queue.claim(ClaimJob {
+    let ClaimOutcome::Claimed(claimed_generic) = generic_queue.claim(ClaimAttempt {
         lease_owner: "generic-worker".to_owned(),
         now: 60,
     })?
@@ -328,9 +331,9 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
     assert_eq!(
         generic_queue
             .get(claimed_generic.id)?
-            .expect("generic job persisted")
+            .expect("generic attempt persisted")
             .state,
-        JobState::Leased
+        AttemptState::Leased
     );
 
     Ok(())
@@ -340,10 +343,10 @@ fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()>
 fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let companion_queue = CompanionQueue::new(&vault);
-    let generic_queue = JobQueue::new(&vault);
+    let generic_queue = AttemptQueue::new(&vault);
 
-    let EnqueueOutcome::Enqueued(invalid_task) = generic_queue.enqueue(EnqueueJob {
-        kind: COMPANION_TASK_JOB_KIND.to_owned(),
+    let EnqueueOutcome::Enqueued(invalid_task) = generic_queue.enqueue(EnqueueAttempt {
+        kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),
         payload: b"not-msgpack".to_vec(),
         dedupe_key: Some("companion:invalid".to_owned()),
         run_id: Some("run-invalid".to_owned()),
@@ -364,7 +367,7 @@ fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
     let failed = generic_queue
         .get(invalid_task.id)?
         .expect("invalid companion task persisted");
-    assert_eq!(failed.state, JobState::Failed);
+    assert_eq!(failed.state, AttemptState::Failed);
     assert_eq!(failed.lease_owner, None);
     assert_eq!(failed.attempt_count, 1);
     assert_eq!(
@@ -1457,7 +1460,7 @@ fn companion_relationship_end_scrubs_private_memory_preserves_data_and_enqueues_
     assert_eq!(task_status.task.kind, CompanionTaskKind::GoodbyeArtifact);
     assert_eq!(task_status.task.key, record.key());
     assert_eq!(
-        task_status.job.run_id.as_deref(),
+        task_status.attempt.run_id.as_deref(),
         Some("run-goodbye-one1488")
     );
     let claimed = CompanionQueue::new(&vault).claim(ClaimCompanionTask {

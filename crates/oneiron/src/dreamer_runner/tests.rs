@@ -1,10 +1,12 @@
 use std::sync::Barrier;
 use std::thread;
 
+use crate::attempt_queue::{
+    AttemptInterventionKind, AttemptState, CleanupAttemptLeases, RetryAttempt,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
-use crate::job_queue::{CleanupJobLeases, JobInterventionKind, JobState, RetryJob};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::WriteProvenance;
@@ -19,38 +21,40 @@ fn occurred(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
 }
 
-fn enqueue_job(runner: &DreamerRunnerStore<'_>, name: &str, now: u64) -> Result<DreamerJobStatus> {
-    match runner.enqueue(EnqueueDreamerJob {
-        job_type: name.to_owned(),
+fn enqueue_attempt(
+    runner: &DreamerRunnerStore<'_>,
+    name: &str,
+    now: u64,
+) -> Result<DreamerAttemptStatus> {
+    match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: name.to_owned(),
         input: Value::from(format!("input:{name}")),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: None,
         run_id: None,
         now,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            Ok(status)
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status),
     }
 }
 
-fn enqueue_consolidation_job(
+fn enqueue_consolidation_attempt(
     runner: &DreamerRunnerStore<'_>,
     scope: DreamerConsolidationScope,
     dedupe_key: Option<&str>,
     now: u64,
-) -> Result<DreamerJobStatus> {
-    match runner.enqueue_consolidation(EnqueueDreamerConsolidationJob {
+) -> Result<DreamerAttemptStatus> {
+    match runner.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
         scope,
         input: Value::from(format!("input:{}", scope.as_str())),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: dedupe_key.map(str::to_owned),
         run_id: None,
         now,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            Ok(status)
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status),
     }
 }
 
@@ -61,12 +65,12 @@ fn admit_consolidation(
     lease_owner: &str,
     now: u64,
 ) -> Result<DreamerConsolidationAdmissionOutcome> {
-    runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+    runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope,
         local_node_id,
         claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
         claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-        admission: AdmitDreamerJob {
+        admission: AdmitDreamerAttempt {
             lease_owner: lease_owner.to_owned(),
             now,
             budget_id: format!("wake:{}", scope.as_str()),
@@ -101,30 +105,35 @@ fn different_node_id(node_id: u64) -> u64 {
     if node_id == u64::MAX { 1 } else { node_id + 1 }
 }
 
-fn test_ready_key(ready_at: u64, id: JobId) -> [u8; 24] {
+fn test_ready_key(ready_at: u64, id: AttemptId) -> [u8; 24] {
     let mut key = [0_u8; 24];
     key[..8].copy_from_slice(&ready_at.to_be_bytes());
     key[8..].copy_from_slice(id.as_bytes());
     key
 }
 
-fn rewrite_ready_key(vault: &Vault, id: JobId, from_ready_at: u64, to_ready_at: u64) -> Result<()> {
+fn rewrite_ready_key(
+    vault: &Vault,
+    id: AttemptId,
+    from_ready_at: u64,
+    to_ready_at: u64,
+) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     vault
         .store
-        .job_ready
+        .attempt_ready
         .delete(&mut wtxn, &test_ready_key(from_ready_at, id))?;
     vault
         .store
-        .job_ready
+        .attempt_ready
         .put(&mut wtxn, &test_ready_key(to_ready_at, id), id.as_bytes())?;
     wtxn.commit()?;
     Ok(())
 }
 
-fn job_dedupe_points_to(vault: &Vault, id: JobId) -> Result<bool> {
+fn attempt_dedupe_points_to(vault: &Vault, id: AttemptId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    for row in vault.store.job_dedupe.iter(&rtxn)? {
+    for row in vault.store.attempt_dedupe.iter(&rtxn)? {
         let (_key, value) = row?;
         if value == id.as_bytes() {
             return Ok(true);
@@ -161,20 +170,20 @@ fn milestone_fixture(vault: &Vault, claim_id: EntityId, at: u64) -> Result<Dream
 }
 
 #[cfg(feature = "sync")]
-fn write_milestone_for_job(
+fn write_milestone_for_attempt(
     vault: &Vault,
-    job_id: JobId,
+    attempt_id: AttemptId,
     claim_id: EntityId,
     kind: DreamerMilestoneKind,
     at: u64,
 ) -> Result<()> {
     let mut milestone = milestone_fixture(vault, claim_id, at)?;
     milestone.kind = kind;
-    let job = JobQueue::new(vault)
-        .get(job_id)?
+    let attempt = AttemptQueue::new(vault)
+        .get(attempt_id)?
         .ok_or(Error::EntityNotFound)?;
     let mut wtxn = vault.store.env.write_txn()?;
-    apply_milestone_claim_in_txn(vault, &mut wtxn, &job, milestone)?;
+    apply_milestone_claim_in_txn(vault, &mut wtxn, &attempt, milestone)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -244,14 +253,14 @@ fn write_dreamer_boundary_claim(
 
 #[cfg(feature = "sync")]
 fn progress_update(
-    job_id: JobId,
-    state: DreamerJobProgressState,
+    attempt_id: AttemptId,
+    state: DreamerAttemptProgressState,
     completed_units: u64,
     total_units: Option<u64>,
     updated_at_ms: u64,
-) -> DreamerJobProgressUpdate {
-    DreamerJobProgressUpdate {
-        job_id,
+) -> DreamerAttemptProgressUpdate {
+    DreamerAttemptProgressUpdate {
+        attempt_id,
         state,
         message: Some(format!("{}:{completed_units}", state.as_str())),
         completed_units,
@@ -437,7 +446,8 @@ fn tournament_admission_schedule_axis_is_batch_tier_only() -> Result<()> {
 fn tournament_budget_axes_use_one_lease_line_and_depletion_budget_traps() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+    let queued =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Micro, None, 10)?;
     let axes = DreamerTournamentBudgetAxes {
         fanout_m: 2,
         depth_k: 3,
@@ -445,7 +455,7 @@ fn tournament_budget_axes_use_one_lease_line_and_depletion_budget_traps() -> Res
     };
     assert_eq!(axes.reserve_units()?, 12);
 
-    let outcome = runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+    let outcome = runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope: DreamerConsolidationScope::Micro,
         local_node_id: 77,
         claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
@@ -457,7 +467,7 @@ fn tournament_budget_axes_use_one_lease_line_and_depletion_budget_traps() -> Res
             0.7,
             axes,
         ),
-        admission: AdmitDreamerJob {
+        admission: AdmitDreamerAttempt {
             lease_owner: "tournament-worker".to_owned(),
             now: 20,
             budget_id: "wake:micro".to_owned(),
@@ -470,37 +480,40 @@ fn tournament_budget_axes_use_one_lease_line_and_depletion_budget_traps() -> Res
     let DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(trap) = outcome else {
         panic!("tournament budget depletion must surface as BudgetTrap");
     };
-    assert_eq!(trap.job_id, queued.job.id);
+    assert_eq!(trap.attempt_id, queued.attempt.id);
     assert_eq!(trap.budget_id, "wake:micro");
     assert_eq!(trap.required_units, 12);
     assert_eq!(trap.fanout_m, 2);
     assert_eq!(trap.depth_k, 3);
     assert_eq!(trap.budget.remaining_units, 11);
     assert_eq!(trap.budget.reserved_units, 0);
-    assert_eq!(trap.intervention_effect, JobInterventionEffect::Paused);
+    assert_eq!(trap.intervention_effect, AttemptInterventionEffect::Paused);
     assert!(
         runner.budget("wake:micro")?.is_none(),
         "BudgetTrap must not commit an initialized budget row"
     );
     assert!(
         runner
-            .budget_reservation("wake:micro", queued.job.id)?
+            .budget_reservation("wake:micro", queued.attempt.id)?
             .is_none(),
         "BudgetTrap must not create a tournament lease"
     );
 
-    let status = runner.status(queued.job.id)?.expect("paused job");
-    assert_eq!(status.job.state, JobState::Paused);
-    assert_eq!(status.job.attempt_count, 0);
-    assert!(status.job.lease_owner.is_none());
-    assert_eq!(status.job.events.len(), 1);
-    assert_eq!(status.job.events[0].kind, JobInterventionKind::Pause);
+    let status = runner.status(queued.attempt.id)?.expect("paused attempt");
+    assert_eq!(status.attempt.state, AttemptState::Paused);
+    assert_eq!(status.attempt.attempt_count, 0);
+    assert!(status.attempt.lease_owner.is_none());
+    assert_eq!(status.attempt.events.len(), 1);
     assert_eq!(
-        status.job.events[0].actor,
+        status.attempt.events[0].kind,
+        AttemptInterventionKind::Pause
+    );
+    assert_eq!(
+        status.attempt.events[0].actor,
         DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR
     );
     assert_eq!(
-        status.job.events[0].note.as_deref(),
+        status.attempt.events[0].note.as_deref(),
         Some(DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE)
     );
     Ok(())
@@ -510,16 +523,17 @@ fn tournament_budget_axes_use_one_lease_line_and_depletion_budget_traps() -> Res
 fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queue = JobQueue::new(&vault);
-    let queued = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+    let queue = AttemptQueue::new(&vault);
+    let queued =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Micro, None, 10)?;
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(first)) =
-        runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+        runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "single-pass-worker".to_owned(),
                 now: 20,
                 budget_id: "wake:micro".to_owned(),
@@ -531,14 +545,14 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
     else {
         panic!("expected initial single-pass admission");
     };
-    assert_eq!(first.status.job.id, queued.job.id);
+    assert_eq!(first.status.attempt.id, queued.attempt.id);
     assert_eq!(first.budget.remaining_units, 4);
     assert_eq!(first.reservation.reserved_units, 8);
 
-    queue.retry(RetryJob {
-        id: queued.job.id,
+    queue.retry(RetryAttempt {
+        id: queued.attempt.id,
         lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.job.attempt_count,
+        attempt_count: first.status.attempt.attempt_count,
         backoff_until: 25,
         last_error: Some("lease_timeout".to_owned()),
         now: 24,
@@ -550,7 +564,7 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
         reserve_units_per_step: 2,
     };
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(second)) =
-        runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+        runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::nightly(),
@@ -562,7 +576,7 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
                 0.7,
                 axes,
             ),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "tournament-worker".to_owned(),
                 now: 30,
                 budget_id: "wake:micro".to_owned(),
@@ -575,14 +589,14 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
         panic!("expected tournament admission after reservation top-up");
     };
 
-    assert_eq!(second.status.job.id, queued.job.id);
-    assert_eq!(second.status.job.attempt_count, 2);
+    assert_eq!(second.status.attempt.id, queued.attempt.id);
+    assert_eq!(second.status.attempt.attempt_count, 2);
     assert_eq!(second.budget.remaining_units, 0);
     assert_eq!(second.budget.reserved_units, 12);
     assert_eq!(second.reservation.reserved_units, 12);
     assert_eq!(second.reservation.updated_at, 30);
     assert_eq!(
-        runner.budget_reservation("wake:micro", queued.job.id)?,
+        runner.budget_reservation("wake:micro", queued.attempt.id)?,
         Some(second.reservation)
     );
     Ok(())
@@ -592,16 +606,17 @@ fn tournament_admission_tops_up_existing_reservation_before_leasing() -> Result<
 fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queue = JobQueue::new(&vault);
-    let queued = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+    let queue = AttemptQueue::new(&vault);
+    let queued =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Micro, None, 10)?;
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(first)) =
-        runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+        runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "single-pass-worker".to_owned(),
                 now: 20,
                 budget_id: "wake:micro".to_owned(),
@@ -615,10 +630,10 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
     };
     let first_budget = first.budget.clone();
     let first_reservation = first.reservation.clone();
-    queue.retry(RetryJob {
-        id: queued.job.id,
+    queue.retry(RetryAttempt {
+        id: queued.attempt.id,
         lease_owner: "single-pass-worker".to_owned(),
-        attempt_count: first.status.job.attempt_count,
+        attempt_count: first.status.attempt.attempt_count,
         backoff_until: 25,
         last_error: Some("lease_timeout".to_owned()),
         now: 24,
@@ -630,7 +645,7 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
         reserve_units_per_step: 2,
     };
     let DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(trap) = runner
-        .admit_next_consolidation(AdmitDreamerConsolidationJob {
+        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
@@ -642,7 +657,7 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
                 0.7,
                 axes,
             ),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "tournament-worker".to_owned(),
                 now: 30,
                 budget_id: "wake:micro".to_owned(),
@@ -655,17 +670,17 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
         panic!("expected tournament BudgetTrap on insufficient top-up");
     };
 
-    assert_eq!(trap.job_id, queued.job.id);
+    assert_eq!(trap.attempt_id, queued.attempt.id);
     assert_eq!(trap.required_units, 12);
     assert_eq!(trap.budget, first_budget);
     assert_eq!(runner.budget("wake:micro")?, Some(first_budget));
     assert_eq!(
-        runner.budget_reservation("wake:micro", queued.job.id)?,
+        runner.budget_reservation("wake:micro", queued.attempt.id)?,
         Some(first_reservation)
     );
-    let status = runner.status(queued.job.id)?.expect("paused job");
-    assert_eq!(status.job.state, JobState::Paused);
-    assert_eq!(status.job.attempt_count, 1);
+    let status = runner.status(queued.attempt.id)?.expect("paused attempt");
+    assert_eq!(status.attempt.state, AttemptState::Paused);
+    assert_eq!(status.attempt.attempt_count, 1);
     Ok(())
 }
 
@@ -673,16 +688,17 @@ fn tournament_admission_budget_traps_when_existing_reservation_cannot_top_up() -
 fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queue = JobQueue::new(&vault);
+    let queue = AttemptQueue::new(&vault);
 
-    let reserved = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 10)?;
+    let reserved =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Micro, None, 10)?;
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(first)) =
-        runner.admit_next_consolidation(AdmitDreamerConsolidationJob {
+        runner.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
             claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "reserved-worker".to_owned(),
                 now: 20,
                 budget_id: "wake:micro".to_owned(),
@@ -694,36 +710,36 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
     else {
         panic!("expected reserved admission");
     };
-    queue.retry(RetryJob {
-        id: reserved.job.id,
+    queue.retry(RetryAttempt {
+        id: reserved.attempt.id,
         lease_owner: "reserved-worker".to_owned(),
-        attempt_count: first.status.job.attempt_count,
+        attempt_count: first.status.attempt.attempt_count,
         backoff_until: 2,
         last_error: Some("lease_timeout".to_owned()),
         now: 21,
     })?;
 
-    let stale = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Micro, None, 30)?;
+    let stale = enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Micro, None, 30)?;
     let ClaimOutcome::Claimed(stale_claim) = queue.claim_kind(
-        DreamerConsolidationScope::Micro.job_kind(),
-        ClaimJob {
+        DreamerConsolidationScope::Micro.attempt_kind(),
+        ClaimAttempt {
             lease_owner: "stale-prep".to_owned(),
             now: 31,
         },
     )?
     else {
-        panic!("expected to claim stale fixture job");
+        panic!("expected to claim stale fixture attempt");
     };
-    assert_eq!(stale_claim.id, stale.job.id);
-    queue.retry(RetryJob {
-        id: stale.job.id,
+    assert_eq!(stale_claim.id, stale.attempt.id);
+    queue.retry(RetryAttempt {
+        id: stale.attempt.id,
         lease_owner: "stale-prep".to_owned(),
         attempt_count: stale_claim.attempt_count,
         backoff_until: 1,
         last_error: Some("lease_timeout".to_owned()),
         now: 32,
     })?;
-    rewrite_ready_key(&vault, stale.job.id, 1, 0)?;
+    rewrite_ready_key(&vault, stale.attempt.id, 1, 0)?;
 
     let axes = DreamerTournamentBudgetAxes {
         fanout_m: 2,
@@ -731,7 +747,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         reserve_units_per_step: 2,
     };
     let DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(trap) = runner
-        .admit_next_consolidation(AdmitDreamerConsolidationJob {
+        .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: 77,
             claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
@@ -743,7 +759,7 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
                 0.7,
                 axes,
             ),
-            admission: AdmitDreamerJob {
+            admission: AdmitDreamerAttempt {
                 lease_owner: "tournament-worker".to_owned(),
                 now: 40,
                 budget_id: "wake:micro".to_owned(),
@@ -756,15 +772,19 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
         panic!("expected tournament BudgetTrap for stale ready candidate");
     };
 
-    assert_eq!(trap.job_id, stale.job.id);
+    assert_eq!(trap.attempt_id, stale.attempt.id);
     assert_eq!(trap.budget.remaining_units, 0);
     assert_eq!(trap.budget.reserved_units, 10);
-    let stale_status = runner.status(stale.job.id)?.expect("paused stale job");
-    assert_eq!(stale_status.job.state, JobState::Paused);
-    let reserved_status = runner.status(reserved.job.id)?.expect("reserved job");
-    assert_eq!(reserved_status.job.state, JobState::Queued);
+    let stale_status = runner
+        .status(stale.attempt.id)?
+        .expect("paused stale attempt");
+    assert_eq!(stale_status.attempt.state, AttemptState::Paused);
+    let reserved_status = runner
+        .status(reserved.attempt.id)?
+        .expect("reserved attempt");
+    assert_eq!(reserved_status.attempt.state, AttemptState::Queued);
     assert_eq!(
-        runner.budget_reservation("wake:micro", reserved.job.id)?,
+        runner.budget_reservation("wake:micro", reserved.attempt.id)?,
         Some(first.reservation)
     );
     Ok(())
@@ -772,16 +792,16 @@ fn tournament_budget_trap_uses_authoritative_candidate_after_ready_repairs() -> 
 
 #[test]
 fn dreamer_payload_round_trips_with_pinned_keys() -> Result<()> {
-    let payload = DreamerJobPayload {
-        job_type: "expand".to_owned(),
+    let payload = DreamerAttemptPayload {
+        attempt_type: "expand".to_owned(),
         input: Value::from("seed"),
-        parent_job: None,
+        parent_attempt: None,
     };
-    let encoded = encode_dreamer_job_payload(&payload)?;
-    let decoded = decode_dreamer_job_payload(&encoded)?;
+    let encoded = encode_dreamer_attempt_payload(&payload)?;
+    let decoded = decode_dreamer_attempt_payload(&encoded)?;
     assert_eq!(decoded, payload);
     assert_eq!(
-        DREAMER_JOB_PAYLOAD_KEYS,
+        DREAMER_ATTEMPT_PAYLOAD_KEYS,
         ["schema_version", "job_type", "input", "parent_job"]
     );
     Ok(())
@@ -793,14 +813,20 @@ fn dreamer_progress_producer_throttles_and_reuses_one_ephemeral_key() {
     use crate::sync::{EphemeralStore, TAG_EPHEMERAL, decode_ephemeral_states};
 
     let store = EphemeralStore::new(30_000);
-    let mut producer = DreamerJobProgressProducer::new();
-    let job_id = JobId::now();
-    let key = dreamer_job_progress_key(job_id);
+    let mut producer = DreamerAttemptProgressProducer::new();
+    let attempt_id = AttemptId::now();
+    let key = dreamer_attempt_progress_key(attempt_id);
 
     let first = producer
         .publish(
             &store,
-            progress_update(job_id, DreamerJobProgressState::Running, 1, Some(4), 1_000),
+            progress_update(
+                attempt_id,
+                DreamerAttemptProgressState::Running,
+                1,
+                Some(4),
+                1_000,
+            ),
         )
         .expect("first progress update encodes")
         .expect("first progress update emits");
@@ -814,7 +840,13 @@ fn dreamer_progress_producer_throttles_and_reuses_one_ephemeral_key() {
     let throttled = producer
         .publish(
             &store,
-            progress_update(job_id, DreamerJobProgressState::Running, 2, Some(4), 1_500),
+            progress_update(
+                attempt_id,
+                DreamerAttemptProgressState::Running,
+                2,
+                Some(4),
+                1_500,
+            ),
         )
         .expect("throttled progress update validates");
     assert!(
@@ -830,7 +862,13 @@ fn dreamer_progress_producer_throttles_and_reuses_one_ephemeral_key() {
     let second = producer
         .publish(
             &store,
-            progress_update(job_id, DreamerJobProgressState::Running, 3, Some(4), 2_000),
+            progress_update(
+                attempt_id,
+                DreamerAttemptProgressState::Running,
+                3,
+                Some(4),
+                2_000,
+            ),
         )
         .expect("second progress update encodes")
         .expect("second progress update emits");
@@ -847,17 +885,17 @@ fn dreamer_progress_producer_throttles_and_reuses_one_ephemeral_key() {
 
 #[cfg(feature = "sync")]
 #[test]
-fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
+fn dreamer_runner_transitions_drive_attempt_progress_producer() -> Result<()> {
     use crate::sync::{EphemeralStore, TAG_EPHEMERAL};
 
     let (_tmp, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    enqueue_job(&runner, "runner-progress", 10)?;
+    enqueue_attempt(&runner, "runner-progress", 10)?;
     let store = EphemeralStore::new(30_000);
-    let mut producer = DreamerJobProgressProducer::new();
+    let mut producer = DreamerAttemptProgressProducer::new();
 
     let admitted = runner.admit_next_with_progress(
-        AdmitDreamerJob {
+        AdmitDreamerAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
             budget_id: "wake".to_owned(),
@@ -872,31 +910,34 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
         panic!("admission must emit a live progress frame");
     };
     assert_eq!(frame[0], TAG_EPHEMERAL);
-    let DreamerAdmissionOutcome::Admitted(admitted_job) = admitted.outcome else {
-        panic!("expected admitted job");
+    let DreamerAdmissionOutcome::Admitted(admitted_attempt) = admitted.outcome else {
+        panic!("expected admitted attempt");
     };
-    let job_id = admitted_job.status.job.id;
-    let key = dreamer_job_progress_key(job_id);
+    let attempt_id = admitted_attempt.status.attempt.id;
+    let key = dreamer_attempt_progress_key(attempt_id);
     assert_eq!(store.keys(), vec![key.clone()]);
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Started.as_str()
+        DreamerAttemptProgressState::Started.as_str()
     );
     assert_eq!(progress_i64(&store, &key, KEY_TOTAL_UNITS), 8);
 
     let completed = runner.complete_with_progress(
-        CompleteDreamerJob {
-            id: job_id,
+        CompleteDreamerAttempt {
+            id: attempt_id,
             lease_owner: "worker-a".to_owned(),
-            attempt_count: admitted_job.status.job.attempt_count,
+            attempt_count: admitted_attempt.status.attempt.attempt_count,
             now: 30,
         },
         &mut producer,
         &store,
     )?;
     assert!(
-        matches!(completed.outcome, CompleteDreamerJobOutcome::Completed(_)),
-        "terminal queue transition should complete the leased job"
+        matches!(
+            completed.outcome,
+            CompleteDreamerAttemptOutcome::Completed(_)
+        ),
+        "terminal queue transition should complete the leased attempt"
     );
     assert!(
         completed.frame.is_some(),
@@ -904,17 +945,27 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
     );
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Done.as_str()
+        DreamerAttemptProgressState::Done.as_str()
     );
     assert_eq!(
-        runner.status(job_id)?.expect("completed job").job.state,
-        JobState::Completed
+        runner
+            .status(attempt_id)?
+            .expect("completed attempt")
+            .attempt
+            .state,
+        AttemptState::Completed
     );
 
     let post_terminal = runner.publish_progress(
         &mut producer,
         &store,
-        progress_update(job_id, DreamerJobProgressState::Running, 1, Some(8), 30_500),
+        progress_update(
+            attempt_id,
+            DreamerAttemptProgressState::Running,
+            1,
+            Some(8),
+            30_500,
+        ),
     )?;
     assert!(
         post_terminal.is_none(),
@@ -922,7 +973,7 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
     );
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Done.as_str(),
+        DreamerAttemptProgressState::Done.as_str(),
         "post-terminal tick must not mutate the terminal live row"
     );
 
@@ -930,7 +981,13 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
     let post_terminal_after_marker_ttl = runner.publish_progress(
         &mut producer,
         &store,
-        progress_update(job_id, DreamerJobProgressState::Running, 2, Some(8), 61_000),
+        progress_update(
+            attempt_id,
+            DreamerAttemptProgressState::Running,
+            2,
+            Some(8),
+            61_000,
+        ),
     )?;
     assert!(
         post_terminal_after_marker_ttl.is_none(),
@@ -938,7 +995,7 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
     );
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Done.as_str(),
+        DreamerAttemptProgressState::Done.as_str(),
         "post-marker tick must still not mutate the terminal live row"
     );
 
@@ -948,32 +1005,32 @@ fn dreamer_runner_transitions_drive_job_progress_producer() -> Result<()> {
 #[test]
 fn dreamer_complete_fail_reject_non_dreamer_queue_rows_before_mutation() -> Result<()> {
     let (_tmp, vault) = open_vault();
-    let queue = crate::job_queue::JobQueue::new(&vault);
-    let companion = match queue.enqueue(crate::job_queue::EnqueueJob {
+    let queue = crate::attempt_queue::AttemptQueue::new(&vault);
+    let companion = match queue.enqueue(crate::attempt_queue::EnqueueAttempt {
         kind: "companion".to_owned(),
         payload: b"not-dreamer".to_vec(),
         dedupe_key: None,
         run_id: None,
         now: 10,
     })? {
-        crate::job_queue::EnqueueOutcome::Enqueued(record)
-        | crate::job_queue::EnqueueOutcome::Existing(record) => record,
+        crate::attempt_queue::EnqueueOutcome::Enqueued(record)
+        | crate::attempt_queue::EnqueueOutcome::Existing(record) => record,
     };
-    let crate::job_queue::ClaimOutcome::Claimed(claimed) = queue.claim_kind(
+    let crate::attempt_queue::ClaimOutcome::Claimed(claimed) = queue.claim_kind(
         "companion",
-        crate::job_queue::ClaimJob {
+        crate::attempt_queue::ClaimAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 11,
         },
     )?
     else {
-        panic!("expected companion job to be leased");
+        panic!("expected companion attempt to be leased");
     };
     assert_eq!(claimed.id, companion.id);
 
     let runner = DreamerRunnerStore::new(&vault);
     runner
-        .complete(CompleteDreamerJob {
+        .complete(CompleteDreamerAttempt {
             id: claimed.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: claimed.attempt_count,
@@ -982,12 +1039,12 @@ fn dreamer_complete_fail_reject_non_dreamer_queue_rows_before_mutation() -> Resu
         .expect_err("non-Dreamer queue row must be rejected before complete");
     assert_eq!(
         queue.get(claimed.id)?.expect("companion row remains").state,
-        JobState::Leased,
+        AttemptState::Leased,
         "complete guard must not mutate the generic queue row"
     );
 
     runner
-        .fail(FailDreamerJob {
+        .fail(FailDreamerAttempt {
             id: claimed.id,
             lease_owner: "worker-a".to_owned(),
             attempt_count: claimed.attempt_count,
@@ -997,7 +1054,7 @@ fn dreamer_complete_fail_reject_non_dreamer_queue_rows_before_mutation() -> Resu
         .expect_err("non-Dreamer queue row must be rejected before fail");
     assert_eq!(
         queue.get(claimed.id)?.expect("companion row remains").state,
-        JobState::Leased,
+        AttemptState::Leased,
         "fail guard must not mutate the generic queue row"
     );
 
@@ -1011,11 +1068,11 @@ fn dreamer_fail_with_progress_bounds_terminal_reason_message() -> Result<()> {
 
     let (_tmp, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    enqueue_job(&runner, "runner-progress-fail", 10)?;
+    enqueue_attempt(&runner, "runner-progress-fail", 10)?;
     let store = EphemeralStore::new(30_000);
-    let mut producer = DreamerJobProgressProducer::new();
+    let mut producer = DreamerAttemptProgressProducer::new();
     let admitted = runner.admit_next_with_progress(
-        AdmitDreamerJob {
+        AdmitDreamerAttempt {
             lease_owner: "worker-a".to_owned(),
             now: 20,
             budget_id: "wake".to_owned(),
@@ -1026,17 +1083,17 @@ fn dreamer_fail_with_progress_bounds_terminal_reason_message() -> Result<()> {
         &mut producer,
         &store,
     )?;
-    let DreamerAdmissionOutcome::Admitted(admitted_job) = admitted.outcome else {
-        panic!("expected admitted job");
+    let DreamerAdmissionOutcome::Admitted(admitted_attempt) = admitted.outcome else {
+        panic!("expected admitted attempt");
     };
-    let job_id = admitted_job.status.job.id;
+    let attempt_id = admitted_attempt.status.attempt.id;
     let reason = "x".repeat(MAX_DREAMER_PROGRESS_MESSAGE_LEN + 88);
 
     let failed = runner.fail_with_progress(
-        FailDreamerJob {
-            id: job_id,
+        FailDreamerAttempt {
+            id: attempt_id,
             lease_owner: "worker-a".to_owned(),
-            attempt_count: admitted_job.status.job.attempt_count,
+            attempt_count: admitted_attempt.status.attempt.attempt_count,
             reason: reason.clone(),
             now: 30,
         },
@@ -1044,17 +1101,17 @@ fn dreamer_fail_with_progress_bounds_terminal_reason_message() -> Result<()> {
         &store,
     )?;
     assert!(
-        matches!(failed.outcome, FailDreamerJobOutcome::Failed(_)),
+        matches!(failed.outcome, FailDreamerAttemptOutcome::Failed(_)),
         "durable failure transition should commit"
     );
     assert!(
         failed.frame.is_some(),
         "terminal failure should publish a bounded terminal row"
     );
-    let key = dreamer_job_progress_key(job_id);
+    let key = dreamer_attempt_progress_key(attempt_id);
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Failed.as_str()
+        DreamerAttemptProgressState::Failed.as_str()
     );
     let message = progress_str(&store, &key, KEY_MESSAGE);
     assert_eq!(message.len(), MAX_DREAMER_PROGRESS_MESSAGE_LEN);
@@ -1069,15 +1126,21 @@ fn dreamer_progress_terminal_stop_ages_out_on_housekeeping() -> Result<()> {
     use crate::sync::EphemeralStore;
 
     let store = EphemeralStore::new(5);
-    let mut producer = DreamerJobProgressProducer::with_limits(1_000, 1_000)?;
-    let job_id = JobId::now();
-    let key = dreamer_job_progress_key(job_id);
+    let mut producer = DreamerAttemptProgressProducer::with_limits(1_000, 1_000)?;
+    let attempt_id = AttemptId::now();
+    let key = dreamer_attempt_progress_key(attempt_id);
 
     assert!(
         producer
             .publish(
                 &store,
-                progress_update(job_id, DreamerJobProgressState::Running, 1, Some(2), 1_000),
+                progress_update(
+                    attempt_id,
+                    DreamerAttemptProgressState::Running,
+                    1,
+                    Some(2),
+                    1_000
+                ),
             )
             .expect("running progress encodes")
             .is_some()
@@ -1087,7 +1150,13 @@ fn dreamer_progress_terminal_stop_ages_out_on_housekeeping() -> Result<()> {
     let terminal = producer
         .publish(
             &store,
-            progress_update(job_id, DreamerJobProgressState::Done, 2, Some(2), 1_200),
+            progress_update(
+                attempt_id,
+                DreamerAttemptProgressState::Done,
+                2,
+                Some(2),
+                1_200,
+            ),
         )
         .expect("terminal progress validates");
     assert!(
@@ -1101,13 +1170,19 @@ fn dreamer_progress_terminal_stop_ages_out_on_housekeeping() -> Result<()> {
     );
     assert_eq!(
         progress_str(&store, &key, KEY_STATE),
-        DreamerJobProgressState::Done.as_str()
+        DreamerAttemptProgressState::Done.as_str()
     );
 
     let post_terminal = producer
         .publish(
             &store,
-            progress_update(job_id, DreamerJobProgressState::Running, 2, Some(2), 1_500),
+            progress_update(
+                attempt_id,
+                DreamerAttemptProgressState::Running,
+                2,
+                Some(2),
+                1_500,
+            ),
         )
         .expect("post-terminal progress validates");
     assert!(
@@ -1132,18 +1207,18 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
 
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
-    write_milestone_for_job(
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         EntityId::now(),
         DreamerMilestoneKind::Started,
         20,
     )?;
     let done_claim = EntityId::now();
-    write_milestone_for_job(
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         done_claim,
         DreamerMilestoneKind::Done,
         30,
@@ -1158,7 +1233,7 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
     write_milestone_value_claim(
         &vault,
         EntityId::now(),
-        dreamer_milestone_value(queued.job.id, DreamerMilestoneKind::Failed, 50),
+        dreamer_milestone_value(queued.attempt.id, DreamerMilestoneKind::Failed, 50),
         50,
         true,
     )?;
@@ -1166,18 +1241,18 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
     let live_store = EphemeralStore::new(5);
     assert!(
         live_store
-            .get(&dreamer_job_progress_key(queued.job.id))
+            .get(&dreamer_attempt_progress_key(queued.attempt.id))
             .is_none(),
         "fixture represents an unreachable executing device"
     );
 
     let durable = runner
-        .latest_durable_milestone(queued.job.id)?
+        .latest_durable_milestone(queued.attempt.id)?
         .expect("durable milestone fallback");
     assert_eq!(durable.claim_id, done_claim);
     assert_eq!(durable.kind, DreamerMilestoneKind::Done);
 
-    let mut malformed_index_key = dreamer_milestone_candidate_prefix(queued.job.id);
+    let mut malformed_index_key = dreamer_milestone_candidate_prefix(queued.attempt.id);
     malformed_index_key.extend_from_slice(b"truncated");
     vault.with_write_txn(|wtxn| {
         vault
@@ -1188,14 +1263,17 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
     })?;
 
     live_store.set(
-        &dreamer_job_progress_key(queued.job.id),
+        &dreamer_attempt_progress_key(queued.attempt.id),
         crate::sync::LoroValue::String("corrupt".into()),
     );
     let snapshot = runner
-        .progress_snapshot(&live_store, queued.job.id)?
+        .progress_snapshot(&live_store, queued.attempt.id)?
         .expect("durable progress snapshot");
-    assert_eq!(snapshot.source, DreamerJobProgressSource::DurableMilestone);
-    assert_eq!(snapshot.state, DreamerJobProgressState::Done);
+    assert_eq!(
+        snapshot.source,
+        DreamerAttemptProgressSource::DurableMilestone
+    );
+    assert_eq!(snapshot.state, DreamerAttemptProgressState::Done);
     assert_eq!(snapshot.updated_at_ms, 30_000);
 
     Ok(())
@@ -1203,22 +1281,22 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
 
 #[cfg(feature = "sync")]
 #[test]
-fn dreamer_durable_milestone_lookup_uses_job_index() -> Result<()> {
+fn dreamer_durable_milestone_lookup_uses_attempt_index() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
     let started_claim = EntityId::now();
-    write_milestone_for_job(
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         started_claim,
         DreamerMilestoneKind::Started,
         20,
     )?;
     let done_claim = EntityId::now();
-    write_milestone_for_job(
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         done_claim,
         DreamerMilestoneKind::Done,
         30,
@@ -1228,19 +1306,21 @@ fn dreamer_durable_milestone_lookup_uses_job_index() -> Result<()> {
     }
 
     assert!(
-        runner.latest_durable_milestone(queued.job.id)?.is_some(),
+        runner
+            .latest_durable_milestone(queued.attempt.id)?
+            .is_some(),
         "first lookup backfills the legacy milestone index"
     );
     crate::claim::reset_claim_body_decode_count();
     let durable = runner
-        .latest_durable_milestone(queued.job.id)?
+        .latest_durable_milestone(queued.attempt.id)?
         .expect("durable milestone fallback");
     assert_eq!(durable.claim_id, done_claim);
     assert_eq!(durable.kind, DreamerMilestoneKind::Done);
     assert_eq!(
         crate::claim::claim_body_decode_count(),
         2,
-        "indexed lookup should decode only this job's milestone candidates"
+        "indexed lookup should decode only this attempt's milestone candidates"
     );
 
     Ok(())
@@ -1251,52 +1331,58 @@ fn dreamer_durable_milestone_lookup_uses_job_index() -> Result<()> {
 fn dreamer_durable_milestone_index_invalidates_lifecycle_and_soft_delete() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
     let started_claim = EntityId::now();
-    write_milestone_for_job(
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         started_claim,
         DreamerMilestoneKind::Started,
         20,
     )?;
     let done_claim = EntityId::now();
-    write_milestone_for_job(
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         done_claim,
         DreamerMilestoneKind::Done,
         30,
     )?;
     assert!(
-        runner.latest_durable_milestone(queued.job.id)?.is_some(),
+        runner
+            .latest_durable_milestone(queued.attempt.id)?
+            .is_some(),
         "first lookup backfills the legacy milestone index"
     );
 
     vault.retract_claim(&done_claim, 35)?;
     crate::claim::reset_claim_body_decode_count();
     let durable = runner
-        .latest_durable_milestone(queued.job.id)?
+        .latest_durable_milestone(queued.attempt.id)?
         .expect("started milestone remains eligible");
     assert_eq!(durable.claim_id, started_claim);
     assert_eq!(durable.kind, DreamerMilestoneKind::Started);
     assert_eq!(
         crate::claim::claim_body_decode_count(),
         1,
-        "retracted latest claim must be removed from the per-job index"
+        "retracted latest claim must be removed from the per-attempt index"
     );
 
     let outcome = vault
         .delete_entity_with_reason(&started_claim, crate::deletion::DeleteReason::UserDelete)?;
     assert!(outcome.existed);
     assert!(
-        runner.latest_durable_milestone(queued.job.id)?.is_none(),
+        runner
+            .latest_durable_milestone(queued.attempt.id)?
+            .is_none(),
         "soft-deleted milestone claim must be removed from the fallback index"
     );
 
     crate::claim::reset_claim_body_decode_count();
     assert!(
-        runner.latest_durable_milestone(queued.job.id)?.is_none(),
+        runner
+            .latest_durable_milestone(queued.attempt.id)?
+            .is_none(),
         "legacy backfill marker should preserve the empty result"
     );
     assert_eq!(
@@ -1313,10 +1399,10 @@ fn dreamer_durable_milestone_index_invalidates_lifecycle_and_soft_delete() -> Re
 fn dreamer_durable_milestone_backfill_fails_closed_on_malformed_claim_body() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
-    write_milestone_for_job(
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
+    write_milestone_for_attempt(
         &vault,
-        queued.job.id,
+        queued.attempt.id,
         EntityId::now(),
         DreamerMilestoneKind::Started,
         20,
@@ -1338,7 +1424,7 @@ fn dreamer_durable_milestone_backfill_fails_closed_on_malformed_claim_body() -> 
     })?;
 
     runner
-        .latest_durable_milestone(queued.job.id)
+        .latest_durable_milestone(queued.attempt.id)
         .expect_err("malformed claim body must fail the one-time backfill");
     let rtxn = vault.store.env.read_txn()?;
     assert!(
@@ -1429,32 +1515,35 @@ fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
 
-    let micro = enqueue_consolidation_job(
+    let micro = enqueue_consolidation_attempt(
         &runner,
         DreamerConsolidationScope::Micro,
         Some("device-a:claim-1"),
         10,
     )?;
-    let micro_again = enqueue_consolidation_job(
+    let micro_again = enqueue_consolidation_attempt(
         &runner,
         DreamerConsolidationScope::Micro,
         Some("device-a:claim-1"),
         11,
     )?;
-    assert_eq!(micro_again.job.id, micro.job.id);
-    assert_eq!(micro_again.job.kind, DREAMER_CONSOLIDATION_MICRO_JOB_KIND);
+    assert_eq!(micro_again.attempt.id, micro.attempt.id);
+    assert_eq!(
+        micro_again.attempt.kind,
+        DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+    );
 
-    let meso = enqueue_consolidation_job(
+    let meso = enqueue_consolidation_attempt(
         &runner,
         DreamerConsolidationScope::Meso,
         Some("device-a:claim-1"),
         12,
     )?;
     assert_ne!(
-        meso.job.id, micro.job.id,
+        meso.attempt.id, micro.attempt.id,
         "advisory dedupe is scoped by consolidation lane, not a global lock"
     );
-    assert_eq!(meso.job.kind, DREAMER_CONSOLIDATION_MESO_JOB_KIND);
+    assert_eq!(meso.attempt.kind, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND);
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted_micro,
@@ -1469,8 +1558,8 @@ fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<
         panic!("MICRO should admit per-device without a home node");
     };
     assert_eq!(
-        admitted_micro.status.job.kind,
-        DREAMER_CONSOLIDATION_MICRO_JOB_KIND
+        admitted_micro.status.attempt.kind,
+        DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
     );
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
@@ -1486,8 +1575,8 @@ fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<
         panic!("MESO should admit per-device without a home node");
     };
     assert_eq!(
-        admitted_meso.status.job.kind,
-        DREAMER_CONSOLIDATION_MESO_JOB_KIND
+        admitted_meso.status.attempt.kind,
+        DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND
     );
     assert!(runner.home_node_designation()?.is_none());
     Ok(())
@@ -1504,7 +1593,7 @@ fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()>
         .expect("always-on local wins");
     assert_eq!(designation.node_id, local.node_id);
 
-    let macro_job = enqueue_consolidation_job(
+    let macro_attempt = enqueue_consolidation_attempt(
         &runner,
         DreamerConsolidationScope::Macro,
         Some("home-macro:bucket-pair"),
@@ -1520,13 +1609,15 @@ fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()>
     );
     assert!(matches!(
         non_home,
-        Err(Error::InvalidJobQueueRecord(
+        Err(Error::InvalidAttemptQueueRecord(
             "dreamer local node_id does not match vault identity"
         ))
     ));
-    let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
-    assert_eq!(still_queued.job.state, JobState::Queued);
-    assert_eq!(still_queued.job.attempt_count, 0);
+    let still_queued = runner
+        .status(macro_attempt.attempt.id)?
+        .expect("macro attempt");
+    assert_eq!(still_queued.attempt.state, AttemptState::Queued);
+    assert_eq!(still_queued.attempt.attempt_count, 0);
 
     let DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
         admitted,
@@ -1540,12 +1631,12 @@ fn dreamer_macro_consolidation_admits_only_the_elected_home_node() -> Result<()>
     else {
         panic!("elected home node should admit MACRO consolidation");
     };
-    assert_eq!(admitted.status.job.id, macro_job.job.id);
+    assert_eq!(admitted.status.attempt.id, macro_attempt.attempt.id);
     assert_eq!(
-        admitted.status.job.kind,
-        DREAMER_CONSOLIDATION_MACRO_JOB_KIND
+        admitted.status.attempt.kind,
+        DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND
     );
-    assert_eq!(admitted.status.job.lease_owner.as_deref(), Some("home"));
+    assert_eq!(admitted.status.attempt.lease_owner.as_deref(), Some("home"));
     Ok(())
 }
 
@@ -1560,7 +1651,8 @@ fn dreamer_macro_consolidation_rejects_spoofed_remote_home_node_id() -> Result<(
         .expect("attached cloud wins");
     assert_eq!(designation.node_id, remote_home.node_id);
 
-    let macro_job = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Macro, None, 10)?;
+    let macro_attempt =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Macro, None, 10)?;
 
     let spoofed_home_id = admit_consolidation(
         &runner,
@@ -1571,7 +1663,7 @@ fn dreamer_macro_consolidation_rejects_spoofed_remote_home_node_id() -> Result<(
     );
     assert!(matches!(
         spoofed_home_id,
-        Err(Error::InvalidJobQueueRecord(
+        Err(Error::InvalidAttemptQueueRecord(
             "dreamer local node_id does not match vault identity"
         ))
     ));
@@ -1587,9 +1679,11 @@ fn dreamer_macro_consolidation_rejects_spoofed_remote_home_node_id() -> Result<(
         honest_local,
         DreamerConsolidationAdmissionOutcome::NotHomeNode(designation)
     );
-    let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
-    assert_eq!(still_queued.job.state, JobState::Queued);
-    assert_eq!(still_queued.job.attempt_count, 0);
+    let still_queued = runner
+        .status(macro_attempt.attempt.id)?
+        .expect("macro attempt");
+    assert_eq!(still_queued.attempt.state, AttemptState::Queued);
+    assert_eq!(still_queued.attempt.attempt_count, 0);
     Ok(())
 }
 
@@ -1598,7 +1692,8 @@ fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
     let local = runner.local_home_node_candidate(true, true, false)?;
-    let macro_job = enqueue_consolidation_job(&runner, DreamerConsolidationScope::Macro, None, 10)?;
+    let macro_attempt =
+        enqueue_consolidation_attempt(&runner, DreamerConsolidationScope::Macro, None, 10)?;
 
     let outcome = admit_consolidation(
         &runner,
@@ -1608,23 +1703,25 @@ fn dreamer_macro_consolidation_without_home_does_not_claim() -> Result<()> {
         20,
     )?;
     assert_eq!(outcome, DreamerConsolidationAdmissionOutcome::NoHomeNode);
-    let still_queued = runner.status(macro_job.job.id)?.expect("macro job");
-    assert_eq!(still_queued.job.state, JobState::Queued);
-    assert_eq!(still_queued.job.attempt_count, 0);
+    let still_queued = runner
+        .status(macro_attempt.attempt.id)?
+        .expect("macro attempt");
+    assert_eq!(still_queued.attempt.state, AttemptState::Queued);
+    assert_eq!(still_queued.attempt.attempt_count, 0);
     Ok(())
 }
 
 #[test]
-fn dreamer_admission_claims_job_reserves_budget_and_writes_started_milestone_atomically()
+fn dreamer_admission_claims_attempt_reserves_budget_and_writes_started_milestone_atomically()
 -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
     let claim_id = EntityId::now();
     let milestone = milestone_fixture(&vault, claim_id, 20)?;
     let milestone_subject = milestone.subject;
 
-    let admitted = runner.admit_next(AdmitDreamerJob {
+    let admitted = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -1634,26 +1731,26 @@ fn dreamer_admission_claims_job_reserves_budget_and_writes_started_milestone_ato
     })?;
 
     let DreamerAdmissionOutcome::Admitted(admitted) = admitted else {
-        panic!("expected admitted Dreamer job");
+        panic!("expected admitted Dreamer attempt");
     };
-    assert_eq!(admitted.status.job.id, queued.job.id);
-    assert_eq!(admitted.status.job.state, JobState::Leased);
+    assert_eq!(admitted.status.attempt.id, queued.attempt.id);
+    assert_eq!(admitted.status.attempt.state, AttemptState::Leased);
     assert_eq!(
-        admitted.status.job.lease_owner.as_deref(),
+        admitted.status.attempt.lease_owner.as_deref(),
         Some("dreamer-worker")
     );
-    assert_eq!(admitted.status.job.attempt_count, 1);
+    assert_eq!(admitted.status.attempt.attempt_count, 1);
     assert_eq!(admitted.budget.remaining_units, 6);
     assert_eq!(admitted.budget.reserved_units, 4);
     assert_eq!(admitted.reservation.budget_id, "wake");
-    assert_eq!(admitted.reservation.job_id, queued.job.id);
+    assert_eq!(admitted.reservation.attempt_id, queued.attempt.id);
     assert_eq!(admitted.reservation.reserved_units, 4);
 
     let stored_budget = runner.budget("wake")?.expect("budget row");
     assert_eq!(stored_budget, admitted.budget);
     assert_eq!(runner.remaining_budget("wake")?, Some(6));
     assert_eq!(
-        runner.budget_reservation("wake", queued.job.id)?,
+        runner.budget_reservation("wake", queued.attempt.id)?,
         Some(admitted.reservation)
     );
     let stored_claim = vault
@@ -1674,8 +1771,8 @@ fn dreamer_admission_claims_job_reserves_budget_and_writes_started_milestone_ato
             && value.as_str() == Some(DreamerMilestoneKind::Started.as_str())
     }));
     assert!(entries.iter().any(|(key, value)| {
-        key.as_str() == Some(KEY_JOB_ID)
-            && matches!(value, Value::Binary(bytes) if bytes.as_slice() == queued.job.id.as_bytes())
+        key.as_str() == Some(KEY_ATTEMPT_ID)
+            && matches!(value, Value::Binary(bytes) if bytes.as_slice() == queued.attempt.id.as_bytes())
     }));
 
     Ok(())
@@ -1685,34 +1782,33 @@ fn dreamer_admission_claims_job_reserves_budget_and_writes_started_milestone_ato
 fn dreamer_admission_budget_denial_does_not_lease_or_persist_budget() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let stale = match runner.enqueue(EnqueueDreamerJob {
-        job_type: "stale".to_owned(),
+    let stale = match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "stale".to_owned(),
         input: Value::from("stale"),
-        parent_job: None,
+        parent_attempt: None,
         dedupe_key: Some("stale-dedupe".to_owned()),
         run_id: None,
         now: 5,
     })? {
-        EnqueueDreamerJobOutcome::Enqueued(status) | EnqueueDreamerJobOutcome::Existing(status) => {
-            status
-        }
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
     };
-    let queued = enqueue_job(&runner, "expand", 10)?;
-    let stale_ready_key = test_ready_key(5, stale.job.id);
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
+    let stale_ready_key = test_ready_key(5, stale.attempt.id);
     {
         let mut wtxn = vault.store.env.write_txn()?;
         vault
             .store
-            .job_records
-            .delete(&mut wtxn, stale.job.id.as_bytes())?;
+            .attempt_records
+            .delete(&mut wtxn, stale.attempt.id.as_bytes())?;
         wtxn.commit()?;
     }
     assert!(
-        job_dedupe_points_to(&vault, stale.job.id)?,
+        attempt_dedupe_points_to(&vault, stale.attempt.id)?,
         "fixture must leave a stale dedupe index before denial"
     );
 
-    let denied = runner.admit_next(AdmitDreamerJob {
+    let denied = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -1731,25 +1827,27 @@ fn dreamer_admission_budget_denial_does_not_lease_or_persist_budget() -> Result<
         "denied admission must not commit an initialized budget row"
     );
     assert!(
-        runner.budget_reservation("wake", queued.job.id)?.is_none(),
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none(),
         "denied admission must not commit a child reservation row"
     );
-    let status = runner.status(queued.job.id)?.expect("queued job");
-    assert_eq!(status.job.state, JobState::Queued);
-    assert_eq!(status.job.attempt_count, 0);
-    assert!(status.job.lease_owner.is_none());
+    let status = runner.status(queued.attempt.id)?.expect("queued attempt");
+    assert_eq!(status.attempt.state, AttemptState::Queued);
+    assert_eq!(status.attempt.attempt_count, 0);
+    assert!(status.attempt.lease_owner.is_none());
     let rtxn = vault.store.env.read_txn()?;
     assert!(
         vault
             .store
-            .job_ready
+            .attempt_ready
             .get(&rtxn, &stale_ready_key)?
             .is_none(),
         "budget denial must commit stale ready-row repairs"
     );
     drop(rtxn);
     assert!(
-        !job_dedupe_points_to(&vault, stale.job.id)?,
+        !attempt_dedupe_points_to(&vault, stale.attempt.id)?,
         "budget denial must commit stale dedupe cleanup"
     );
 
@@ -1760,11 +1858,11 @@ fn dreamer_admission_budget_denial_does_not_lease_or_persist_budget() -> Result<
 fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
     let claim_id = EntityId::now();
     let milestone = milestone_fixture(&vault, claim_id, 20)?;
 
-    runner.admit_next(AdmitDreamerJob {
+    runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -1772,13 +1870,13 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
         reserve_units: 4,
         started_milestone: Some(milestone),
     })?;
-    let parked = runner.park_job(ParkDreamerJob {
-        job_id: queued.job.id,
+    let parked = runner.park_attempt(ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
         reason: "waiting for wake budget settle".to_owned(),
         park_owner: "dreamer-worker".to_owned(),
         now: 30,
     })?;
-    assert_eq!(runner.parked_job(queued.job.id)?, Some(parked));
+    assert_eq!(runner.parked_attempt(queued.attempt.id)?, Some(parked));
 
     let rtxn = vault.store.env.read_txn()?;
     assert!(
@@ -1792,37 +1890,37 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
         vault
             .store
             .vault_meta
-            .get(&rtxn, &budget_reservation_key("wake", queued.job.id)?)?
+            .get(&rtxn, &budget_reservation_key("wake", queued.attempt.id)?)?
             .is_some()
     );
     assert!(
         vault
             .store
             .vault_meta
-            .get(&rtxn, &run_tree_key(queued.job.id))?
+            .get(&rtxn, &run_tree_key(queued.attempt.id))?
             .is_some()
     );
     assert!(
         vault
             .store
             .vault_meta
-            .get(&rtxn, &parked_key(queued.job.id))?
+            .get(&rtxn, &parked_key(queued.attempt.id))?
             .is_some()
     );
     assert!(
         vault
             .store
-            .job_records
-            .get(&rtxn, queued.job.id.as_bytes())?
+            .attempt_records
+            .get(&rtxn, queued.attempt.id.as_bytes())?
             .is_some()
     );
     assert!(
         vault
             .store
             .entities
-            .get(&rtxn, queued.job.id.as_bytes())?
+            .get(&rtxn, queued.attempt.id.as_bytes())?
             .is_none(),
-        "job ids and local runner rows must not become vault entities"
+        "attempt ids and local runner rows must not become vault entities"
     );
     assert!(
         vault
@@ -1840,53 +1938,58 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
 fn park_row_ownership_enforced() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "expand", 10)?;
+    let queued = enqueue_attempt(&runner, "expand", 10)?;
 
     // Same-owner park → re-park round-trip refreshes the row.
-    runner.park_job(ParkDreamerJob {
-        job_id: queued.job.id,
+    runner.park_attempt(ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
         reason: "first park".to_owned(),
         park_owner: "owner-a".to_owned(),
         now: 20,
     })?;
-    let reparked = runner.park_job(ParkDreamerJob {
-        job_id: queued.job.id,
+    let reparked = runner.park_attempt(ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
         reason: "refreshed park".to_owned(),
         park_owner: "owner-a".to_owned(),
         now: 21,
     })?;
-    assert_eq!(runner.parked_job(queued.job.id)?, Some(reparked));
+    assert_eq!(runner.parked_attempt(queued.attempt.id)?, Some(reparked));
 
     // A DIFFERENT owner must not overwrite the row.
     let error = runner
-        .park_job(ParkDreamerJob {
-            job_id: queued.job.id,
+        .park_attempt(ParkDreamerAttempt {
+            attempt_id: queued.attempt.id,
             reason: "steal park".to_owned(),
             park_owner: "owner-b".to_owned(),
             now: 22,
         })
         .expect_err("overwrite by other owner refused");
-    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
-    let parked = runner.parked_job(queued.job.id)?.expect("row intact");
+    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
+    let parked = runner
+        .parked_attempt(queued.attempt.id)?
+        .expect("row intact");
     assert_eq!(parked.park_owner, "owner-a");
     assert_eq!(parked.reason, "refreshed park");
 
     // A DIFFERENT owner must not resume (delete) the row.
     let error = runner
-        .resume_parked(queued.job.id, "owner-b", 23)
+        .resume_parked(queued.attempt.id, "owner-b", 23)
         .expect_err("unpark by other owner refused");
-    assert!(matches!(error, Error::InvalidJobQueueRecord(_)));
-    assert!(runner.parked_job(queued.job.id)?.is_some(), "row intact");
+    assert!(matches!(error, Error::InvalidAttemptQueueRecord(_)));
+    assert!(
+        runner.parked_attempt(queued.attempt.id)?.is_some(),
+        "row intact"
+    );
 
     // The recorded owner resumes; a second resume is an idempotent no-op.
     let resumed = runner
-        .resume_parked(queued.job.id, "owner-a", 24)?
+        .resume_parked(queued.attempt.id, "owner-a", 24)?
         .expect("resumed status");
-    assert_eq!(resumed.job.id, queued.job.id);
-    assert!(runner.parked_job(queued.job.id)?.is_none());
+    assert_eq!(resumed.attempt.id, queued.attempt.id);
+    assert!(runner.parked_attempt(queued.attempt.id)?.is_none());
     assert!(
         runner
-            .resume_parked(queued.job.id, "owner-a", 25)?
+            .resume_parked(queued.attempt.id, "owner-a", 25)?
             .is_none()
     );
     Ok(())
@@ -1906,11 +2009,11 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
     let window_key = WindowKey::from_timestamp(learned_at);
     let (_dir_a, vault_a) = open_vault();
     let runner_a = DreamerRunnerStore::new(&vault_a);
-    let queued = enqueue_job(&runner_a, "expand", learned_at)?;
+    let queued = enqueue_attempt(&runner_a, "expand", learned_at)?;
     let milestone_id = EntityId::now();
     let milestone = milestone_fixture(&vault_a, milestone_id, learned_at)?;
 
-    runner_a.admit_next(AdmitDreamerJob {
+    runner_a.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: learned_at,
         budget_id: "wake".to_owned(),
@@ -1918,8 +2021,8 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         reserve_units: 4,
         started_milestone: Some(milestone),
     })?;
-    runner_a.park_job(ParkDreamerJob {
-        job_id: queued.job.id,
+    runner_a.park_attempt(ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
         reason: "waiting for wake budget settle".to_owned(),
         park_owner: "dreamer-worker".to_owned(),
         now: learned_at + 1,
@@ -1949,10 +2052,10 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         );
     }
 
-    let queued_as_entity = EntityId::from_bytes(*queued.job.id.as_bytes())?;
+    let queued_as_entity = EntityId::from_bytes(*queued.attempt.id.as_bytes())?;
     assert!(
         map_get_bytes(&entities, queued_as_entity.to_hex().as_str()).is_none(),
-        "queue job rows and leases must not be emitted as sync entities"
+        "queue attempt rows and leases must not be emitted as sync entities"
     );
     assert!(
         map_get_bytes(&entities, "dreamer:budget:wake").is_none(),
@@ -1983,8 +2086,8 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
     assert!(
         vault_b
             .store
-            .job_records
-            .get(&rtxn, queued.job.id.as_bytes())?
+            .attempt_records
+            .get(&rtxn, queued.attempt.id.as_bytes())?
             .is_none(),
         "queue leases must remain private to the runner store"
     );
@@ -2000,7 +2103,7 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         vault_b
             .store
             .vault_meta
-            .get(&rtxn, &budget_reservation_key("wake", queued.job.id)?)?
+            .get(&rtxn, &budget_reservation_key("wake", queued.attempt.id)?)?
             .is_none(),
         "private budget reservation rows must not sync"
     );
@@ -2008,7 +2111,7 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         vault_b
             .store
             .vault_meta
-            .get(&rtxn, &run_tree_key(queued.job.id))?
+            .get(&rtxn, &run_tree_key(queued.attempt.id))?
             .is_none(),
         "private run-tree rows must not sync"
     );
@@ -2016,7 +2119,7 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         vault_b
             .store
             .vault_meta
-            .get(&rtxn, &parked_key(queued.job.id))?
+            .get(&rtxn, &parked_key(queued.attempt.id))?
             .is_none(),
         "private parked rows must not sync"
     );
@@ -2034,15 +2137,15 @@ fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> 
         config.child_reserve_units,
         DEFAULT_DREAMER_CHILD_RESERVE_UNITS
     );
-    let first = enqueue_job(&runner, "first", 10)?;
-    let second = enqueue_job(&runner, "second", 11)?;
-    let third = enqueue_job(&runner, "third", 12)?;
+    let first = enqueue_attempt(&runner, "first", 10)?;
+    let second = enqueue_attempt(&runner, "second", 11)?;
+    let third = enqueue_attempt(&runner, "third", 12)?;
     let barrier = Barrier::new(3);
 
     let (left, middle, right) = thread::scope(|scope| {
         let left = scope.spawn(|| {
             barrier.wait();
-            runner.admit_next(AdmitDreamerJob {
+            runner.admit_next(AdmitDreamerAttempt {
                 lease_owner: "left-worker".to_owned(),
                 now: 20,
                 budget_id: "wake".to_owned(),
@@ -2053,7 +2156,7 @@ fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> 
         });
         let middle = scope.spawn(|| {
             barrier.wait();
-            runner.admit_next(AdmitDreamerJob {
+            runner.admit_next(AdmitDreamerAttempt {
                 lease_owner: "middle-worker".to_owned(),
                 now: 20,
                 budget_id: "wake".to_owned(),
@@ -2064,7 +2167,7 @@ fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> 
         });
         let right = scope.spawn(|| {
             barrier.wait();
-            runner.admit_next(AdmitDreamerJob {
+            runner.admit_next(AdmitDreamerAttempt {
                 lease_owner: "right-worker".to_owned(),
                 now: 20,
                 budget_id: "wake".to_owned(),
@@ -2099,24 +2202,24 @@ fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> 
     assert_eq!(budget.remaining_units, 0);
     assert_eq!(budget.reserved_units, config.child_reserve_units * 2);
 
-    let first_status = runner.status(first.job.id)?.expect("first status");
-    let second_status = runner.status(second.job.id)?.expect("second status");
-    let third_status = runner.status(third.job.id)?.expect("third status");
+    let first_status = runner.status(first.attempt.id)?.expect("first status");
+    let second_status = runner.status(second.attempt.id)?.expect("second status");
+    let third_status = runner.status(third.attempt.id)?.expect("third status");
     let leased = [
-        first_status.job.state,
-        second_status.job.state,
-        third_status.job.state,
+        first_status.attempt.state,
+        second_status.attempt.state,
+        third_status.attempt.state,
     ]
     .into_iter()
-    .filter(|state| *state == JobState::Leased)
+    .filter(|state| *state == AttemptState::Leased)
     .count();
     let queued = [
-        first_status.job.state,
-        second_status.job.state,
-        third_status.job.state,
+        first_status.attempt.state,
+        second_status.attempt.state,
+        third_status.attempt.state,
     ]
     .into_iter()
-    .filter(|state| *state == JobState::Queued)
+    .filter(|state| *state == AttemptState::Queued)
     .count();
     assert_eq!(leased, 2);
     assert_eq!(queued, 1);
@@ -2128,9 +2231,9 @@ fn dreamer_concurrent_admission_cannot_overspend_private_budget() -> Result<()> 
 fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "settle", 10)?;
+    let queued = enqueue_attempt(&runner, "settle", 10)?;
 
-    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -2139,16 +2242,16 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
         started_milestone: None,
     })?
     else {
-        panic!("expected admitted Dreamer job");
+        panic!("expected admitted Dreamer attempt");
     };
-    assert_eq!(admitted.reservation.job_id, queued.job.id);
+    assert_eq!(admitted.reservation.attempt_id, queued.attempt.id);
     assert_eq!(admitted.budget.remaining_units, 12);
     assert_eq!(admitted.budget.reserved_units, 8);
 
     let DreamerBudgetSettlementOutcome::Settled(settlement) =
         runner.settle_budget(SettleDreamerBudget {
             budget_id: "wake".to_owned(),
-            child_job: queued.job.id,
+            child_attempt: queued.attempt.id,
             actual_units: 5,
             now: 30,
         })?
@@ -2164,13 +2267,17 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
         runner.budget("wake")?.expect("settled budget"),
         settlement.budget
     );
-    assert!(runner.budget_reservation("wake", queued.job.id)?.is_none());
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none()
+    );
 
-    let second = enqueue_job(&runner, "settle-over-reserve", 40)?;
+    let second = enqueue_attempt(&runner, "settle-over-reserve", 40)?;
     let DreamerBudgetReserveOutcome::Reserved(reserved) =
         runner.reserve_budget(ReserveDreamerBudget {
             budget_id: "wake".to_owned(),
-            child_job: second.job.id,
+            child_attempt: second.attempt.id,
             budget_total_units: 20,
             reserve_units: 8,
             now: 50,
@@ -2184,7 +2291,7 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
     let DreamerBudgetSettlementOutcome::Settled(over) =
         runner.settle_budget(SettleDreamerBudget {
             budget_id: "wake".to_owned(),
-            child_job: second.job.id,
+            child_attempt: second.attempt.id,
             actual_units: 10,
             now: 60,
         })?
@@ -2203,9 +2310,9 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
 fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "settle-overspend", 10)?;
+    let queued = enqueue_attempt(&runner, "settle-overspend", 10)?;
 
-    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -2214,20 +2321,20 @@ fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
         started_milestone: None,
     })?
     else {
-        panic!("expected admitted Dreamer job");
+        panic!("expected admitted Dreamer attempt");
     };
     assert_eq!(admitted.budget.remaining_units, 2);
     assert_eq!(admitted.budget.reserved_units, 8);
 
     let result = runner.settle_budget(SettleDreamerBudget {
         budget_id: "wake".to_owned(),
-        child_job: queued.job.id,
+        child_attempt: queued.attempt.id,
         actual_units: 11,
         now: 30,
     });
     assert!(matches!(
         result,
-        Err(Error::InvalidJobQueueRecord(
+        Err(Error::InvalidAttemptQueueRecord(
             "dreamer budget settlement exceeds remaining units"
         ))
     ));
@@ -2236,7 +2343,7 @@ fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
         admitted.budget
     );
     assert_eq!(
-        runner.budget_reservation("wake", queued.job.id)?,
+        runner.budget_reservation("wake", queued.attempt.id)?,
         Some(admitted.reservation)
     );
 
@@ -2247,10 +2354,10 @@ fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
 fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queue = JobQueue::new(&vault);
-    let queued = enqueue_job(&runner, "requeued", 10)?;
+    let queue = AttemptQueue::new(&vault);
+    let queued = enqueue_attempt(&runner, "requeued", 10)?;
 
-    let DreamerAdmissionOutcome::Admitted(first) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(first) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "first-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -2261,23 +2368,26 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
     else {
         panic!("expected first admission");
     };
-    assert_eq!(first.status.job.id, queued.job.id);
-    assert_eq!(first.status.job.attempt_count, 1);
+    assert_eq!(first.status.attempt.id, queued.attempt.id);
+    assert_eq!(first.status.attempt.attempt_count, 1);
     assert_eq!(first.budget.remaining_units, 2);
     assert_eq!(first.budget.reserved_units, 8);
     let first_budget = first.budget.clone();
     let first_reservation = first.reservation.clone();
 
-    let report = queue.cleanup_leases(CleanupJobLeases {
+    let report = queue.cleanup_leases(CleanupAttemptLeases {
         now: 40,
         lease_timeout_secs: 10,
     })?;
     assert_eq!(report.stale_requeued, 1);
-    let requeued = runner.status(queued.job.id)?.expect("requeued job");
-    assert_eq!(requeued.job.state, JobState::Queued);
-    assert_eq!(requeued.job.last_error.as_deref(), Some("lease_timeout"));
+    let requeued = runner.status(queued.attempt.id)?.expect("requeued attempt");
+    assert_eq!(requeued.attempt.state, AttemptState::Queued);
+    assert_eq!(
+        requeued.attempt.last_error.as_deref(),
+        Some("lease_timeout")
+    );
 
-    let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(second) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "second-worker".to_owned(),
         now: 50,
         budget_id: "wake".to_owned(),
@@ -2288,11 +2398,11 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
     else {
         panic!("expected second admission");
     };
-    assert_eq!(second.status.job.id, queued.job.id);
-    assert_eq!(second.status.job.state, JobState::Leased);
-    assert_eq!(second.status.job.attempt_count, 2);
+    assert_eq!(second.status.attempt.id, queued.attempt.id);
+    assert_eq!(second.status.attempt.state, AttemptState::Leased);
+    assert_eq!(second.status.attempt.attempt_count, 2);
     assert_eq!(
-        second.status.job.lease_owner.as_deref(),
+        second.status.attempt.lease_owner.as_deref(),
         Some("second-worker")
     );
     assert_eq!(second.budget, first_budget);
@@ -2302,7 +2412,7 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
         first_budget
     );
     assert_eq!(
-        runner.budget_reservation("wake", queued.job.id)?,
+        runner.budget_reservation("wake", queued.attempt.id)?,
         Some(first_reservation)
     );
 
@@ -2313,9 +2423,9 @@ fn dreamer_admission_reuses_existing_reservation_after_lease_timeout_requeue() -
 fn dreamer_abort_refunds_unspent_child_reservation() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);
-    let queued = enqueue_job(&runner, "abort", 10)?;
+    let queued = enqueue_attempt(&runner, "abort", 10)?;
 
-    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerJob {
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
         lease_owner: "dreamer-worker".to_owned(),
         now: 20,
         budget_id: "wake".to_owned(),
@@ -2324,7 +2434,7 @@ fn dreamer_abort_refunds_unspent_child_reservation() -> Result<()> {
         started_milestone: None,
     })?
     else {
-        panic!("expected admitted Dreamer job");
+        panic!("expected admitted Dreamer attempt");
     };
     assert_eq!(admitted.budget.remaining_units, 2);
     assert_eq!(admitted.budget.reserved_units, 8);
@@ -2332,7 +2442,7 @@ fn dreamer_abort_refunds_unspent_child_reservation() -> Result<()> {
     let DreamerBudgetSettlementOutcome::Settled(aborted) =
         runner.abort_budget_reservation(AbortDreamerBudgetReservation {
             budget_id: "wake".to_owned(),
-            child_job: queued.job.id,
+            child_attempt: queued.attempt.id,
             now: 30,
         })?
     else {
@@ -2343,11 +2453,15 @@ fn dreamer_abort_refunds_unspent_child_reservation() -> Result<()> {
     assert_eq!(aborted.over_reserved_units, 0);
     assert_eq!(aborted.budget.remaining_units, 10);
     assert_eq!(aborted.budget.reserved_units, 0);
-    assert!(runner.budget_reservation("wake", queued.job.id)?.is_none());
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none()
+    );
     assert_eq!(
         runner.abort_budget_reservation(AbortDreamerBudgetReservation {
             budget_id: "wake".to_owned(),
-            child_job: queued.job.id,
+            child_attempt: queued.attempt.id,
             now: 40,
         })?,
         DreamerBudgetSettlementOutcome::NoReservation
