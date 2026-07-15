@@ -72,7 +72,7 @@
 //!   retrieval-telemetry seam (e.g. a session ref on `PipelineBuilder`)
 //!   that does not exist today.
 
-use std::collections::BTreeSet;
+use std::{cell::Cell, collections::BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -102,6 +102,12 @@ const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 /// never be a live session ref (`vet_off_record_session_ref` rejects empty),
 /// so it preserves the closed write door without retaining session metadata.
 const OFF_RECORD_CLOSED_FENCE_VALUE: &[u8] = b"";
+
+thread_local! {
+    /// One-shot raw-delete capability held only while close synchronously
+    /// invokes the ordinary deletion pipeline for this exact root/carrier.
+    static OFF_RECORD_CLOSE_DELETE_ID: Cell<Option<EntityId>> = const { Cell::new(None) };
+}
 
 const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
@@ -757,6 +763,25 @@ pub(crate) fn guard_off_record_entity_put(
     id: &EntityId,
     replicated: bool,
 ) -> Result<()> {
+    guard_direct_off_record_entity_write(store, wtxn, id, replicated)?;
+    if inherited_off_record_fence_roots_in_txn(store, wtxn, id)?.is_empty() {
+        return Ok(());
+    }
+    Err(Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    })
+}
+
+/// Direct-fence state validation shared by entity and edge writers.
+///
+/// Edges need this narrower probe because the edge preflight separately
+/// admits byte-identical retries and the one fence-establishing PartOf write.
+pub(crate) fn guard_direct_off_record_entity_write(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    replicated: bool,
+) -> Result<()> {
     let fence_key = off_record_fence_key(id);
     let Some(fence_value) = store.vault_meta.get(wtxn, &fence_key)? else {
         return Ok(());
@@ -778,6 +803,102 @@ pub(crate) fn guard_off_record_entity_put(
         return Err(rejected());
     }
     Ok(())
+}
+
+/// Rejects ordinary deletion of any direct or inherited fenced entity.
+/// Close temporarily authorizes one exact id so it can keep using the full
+/// PolicyDelete/audit pipeline without opening a general raw deletion door.
+pub(crate) fn guard_off_record_entity_delete(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if !off_record_visibility_hidden(store, rtxn, id)? {
+        return Ok(());
+    }
+    let close_authorized = OFF_RECORD_CLOSE_DELETE_ID.with(|slot| slot.get() == Some(*id));
+    if close_authorized {
+        return Ok(());
+    }
+    // Crash-retry compatibility: once close has durably frozen every root
+    // named by this row, a resumed PolicyDelete may re-enter through the
+    // ordinary deletion pipeline before the in-memory exact-id capability is
+    // re-established. No live/mutable session receives this fallback.
+    if off_record_delete_roots_are_closing(store, rtxn, id)? {
+        return Ok(());
+    }
+    Err(Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    })
+}
+
+/// Lower deindex guard. A closing-state fallback must also prove that the
+/// ordinary deletion pipeline staged a PolicyDelete marker; this prevents a
+/// batch delete (which has no marker) or another hard-delete reason from
+/// borrowing close's crash-retry allowance.
+pub(crate) fn guard_off_record_entity_deindex(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if !off_record_visibility_hidden(store, rtxn, id)? {
+        return Ok(());
+    }
+    if OFF_RECORD_CLOSE_DELETE_ID.with(|slot| slot.get() == Some(*id)) {
+        return Ok(());
+    }
+    let marker_key = crate::deletion::local_hard_delete_key(id);
+    let policy_delete_staged = store
+        .sync_state
+        .get(rtxn, &marker_key)?
+        .is_some_and(|value| {
+            value.first().copied()
+                == Some(crate::deletion::TombstoneReason::PolicyDelete.wire_byte())
+        });
+    if policy_delete_staged && off_record_delete_roots_are_closing(store, rtxn, id)? {
+        return Ok(());
+    }
+    Err(Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    })
+}
+
+fn off_record_delete_roots_are_closing(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let mut roots = inherited_off_record_fence_roots_in_txn(store, rtxn, id)?;
+    if direct_off_record_fence_active(store, rtxn, id)? {
+        roots.insert(*id);
+    }
+    Ok(!roots.is_empty()
+        && roots.iter().all(|root| {
+            let Ok(Some(value)) = store.vault_meta.get(rtxn, &off_record_fence_key(root)) else {
+                return false;
+            };
+            let Ok(session_ref) = std::str::from_utf8(value) else {
+                return false;
+            };
+            session_record_in_txn(store, rtxn, session_ref)
+                .ok()
+                .flatten()
+                .is_some_and(|record| record.closing)
+        }))
+}
+
+fn with_off_record_close_delete<T>(id: &EntityId, delete: impl FnOnce() -> Result<T>) -> Result<T> {
+    struct RestoreCloseDeleteId(Option<EntityId>);
+
+    impl Drop for RestoreCloseDeleteId {
+        fn drop(&mut self) {
+            OFF_RECORD_CLOSE_DELETE_ID.with(|slot| slot.set(self.0));
+        }
+    }
+
+    let previous = OFF_RECORD_CLOSE_DELETE_ID.with(|slot| slot.replace(Some(*id)));
+    let _restore = RestoreCloseDeleteId(previous);
+    delete()
 }
 
 /// Loads the record for a mutator: errors when the session is unknown, and
@@ -960,6 +1081,16 @@ impl Vault {
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
                 if existing == session_ref.as_bytes() {
+                    // Repair legacy/pre-sidecar fences and any interrupted
+                    // migration idempotently. Public readers no longer walk
+                    // the graph, so an existing direct row is not sufficient
+                    // unless every already-materialized descendant also has
+                    // its durable inherited-fence sidecar.
+                    persist_existing_inherited_carriers_for_root_in_txn(
+                        &self.store,
+                        wtxn,
+                        turn_id,
+                    )?;
                     #[cfg(feature = "sync")]
                     crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());
@@ -1281,14 +1412,17 @@ impl Vault {
             // entire cascade. `closing` makes this snapshot stable.
             let inherited_carriers = inherited_off_record_carriers_for_close(self, &id)?;
             for carrier_id in inherited_carriers.iter().rev() {
-                let child_outcome =
-                    self.delete_entity_with_reason(carrier_id, DeleteReason::PolicyDelete)?;
+                let child_outcome = with_off_record_close_delete(carrier_id, || {
+                    self.delete_entity_with_reason(carrier_id, DeleteReason::PolicyDelete)
+                })?;
                 if let Some(receipt_id) = child_outcome.receipt_id {
                     redaction_receipt_ids.push(receipt_id);
                 }
             }
 
-            let outcome = self.delete_entity_with_reason(&id, DeleteReason::PolicyDelete)?;
+            let outcome = with_off_record_close_delete(&id, || {
+                self.delete_entity_with_reason(&id, DeleteReason::PolicyDelete)
+            })?;
             if outcome.existed {
                 turns_deleted += 1;
             } else {

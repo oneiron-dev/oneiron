@@ -727,6 +727,13 @@ pub fn scrub_off_record_fenced_carriers(
                 .push(*target);
         }
     }
+    // A locally materialized MESSAGE/SUMMARY is not positive on-record truth
+    // when this window carries an inheritance edge for it. It must wait for
+    // every parent to resolve in the fixed point below; otherwise arrival
+    // order can seed a carrier as resolved before its fenced parent appears.
+    for source in inheritance_parents.keys() {
+        resolved_entities.remove(source);
+    }
 
     // First propagate known roots and positively resolved on-record chains to
     // a fixed point. A carrier is on-record only when ALL of its inheritance
@@ -931,7 +938,7 @@ fn persist_inherited_fences_and_purge_orphans(
             }
 
             let (_, entity_had_vector, entity_had_graph_mutation, neighbors) =
-                crate::batch::deindex_entity(&vault.store, wtxn, id)?;
+                crate::batch::deindex_entity_raw(&vault.store, wtxn, id)?;
             crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, id, &neighbors)?;
             had_vector |= entity_had_vector;
             had_graph_mutation |= entity_had_graph_mutation;

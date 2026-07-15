@@ -1621,11 +1621,7 @@ pub(crate) fn apply_ops_with_gate_mode(
     secret_scan::scan_batch_ops(&ops)?;
     let edge_preflight = validate_and_filter_off_record_edge_ops(store, &*wtxn, ops)?;
     let ops = edge_preflight.ops;
-    for (carrier, roots) in edge_preflight.inherited_fences {
-        crate::off_record::put_inherited_off_record_fence_roots_in_txn(
-            store, wtxn, &carrier, &roots,
-        )?;
-    }
+    let inherited_fences = edge_preflight.inherited_fences;
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
@@ -1986,6 +1982,16 @@ pub(crate) fn apply_ops_with_gate_mode(
         }
     }
 
+    // Persist prospective carrier roots after applying the batch operations.
+    // The rows still commit atomically with the fence-establishing batch, but
+    // a same-batch MESSAGE put does not trip the ordinary sidecar-hidden
+    // entity door while its PartOf edge is still being established.
+    for (carrier, roots) in inherited_fences {
+        crate::off_record::put_inherited_off_record_fence_roots_in_txn(
+            store, wtxn, &carrier, &roots,
+        )?;
+    }
+
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
         if store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice()) {
@@ -2028,10 +2034,11 @@ fn delete_edge_op_fields(op: &BatchOp) -> Option<(EntityId, EdgeKind, EntityId, 
     }
 }
 
-/// An existing structural edge is an idempotent retry only when its canonical
-/// identity and stored weight match. Timestamped public writes additionally
-/// pin `created_at`; replicated writes never receive the local PartOf
-/// establishment allowance.
+/// An existing local edge is an idempotent retry only when re-encoding every
+/// caller-controlled field yields the exact stored bytes. Plain writes reuse
+/// the stored `created_at` solely for this comparison; the preflight drops a
+/// matching hidden-edge op instead of rewriting it. Replicated writes never
+/// receive this allowance.
 fn edge_op_matches_existing(store: &Store, rtxn: &heed::RwTxn<'_>, op: &BatchOp) -> Result<bool> {
     let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
         return Ok(false);
@@ -2044,13 +2051,19 @@ fn edge_op_matches_existing(store: &Store, rtxn: &heed::RwTxn<'_>, op: &BatchOp)
         return Ok(false);
     };
     let decoded = crate::edge::decode_edge_value_for_kind(kind, value)?;
-    Ok(match op {
-        BatchOp::Edge { weight, .. } => decoded.weight.to_bits() == weight.to_bits(),
+    let intended = match op {
+        BatchOp::Edge { weight, vad, .. } => {
+            encode_edge_value(kind, *weight, decoded.created_at, *vad, None)?
+        }
         BatchOp::PublicEdgeWithCreatedAt {
-            weight, created_at, ..
-        } => decoded.weight.to_bits() == weight.to_bits() && decoded.created_at == *created_at,
-        _ => false,
-    })
+            weight,
+            created_at,
+            vad,
+            ..
+        } => encode_edge_value(kind, *weight, *created_at, *vad, None)?,
+        _ => return Ok(false),
+    };
+    Ok(value == intended.as_slice())
 }
 
 fn effective_batch_entity_type(
@@ -2083,11 +2096,12 @@ fn guard_off_record_edge_op(
     replicated: bool,
     src_type: Option<u8>,
     tgt_type: Option<u8>,
+    exact_existing: bool,
 ) -> Result<bool> {
     // Preserve the direct-fence state checks (replicated, closing, closed,
     // malformed) before consulting the inherited probe.
-    crate::off_record::guard_off_record_entity_put(store, rtxn, src, replicated)?;
-    crate::off_record::guard_off_record_entity_put(store, rtxn, tgt, replicated)?;
+    crate::off_record::guard_direct_off_record_entity_write(store, rtxn, src, replicated)?;
+    crate::off_record::guard_direct_off_record_entity_write(store, rtxn, tgt, replicated)?;
 
     let src_fenced = crate::off_record::off_record_visibility_hidden(store, rtxn, src)?;
     let tgt_fenced = crate::off_record::off_record_visibility_hidden(store, rtxn, tgt)?;
@@ -2127,6 +2141,9 @@ fn guard_off_record_edge_op(
     // all of a new carrier's edges atomically in the prospective pass below.
     let src_inherited = src_fenced && !src_direct;
     let tgt_inherited = tgt_fenced && !tgt_direct;
+    if exact_existing && (src_inherited || tgt_inherited) {
+        return Ok(false);
+    }
     if let Some(hidden) = src_inherited
         .then_some(src)
         .or_else(|| tgt_inherited.then_some(tgt))
@@ -2191,7 +2208,8 @@ struct OffRecordEdgePreflight {
 /// the same LMDB transaction. Non-PartOf witness edges remain stored: public
 /// readers hide either fenced endpoint and promotion releases the complete
 /// conversation/authorship graph. An already-existing carrier gets no
-/// initialization allowance beyond an exact PartOf retry.
+/// initialization allowance beyond byte-identical retries of its already
+/// committed witness edges.
 fn validate_and_filter_off_record_edge_ops(
     store: &Store,
     rtxn: &heed::RwTxn<'_>,
@@ -2214,16 +2232,26 @@ fn validate_and_filter_off_record_edge_ops(
     let mut prospective_message_carriers = HashSet::new();
     let mut allowed_inheritance_edges = HashSet::new();
     let mut inherited_fences = HashMap::<EntityId, BTreeSet<EntityId>>::new();
+    let mut exact_hidden_retries = HashSet::new();
     for op in &ops {
         let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
             continue;
         };
         let src_type = effective_batch_entity_type(store, rtxn, &put_types, &src)?;
         let tgt_type = effective_batch_entity_type(store, rtxn, &put_types, &tgt)?;
+        let exact_existing = edge_op_matches_existing(store, rtxn, op)?;
         if guard_off_record_edge_op(
-            store, rtxn, &src, kind, &tgt, replicated, src_type, tgt_type,
+            store,
+            rtxn,
+            &src,
+            kind,
+            &tgt,
+            replicated,
+            src_type,
+            tgt_type,
+            exact_existing,
         )? {
-            if !new_puts.contains(&src) && !edge_op_matches_existing(store, rtxn, op)? {
+            if !new_puts.contains(&src) && !exact_existing {
                 return Err(Error::OffRecordFencedTurnWriteRejected {
                     turn_ref: src.to_hex(),
                 });
@@ -2231,6 +2259,11 @@ fn validate_and_filter_off_record_edge_ops(
             prospective_message_carriers.insert(src);
             allowed_inheritance_edges.insert((src, kind, tgt));
             inherited_fences.entry(src).or_default().insert(tgt);
+        }
+        let src_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, &src)?;
+        let tgt_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, &tgt)?;
+        if exact_existing && (src_hidden || tgt_hidden) {
+            exact_hidden_retries.insert((src, kind, tgt));
         }
     }
 
@@ -2253,7 +2286,9 @@ fn validate_and_filter_off_record_edge_ops(
         let Some((src, kind, tgt, _)) = edge_op_fields(op) else {
             continue;
         };
-        if allowed_inheritance_edges.contains(&(src, kind, tgt)) {
+        if allowed_inheritance_edges.contains(&(src, kind, tgt))
+            || exact_hidden_retries.contains(&(src, kind, tgt))
+        {
             continue;
         }
         let fenced_endpoint = prospective_message_carriers
@@ -2270,7 +2305,14 @@ fn validate_and_filter_off_record_edge_ops(
     }
 
     Ok(OffRecordEdgePreflight {
-        ops,
+        ops: ops
+            .into_iter()
+            .filter(|op| {
+                edge_op_fields(op).is_none_or(|(src, kind, tgt, _)| {
+                    !exact_hidden_retries.contains(&(src, kind, tgt))
+                })
+            })
+            .collect(),
         inherited_fences,
     })
 }
@@ -2512,6 +2554,17 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
 }
 
 pub(crate) fn deindex_entity(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<(bool, bool, bool, Vec<EntityId>)> {
+    crate::off_record::guard_off_record_entity_deindex(store, &*wtxn, id)?;
+    deindex_entity_raw(store, wtxn, id)
+}
+
+/// Raw deindexing for privacy machinery that has already established the
+/// carrier's fence and must scrub its local materialization atomically.
+pub(crate) fn deindex_entity_raw(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -2821,7 +2874,21 @@ fn apply_put(
     // fence admits only the local tag-before-write path; replicated writes
     // and closed fences reject before any validation or side effect can mint
     // an index row, gate receipt, or late entity body.
-    crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
+    let exact_local_retry = !replicated
+        && store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
+            EntityMetadataHeader::parse(raw).is_some_and(|header| {
+                header.entity_type == entity_type
+                    && header.occurred_start == occurred.start
+                    && header.occurred_end == occurred.end
+                    && header.learned_at == learned_at
+                    && &raw[ENTITY_METADATA_HEADER_LEN..] == data
+            })
+        });
+    if exact_local_retry {
+        crate::off_record::guard_direct_off_record_entity_write(store, wtxn, &id, false)?;
+    } else {
+        crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
+    }
     // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at
     // one of them would resolve at the gate as a system preset with its
@@ -3650,8 +3717,8 @@ fn apply_edge_with_created_at(
     // a MESSAGE PartOf edge atomic with close's child snapshot: once close
     // stamps `closing`, no late child can attach to the fenced TURN and escape
     // the cascade.
-    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &src, replicated)?;
-    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &tgt, replicated)?;
+    crate::off_record::guard_direct_off_record_entity_write(store, &*wtxn, &src, replicated)?;
+    crate::off_record::guard_direct_off_record_entity_write(store, &*wtxn, &tgt, replicated)?;
     validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });

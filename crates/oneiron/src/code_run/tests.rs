@@ -1434,3 +1434,181 @@ fn code_run_human_destructive_and_outbound_effects_become_durable_waits() -> Res
 
     Ok(())
 }
+
+#[test]
+fn off_record_code_run_rejects_durable_memory_writes_but_allows_witness() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    let subject = seed_person(&vault, 0xB8);
+    let target = seed_person(&vault, 0xC8);
+    let claim = EntityId::from_bytes([0xD8; 16])?;
+    let replacement = EntityId::from_bytes([0xE8; 16])?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:off-record-write-reject",
+    )?;
+    vault.enter_off_record_session(
+        "sess-code-write-reject",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let calls = [
+        SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            claim,
+            ClaimCandidate::new(
+                "profile.private_note",
+                ClaimSubject::Entity(subject),
+                Value::from("must not persist"),
+                0.9,
+            ),
+            range(10),
+            10,
+        )),
+        SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(replacement, claim, 11)),
+        SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            subject,
+            EdgeKind::Mentions,
+            target,
+            0.7,
+        )),
+    ];
+    let mut durable_write_rejections = 0;
+    for call in calls {
+        let error = dispatcher
+            .dispatch_with_off_record_session_ref(call, Some("sess-code-write-reject"))
+            .expect_err("off-record durable memory write must reject");
+        durable_write_rejections +=
+            usize::from(error.kind() == crate::error::ErrorKind::InvalidClaimBody);
+    }
+    assert_eq!(durable_write_rejections, 3);
+    assert_eq!(
+        [claim, replacement]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("write side effect probe"))
+            .count(),
+        0
+    );
+    assert_eq!(
+        vault
+            .targets(&subject, EdgeKind::Mentions, None)?
+            .into_iter()
+            .filter(|id| *id == target)
+            .count(),
+        0
+    );
+
+    let conversation = EntityId::from_bytes([0xA8; 16])?.to_hex();
+    let mut witness = SelfCall::Speak({
+        let mut turn = message_turn(
+            &conversation,
+            &EntityId::from_bytes([0xA9; 16])?.to_hex(),
+            "private speech",
+            0,
+        );
+        turn.turn_ref = None;
+        turn.messages[0].id = None;
+        turn
+    });
+    stamp_self_message_ids_for_bridge_call(&mut witness, &EntityId::from_bytes([0xAA; 16])?, 0)?;
+    let outcome =
+        dispatcher.dispatch_with_off_record_session_ref(witness, Some("sess-code-write-reject"))?;
+    assert_eq!(
+        [outcome]
+            .into_iter()
+            .filter(|outcome| matches!(outcome, SelfDispatchOutcome::MessageWitness(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        vault
+            .off_record_session("sess-code-write-reject")?
+            .expect("off-record session")
+            .fenced_turns
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn off_record_code_run_rejects_guest_turn_ref_and_accepts_omission() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    let on_record_turn = EntityId::from_bytes([0xB9; 16])?;
+    vault.put_entity(
+        &on_record_turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        range(20),
+        20,
+        b"on-record turn",
+    )?;
+    vault.enter_off_record_session(
+        "sess-code-turn-owner",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:off-record-turn-owner",
+    )?;
+    let conversation = EntityId::from_bytes([0xBA; 16])?.to_hex();
+
+    let mut supplied = SelfCall::Speak(message_turn(
+        &conversation,
+        &on_record_turn.to_hex(),
+        "guest selected turn",
+        0,
+    ));
+    stamp_self_message_ids_for_bridge_call(&mut supplied, &EntityId::from_bytes([0xBD; 16])?, 0)?;
+    let error = dispatcher
+        .dispatch_with_off_record_session_ref(supplied, Some("sess-code-turn-owner"))
+        .expect_err("guest-supplied off-record turn ref must reject");
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidClaimBody);
+    assert_eq!(
+        vault
+            .off_record_session("sess-code-turn-owner")?
+            .expect("unchanged session")
+            .fenced_turns
+            .len(),
+        0
+    );
+    assert_eq!(
+        [on_record_turn]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("on-record turn control").is_some())
+            .count(),
+        1
+    );
+
+    let mut omitted = SelfCall::Speak({
+        let mut turn = message_turn(
+            &conversation,
+            &EntityId::from_bytes([0xBB; 16])?.to_hex(),
+            "executor selected turn",
+            1,
+        );
+        turn.turn_ref = None;
+        turn.messages[0].id = None;
+        turn
+    });
+    stamp_self_message_ids_for_bridge_call(&mut omitted, &EntityId::from_bytes([0xBC; 16])?, 1)?;
+    dispatcher.dispatch_with_off_record_session_ref(omitted, Some("sess-code-turn-owner"))?;
+    assert_eq!(
+        vault
+            .off_record_session("sess-code-turn-owner")?
+            .expect("updated session")
+            .fenced_turns
+            .len(),
+        1
+    );
+    assert_eq!(
+        [on_record_turn]
+            .into_iter()
+            .filter(|id| vault
+                .is_turn_off_record_fenced(id)
+                .expect("on-record fence probe"))
+            .count(),
+        0
+    );
+    Ok(())
+}

@@ -616,6 +616,184 @@ fn window_scrub_resolves_on_record_cross_window_message_parent_from_lmdb() -> Re
     Ok(())
 }
 
+#[test]
+fn window_carriers_with_inheritance_edges_wait_for_parent_resolution() -> Result<()> {
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+
+    let (_unknown_dir, unknown_vault) = test_vault();
+    let unknown_parent = EntityId::from_bytes([0x71; 16])?;
+    let unresolved_summary = EntityId::from_bytes([0x72; 16])?;
+    unknown_vault.put_entity(
+        &unresolved_summary,
+        ENTITY_TYPE_SUMMARY,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"locally materialized unresolved summary",
+    )?;
+    let unknown_doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(
+        &unknown_doc.get_map("entities"),
+        &unresolved_summary.to_hex(),
+        &make_entity_blob(
+            ENTITY_TYPE_SUMMARY,
+            learned_at,
+            b"locally materialized unresolved summary",
+        ),
+    )?;
+    let unresolved_edge =
+        format_edge_key(&unresolved_summary, EdgeKind::DerivedFrom, &unknown_parent);
+    map_insert_bytes(
+        &unknown_doc.get_map("edges"),
+        &unresolved_edge,
+        b"DerivedFrom",
+    )?;
+    unknown_doc.commit();
+    scrub_off_record_fenced_carriers(&unknown_vault, &window_key, &unknown_doc)?;
+    assert_eq!(
+        [unresolved_summary]
+            .into_iter()
+            .filter(|id| {
+                map_get_bytes(&unknown_doc.get_map("entities"), &id.to_hex()).is_some()
+            })
+            .count(),
+        0
+    );
+    assert_eq!(
+        [unresolved_summary]
+            .into_iter()
+            .filter(|id| unknown_vault
+                .get_raw(id)
+                .expect("unresolved LMDB row")
+                .is_some())
+            .count(),
+        0
+    );
+
+    let (_public_dir, public_vault) = test_vault();
+    let public_parent = EntityId::from_bytes([0x73; 16])?;
+    let public_summary = EntityId::from_bytes([0x74; 16])?;
+    for (id, entity_type, body) in [
+        (
+            public_parent,
+            ENTITY_TYPE_MESSAGE,
+            b"positive on-record parent".as_slice(),
+        ),
+        (
+            public_summary,
+            ENTITY_TYPE_SUMMARY,
+            b"resolved on-record summary".as_slice(),
+        ),
+    ] {
+        public_vault.put_entity(
+            &id,
+            entity_type,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+            body,
+        )?;
+    }
+    let public_doc = create_window_doc("remote", &window_key);
+    for (id, entity_type, body) in [
+        (
+            public_parent,
+            ENTITY_TYPE_MESSAGE,
+            b"positive on-record parent".as_slice(),
+        ),
+        (
+            public_summary,
+            ENTITY_TYPE_SUMMARY,
+            b"resolved on-record summary".as_slice(),
+        ),
+    ] {
+        map_insert_bytes(
+            &public_doc.get_map("entities"),
+            &id.to_hex(),
+            &make_entity_blob(entity_type, learned_at, body),
+        )?;
+    }
+    let public_edge = format_edge_key(&public_summary, EdgeKind::DerivedFrom, &public_parent);
+    map_insert_bytes(&public_doc.get_map("edges"), &public_edge, b"DerivedFrom")?;
+    public_doc.commit();
+    scrub_off_record_fenced_carriers(&public_vault, &window_key, &public_doc)?;
+    assert_eq!(
+        [public_parent, public_summary]
+            .into_iter()
+            .filter(|id| map_get_bytes(&public_doc.get_map("entities"), &id.to_hex()).is_some())
+            .count(),
+        2
+    );
+    assert_eq!(
+        [public_edge]
+            .into_iter()
+            .filter(|edge| map_get_bytes(&public_doc.get_map("edges"), edge).is_some())
+            .count(),
+        1
+    );
+
+    let (_fenced_dir, fenced_vault) = test_vault();
+    let fenced_parent = EntityId::from_bytes([0x75; 16])?;
+    let fenced_summary = EntityId::from_bytes([0x76; 16])?;
+    fenced_vault.put_entity(
+        &fenced_parent,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"fenced parent",
+    )?;
+    fenced_vault.put_entity(
+        &fenced_summary,
+        ENTITY_TYPE_SUMMARY,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"summary awaiting fenced parent",
+    )?;
+    fenced_vault
+        .enter_off_record_session("sess-window-parent-order", OffRecordBackendClass::Local)?;
+    fenced_vault.tag_turn_off_record("sess-window-parent-order", &fenced_parent)?;
+    let fenced_doc = create_window_doc("remote", &window_key);
+    map_insert_bytes(
+        &fenced_doc.get_map("entities"),
+        &fenced_summary.to_hex(),
+        &make_entity_blob(
+            ENTITY_TYPE_SUMMARY,
+            learned_at,
+            b"summary awaiting fenced parent",
+        ),
+    )?;
+    let fenced_edge = format_edge_key(&fenced_summary, EdgeKind::DerivedFrom, &fenced_parent);
+    map_insert_bytes(&fenced_doc.get_map("edges"), &fenced_edge, b"DerivedFrom")?;
+    fenced_doc.commit();
+    scrub_off_record_fenced_carriers(&fenced_vault, &window_key, &fenced_doc)?;
+    assert_eq!(
+        [fenced_summary]
+            .into_iter()
+            .filter(|id| map_get_bytes(&fenced_doc.get_map("entities"), &id.to_hex()).is_some())
+            .count(),
+        0
+    );
+    assert_eq!(
+        [fenced_edge]
+            .into_iter()
+            .filter(|edge| map_get_bytes(&fenced_doc.get_map("edges"), edge).is_some())
+            .count(),
+        0
+    );
+    Ok(())
+}
+
 /// Tagging an entity that is already present in a registry-owned live window
 /// must remove its body and incident edges before the call returns. The
 /// ordinary neighbor is the legitimate control and must remain exportable.

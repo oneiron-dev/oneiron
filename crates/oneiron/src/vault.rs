@@ -560,6 +560,7 @@ impl Vault {
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
         let rtxn = self.store.env.read_txn()?;
+        crate::off_record::guard_off_record_entity_delete(&self.store, &rtxn, id)?;
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -867,6 +868,10 @@ impl Vault {
         if limit == 0 {
             return Ok(Vec::new());
         }
+        let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, center)? {
+            return Ok(Vec::new());
+        }
         let db = if outbound {
             &self.store.edges_out
         } else {
@@ -876,12 +881,14 @@ impl Vault {
             Some(kind) => edge_kind_prefix(center, kind).to_vec(),
             None => center.as_bytes().to_vec(),
         };
-        let rtxn = self.store.env.read_txn()?;
         let mut edges = Vec::new();
         for entry in db.prefix_iter(&rtxn, prefix.as_slice())? {
             let (key, value) = entry?;
             let edge = parse_edge_record(key, value)?;
             if min_weight.is_some_and(|min| edge.weight < min) {
+                continue;
+            }
+            if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &edge.target)? {
                 continue;
             }
             edges.push(edge);

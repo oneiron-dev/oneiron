@@ -277,6 +277,9 @@ impl<'a> ScopedRead<'a> {
 
     pub fn get_entity_parts(&self, id: &EntityId) -> Result<Option<(u8, u64, Vec<u8>)>> {
         let rtxn = self.vault.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.vault.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let Some(raw) = self.vault.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -300,6 +303,13 @@ impl<'a> ScopedRead<'a> {
         let Some(result) = self.vault.hydrate_short_id(short_id, content_hash)? else {
             return Ok(None);
         };
+        let rtxn = self.vault.store.env.read_txn()?;
+        let hidden =
+            crate::off_record::off_record_visibility_hidden(&self.vault.store, &rtxn, &result.id)?;
+        drop(rtxn);
+        if hidden {
+            return Ok(None);
+        }
         if result.body.is_none() {
             if result.deletion.is_some() {
                 return Ok(Some(result));
@@ -441,6 +451,9 @@ impl<'a> ScopedRead<'a> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
+        if crate::off_record::off_record_visibility_hidden(&self.vault.store, rtxn, id)? {
+            return Ok(false);
+        }
         let Some(raw) = self.vault.store.entities.get(rtxn, id.as_bytes())? else {
             return Ok(false);
         };
@@ -623,10 +636,9 @@ impl<'a> ScopedRead<'a> {
         for record in records {
             let readable = match (record.state, record.entity_type) {
                 (MemoryTimelineRecordState::Missing, _) => false,
-                (_, Some(ENTITY_TYPE_CLAIM)) => {
+                (_, Some(_)) => {
                     self.is_entity_readable_with_policy_in(&rtxn, &policy, &record.id)?
                 }
-                (_, Some(_)) => true,
                 (_, None) => false,
             };
             if readable {

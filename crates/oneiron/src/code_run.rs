@@ -33,6 +33,24 @@ const CODE_RUN_REPLAY_CANONICAL_REQUEST_ACTOR: [u8; 16] = [0x42; 16];
 const CODE_RUN_REPLAY_MAX_LABEL_BYTES: usize = 512;
 const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
 
+thread_local! {
+    /// One-shot capabilities minted only when the executor fills an omitted
+    /// self-message turn ref. Off-record dispatch consumes the capability so
+    /// a guest-supplied ref cannot target an existing on-record turn.
+    static EXECUTOR_OWNED_SELF_MESSAGE_TURN: Cell<Option<EntityId>> = const { Cell::new(None) };
+}
+
+fn consume_executor_owned_self_message_turn(turn: &crate::facade::WitnessTurn) -> bool {
+    let Some(turn_id) = turn
+        .turn_ref
+        .as_deref()
+        .and_then(|value| EntityId::from_hex(value).ok())
+    else {
+        return false;
+    };
+    EXECUTOR_OWNED_SELF_MESSAGE_TURN.with(|slot| slot.replace(None) == Some(turn_id))
+}
+
 /// Maximum results a first-party `self.memory.search` call can request.
 pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
@@ -1852,6 +1870,12 @@ impl<'a> HostSelfDispatcher<'a> {
         mut turn: crate::facade::WitnessTurn,
         off_record_session_ref: Option<&str>,
     ) -> Result<SelfDispatchOutcome> {
+        let executor_owned_turn = consume_executor_owned_self_message_turn(&turn);
+        if off_record_session_ref.is_some() && !executor_owned_turn {
+            return Err(Error::InvalidClaimBody(
+                "off-record self message turn_ref must be omitted and executor-owned",
+            ));
+        }
         if turn.messages.len() != 1 {
             return Err(Error::InvalidClaimBody(
                 "self.speak/think/express requires exactly one message bubble",
@@ -1964,9 +1988,30 @@ impl<'a> HostSelfDispatcher<'a> {
         match call {
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
-            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
-            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
-            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::MemoryPutClaim(call) => {
+                if off_record_session_ref.is_some() {
+                    return Err(Error::InvalidClaimBody(
+                        "off-record code runs cannot persist durable memory writes",
+                    ));
+                }
+                self.dispatch_memory_put_claim(call)
+            }
+            SelfCall::MemorySupersedeClaim(call) => {
+                if off_record_session_ref.is_some() {
+                    return Err(Error::InvalidClaimBody(
+                        "off-record code runs cannot persist durable memory writes",
+                    ));
+                }
+                self.dispatch_memory_supersede_claim(call)
+            }
+            SelfCall::MemoryPutEdge(call) => {
+                if off_record_session_ref.is_some() {
+                    return Err(Error::InvalidClaimBody(
+                        "off-record code runs cannot persist durable memory writes",
+                    ));
+                }
+                self.dispatch_memory_put_edge(call)
+            }
             SelfCall::Speak(turn) => {
                 self.dispatch_message_witness(SelfEffect::Speak, turn, off_record_session_ref)
             }
@@ -2226,12 +2271,14 @@ pub(crate) fn stamp_self_message_ids_for_bridge_call(
         SelfCall::Speak(turn) | SelfCall::Think(turn) | SelfCall::Express(turn) => turn,
         _ => return Ok(()),
     };
-    if turn.turn_ref.is_none() {
-        turn.turn_ref = Some(
-            deterministic_self_message_id(SELF_MESSAGE_TURN_ID_DOMAIN, run_id, bridge_seq, 0)?
-                .to_hex(),
-        );
-    }
+    let minted_turn_id = if turn.turn_ref.is_none() {
+        let turn_id =
+            deterministic_self_message_id(SELF_MESSAGE_TURN_ID_DOMAIN, run_id, bridge_seq, 0)?;
+        turn.turn_ref = Some(turn_id.to_hex());
+        Some(turn_id)
+    } else {
+        None
+    };
     for (index, message) in turn.messages.iter_mut().enumerate() {
         if message.id.is_none() {
             let index = u64::try_from(index)
@@ -2247,6 +2294,9 @@ pub(crate) fn stamp_self_message_ids_for_bridge_call(
             );
         }
     }
+    // Always overwrite the one-shot slot. A caller-supplied turn ref clears
+    // any stale prediction-only stamp instead of borrowing its capability.
+    EXECUTOR_OWNED_SELF_MESSAGE_TURN.with(|slot| slot.set(minted_turn_id));
     Ok(())
 }
 

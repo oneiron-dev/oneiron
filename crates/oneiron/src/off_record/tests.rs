@@ -3,6 +3,7 @@ use crate::code_run::{CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord}
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, ErrorKind};
+use crate::facade::NeighborOpts;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchPipeline, OutboundDispatchRequest,
@@ -911,6 +912,76 @@ fn public_edge_readers_hide_direct_fenced_endpoint_until_promotion() {
 }
 
 #[test]
+fn neighbors_facade_hides_fenced_anchor_and_peers() {
+    let (_tmp, vault) = temp_vault();
+    let anchor = seed_turn(&vault, 1000);
+    let hidden = seed_turn(&vault, 1001);
+    let visible = seed_turn(&vault, 1002);
+    let actor = EntityId::now();
+    vault
+        .put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: 1000,
+                end: 1000,
+            },
+            1000,
+            b"neighbor reader",
+        )
+        .expect("seed neighbor reader");
+    vault
+        .put_edge(&anchor, EdgeKind::Mentions, &hidden, 0.9)
+        .expect("hidden outbound edge");
+    vault
+        .put_edge(&anchor, EdgeKind::Mentions, &visible, 0.8)
+        .expect("visible outbound edge");
+    vault
+        .put_edge(&hidden, EdgeKind::Mentions, &anchor, 0.7)
+        .expect("hidden inbound edge");
+    vault
+        .enter_off_record_session("sess-neighbor-filter", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-neighbor-filter", &hidden)
+        .expect("tag hidden peer");
+    let facade = vault.memory_facade(actor, EdgeActorClass::Human);
+    let opts = NeighborOpts {
+        edge_kind: Some("mentions".to_owned()),
+        min_weight: None,
+        limit: 10,
+    };
+
+    let hits = facade
+        .neighbors(&anchor.to_hex(), &opts)
+        .expect("visible-anchor neighbors");
+    assert_eq!(hits.len(), 1);
+    let hydrated = facade
+        .hydrate(
+            &hits
+                .iter()
+                .map(|hit| hit.short_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .expect("hydrate visible neighbor set");
+    assert_eq!(
+        hydrated
+            .iter()
+            .filter(|view| view.id_hex == visible.to_hex())
+            .count(),
+        1
+    );
+
+    assert_eq!(
+        facade
+            .neighbors(&hidden.to_hex(), &opts)
+            .expect("hidden-anchor neighbors")
+            .len(),
+        0
+    );
+}
+
+#[test]
 fn witness_edges_survive_fence_and_reappear_as_exact_set_on_promotion() {
     let (_tmp, vault) = temp_vault();
     let turn = seed_turn(&vault, 1000);
@@ -1005,6 +1076,382 @@ fn witness_edges_survive_fence_and_reappear_as_exact_set_on_promotion() {
             .expect("released message sidecar")
             .len(),
         0
+    );
+}
+
+#[test]
+fn inherited_fenced_carrier_reput_is_rejected_and_promotion_releases_original() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    let original = b"private carrier body";
+    vault
+        .batch()
+        .put(&message, ENTITY_TYPE_MESSAGE, occurred, 1000, original)
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()
+        .expect("seed private carrier");
+    vault
+        .enter_off_record_session("sess-carrier-reput", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-carrier-reput", &turn)
+        .expect("tag");
+
+    let error = vault
+        .put_entity(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"divergent rematerialized body",
+        )
+        .expect_err("a sidecar-hidden carrier must reject a divergent re-put");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert_eq!(
+        [message]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("raw carrier read").is_some())
+            .count(),
+        1
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-carrier-reput",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote");
+    assert_eq!(
+        vault.get(&message).expect("released carrier read"),
+        Some(original.to_vec())
+    );
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("released sidecars")
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn scoped_direct_read_surfaces_hide_direct_and_inherited_fences() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"private message",
+        )
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()
+        .expect("seed carrier");
+    let short_refs = [turn, message].map(|id| {
+        let rtxn = vault.store.env.read_txn().expect("short-ref read");
+        let encoded = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())
+            .expect("short-ref lookup")
+            .expect("assigned short ref");
+        let (short_id, content_hash) =
+            crate::batch::parse_short_id_value(encoded).expect("decode assigned short ref");
+        (short_id.to_owned(), content_hash)
+    });
+    vault
+        .enter_off_record_session("sess-scoped-direct", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-scoped-direct", &turn)
+        .expect("tag");
+    let scoped = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::new("off-record-regression-reader").expect("reader key"),
+    );
+
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| scoped.get_entity_parts(id).expect("scoped parts").is_some())
+            .count(),
+        0
+    );
+    assert_eq!(
+        short_refs
+            .iter()
+            .filter(|(short_id, content_hash)| {
+                scoped
+                    .hydrate_short_id(short_id, *content_hash)
+                    .expect("scoped hydrate")
+                    .is_some()
+            })
+            .count(),
+        0
+    );
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .map(|id| {
+                scoped
+                    .memory_timeline(&id)
+                    .expect("scoped timeline")
+                    .records
+                    .len()
+            })
+            .sum::<usize>(),
+        0
+    );
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("raw control").is_some())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn retagging_existing_fence_backfills_descendant_sidecars() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message = EntityId::now();
+    let summary = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"legacy private message",
+        )
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            occurred,
+            1000,
+            b"legacy private summary",
+        )
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .edge(&summary, EdgeKind::DerivedFrom, &message, 1.0)
+        .commit()
+        .expect("seed legacy descendants");
+    vault
+        .enter_off_record_session("sess-retag-backfill", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-retag-backfill", &turn)
+        .expect("initial tag");
+    vault
+        .with_write_txn(|wtxn| {
+            for carrier in [message, summary] {
+                vault
+                    .store
+                    .vault_meta
+                    .delete(wtxn, &off_record_inherited_fence_key(&carrier))?;
+            }
+            Ok(())
+        })
+        .expect("simulate pre-sidecar fence");
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("legacy carrier inventory")
+            .len(),
+        0
+    );
+
+    vault
+        .tag_turn_off_record("sess-retag-backfill", &turn)
+        .expect("idempotent repair tag");
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("repaired carrier inventory")
+            .len(),
+        2
+    );
+    let rtxn = vault.store.env.read_txn().expect("repaired roots read");
+    assert_eq!(
+        [message, summary]
+            .into_iter()
+            .filter(|carrier| {
+                inherited_off_record_fence_roots_in_txn(&vault.store, &rtxn, carrier)
+                    .expect("repaired roots")
+                    == std::collections::BTreeSet::from([turn])
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn direct_fenced_root_delete_is_rejected_but_close_cascade_remains_authorized() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"private delete carrier",
+        )
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()
+        .expect("seed delete carrier");
+    vault
+        .enter_off_record_session("sess-root-delete", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-root-delete", &turn)
+        .expect("tag");
+
+    let batch_error = vault
+        .batch()
+        .delete(&turn)
+        .commit()
+        .expect_err("batch delete must reject a direct fenced root");
+    assert_eq!(
+        batch_error.kind(),
+        ErrorKind::OffRecordFencedTurnWriteRejected
+    );
+    let direct_error = vault
+        .delete_entity_with_reason(&turn, DeleteReason::UserHardDelete)
+        .expect_err("ordinary hard delete must reject a direct fenced root");
+    assert_eq!(
+        direct_error.kind(),
+        ErrorKind::OffRecordFencedTurnWriteRejected
+    );
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("raw pre-close row").is_some())
+            .count(),
+        2
+    );
+    assert_eq!(
+        vault
+            .sources_unfiltered(&turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))
+            .expect("raw inheritance edge")
+            .len(),
+        1
+    );
+
+    let log = vault
+        .off_record_receipt_log("sess-root-delete")
+        .expect("close log");
+    let outcome = vault
+        .close_off_record_session("sess-root-delete", log)
+        .expect("close cascade");
+    assert_eq!(outcome.turns_deleted, 1);
+    assert_eq!(outcome.turns_missing, 0);
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("raw post-close row").is_some())
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn committed_witness_batch_replays_exactly_but_rejects_new_carrier_edge() {
+    let (_tmp, vault) = temp_vault();
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let author = EntityId::now();
+    let ordinary = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            occurred,
+            1000,
+            b"conversation",
+        )
+        .put(&author, ENTITY_TYPE_PERSON, occurred, 1000, b"author")
+        .put(&ordinary, ENTITY_TYPE_PERSON, occurred, 1000, b"ordinary")
+        .commit()
+        .expect("seed witness endpoints");
+    vault
+        .enter_off_record_session("sess-witness-retry", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-witness-retry", &turn)
+        .expect("tag before witness");
+    let witness = crate::facade::WitnessTurn {
+        conversation_ref: conversation.to_hex(),
+        turn_ref: Some(turn.to_hex()),
+        messages: vec![crate::facade::WitnessMessage {
+            id: Some(message.to_hex()),
+            author: crate::facade::WitnessAuthor::User,
+            message_type: "dialogue".to_owned(),
+            content: "private retry witness".to_owned(),
+            metadata: None,
+            is_visible: true,
+            order: 0,
+        }],
+        occurred_at: 1000,
+    };
+    let facade = vault.memory_facade(author, EdgeActorClass::Human);
+
+    facade.witness(&witness).expect("first witness commit");
+    facade
+        .witness(&witness)
+        .expect("byte-identical witness replay");
+    assert_eq!(
+        vault
+            .edges_out_unfiltered(&message)
+            .expect("raw replayed witness edges")
+            .len(),
+        3
+    );
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("witness sidecars")
+            .len(),
+        1
+    );
+
+    let error = vault
+        .put_edge(&message, EdgeKind::Mentions, &ordinary, 0.5)
+        .expect_err("a new edge from the inherited carrier must still reject");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert_eq!(
+        vault
+            .edges_out_unfiltered(&message)
+            .expect("unchanged witness edge set")
+            .len(),
+        3
     );
 }
 
