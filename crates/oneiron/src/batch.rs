@@ -2111,8 +2111,7 @@ fn guard_off_record_edge_op(
 
     // One local structural edge is the fence-establishing write itself:
     // MESSAGE PartOf a live fenced TURN. The batch's remaining incident
-    // edges are handled below; SUMMARY DerivedFrom deliberately has no such
-    // exception, so compaction from a fenced source fails atomically.
+    // edges are handled below; direct SUMMARY compaction remains rejected.
     let src_direct = crate::off_record::direct_off_record_fence_active(store, rtxn, src)?;
     let tgt_direct = crate::off_record::direct_off_record_fence_active(store, rtxn, tgt)?;
 
@@ -2126,9 +2125,26 @@ fn guard_off_record_edge_op(
         return Ok(true);
     }
 
-    // SUMMARY DerivedFrom deliberately has no local allowance: compaction
-    // from any fenced source fails atomically.
-    if kind == EdgeKind::DerivedFrom && src_type == Some(ENTITY_TYPE_SUMMARY) && tgt_fenced {
+    // SUMMARY DerivedFrom deliberately has no direct-root allowance:
+    // compaction from an already-fenced source fails atomically. A SUMMARY
+    // created in the same batch may still inherit transitively from a new
+    // prospective carrier; that fixed-point is computed by the caller.
+    if kind == EdgeKind::DerivedFrom
+        && src_type == Some(ENTITY_TYPE_SUMMARY)
+        && tgt_fenced
+        && !exact_existing
+    {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: tgt.to_hex(),
+        });
+    }
+
+    // No other inheritance edge may be introduced toward a root/carrier
+    // that was already fenced at the transaction snapshot. This includes an
+    // unknown source entity (the edge-first case): without a same-batch body
+    // there is no typed carrier on which to persist the inherited sidecar.
+    // Byte-exact retries are non-mutating and retain their r5 allowance.
+    if matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom) && tgt_fenced && !exact_existing {
         return Err(Error::OffRecordFencedTurnWriteRejected {
             turn_ref: tgt.to_hex(),
         });
@@ -2229,10 +2245,11 @@ fn validate_and_filter_off_record_edge_ops(
         }
     }
 
-    let mut prospective_message_carriers = HashSet::new();
+    let mut prospective_carriers = HashSet::new();
     let mut allowed_inheritance_edges = HashSet::new();
     let mut inherited_fences = HashMap::<EntityId, BTreeSet<EntityId>>::new();
     let mut exact_hidden_retries = HashSet::new();
+    let mut inheritance_edges = Vec::new();
     for op in &ops {
         let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
             continue;
@@ -2240,6 +2257,9 @@ fn validate_and_filter_off_record_edge_ops(
         let src_type = effective_batch_entity_type(store, rtxn, &put_types, &src)?;
         let tgt_type = effective_batch_entity_type(store, rtxn, &put_types, &tgt)?;
         let exact_existing = edge_op_matches_existing(store, rtxn, op)?;
+        if matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom) {
+            inheritance_edges.push((src, kind, tgt, replicated, src_type, exact_existing));
+        }
         if guard_off_record_edge_op(
             store,
             rtxn,
@@ -2256,7 +2276,7 @@ fn validate_and_filter_off_record_edge_ops(
                     turn_ref: src.to_hex(),
                 });
             }
-            prospective_message_carriers.insert(src);
+            prospective_carriers.insert(src);
             allowed_inheritance_edges.insert((src, kind, tgt));
             inherited_fences.entry(src).or_default().insert(tgt);
         }
@@ -2267,6 +2287,44 @@ fn validate_and_filter_off_record_edge_ops(
         }
     }
 
+    // Same-batch inheritance is order-independent. Starting with the direct
+    // MESSAGE -> fenced TURN carriers above, propagate the same root set
+    // through every newly created typed PartOf/DerivedFrom source until no
+    // carrier changes. Existing sources cannot be captured by a new edge;
+    // only their byte-exact pre-existing edge may participate.
+    loop {
+        let mut changed = false;
+        for (src, kind, tgt, replicated, src_type, exact_existing) in &inheritance_edges {
+            let Some(roots) = inherited_fences.get(tgt).cloned() else {
+                continue;
+            };
+            let expected_type = match kind {
+                EdgeKind::PartOf => ENTITY_TYPE_MESSAGE,
+                EdgeKind::DerivedFrom => ENTITY_TYPE_SUMMARY,
+                _ => unreachable!("inheritance edge collection is type-filtered"),
+            };
+            if *replicated
+                || *src_type != Some(expected_type)
+                || (!new_puts.contains(src) && !exact_existing)
+            {
+                return Err(Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: src.to_hex(),
+                });
+            }
+            let carrier_roots = inherited_fences.entry(*src).or_default();
+            let old_len = carrier_roots.len();
+            carrier_roots.extend(roots);
+            if carrier_roots.len() != old_len {
+                prospective_carriers.insert(*src);
+                changed = true;
+            }
+            allowed_inheritance_edges.insert((*src, *kind, *tgt));
+        }
+        if !changed {
+            break;
+        }
+    }
+
     for op in &ops {
         let Some((src, kind, tgt, replicated)) = delete_edge_op_fields(op) else {
             continue;
@@ -2274,7 +2332,7 @@ fn validate_and_filter_off_record_edge_ops(
         guard_off_record_edge_delete(store, rtxn, &src, kind, &tgt, replicated)?;
         if !replicated
             && matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom)
-            && prospective_message_carriers.contains(&src)
+            && prospective_carriers.contains(&src)
         {
             return Err(Error::OffRecordFencedTurnWriteRejected {
                 turn_ref: src.to_hex(),
@@ -2291,10 +2349,10 @@ fn validate_and_filter_off_record_edge_ops(
         {
             continue;
         }
-        let fenced_endpoint = prospective_message_carriers
+        let fenced_endpoint = prospective_carriers
             .contains(&src)
             .then_some(src)
-            .or_else(|| prospective_message_carriers.contains(&tgt).then_some(tgt));
+            .or_else(|| prospective_carriers.contains(&tgt).then_some(tgt));
         if let Some(carrier) = fenced_endpoint
             && !new_puts.contains(&carrier)
         {

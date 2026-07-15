@@ -541,6 +541,12 @@ impl Vault {
     /// Retrieves an entity blob by ID.
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
+        // Public body read: an off-record carrier (direct fence row or
+        // inherited sidecar) is invisible here even though its body is
+        // stored — close/scrub/promotion internals use raw store reads.
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let value = self.store.entities.get(&rtxn, id.as_bytes())?;
         let Some(bytes) = value else {
             return Ok(None);

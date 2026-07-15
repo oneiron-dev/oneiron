@@ -1957,6 +1957,20 @@ impl<'a> HostSelfDispatcher<'a> {
                 Error::InvalidClaimBody("off-record self message turn id must be 32-hex")
             })?;
             self.vault.tag_turn_off_record(session_ref, &turn_id)?;
+            let conversation_id =
+                crate::facade::resolve_entity_ref(self.vault, &turn.conversation_ref).map_err(
+                    |error| match error.code.as_str() {
+                        crate::facade::FACADE_CODE_BAD_REQUEST => Error::InvalidClaimBody(
+                            "off-record self message conversation_ref was invalid",
+                        ),
+                        crate::facade::FACADE_CODE_NOT_FOUND => Error::EntityNotFound,
+                        _ => Error::InvariantViolation(
+                            "off-record self message conversation resolution failed",
+                        ),
+                    },
+                )?;
+            self.vault
+                .register_off_record_conversation_shell(session_ref, &conversation_id)?;
         }
 
         let receipt = self

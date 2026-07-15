@@ -7,7 +7,10 @@ use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
 use crate::{
     ClaimSubject, EdgeActorClass, HnswConfig, VaultConfig, WriteActor,
     receipt::{ReceiptKind, ReceiptQuery},
-    registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST},
+    registry::{
+        ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+        ENTITY_TYPE_POLICY_MANIFEST,
+    },
 };
 
 fn test_config() -> VaultConfig {
@@ -1497,7 +1500,15 @@ fn off_record_code_run_rejects_durable_memory_writes_but_allows_witness() -> Res
         0
     );
 
-    let conversation = EntityId::from_bytes([0xA8; 16])?.to_hex();
+    let conversation_id = EntityId::from_bytes([0xA8; 16])?;
+    vault.put_entity(
+        &conversation_id,
+        ENTITY_TYPE_CONVERSATION,
+        range(100),
+        100,
+        b"existing conversation",
+    )?;
+    let conversation = conversation_id.to_hex();
     let mut witness = SelfCall::Speak({
         let mut turn = message_turn(
             &conversation,
@@ -1519,13 +1530,18 @@ fn off_record_code_run_rejects_durable_memory_writes_but_allows_witness() -> Res
             .count(),
         1
     );
+    let session = vault
+        .off_record_session("sess-code-write-reject")?
+        .expect("off-record session");
+    assert_eq!(session.fenced_turns.len(), 1);
+    assert_eq!(session.conversation_shells.len(), 0);
     assert_eq!(
-        vault
-            .off_record_session("sess-code-write-reject")?
-            .expect("off-record session")
-            .fenced_turns
-            .len(),
-        1
+        [conversation_id]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("existing conversation read").is_some())
+            .count(),
+        1,
+        "an existing conversation remains ordinary while its private MESSAGE is fenced"
     );
     Ok(())
 }

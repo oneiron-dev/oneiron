@@ -418,6 +418,154 @@ fn production_summary_batch_rejects_a_live_fenced_source_atomically() {
 }
 
 #[test]
+fn same_batch_inheritance_chain_sidecars_summary_until_close_or_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let close_turn = seed_turn(&vault, 1000);
+    let promote_turn = seed_turn(&vault, 1001);
+    let close_message = EntityId::now();
+    let close_summary = EntityId::now();
+    let promote_message = EntityId::now();
+    let promote_summary = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1001,
+    };
+    vault
+        .enter_off_record_session("sess-transitive-batch", OffRecordBackendClass::Local)
+        .expect("enter");
+    for turn in [close_turn, promote_turn] {
+        vault
+            .tag_turn_off_record("sess-transitive-batch", &turn)
+            .expect("tag root");
+    }
+
+    vault
+        .batch()
+        .put(
+            &close_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1001,
+            b"private close message",
+        )
+        .put(
+            &close_summary,
+            ENTITY_TYPE_SUMMARY,
+            occurred,
+            1001,
+            b"private close summary",
+        )
+        .put(
+            &promote_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1001,
+            b"private promote message",
+        )
+        .put(
+            &promote_summary,
+            ENTITY_TYPE_SUMMARY,
+            occurred,
+            1001,
+            b"private promote summary",
+        )
+        .edge(&close_message, EdgeKind::PartOf, &close_turn, 1.0)
+        .edge(&close_summary, EdgeKind::DerivedFrom, &close_message, 1.0)
+        .edge(&promote_message, EdgeKind::PartOf, &promote_turn, 1.0)
+        .edge(
+            &promote_summary,
+            EdgeKind::DerivedFrom,
+            &promote_message,
+            1.0,
+        )
+        .commit()
+        .expect("commit both same-batch chains");
+
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("sidecar inventory")
+            .len(),
+        4,
+        "both MESSAGEs and both transitively-derived SUMMARYs need sidecars"
+    );
+    let rtxn = vault.store.env.read_txn().expect("summary root read");
+    assert_eq!(
+        [(close_summary, close_turn), (promote_summary, promote_turn),]
+            .into_iter()
+            .filter(|(summary, root)| {
+                inherited_off_record_fence_roots_in_txn(&vault.store, &rtxn, summary)
+                    .expect("summary roots")
+                    == std::collections::BTreeSet::from([*root])
+            })
+            .count(),
+        2
+    );
+    drop(rtxn);
+    assert_eq!(
+        [close_summary, promote_summary]
+            .into_iter()
+            .filter(|summary| vault.get(summary).expect("hidden summary read").is_some())
+            .count(),
+        0,
+        "both summaries stay hidden while their roots are fenced"
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-transitive-batch",
+            &promote_turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote one chain");
+    assert_eq!(
+        [promote_message, promote_summary]
+            .into_iter()
+            .filter(|carrier| vault.get(carrier).expect("promoted carrier read").is_some())
+            .count(),
+        2,
+        "promotion releases the complete transitive chain"
+    );
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("post-promotion sidecars")
+            .len(),
+        2
+    );
+
+    let log = vault
+        .off_record_receipt_log("sess-transitive-batch")
+        .expect("receipt log");
+    let close = vault
+        .close_off_record_session("sess-transitive-batch", log)
+        .expect("close remaining chain");
+    assert_eq!(close.turns_deleted, 1);
+    assert_eq!(close.promoted_turns_kept, 1);
+    assert_eq!(
+        [close_turn, close_message, close_summary]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("closed-chain existence"))
+            .count(),
+        0,
+        "close deletes the transitively-derived summary"
+    );
+    assert_eq!(
+        [promote_turn, promote_message, promote_summary]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("promoted-chain existence"))
+            .count(),
+        3,
+        "the promoted chain survives close"
+    );
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("final sidecar inventory")
+            .len(),
+        0
+    );
+}
+
+#[test]
 fn off_record_close_cascades_preexisting_derived_summaries_recursively() {
     let (_tmp, vault) = temp_vault();
     let turn = seed_turn(&vault, 1000);
@@ -828,6 +976,107 @@ fn off_record_promote_writes_exactly_one_turn() {
         .expect("receipt lookup")
         .expect("promote receipt persists");
     assert_eq!(persisted, receipt);
+}
+
+#[test]
+fn promotion_requires_materialized_turn_then_releases_witness_carriers() {
+    let (_tmp, vault) = temp_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let conversation = EntityId::now();
+    let author = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .put_entity(&author, ENTITY_TYPE_PERSON, occurred, 1000, b"author")
+        .expect("author");
+    vault
+        .enter_off_record_session("sess-promote-materialized", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-promote-materialized", &turn)
+        .expect("tag before witness");
+    assert_eq!(
+        [vault
+            .register_off_record_conversation_shell("sess-promote-materialized", &conversation)
+            .expect("reserve fresh conversation shell")]
+        .into_iter()
+        .filter(|owned| *owned)
+        .count(),
+        1
+    );
+
+    let early = vault
+        .promote_off_record_turn(
+            "sess-promote-materialized",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect_err("a tagged but unmaterialized turn cannot be promoted");
+    assert_eq!(
+        [early]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::InvariantViolation)
+            .count(),
+        1
+    );
+    let unchanged = vault
+        .off_record_session("sess-promote-materialized")
+        .expect("session read")
+        .expect("live session");
+    assert_eq!(unchanged.fenced_turns.len(), 1);
+    assert_eq!(unchanged.promoted_turns.len(), 0);
+
+    vault
+        .memory_facade(author, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![crate::facade::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "private witness after tag".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1000,
+        })
+        .expect("materialize witness");
+    vault
+        .promote_off_record_turn(
+            "sess-promote-materialized",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote materialized turn");
+
+    assert_eq!(
+        [turn, message, conversation]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("released entity read").is_some())
+            .count(),
+        3,
+        "the materialized turn, MESSAGE carrier, and fresh conversation shell are released"
+    );
+    assert_eq!(
+        inherited_off_record_fence_carriers(&vault.store)
+            .expect("released sidecar inventory")
+            .len(),
+        0
+    );
+    let promoted = vault
+        .off_record_session("sess-promote-materialized")
+        .expect("session read")
+        .expect("live session");
+    assert_eq!(promoted.fenced_turns.len(), 0);
+    assert_eq!(promoted.conversation_shells.len(), 0);
+    assert_eq!(promoted.promoted_turns.len(), 1);
 }
 
 #[test]

@@ -1050,10 +1050,12 @@ fn executor_config_hash(config: &EngineExecutorConfig) -> [u8; 32] {
     hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
     hash_bytes(&mut hasher, &config.determinism.rng_seed);
     hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
-    hash_str(
-        &mut hasher,
-        config.off_record_session_ref.as_deref().unwrap_or_default(),
-    );
+    // Preserve the pre-off-record durable layout exactly for ordinary runs.
+    // Session-bound runs append one extra component so the marker still
+    // authenticates the specific off-record namespace.
+    if let Some(session_ref) = config.off_record_session_ref.as_deref() {
+        hash_str(&mut hasher, session_ref);
+    }
     *hasher.finalize().as_bytes()
 }
 

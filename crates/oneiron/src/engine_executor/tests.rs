@@ -13,7 +13,7 @@ use crate::{
     FatalLlmError, FinishReason, HnswConfig, LlmGenerateFuture, LlmResponse, LlmStreamResult,
     LlmUsage, ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, VaultConfig, WriteActor,
-    registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON},
+    registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON},
 };
 
 use super::*;
@@ -110,6 +110,81 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
         limits,
         off_record_session_ref: None,
     }
+}
+
+fn legacy_executor_config_hash(config: &EngineExecutorConfig) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hash_bytes(&mut hasher, CONFIG_HASH_DOMAIN);
+    hash_str(&mut hasher, &config.run_id.to_hex());
+    hash_str(&mut hasher, &config.task);
+    hash_str(&mut hasher, config.model.as_str());
+    hash_str(&mut hasher, model_locality_str(config.model_locality));
+    hash_str(&mut hasher, config.global_tier.as_str());
+    hash_u64(&mut hasher, config.determinism.frozen_unix_ms);
+    hash_bytes(&mut hasher, &config.determinism.rng_seed);
+    hash_u64(&mut hasher, u64::from(config.limits.hard_steps));
+    *hasher.finalize().as_bytes()
+}
+
+#[test]
+fn executor_config_marker_accepts_legacy_layout_and_binds_off_record_ref() {
+    let (_dir, vault) = open_test_vault();
+    let legacy_config = executor_config(entity(0x71), EngineExecutorLimits::default());
+    let legacy_marker = ExecutorConfigMarker {
+        schema_version: REPLAY_METADATA_SCHEMA_VERSION,
+        config_hash: bytes_to_hex_lower(&legacy_executor_config_hash(&legacy_config)),
+    };
+    let mut legacy_record =
+        CodeRunReplayRecord::new(legacy_config.run_id, legacy_config.determinism);
+    record_text_output(
+        &vault,
+        &mut legacy_record,
+        CONFIG_OUTPUT_PATH.to_owned(),
+        &serde_json::to_string(&legacy_marker).expect("encode legacy marker"),
+    )
+    .expect("write legacy-layout marker");
+
+    let session_ref = "sess-config-hash-a";
+    vault
+        .enter_off_record_session(session_ref, crate::OffRecordBackendClass::Local)
+        .expect("enter off-record session");
+    let mut off_record_config = executor_config(entity(0x72), EngineExecutorLimits::default());
+    off_record_config.off_record_session_ref = Some(session_ref.to_owned());
+    let mut off_record_record = CodeRunReplayRecord::for_off_record_session(
+        off_record_config.run_id,
+        off_record_config.determinism,
+        session_ref,
+    )
+    .expect("off-record record");
+    record_config_marker(&vault, &mut off_record_record, &off_record_config)
+        .expect("write off-record marker");
+
+    assert_eq!(
+        [
+            validate_executor_config_marker(&vault, &legacy_record, &legacy_config),
+            validate_executor_config_marker(&vault, &off_record_record, &off_record_config),
+        ]
+        .into_iter()
+        .filter(|result| result.is_ok())
+        .count(),
+        2,
+        "both the pre-field layout and the matching session-bound layout validate"
+    );
+
+    let mut changed_ref = off_record_config.clone();
+    changed_ref.off_record_session_ref = Some("sess-config-hash-b".to_owned());
+    assert_eq!(
+        [validate_executor_config_marker(
+            &vault,
+            &off_record_record,
+            &changed_ref,
+        )]
+        .into_iter()
+        .filter(|result| result.is_err())
+        .count(),
+        1,
+        "changing only the off-record session ref must invalidate the marker"
+    );
 }
 
 fn llm_response(text: impl Into<String>) -> LlmResponse {
@@ -1525,8 +1600,9 @@ fn executor_off_record_speak_registers_minted_turn_and_close_deletes_message() {
     .expect("gated actor write");
 
     let run_id = entity(0x8D);
+    let conversation_id = entity(0x8E);
     let call = SelfCall::Speak(crate::facade::WitnessTurn {
-        conversation_ref: entity(0x8E).to_hex(),
+        conversation_ref: conversation_id.to_hex(),
         turn_ref: None,
         messages: vec![crate::facade::WitnessMessage {
             id: None,
@@ -1576,15 +1652,17 @@ fn executor_off_record_speak_registers_minted_turn_and_close_deletes_message() {
         .expect("session lookup")
         .expect("session record");
     assert_eq!(session.fenced_turns, vec![*turn_id.as_bytes()]);
-    assert!(
-        vault
-            .is_turn_off_record_fenced(&turn_id)
-            .expect("turn fence")
+    assert_eq!(
+        session.conversation_shells,
+        vec![*conversation_id.as_bytes()]
     );
-    assert!(
-        vault
-            .is_turn_off_record_fenced(&message_id)
-            .expect("message sidecar")
+    assert_eq!(
+        [turn_id, message_id, conversation_id]
+            .into_iter()
+            .filter(|id| vault.is_turn_off_record_fenced(id).expect("entity fence"))
+            .count(),
+        3,
+        "the turn, inherited MESSAGE, and fresh conversation shell stay hidden"
     );
     assert_eq!(
         vault
@@ -1603,17 +1681,24 @@ fn executor_off_record_speak_registers_minted_turn_and_close_deletes_message() {
     assert_eq!(close.turns_deleted, 1);
     assert_eq!(close.turns_missing, 0);
     assert_eq!(
-        [turn_id, message_id]
+        [turn_id, message_id, conversation_id]
             .into_iter()
             .filter(|id| vault.entity_exists(id).expect("entity existence"))
             .count(),
         0,
-        "close deletes the executor turn and its MESSAGE carrier"
+        "close deletes the executor turn, MESSAGE carrier, and fresh conversation shell"
     );
     assert_eq!(
         vault
             .entities_by_type(ENTITY_TYPE_MESSAGE)
             .expect("post-close message rows")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_CONVERSATION)
+            .expect("post-close conversation rows")
             .len(),
         0
     );
