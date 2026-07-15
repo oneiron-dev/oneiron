@@ -1354,7 +1354,13 @@ fn fold_authority_log_once(
                         fork,
                         issues: group_issues,
                     } => {
-                        unresolved_equivocation_groups.remove(&group_key);
+                        // The per-round hash snapshot can revisit a second
+                        // member of an already-resolved group; only the first
+                        // resolution may emit facts, or every group member
+                        // duplicates the detection and loser issues.
+                        if !unresolved_equivocation_groups.remove(&group_key) {
+                            continue;
+                        }
                         if let Some(fork) = fork {
                             authority_forks.insert(group_key.clone(), fork.clone());
                             reported_authority_forks.insert(group_key.clone(), fork);
@@ -1412,6 +1418,9 @@ fn fold_authority_log_once(
                 vault_id: state.vault_id,
             });
         }
+        for state in states.values() {
+            reconcile_reported_authority_forks(&mut reported_authority_forks, state);
+        }
         let authority_forks: Vec<_> = reported_authority_forks.values().cloned().collect();
         let fork_alarms = build_fork_alarms(&authority_forks);
         return AuthorityFold {
@@ -1440,16 +1449,7 @@ fn fold_authority_log_once(
     }
 
     if let Some(state) = &merged {
-        for (key, fork) in &state.authority_forks {
-            reported_authority_forks
-                .entry(key.clone())
-                .and_modify(|existing| {
-                    if fork.status == AuthorityForkStatus::Resolved {
-                        existing.status = AuthorityForkStatus::Resolved;
-                    }
-                })
-                .or_insert_with(|| fork.clone());
-        }
+        reconcile_reported_authority_forks(&mut reported_authority_forks, state);
     }
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
@@ -1476,6 +1476,22 @@ fn fold_authority_log_once(
             state.federation_grant_bindings.clone()
         }),
         issues,
+    }
+}
+
+fn reconcile_reported_authority_forks(
+    reported: &mut BTreeMap<(AuthorityKey, u64), AuthorityFork>,
+    state: &FoldState,
+) {
+    for (key, fork) in &state.authority_forks {
+        reported
+            .entry(key.clone())
+            .and_modify(|existing| {
+                if fork.status == AuthorityForkStatus::Resolved {
+                    existing.status = AuthorityForkStatus::Resolved;
+                }
+            })
+            .or_insert_with(|| fork.clone());
     }
 }
 
@@ -1536,7 +1552,10 @@ fn resolve_equivocation_group(
             EntryFold::Waiting if entry_waits_on_unresolved_equivocation(entry, *hash, context) => {
                 return EquivocationResolution::Waiting;
             }
-            EntryFold::Waiting => issues.push(AuthorityFoldIssue::InvalidAncestry(*hash)),
+            EntryFold::Waiting => {
+                invalid_candidates.push(*hash);
+                issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
+            }
         }
     }
 
@@ -1795,8 +1814,23 @@ fn entry_waits_on_unresolved_equivocation(
                     .iter()
                     .any(|signature| signature.public_key == *fork_key)
                 || matches!(&entry.op, AuthorityOp::RevokeDevice { revoked_key } if revoked_key == fork_key)
-                || matches!(&entry.op, AuthorityOp::RecoveryReboot { .. })
+                || recovery_reboot_is_entangled_with_fork(entry, fork_key)
         })
+}
+
+fn recovery_reboot_is_entangled_with_fork(
+    entry: &AuthorityLogEntry,
+    fork_key: &AuthorityKey,
+) -> bool {
+    if !matches!(&entry.op, AuthorityOp::RecoveryReboot { .. }) {
+        return false;
+    }
+    // Resolve groups involving a reboot participant first so quarantined
+    // authority cannot authorize recovery. Unrelated recovery groups do not
+    // affect this candidate's admissibility and must not deadlock each other.
+    std::iter::once(&entry.signer)
+        .chain(entry.cosigns.iter())
+        .any(|signature| signature.public_key == *fork_key)
 }
 
 fn entry_waits_on_pending_parent_outside_group(
