@@ -3059,7 +3059,7 @@ fn apply_put(
     if exact_local_retry {
         crate::off_record::guard_direct_off_record_entity_write(store, wtxn, &id, false)?;
     } else {
-        crate::off_record::guard_off_record_entity_put(store, wtxn, &id, replicated)?;
+        crate::off_record::guard_off_record_entity_put(store, wtxn, &id, entity_type, replicated)?;
     }
     // The five pinned system-agent actor ids ([0xA1; 16]..[0xA5; 16]) are
     // write-door-reserved (design-pass 2026-07-10 §7a): a definition stored at

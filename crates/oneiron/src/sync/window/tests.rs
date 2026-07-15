@@ -112,21 +112,33 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     let ordinary = EntityId::from_bytes([0x43; 16])?;
 
     vault.enter_off_record_session("sess-defer-sync", OffRecordBackendClass::Local)?;
-    for id in [&promoted, &still_fenced] {
-        // Tag before the entity write: this is the live-session path that
-        // must remain writable while it is held out of sync.
-        vault.tag_turn_off_record("sess-defer-sync", id)?;
-        vault.put_entity(
-            id,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            b"off-record turn",
-        )?;
-    }
+    // The promoted turn materializes before tagging (the documented caller
+    // flow): tagging an existing body records the session's witness
+    // evidence, which promotion requires. The never-promoted turn keeps the
+    // tag-before-write order — that live-session door must remain writable
+    // while it is held out of sync.
+    vault.put_entity(
+        &promoted,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"off-record turn",
+    )?;
+    vault.tag_turn_off_record("sess-defer-sync", &promoted)?;
+    vault.tag_turn_off_record("sess-defer-sync", &still_fenced)?;
+    vault.put_entity(
+        &still_fenced,
+        ENTITY_TYPE_TURN,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        b"off-record turn",
+    )?;
     vault.put_entity(
         &ordinary,
         ENTITY_TYPE_TURN,
@@ -198,8 +210,10 @@ fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
     let ordinary = EntityId::from_bytes([0x53; 16])?;
 
     vault.enter_off_record_session("sess-live-promotion", OffRecordBackendClass::Local)?;
+    // Materialize before tagging (the documented caller flow): tagging an
+    // existing body records the session's witness evidence, which promotion
+    // requires — a body squatted through the tag-before-write door does not.
     for id in [&promoted, &still_fenced] {
-        vault.tag_turn_off_record("sess-live-promotion", id)?;
         vault.put_entity(
             id,
             ENTITY_TYPE_TURN,
@@ -210,6 +224,7 @@ fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
             learned_at,
             b"fenced live-window fixture",
         )?;
+        vault.tag_turn_off_record("sess-live-promotion", id)?;
     }
     vault.put_entity(
         &ordinary,
@@ -279,7 +294,6 @@ fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
     let target = EntityId::from_bytes([0x5b; 16])?;
 
     vault.enter_off_record_session("sess-cross-window-promote", OffRecordBackendClass::Local)?;
-    vault.tag_turn_off_record("sess-cross-window-promote", &target)?;
     vault.put_entity(
         &source,
         ENTITY_TYPE_TURN,
@@ -290,6 +304,9 @@ fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
         source_at,
         b"cross-window source",
     )?;
+    // Materialize before tagging (the documented caller flow): tagging an
+    // existing body records the session's witness evidence, which promotion
+    // requires — a body squatted through the tag-before-write door does not.
     vault.put_entity(
         &target,
         ENTITY_TYPE_TURN,
@@ -300,6 +317,7 @@ fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
         target_at,
         b"cross-window target",
     )?;
+    vault.tag_turn_off_record("sess-cross-window-promote", &target)?;
     vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
     vault.sync_state_put(&format!("pm:{target_key}:{}", target.to_hex()), &[1])?;
 

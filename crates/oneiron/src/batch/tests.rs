@@ -1076,7 +1076,7 @@ fn off_record_inheritance_edge_delete_is_rejected_but_close_still_cascades() -> 
         )
         .edge(&message, EdgeKind::PartOf, &turn, 1.0)
         .commit()?;
-    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+    assert!(vault.edge_exists_unfiltered(&message, EdgeKind::PartOf, &turn)?);
 
     let batch_error = vault
         .batch()
@@ -1094,7 +1094,7 @@ fn off_record_inheritance_edge_delete_is_rejected_but_close_still_cascades() -> 
         direct_error.kind(),
         ErrorKind::OffRecordFencedTurnWriteRejected
     );
-    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+    assert!(vault.edge_exists_unfiltered(&message, EdgeKind::PartOf, &turn)?);
 
     let log = vault.off_record_receipt_log("sess-delete-carrier")?;
     let outcome = vault.close_off_record_session("sess-delete-carrier", log)?;
@@ -1156,7 +1156,7 @@ fn replicated_inheritance_edge_tombstone_touching_fence_is_rejected() -> Result<
     .expect_err("replicated tombstone must reject either fenced endpoint");
     assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
     drop(wtxn);
-    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+    assert!(vault.edge_exists_unfiltered(&message, EdgeKind::PartOf, &turn)?);
     Ok(())
 }
 

@@ -198,6 +198,12 @@ pub struct OffRecordSessionRecord {
     pub entered_at: u64,
     /// Turns still fenced (the delete-at-close set).
     pub fenced_turns: Vec<[u8; 16]>,
+    /// Fenced turns with session-owned witness evidence. Existing bodies that
+    /// predate their fence are recorded at initial tag; tag-before-write turns
+    /// enter only when the facade witness batch commits. Promotion requires
+    /// membership here, not merely a caller-materialized TURN header.
+    #[serde(default)]
+    pub witnessed_turns: Vec<[u8; 16]>,
     /// Fresh CONVERSATION containers reserved by off-record executor
     /// witnesses. They carry a direct fence and are deleted at close unless
     /// promotion releases a turn that belongs to the container.
@@ -249,8 +255,8 @@ pub struct OffRecordCloseOutcome {
     /// Sessionless closed-fence rows kept for turns that were MISSING at
     /// delete time (tag-before-write where the write had not landed). The
     /// retained marker rejects a late entity write without keeping session
-    /// metadata. Includes both missing turns and missing reserved
-    /// conversation shells.
+    /// metadata. Includes missing turns, missing reserved conversation shells,
+    /// and never-materialized inherited carriers whose last root closed.
     pub fence_rows_retained: usize,
     /// Promoted turns intentionally left in place.
     pub promoted_turns_kept: usize,
@@ -466,15 +472,28 @@ pub(crate) fn put_inherited_off_record_fence_roots_in_txn(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum InheritedFenceRootRelease {
+    /// Explicit promotion releases even a never-materialized child id for
+    /// ordinary future use.
+    Promotion,
+    /// Close preserves the write door for a reserved child whose body never
+    /// landed. Materialized children have a PolicyDelete marker and remain
+    /// under the existing deletion semantics.
+    Close,
+}
+
 /// Removes one promoted/deleted direct root from every inherited-fence row.
 /// This runs in the same LMDB transaction that lifts the direct fence, so a
 /// carrier can never observe the root as released while its durable sidecar
-/// still names it (or vice versa).
+/// still names it (or vice versa). Returns the number of never-materialized
+/// carrier ids converted to sessionless closed-door markers.
 fn remove_inherited_off_record_fence_root_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     root: &EntityId,
-) -> Result<()> {
+    release: InheritedFenceRootRelease,
+) -> Result<usize> {
     let mut updates = Vec::new();
     for row in store
         .vault_meta
@@ -483,7 +502,16 @@ fn remove_inherited_off_record_fence_root_in_txn(
         let (key, value) = row?;
         let mut roots = decode_inherited_off_record_fence_roots(value)?;
         if roots.remove(root) {
-            updates.push((key.to_vec(), roots));
+            let suffix = key
+                .strip_prefix(OFF_RECORD_INHERITED_FENCE_KEY_PREFIX)
+                .ok_or(Error::CorruptedIndex("off-record inherited fence key"))?;
+            let carrier = EntityId::from_bytes(
+                suffix
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("off-record inherited fence key"))?,
+            )
+            .map_err(|_| Error::CorruptedIndex("off-record inherited fence key"))?;
+            updates.push((key.to_vec(), carrier, roots));
         }
         if updates.len() > OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
             return Err(Error::CorruptedIndex(
@@ -491,9 +519,28 @@ fn remove_inherited_off_record_fence_root_in_txn(
             ));
         }
     }
-    for (key, roots) in updates {
+    let mut closed_markers = 0;
+    for (key, carrier, roots) in updates {
         if roots.is_empty() {
             store.vault_meta.delete(wtxn, &key)?;
+            if matches!(release, InheritedFenceRootRelease::Close)
+                && store.entities.get(&*wtxn, carrier.as_bytes())?.is_none()
+                && store
+                    .sync_state
+                    .get(&*wtxn, &crate::deletion::local_hard_delete_key(&carrier))?
+                    .is_none()
+                && store
+                    .vault_meta
+                    .get(&*wtxn, &off_record_fence_key(&carrier))?
+                    .is_none()
+            {
+                store.vault_meta.put(
+                    wtxn,
+                    &off_record_fence_key(&carrier),
+                    OFF_RECORD_CLOSED_FENCE_VALUE,
+                )?;
+                closed_markers += 1;
+            }
         } else {
             store.vault_meta.put(
                 wtxn,
@@ -502,7 +549,7 @@ fn remove_inherited_off_record_fence_root_in_txn(
             )?;
         }
     }
-    Ok(())
+    Ok(closed_markers)
 }
 
 fn off_record_fence_roots_impl(
@@ -817,9 +864,19 @@ pub(crate) fn guard_off_record_entity_put(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,
+    entity_type: u8,
     replicated: bool,
 ) -> Result<()> {
     guard_off_record_entity_put_preflight(store, wtxn, id, replicated)?;
+    let inherited_roots = inherited_off_record_fence_roots_in_txn(store, wtxn, id)?;
+    if !inherited_roots.is_empty()
+        && store.entities.get(wtxn, id.as_bytes())?.is_none()
+        && !pending_inherited_entity_type_allowed(store, wtxn, id, entity_type, &inherited_roots)?
+    {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: id.to_hex(),
+        });
+    }
     if direct_off_record_fence_active(store, wtxn, id)?
         && store.entities.get(wtxn, id.as_bytes())?.is_some()
     {
@@ -828,6 +885,40 @@ pub(crate) fn guard_off_record_entity_put(
         });
     }
     Ok(())
+}
+
+/// Confines a pending inherited-fence reservation to the entity kind implied
+/// by its raw inheritance edge. Sidecars intentionally store only root ids,
+/// so first materialization re-reads the edge that created the reservation:
+/// `PartOf` admits MESSAGE and `DerivedFrom` admits SUMMARY. The edge target
+/// must share a live root with the carrier sidecar; an unrelated raw edge of
+/// the same kind cannot lend its type allowance. A carrier reserved through
+/// both edge kinds admits either corresponding entity type.
+fn pending_inherited_entity_type_allowed(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    inherited_roots: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let kind = match entity_type {
+        ENTITY_TYPE_MESSAGE => EdgeKind::PartOf,
+        ENTITY_TYPE_SUMMARY => EdgeKind::DerivedFrom,
+        _ => return Ok(false),
+    };
+    let prefix = crate::vault::edge_kind_prefix(id, kind);
+    for row in store.edges_out.prefix_iter(rtxn, &prefix)? {
+        let (key, value) = row?;
+        let parent = crate::vault::parse_edge_record(key, value)?.target;
+        let mut parent_roots = inherited_off_record_fence_roots_in_txn(store, rtxn, &parent)?;
+        if direct_off_record_fence_active(store, rtxn, &parent)? {
+            parent_roots.insert(parent);
+        }
+        if !inherited_roots.is_disjoint(&parent_roots) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Early gate-receipt preflight for entity puts.
@@ -1012,6 +1103,53 @@ fn mutable_session_record_in_txn(
     Ok(record)
 }
 
+/// Records witness evidence for a live direct-fenced turn in the existing
+/// session row. The facade calls this after its MESSAGE+PartOf batch and in
+/// the same write transaction, so neither the marker nor witness graph can
+/// commit alone. Ordinary on-record witnesses have no direct fence and need
+/// no session marker.
+pub(crate) fn register_off_record_witness_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    turn_id: &EntityId,
+) -> Result<()> {
+    let Some(fence_value) = store
+        .vault_meta
+        .get(&*wtxn, &off_record_fence_key(turn_id))?
+    else {
+        return Ok(());
+    };
+    let rejected = || Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: turn_id.to_hex(),
+    };
+    let Some(session_ref) = std::str::from_utf8(fence_value)
+        .ok()
+        .filter(|session_ref| !session_ref.is_empty())
+    else {
+        return Err(rejected());
+    };
+    let session_ref = session_ref.to_owned();
+    let mut record = mutable_session_record_in_txn(store, wtxn, &session_ref)?;
+    if !record.fenced_turns.contains(turn_id.as_bytes()) {
+        return Err(rejected());
+    }
+    if record.witnessed_turns.contains(turn_id.as_bytes()) {
+        return Ok(());
+    }
+    if record.witnessed_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+        return Err(Error::InvariantViolation(
+            "off-record session witnessed-turn capacity exceeded",
+        ));
+    }
+    record.witnessed_turns.push(*turn_id.as_bytes());
+    store.vault_meta.put(
+        wtxn,
+        &off_record_session_key(&session_ref),
+        &encode_off_record_session(&record)?,
+    )?;
+    Ok(())
+}
+
 /// Registers an exact code-run artifact key in the same transaction that
 /// writes it. Only the two pinned code-run key families are accepted, so a
 /// malformed internal caller cannot turn close into an arbitrary metadata
@@ -1086,6 +1224,7 @@ impl Vault {
             backend,
             entered_at: crate::unix_seconds_now(),
             fenced_turns: Vec::new(),
+            witnessed_turns: Vec::new(),
             conversation_shells: Vec::new(),
             promoted_turns: Vec::new(),
             context_receipt_runs: Vec::new(),
@@ -1142,11 +1281,12 @@ impl Vault {
     /// Reserves a fresh executor witness CONVERSATION for close-time sweep.
     ///
     /// The reservation and direct fence commit before the witness batch. If
-    /// the id already materializes, it is an ordinary existing conversation
-    /// and needs no registration. A missing id becomes a session-owned shell:
-    /// its local tag-before-write put remains legal, public readers hide it,
-    /// and close either deletes it or retains a closed fence if witness never
-    /// lands. Returns whether this session owns the fresh shell.
+    /// the id already materializes without a fence, it is an ordinary existing
+    /// conversation and needs no registration. A direct-fenced id must belong
+    /// to this exact session. A missing id becomes a session-owned shell: its
+    /// local tag-before-write put remains legal, public readers hide it, and
+    /// close either deletes it or retains a closed fence if witness never lands.
+    /// Returns whether this session owns a still-missing fresh shell.
     pub(crate) fn register_off_record_conversation_shell(
         &self,
         session_ref: &str,
@@ -1159,6 +1299,28 @@ impl Vault {
                 return Err(Error::InvariantViolation(
                     "off-record conversation shell requires the session to be in off-record mode",
                 ));
+            }
+            let fence_key = off_record_fence_key(conversation_id);
+            if let Some(existing) = self.store.vault_meta.get(&*wtxn, &fence_key)? {
+                if existing != session_ref.as_bytes() {
+                    return Err(Error::OffRecordFencedTurnWriteRejected {
+                        turn_ref: conversation_id.to_hex(),
+                    });
+                }
+                if record.fenced_turns.contains(conversation_id.as_bytes())
+                    || !record
+                        .conversation_shells
+                        .contains(conversation_id.as_bytes())
+                {
+                    return Err(Error::InvariantViolation(
+                        "off-record conversation shell fence has invalid session membership",
+                    ));
+                }
+                return Ok(self
+                    .store
+                    .entities
+                    .get(&*wtxn, conversation_id.as_bytes())?
+                    .is_none());
             }
             if self
                 .store
@@ -1177,12 +1339,6 @@ impl Vault {
             if record.fenced_turns.contains(conversation_id.as_bytes()) {
                 return Err(Error::InvariantViolation(
                     "off-record conversation shell collides with a fenced turn",
-                ));
-            }
-            let fence_key = off_record_fence_key(conversation_id);
-            if self.store.vault_meta.get(&*wtxn, &fence_key)?.is_some() {
-                return Err(Error::InvariantViolation(
-                    "off-record conversation shell id is already fenced",
                 ));
             }
             if record.conversation_shells.len() >= OFF_RECORD_MAX_CONVERSATION_SHELLS {
@@ -1228,16 +1384,28 @@ impl Vault {
                 ));
             }
             // Fail early on entity kinds the close-path PolicyDelete would
-            // refuse anyway (delete-protected engine records).
-            if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())?
-                && let Some(&entity_type) = raw.first()
-                && crate::deletion::is_delete_protected_engine_record(entity_type)
-            {
-                return Err(Error::MaintenanceKindNotWritable(entity_type));
-            }
+            // refuse anyway (delete-protected engine records). A body present
+            // before the first fence cannot be the tag-before-write promotion
+            // race; record that preexisting witness evidence with the tag.
+            let was_materialized =
+                if let Some(raw) = self.store.entities.get(wtxn, turn_id.as_bytes())? {
+                    if let Some(&entity_type) = raw.first()
+                        && crate::deletion::is_delete_protected_engine_record(entity_type)
+                    {
+                        return Err(Error::MaintenanceKindNotWritable(entity_type));
+                    }
+                    true
+                } else {
+                    false
+                };
             let fence_key = off_record_fence_key(turn_id);
             if let Some(existing) = self.store.vault_meta.get(wtxn, &fence_key)? {
                 if existing == session_ref.as_bytes() {
+                    if !record.fenced_turns.contains(turn_id.as_bytes()) {
+                        return Err(Error::InvariantViolation(
+                            "off-record turn fence has invalid session membership",
+                        ));
+                    }
                     // Repair legacy/pre-sidecar fences and any interrupted
                     // migration idempotently. Public readers no longer walk
                     // the graph, so an existing direct row is not sufficient
@@ -1252,16 +1420,24 @@ impl Vault {
                     crate::sync::queue::scrub_outbox_for_off_record_fence_in_txn(self, wtxn)?;
                     return Ok(());
                 }
-                return Err(Error::InvariantViolation(
-                    "off-record fence already held by another session",
-                ));
+                return Err(Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: turn_id.to_hex(),
+                });
             }
             if record.fenced_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
                 return Err(Error::InvariantViolation(
                     "off-record session fenced-turn capacity exceeded",
                 ));
             }
+            if was_materialized && record.witnessed_turns.len() >= OFF_RECORD_MAX_FENCED_TURNS {
+                return Err(Error::InvariantViolation(
+                    "off-record session witnessed-turn capacity exceeded",
+                ));
+            }
             record.fenced_turns.push(*turn_id.as_bytes());
+            if was_materialized {
+                record.witnessed_turns.push(*turn_id.as_bytes());
+            }
             self.store
                 .vault_meta
                 .put(wtxn, &fence_key, session_ref.as_bytes())?;
@@ -1394,6 +1570,13 @@ impl Vault {
                     "off-record promotion requires a materialized TURN body",
                 ));
             }
+            let witnessed_position = record
+                .witnessed_turns
+                .iter()
+                .position(|bytes| bytes == turn_id.as_bytes())
+                .ok_or_else(|| Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: turn_id.to_hex(),
+                })?;
             let registered_shells = record
                 .conversation_shells
                 .iter()
@@ -1407,6 +1590,7 @@ impl Vault {
                 &registered_shells,
             )?;
             record.fenced_turns.remove(position);
+            record.witnessed_turns.remove(witnessed_position);
             record.conversation_shells.retain(|bytes| {
                 !released_shells
                     .iter()
@@ -1428,7 +1612,12 @@ impl Vault {
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(shell))?;
             }
-            remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, turn_id)?;
+            remove_inherited_off_record_fence_root_in_txn(
+                &self.store,
+                wtxn,
+                turn_id,
+                InheritedFenceRootRelease::Promotion,
+            )?;
             self.store.vault_meta.put(
                 wtxn,
                 &off_record_promote_key(turn_id),
@@ -1671,7 +1860,8 @@ impl Vault {
         // the closing flag already blocks mutators), then remove fence rows
         // for DELETED turns only and drop the record. A missing turn keeps a
         // sessionless marker so every late entity write is rejected.
-        self.with_write_txn(|wtxn| {
+        let pending_carrier_fence_rows_retained = self.with_write_txn(|wtxn| {
+            let mut pending_carrier_fence_rows_retained = 0;
             let current =
                 session_record_in_txn(&self.store, wtxn, session_ref)?.ok_or_else(|| {
                     Error::OffRecordSessionNotFound {
@@ -1680,6 +1870,7 @@ impl Vault {
                 })?;
             if !current.closing
                 || current.fenced_turns != record.fenced_turns
+                || current.witnessed_turns != record.witnessed_turns
                 || current.conversation_shells != record.conversation_shells
                 || current.promoted_turns != record.promoted_turns
                 || current.context_receipt_runs != record.context_receipt_runs
@@ -1702,7 +1893,13 @@ impl Vault {
                     // leaking an off-record artifact.
                     self.store
                         .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &id)?;
-                    remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, &id)?;
+                    pending_carrier_fence_rows_retained +=
+                        remove_inherited_off_record_fence_root_in_txn(
+                            &self.store,
+                            wtxn,
+                            &id,
+                            InheritedFenceRootRelease::Close,
+                        )?;
                     self.store.vault_meta.put(
                         wtxn,
                         &off_record_fence_key(&id),
@@ -1710,7 +1907,13 @@ impl Vault {
                     )?;
                     continue;
                 }
-                remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, &id)?;
+                pending_carrier_fence_rows_retained +=
+                    remove_inherited_off_record_fence_root_in_txn(
+                        &self.store,
+                        wtxn,
+                        &id,
+                        InheritedFenceRootRelease::Close,
+                    )?;
                 self.store
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(&id))?;
@@ -1735,7 +1938,7 @@ impl Vault {
             self.store
                 .vault_meta
                 .delete(wtxn, &off_record_session_key(session_ref))?;
-            Ok(())
+            Ok(pending_carrier_fence_rows_retained)
         })?;
 
         Ok(OffRecordCloseOutcome {
@@ -1743,7 +1946,9 @@ impl Vault {
             turns_missing: missing_turns.len(),
             context_receipts_deleted,
             emit_receipts_deleted,
-            fence_rows_retained: missing_turns.len() + missing_conversation_shells.len(),
+            fence_rows_retained: missing_turns.len()
+                + missing_conversation_shells.len()
+                + pending_carrier_fence_rows_retained,
             promoted_turns_kept: record.promoted_turns.len(),
             redaction_receipt_ids,
         })

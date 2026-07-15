@@ -12,8 +12,8 @@ use crate::outbound::{
 };
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REDACTION_AUDIT,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord};
 #[cfg(feature = "sync")]
@@ -680,6 +680,275 @@ fn tag_time_backfill_persists_pending_edge_first_children_until_close_or_promoti
 }
 
 #[test]
+fn pending_inherited_carriers_materialize_only_as_their_reserved_entity_types() {
+    let (_tmp, vault) = temp_vault();
+    let part_of_root = seed_turn(&vault, 1000);
+    let derived_from_root = seed_turn(&vault, 1001);
+    let pending_message = EntityId::now();
+    let pending_summary = EntityId::now();
+    vault
+        .batch()
+        .edge(&pending_message, EdgeKind::PartOf, &part_of_root, 1.0)
+        .edge(
+            &pending_summary,
+            EdgeKind::DerivedFrom,
+            &derived_from_root,
+            1.0,
+        )
+        .commit()
+        .expect("seed raw inheritance edges before carrier bodies");
+    vault
+        .enter_off_record_session("sess-pending-types", OffRecordBackendClass::Local)
+        .expect("enter");
+    for root in [part_of_root, derived_from_root] {
+        vault
+            .tag_turn_off_record("sess-pending-types", &root)
+            .expect("tag root after edge-first reservation");
+    }
+
+    let occurred = TimeRange {
+        start: 1002,
+        end: 1002,
+    };
+    let wrong_type_errors = [
+        vault
+            .put_entity(
+                &pending_message,
+                ENTITY_TYPE_ASSET,
+                occurred,
+                1002,
+                b"wrong asset body",
+            )
+            .expect_err("PartOf reservation must reject ASSET"),
+        vault
+            .put_entity(
+                &pending_summary,
+                ENTITY_TYPE_MESSAGE,
+                occurred,
+                1002,
+                b"wrong message body",
+            )
+            .expect_err("DerivedFrom reservation must reject MESSAGE"),
+    ];
+    assert_eq!(
+        wrong_type_errors
+            .iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        2
+    );
+
+    vault
+        .put_entity(
+            &pending_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1002,
+            b"reserved message body",
+        )
+        .expect("PartOf reservation admits MESSAGE");
+    vault
+        .put_entity(
+            &pending_summary,
+            ENTITY_TYPE_SUMMARY,
+            occurred,
+            1002,
+            b"reserved summary body",
+        )
+        .expect("DerivedFrom reservation admits SUMMARY");
+    assert_eq!(
+        [pending_message, pending_summary]
+            .into_iter()
+            .filter(|id| vault.get_raw(id).expect("raw carrier read").is_some())
+            .count(),
+        2
+    );
+    assert_eq!(
+        [pending_message, pending_summary]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("public carrier read").is_some())
+            .count(),
+        0,
+        "both correctly typed first puts remain hidden"
+    );
+}
+
+#[test]
+fn pending_edge_first_child_closes_its_write_door_but_promotion_releases_it() {
+    let (_tmp, vault) = temp_vault();
+    let close_root = seed_turn(&vault, 1000);
+    let promote_root = seed_turn(&vault, 1001);
+    let close_child = EntityId::now();
+    let promote_child = EntityId::now();
+    vault
+        .batch()
+        .edge(&close_child, EdgeKind::PartOf, &close_root, 1.0)
+        .edge(&promote_child, EdgeKind::PartOf, &promote_root, 1.0)
+        .commit()
+        .expect("seed edge-first reservations");
+    vault
+        .enter_off_record_session("sess-pending-close", OffRecordBackendClass::Local)
+        .expect("enter");
+    for root in [close_root, promote_root] {
+        vault
+            .tag_turn_off_record("sess-pending-close", &root)
+            .expect("tag edge-first root");
+    }
+    vault
+        .promote_off_record_turn(
+            "sess-pending-close",
+            &promote_root,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promotion releases the pending child id");
+    let log = vault
+        .off_record_receipt_log("sess-pending-close")
+        .expect("receipt log");
+    let outcome = vault
+        .close_off_record_session("sess-pending-close", log)
+        .expect("close remaining root");
+    assert_eq!(outcome.fence_rows_retained, 1);
+
+    let occurred = TimeRange {
+        start: 1002,
+        end: 1002,
+    };
+    let closed_error = vault
+        .put_entity(
+            &close_child,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1002,
+            b"late private child",
+        )
+        .expect_err("close must retain the pending child write door");
+    assert_eq!(
+        [closed_error]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+    vault
+        .put_entity(
+            &promote_child,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1002,
+            b"ordinary post-promotion child",
+        )
+        .expect("promotion makes a never-materialized child id ordinarily writable");
+    assert_eq!(
+        [close_child, promote_child]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("post-release public read").is_some())
+            .count(),
+        1
+    );
+    let rtxn = vault.store.env.read_txn().expect("closed marker read");
+    assert_eq!(
+        [close_child, promote_child]
+            .into_iter()
+            .filter(|id| {
+                direct_off_record_fence_active(&vault.store, &rtxn, id).expect("direct fence probe")
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn executor_container_reservations_reject_foreign_session_fences() {
+    let (_tmp, vault) = temp_vault();
+    let actor = EntityId::now();
+    let conversation_a = EntityId::now();
+    let turn_a = EntityId::now();
+    let message_a = EntityId::now();
+    let turn_b = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1000, b"actor")
+        .expect("seed actor");
+    vault
+        .enter_off_record_session("sess-container-a", OffRecordBackendClass::Local)
+        .expect("enter A");
+    assert_eq!(
+        [vault
+            .register_off_record_conversation_shell("sess-container-a", &conversation_a)
+            .expect("reserve A conversation")]
+        .into_iter()
+        .filter(|owned| *owned)
+        .count(),
+        1
+    );
+    vault
+        .tag_turn_off_record("sess-container-a", &turn_a)
+        .expect("tag A turn");
+    vault
+        .memory_facade(actor, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: conversation_a.to_hex(),
+            turn_ref: Some(turn_a.to_hex()),
+            messages: vec![crate::facade::WitnessMessage {
+                id: Some(message_a.to_hex()),
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "same-session private message".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1000,
+        })
+        .expect("same-session conversation and turn refs remain legal");
+
+    vault
+        .enter_off_record_session("sess-container-b", OffRecordBackendClass::Local)
+        .expect("enter B");
+    vault
+        .tag_turn_off_record("sess-container-b", &turn_b)
+        .expect("tag B turn");
+    let foreign_errors = [
+        vault
+            .register_off_record_conversation_shell("sess-container-b", &conversation_a)
+            .expect_err("B self-message must reject A's fenced conversation"),
+        vault
+            .tag_turn_off_record("sess-container-b", &turn_a)
+            .expect_err("B self-message must reject A's fenced turn ref"),
+    ];
+    assert_eq!(
+        foreign_errors
+            .iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        2
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("public message inventory")
+            .len(),
+        0,
+        "only A's same-session hidden witness was stored"
+    );
+    assert_eq!(
+        vault
+            .store
+            .entities
+            .len(&vault.store.env.read_txn().expect("raw entity count"))
+            .expect("raw entity count"),
+        5,
+        "actor, A's conversation/turn/message, and the default policy \
+         manifest seeded by the first gated write; foreign reservations add \
+         no bodies"
+    );
+}
+
+#[test]
 fn off_record_close_cascades_preexisting_derived_summaries_recursively() {
     let (_tmp, vault) = temp_vault();
     let turn = seed_turn(&vault, 1000);
@@ -1194,6 +1463,113 @@ fn promotion_requires_materialized_turn_then_releases_witness_carriers() {
 }
 
 #[test]
+fn promotion_rejects_plain_materialization_until_session_witness_commits() {
+    let (_tmp, vault) = temp_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let conversation = EntityId::now();
+    let actor = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            occurred,
+            1000,
+            b"ordinary conversation",
+        )
+        .put(&actor, ENTITY_TYPE_PERSON, occurred, 1000, b"actor")
+        .commit()
+        .expect("seed witness endpoints");
+    vault
+        .enter_off_record_session("sess-witness-proof", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-witness-proof", &turn)
+        .expect("executor tag before write");
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            occurred,
+            1000,
+            b"plain caller-supplied turn body",
+        )
+        .expect("first local materialization remains hidden");
+
+    let premature = vault
+        .promote_off_record_turn(
+            "sess-witness-proof",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect_err("materialization without session witness evidence must not promote");
+    assert_eq!(
+        [premature]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+    let before_witness = vault
+        .off_record_session("sess-witness-proof")
+        .expect("session read")
+        .expect("live session");
+    assert_eq!(before_witness.witnessed_turns.len(), 0);
+    assert_eq!(before_witness.promoted_turns.len(), 0);
+
+    vault
+        .memory_facade(actor, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![crate::facade::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "legitimate witness evidence".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1000,
+        })
+        .expect("witness records session evidence atomically");
+    let witnessed = vault
+        .off_record_session("sess-witness-proof")
+        .expect("session read")
+        .expect("live session");
+    assert_eq!(witnessed.witnessed_turns.len(), 1);
+
+    vault
+        .promote_off_record_turn(
+            "sess-witness-proof",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("witness then promote remains legal");
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("promoted public read").is_some())
+            .count(),
+        2
+    );
+    let promoted = vault
+        .off_record_session("sess-witness-proof")
+        .expect("session read")
+        .expect("live session");
+    assert_eq!(promoted.witnessed_turns.len(), 0);
+    assert_eq!(promoted.promoted_turns.len(), 1);
+}
+
+#[test]
 fn vault_search_and_short_id_hydration_hide_fenced_message_until_promotion() {
     let (_tmp, vault) = temp_vault();
     let turn = EntityId::now();
@@ -1495,6 +1871,71 @@ fn public_edge_readers_hide_direct_fenced_endpoint_until_promotion() {
             .sources_page(&fenced, EdgeKind::Mentions, None, None, 1)
             .expect("released source page"),
         vec![ordinary]
+    );
+}
+
+#[test]
+fn edge_exists_hides_either_fenced_endpoint_until_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let source = seed_turn(&vault, 999);
+    let hidden_target = seed_turn(&vault, 1000);
+    let ordinary_target = seed_turn(&vault, 1001);
+    vault
+        .put_edge(&source, EdgeKind::Mentions, &hidden_target, 0.75)
+        .expect("seed edge that will become hidden");
+    vault
+        .put_edge(&source, EdgeKind::Mentions, &ordinary_target, 0.5)
+        .expect("seed on-record control edge");
+    vault
+        .enter_off_record_session("sess-edge-exists", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-edge-exists", &hidden_target)
+        .expect("tag target");
+
+    assert_eq!(
+        [hidden_target, ordinary_target]
+            .into_iter()
+            .filter(|target| {
+                vault
+                    .edge_exists(&source, EdgeKind::Mentions, target)
+                    .expect("public edge existence")
+            })
+            .count(),
+        1,
+        "the hidden-endpoint edge reports absent while the on-record control remains"
+    );
+    assert_eq!(
+        [hidden_target, ordinary_target]
+            .into_iter()
+            .filter(|target| {
+                vault
+                    .edge_exists_unfiltered(&source, EdgeKind::Mentions, target)
+                    .expect("raw edge existence")
+            })
+            .count(),
+        2,
+        "both raw edge rows remain durable"
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-edge-exists",
+            &hidden_target,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote hidden endpoint");
+    assert_eq!(
+        [hidden_target, ordinary_target]
+            .into_iter()
+            .filter(|target| {
+                vault
+                    .edge_exists(&source, EdgeKind::Mentions, target)
+                    .expect("released public edge existence")
+            })
+            .count(),
+        2
     );
 }
 

@@ -1211,11 +1211,41 @@ impl Vault {
         Ok(true)
     }
 
-    /// Checks if a directed edge exists in the LMDB vault.
+    /// Checks if a publicly visible directed edge exists in the LMDB vault.
+    /// A direct or inherited off-record fence on either endpoint makes the
+    /// edge indistinguishable from absent.
     pub fn edge_exists(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
-        let key = Store::encode_edge_key(src, kind, tgt);
         let rtxn = self.store.env.read_txn()?;
-        Ok(self.store.edges_out.get(&rtxn, &key)?.is_some())
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, src)?
+            || crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, tgt)?
+        {
+            return Ok(false);
+        }
+        self.edge_exists_unfiltered_in_txn(&rtxn, src, kind, tgt)
+    }
+
+    fn edge_exists_unfiltered_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<bool> {
+        let key = Store::encode_edge_key(src, kind, tgt);
+        Ok(self.store.edges_out.get(rtxn, &key)?.is_some())
+    }
+
+    /// Raw edge-existence probe for privacy machinery tests that must prove a
+    /// hidden edge remains durable while public readers report it absent.
+    #[cfg(test)]
+    pub(crate) fn edge_exists_unfiltered(
+        &self,
+        src: &EntityId,
+        kind: EdgeKind,
+        tgt: &EntityId,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        self.edge_exists_unfiltered_in_txn(&rtxn, src, kind, tgt)
     }
 
     /// Returns the `learned_at` timestamp from a visible entity's header.

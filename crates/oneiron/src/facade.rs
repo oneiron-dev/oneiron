@@ -1435,6 +1435,11 @@ impl MemoryFacade<'_> {
                 }
             }
             batch.apply(wtxn)?;
+            crate::off_record::register_off_record_witness_in_txn(
+                &self.vault.store,
+                wtxn,
+                &turn_id,
+            )?;
             if !text_ops.is_empty() {
                 apply_ops(
                     &self.vault.store,
