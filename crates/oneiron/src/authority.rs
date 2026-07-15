@@ -1269,23 +1269,21 @@ fn fold_authority_log_inner(
         },
     );
     for _ in 0..=entries.len() {
-        // A quarantine discovered after a sibling revoke has already folded
-        // must become input to the next pass, so the revoke is checked against
-        // the same survivor set as it would be in quarantine-first hash order.
-        // Resolved rows do not exclude survivors and conflicting roots are
-        // intentionally never shared across vaults as fold context.
+        // Every fork discovered by the pass becomes quarantined input to the
+        // next pass, even when a later sibling resolved its reported row. The
+        // seeded quarantine is positional: entries outside the resolver's
+        // ancestry are re-checked without the forked key, while folding the
+        // resolver lifts the quarantine only for its descendants. Scope sets
+        // keep this safe when the same fork spans conflicting vault roots.
         let mut next_authority_forks = BTreeMap::new();
         let mut next_authority_fork_vault_ids = BTreeMap::new();
-        if let Some(vault_id) = fold.vault_id {
-            for fork in &fold.authority_forks {
-                let key = (fork.signer.clone(), fork.seq);
-                if fork.status == AuthorityForkStatus::Quarantined
-                    && let Some(fork_vault_ids) = folded_authority_fork_vault_ids.get(&key)
-                    && (fork_vault_ids.is_empty() || fork_vault_ids.contains(&vault_id))
-                {
-                    next_authority_forks.insert(key.clone(), fork.clone());
-                    next_authority_fork_vault_ids.insert(key, fork_vault_ids.clone());
-                }
+        for fork in &fold.authority_forks {
+            let key = (fork.signer.clone(), fork.seq);
+            if let Some(fork_vault_ids) = folded_authority_fork_vault_ids.get(&key) {
+                let mut quarantined = fork.clone();
+                quarantined.status = AuthorityForkStatus::Quarantined;
+                next_authority_forks.insert(key.clone(), quarantined);
+                next_authority_fork_vault_ids.insert(key, fork_vault_ids.clone());
             }
         }
         if fold.vetoed_widens == vetoed_widens
@@ -1356,6 +1354,8 @@ fn fold_authority_log_once(
     let mut authority_forks = context.authority_forks.clone();
     let mut authority_fork_vault_ids = context.authority_fork_vault_ids.clone();
     let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
+    let mut reported_authority_fork_resolved_vault_ids =
+        BTreeMap::<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>::new();
     let mut unresolved_equivocation_groups =
         BTreeSet::<(AuthorityKey, u64)>::from_iter(equivocation_groups.keys().cloned());
 
@@ -1463,6 +1463,7 @@ fn fold_authority_log_once(
             reconcile_reported_authority_forks(
                 &mut reported_authority_forks,
                 &authority_fork_vault_ids,
+                &mut reported_authority_fork_resolved_vault_ids,
                 state,
             );
         }
@@ -1500,6 +1501,7 @@ fn fold_authority_log_once(
         reconcile_reported_authority_forks(
             &mut reported_authority_forks,
             &authority_fork_vault_ids,
+            &mut reported_authority_fork_resolved_vault_ids,
             state,
         );
     }
@@ -1537,15 +1539,25 @@ fn fold_authority_log_once(
 fn reconcile_reported_authority_forks(
     reported: &mut BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     authority_fork_vault_ids: &BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
+    resolved_vault_ids: &mut BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
     state: &FoldState,
 ) {
-    for (key, fork) in reported.iter_mut() {
-        if authority_fork_vault_ids
+    for (key, fork) in reported.iter() {
+        let applies_to_state = authority_fork_vault_ids
             .get(key)
-            .is_some_and(|vault_ids| vault_ids.is_empty() || vault_ids.contains(&state.vault_id))
-            && state.fork_resolution_revocations.contains(&fork.signer)
+            .is_some_and(|vault_ids| vault_ids.is_empty() || vault_ids.contains(&state.vault_id));
+        let state_records_resolution = state
+            .authority_forks
+            .get(key)
+            .is_some_and(|state_fork| state_fork.status == AuthorityForkStatus::Resolved);
+        if applies_to_state
+            && (state.fork_resolution_revocations.contains(&fork.signer)
+                || state_records_resolution)
         {
-            fork.status = AuthorityForkStatus::Resolved;
+            resolved_vault_ids
+                .entry(key.clone())
+                .or_default()
+                .insert(state.vault_id);
         }
     }
     for (key, fork) in &state.authority_forks {
@@ -1555,14 +1567,35 @@ fn reconcile_reported_authority_forks(
         {
             continue;
         }
+        if fork.status == AuthorityForkStatus::Resolved {
+            resolved_vault_ids
+                .entry(key.clone())
+                .or_default()
+                .insert(state.vault_id);
+        }
         reported
             .entry(key.clone())
-            .and_modify(|existing| {
-                if fork.status == AuthorityForkStatus::Resolved {
-                    existing.status = AuthorityForkStatus::Resolved;
-                }
-            })
-            .or_insert_with(|| fork.clone());
+            .or_insert_with(|| AuthorityFork {
+                status: AuthorityForkStatus::Quarantined,
+                ..fork.clone()
+            });
+    }
+    for (key, fork) in reported.iter_mut() {
+        // A non-empty scope is resolved only after every named vault has a
+        // real RevokeDevice/RecoveryReboot resolution in that vault. Empty
+        // scope means universal: a local real revocation lifts only that
+        // state's gate, while the global alarm remains quarantined because no
+        // finite set of vaults can prove universal resolution.
+        fork.status = if authority_fork_vault_ids.get(key).is_some_and(|vault_ids| {
+            !vault_ids.is_empty()
+                && resolved_vault_ids
+                    .get(key)
+                    .is_some_and(|resolved| vault_ids.is_subset(resolved))
+        }) {
+            AuthorityForkStatus::Resolved
+        } else {
+            AuthorityForkStatus::Quarantined
+        };
     }
 }
 
@@ -1992,6 +2025,8 @@ fn resolve_global_forks_for_recovery_reboot(state: &mut FoldState, context: Fold
 /// construction (seq continuity is enforced against the folded parent
 /// state), which matters when the fork candidates' ancestry is unresolvable
 /// (missing parents) and the ancestor-based exemption cannot see them.
+/// The exemption covers the entry SIGNER only: a cosign carries no chain
+/// position, so cosigned entries need an ancestry proof or fail closed.
 /// Scans without a concrete entry context pass `None` and stay fail-closed.
 fn key_is_quarantined_for_entry(
     state: &FoldState,
@@ -2027,6 +2062,15 @@ fn fork_quarantines_key_for_entry(
         && fork.status == AuthorityForkStatus::Quarantined
         && !fork_resolved_in_state(state, key, fork.seq)
         && !entry_is_prefork_or_fork_candidate(context, key, fork.seq, entry_hash)
+        // Only the entry signer's own seq orders the entry against the fork
+        // point (seq continuity: a second entry at the same seq would form
+        // its own equivocation group). A cosign carries no chain position —
+        // a folded-state seq below the fork proves only that the cosigner's
+        // SIGNING chain stalled prefork, not that the cosign happened
+        // prefork, and a quarantined key could keep cosigning new entries
+        // forever without ever advancing it. Cosigned entries are therefore
+        // exempt only via ancestry proof (entry_is_prefork_or_fork_candidate
+        // above); without one they fail closed.
         && !prefork.is_some_and(|(signer, seq)| signer == key && seq < fork.seq)
 }
 
