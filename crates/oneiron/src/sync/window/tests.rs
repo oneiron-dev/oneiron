@@ -565,6 +565,57 @@ fn window_scrub_propagates_durable_inherited_fence_across_source_windows() -> Re
     Ok(())
 }
 
+#[test]
+fn window_scrub_resolves_on_record_cross_window_message_parent_from_lmdb() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let source_key = WindowKey::new("2026-03");
+    let derived_key = WindowKey::new("2026-04");
+    let source_at = source_key.start_timestamp().unwrap() + 60;
+    let derived_at = derived_key.start_timestamp().unwrap() + 60;
+    let public_message = EntityId::from_bytes([0x6E; 16])?;
+    let public_summary = EntityId::from_bytes([0x6F; 16])?;
+    vault.put_entity(
+        &public_message,
+        ENTITY_TYPE_MESSAGE,
+        TimeRange {
+            start: source_at,
+            end: source_at,
+        },
+        source_at,
+        b"on-record cross-window message",
+    )?;
+    assert!(!vault.is_turn_off_record_fenced(&public_message)?);
+
+    let doc = create_window_doc("remote", &derived_key);
+    let summary_blob = make_entity_blob(
+        ENTITY_TYPE_SUMMARY,
+        derived_at,
+        b"on-record cross-window summary",
+    );
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &public_summary.to_hex(),
+        &summary_blob,
+    )?;
+    let derived_from = format_edge_key(&public_summary, EdgeKind::DerivedFrom, &public_message);
+    map_insert_bytes(&doc.get_map("edges"), &derived_from, b"DerivedFrom")?;
+    doc.commit();
+
+    assert!(
+        !scrub_off_record_fenced_carriers(&vault, &derived_key, &doc)?,
+        "an LMDB-known on-record parent must not false-positive scrub its summary"
+    );
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &public_summary.to_hex()).as_deref(),
+        Some(summary_blob.as_slice())
+    );
+    assert_eq!(
+        map_get_bytes(&doc.get_map("edges"), &derived_from).as_deref(),
+        Some(b"DerivedFrom".as_slice())
+    );
+    Ok(())
+}
+
 /// Tagging an entity that is already present in a registry-owned live window
 /// must remove its body and incident edges before the call returns. The
 /// ordinary neighbor is the legitimate control and must remain exportable.

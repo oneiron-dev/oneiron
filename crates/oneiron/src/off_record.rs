@@ -314,6 +314,25 @@ pub(crate) fn direct_off_record_fence_active(
     Ok(store.vault_meta.get(rtxn, &key)?.is_some())
 }
 
+/// Cheap, uniform visibility probe for public entity/edge readers.
+///
+/// Direct roots carry `offrecord_fence:v0:<id>` and inherited MESSAGE /
+/// SUMMARY carriers carry `offrecord_inherited_fence:v0:<id>`. Both are
+/// point lookups in `vault_meta`; public reads never walk the entity graph.
+pub(crate) fn off_record_visibility_hidden(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if direct_off_record_fence_active(store, rtxn, id)? {
+        return Ok(true);
+    }
+    Ok(store
+        .vault_meta
+        .get(rtxn, &off_record_inherited_fence_key(id))?
+        .is_some())
+}
+
 fn decode_inherited_off_record_fence_roots(bytes: &[u8]) -> Result<BTreeSet<EntityId>> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(16) {
         return Err(Error::CorruptedIndex("off-record inherited fence row"));
@@ -546,18 +565,66 @@ pub(crate) fn off_record_graph_fence_active(
 
 /// THE FENCE probe consulted by every retrieval/extraction candidate filter.
 ///
-/// In addition to an entity's own fence row, MESSAGE children inherit the
-/// fence of their `PartOf` TURN and SUMMARY rows inherit the fence of every
-/// `DerivedFrom` source. Window scrubs also persist node-local inherited-root
-/// sidecars, so a carrier remains covered when its inheritance edge lives in
-/// another CRDT window. Corrupt entity/edge/sidecar rows fail closed with a
-/// typed storage error.
+/// Fence-establishing batches and tag-time reverse closure persist inherited
+/// sidecars, while window scrubs backfill cross-window carriers. Visibility is
+/// therefore exactly the uniform two-point-lookup rule used by edge readers:
+/// a direct fence row OR an inherited sidecar row hides the entity.
 pub(crate) fn off_record_fence_active(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(!off_record_fence_roots(store, rtxn, id)?.is_empty())
+    off_record_visibility_hidden(store, rtxn, id)
+}
+
+/// Persists `root` on every already-materialized MESSAGE/SUMMARY descendant.
+///
+/// Tagging an existing TURN must switch public visibility atomically with the
+/// direct fence row. The reverse walk is mutation-time work; readers retain
+/// the two-point-lookup fast path. Rows are collected before any sidecar write
+/// so no LMDB iterator remains live while `vault_meta` is mutated.
+fn persist_existing_inherited_carriers_for_root_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    root: &EntityId,
+) -> Result<()> {
+    let mut visited = BTreeSet::from([*root]);
+    let mut pending = vec![*root];
+    let mut carriers = Vec::new();
+    while let Some(parent) = pending.pop() {
+        for (kind, entity_type) in [
+            (EdgeKind::PartOf, ENTITY_TYPE_MESSAGE),
+            (EdgeKind::DerivedFrom, ENTITY_TYPE_SUMMARY),
+        ] {
+            let prefix = crate::vault::edge_kind_prefix(&parent, kind);
+            for row in store.edges_in.prefix_iter(&*wtxn, &prefix)? {
+                let (key, value) = row?;
+                let child = crate::vault::parse_edge_record(key, value)?.target;
+                let Some(raw) = store.entities.get(&*wtxn, child.as_bytes())? else {
+                    continue;
+                };
+                let header = EntityMetadataHeader::parse(raw)
+                    .ok_or(Error::CorruptedIndex("entity header"))?;
+                if header.entity_type != entity_type || visited.contains(&child) {
+                    continue;
+                }
+                if visited.len() >= OFF_RECORD_MAX_FENCE_INHERITANCE_ENTITIES {
+                    return Err(Error::CorruptedIndex(
+                        "off-record fence inheritance graph exceeds bound",
+                    ));
+                }
+                visited.insert(child);
+                pending.push(child);
+                carriers.push(child);
+            }
+        }
+    }
+
+    let roots = BTreeSet::from([*root]);
+    for carrier in carriers {
+        put_inherited_off_record_fence_roots_in_txn(store, wtxn, &carrier, &roots)?;
+    }
+    Ok(())
 }
 
 /// Snapshots every carrier that inherits `root`'s fence. The closing flag has
@@ -579,7 +646,7 @@ fn inherited_off_record_carriers_for_close(
         ] {
             let mut after = None;
             loop {
-                let page = vault.sources_page(
+                let page = vault.sources_page_unfiltered(
                     &parent,
                     kind,
                     Some(entity_type),
@@ -614,9 +681,18 @@ fn inherited_off_record_carriers_for_close(
 /// this once-per-query probe to preserve their fence-free fast path before
 /// checking returned candidates individually.
 pub(crate) fn off_record_fences_present(store: &Store, rtxn: &RoTxn<'_>) -> Result<bool> {
-    Ok(store
+    if store
         .vault_meta
         .prefix_iter(rtxn, OFF_RECORD_FENCE_KEY_PREFIX)?
+        .next()
+        .transpose()?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(store
+        .vault_meta
+        .prefix_iter(rtxn, OFF_RECORD_INHERITED_FENCE_KEY_PREFIX)?
         .next()
         .transpose()?
         .is_some())
@@ -901,6 +977,7 @@ impl Vault {
             self.store
                 .vault_meta
                 .put(wtxn, &fence_key, session_ref.as_bytes())?;
+            persist_existing_inherited_carriers_for_root_in_txn(&self.store, wtxn, turn_id)?;
             self.store.vault_meta.put(
                 wtxn,
                 &off_record_session_key(session_ref),
@@ -1277,6 +1354,7 @@ impl Vault {
                     // leaking an off-record artifact.
                     self.store
                         .delete_gate_decisions_for_missing_off_record_turn_in_txn(wtxn, &id)?;
+                    remove_inherited_off_record_fence_root_in_txn(&self.store, wtxn, &id)?;
                     self.store.vault_meta.put(
                         wtxn,
                         &off_record_fence_key(&id),

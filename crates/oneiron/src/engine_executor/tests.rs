@@ -13,7 +13,7 @@ use crate::{
     FatalLlmError, FinishReason, HnswConfig, LlmGenerateFuture, LlmResponse, LlmStreamResult,
     LlmUsage, ModelId, SelfAskHumanCall, SelfDurableWaitReason, SelfEffect, SelfMemoryPutClaimCall,
     SelfMemoryPutEdgeCall, SelfMemoryWriteFixtureCall, TimeRange, VaultConfig, WriteActor,
-    registry::ENTITY_TYPE_PERSON,
+    registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON},
 };
 
 use super::*;
@@ -1495,5 +1495,126 @@ fn executor_binds_replay_artifacts_to_off_record_session_and_close_sweeps_them()
             .expect("post-close load")
             .is_none(),
         "close must sweep session-bound replay artifacts"
+    );
+}
+
+#[test]
+fn executor_off_record_speak_registers_minted_turn_and_close_deletes_message() {
+    let (_dir, vault) = open_test_vault();
+    let session_ref = "sess-exec-speak-offrecord";
+    vault
+        .enter_off_record_session(session_ref, crate::OffRecordBackendClass::Local)
+        .expect("enter off-record session");
+
+    let actor = EntityId::from_bytes(crate::gate::FIRST_PARTY_EIRI_CONNECTOR_ACTOR_ID)
+        .expect("first-party actor id");
+    vault
+        .put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            range(1),
+            1,
+            b"first-party actor",
+        )
+        .expect("seed first-party actor");
+    let gated_write = GatedActorWrite::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-offrecord-speak",
+    )
+    .expect("gated actor write");
+
+    let run_id = entity(0x8D);
+    let call = SelfCall::Speak(crate::facade::WitnessTurn {
+        conversation_ref: entity(0x8E).to_hex(),
+        turn_ref: None,
+        messages: vec![crate::facade::WitnessMessage {
+            id: None,
+            author: crate::facade::WitnessAuthor::User,
+            message_type: "guest-controlled".to_owned(),
+            content: "private executor speech".to_owned(),
+            metadata: None,
+            is_visible: true,
+            order: 0,
+        }],
+        occurred_at: 100,
+    });
+    let mut predicted = call.clone();
+    stamp_self_message_ids_for_bridge_call(&mut predicted, &run_id, 0)
+        .expect("predict deterministic ids");
+    let SelfCall::Speak(predicted_turn) = predicted else {
+        unreachable!("fixture is speak")
+    };
+    let turn_id = EntityId::from_hex(
+        predicted_turn
+            .turn_ref
+            .as_deref()
+            .expect("executor-stamped turn id"),
+    )
+    .expect("turn id");
+    let message_id = EntityId::from_hex(
+        predicted_turn.messages[0]
+            .id
+            .as_deref()
+            .expect("executor-stamped message id"),
+    )
+    .expect("message id");
+
+    let backend = FixtureBackend::new(["await self.speak({ content: 'private' });"]);
+    let lease = BudgetLease::for_test("executor-lease");
+    let mut runtime =
+        FixtureRuntime::new([JsCodeModeStepOutcome::complete("done")]).with_calls([vec![call]]);
+    let mut config = executor_config(run_id, EngineExecutorLimits::default());
+    config.off_record_session_ref = Some(session_ref.to_owned());
+    let mut executor =
+        EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
+    let outcome = block_on_ready(executor.run(&config)).expect("executor run");
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+
+    let session = vault
+        .off_record_session(session_ref)
+        .expect("session lookup")
+        .expect("session record");
+    assert_eq!(session.fenced_turns, vec![*turn_id.as_bytes()]);
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&turn_id)
+            .expect("turn fence")
+    );
+    assert!(
+        vault
+            .is_turn_off_record_fenced(&message_id)
+            .expect("message sidecar")
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("message rows")
+            .len(),
+        1
+    );
+
+    let log = vault
+        .off_record_receipt_log(session_ref)
+        .expect("receipt log");
+    let close = vault
+        .close_off_record_session(session_ref, log)
+        .expect("close session");
+    assert_eq!(close.turns_deleted, 1);
+    assert_eq!(close.turns_missing, 0);
+    assert_eq!(
+        [turn_id, message_id]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("entity existence"))
+            .count(),
+        0,
+        "close deletes the executor turn and its MESSAGE carrier"
+    );
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("post-close message rows")
+            .len(),
+        0
     );
 }

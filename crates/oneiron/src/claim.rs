@@ -567,6 +567,9 @@ impl<'a> ScopedRead<'a> {
     fn edges_out_in(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Vec<EdgeInfo>> {
         const MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS: usize = 100_000;
 
+        if crate::off_record::off_record_visibility_hidden(&self.vault.store, rtxn, id)? {
+            return Ok(Vec::new());
+        }
         let mut edges = Vec::new();
         for entry in self
             .vault
@@ -578,7 +581,15 @@ impl<'a> ScopedRead<'a> {
             if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
                 return Err(Error::IndexOverflow("scoped read edge reachability"));
             }
-            edges.push(crate::vault::parse_edge_record(key, value)?);
+            let edge = crate::vault::parse_edge_record(key, value)?;
+            if crate::off_record::off_record_visibility_hidden(
+                &self.vault.store,
+                rtxn,
+                &edge.target,
+            )? {
+                continue;
+            }
+            edges.push(edge);
         }
         Ok(edges)
     }
@@ -2192,6 +2203,7 @@ impl Vault {
             EdgeKind::ClaimOf,
             Some(ENTITY_TYPE_CLAIM),
             "claims for subject",
+            true,
         )
     }
 

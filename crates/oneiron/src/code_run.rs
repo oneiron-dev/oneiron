@@ -1850,6 +1850,7 @@ impl<'a> HostSelfDispatcher<'a> {
         &self,
         effect: SelfEffect,
         mut turn: crate::facade::WitnessTurn,
+        off_record_session_ref: Option<&str>,
     ) -> Result<SelfDispatchOutcome> {
         if turn.messages.len() != 1 {
             return Err(Error::InvalidClaimBody(
@@ -1919,6 +1920,21 @@ impl<'a> HostSelfDispatcher<'a> {
         approval.authorizes(&gate_input)?;
         drop(rtxn);
 
+        // Executor-stamped message turns join the same durable fence/session
+        // membership path as ordinary off-record turns before witness writes
+        // any entity or edge. Tag-before-write is intentionally allowed to
+        // leave a fenced missing id if witness later fails; close already
+        // handles that retry-safe state without leaking transcript data.
+        if let Some(session_ref) = off_record_session_ref {
+            let turn_id = EntityId::from_hex(turn.turn_ref.as_deref().ok_or(
+                Error::InvalidClaimBody("off-record self message turn id must be executor-stamped"),
+            )?)
+            .map_err(|_| {
+                Error::InvalidClaimBody("off-record self message turn id must be 32-hex")
+            })?;
+            self.vault.tag_turn_off_record(session_ref, &turn_id)?;
+        }
+
         let receipt = self
             .vault
             .memory_facade(self.actor.entity_ref(), self.actor.actor_class())
@@ -1936,6 +1952,46 @@ impl<'a> HostSelfDispatcher<'a> {
             })?;
 
         Ok(SelfDispatchOutcome::MessageWitness(receipt))
+    }
+
+    /// Dispatches one call with the executor's validated off-record binding.
+    /// Sessionless callers retain the ordinary [`SelfDispatcher`] behavior.
+    pub(crate) fn dispatch_with_off_record_session_ref(
+        &self,
+        call: SelfCall,
+        off_record_session_ref: Option<&str>,
+    ) -> Result<SelfDispatchOutcome> {
+        match call {
+            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
+            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
+            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
+            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::Speak(turn) => {
+                self.dispatch_message_witness(SelfEffect::Speak, turn, off_record_session_ref)
+            }
+            SelfCall::Think(turn) => {
+                self.dispatch_message_witness(SelfEffect::Think, turn, off_record_session_ref)
+            }
+            SelfCall::Express(turn) => {
+                self.dispatch_message_witness(SelfEffect::Express, turn, off_record_session_ref)
+            }
+            SelfCall::AskHuman(call) => Ok(self.durable_wait(
+                SelfEffect::AskHuman,
+                SelfDurableWaitReason::HumanInput,
+                Some(call.prompt),
+            )),
+            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
+                SelfEffect::DestructiveFixture,
+                SelfDurableWaitReason::DestructiveEffect,
+                Some(call.label),
+            )),
+            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
+                SelfEffect::OutboundFixture,
+                SelfDurableWaitReason::OutboundEffect,
+                Some(call.label),
+            )),
+        }
     }
 
     fn operation_gate_body(
@@ -2021,31 +2077,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
 impl SelfDispatcher for HostSelfDispatcher<'_> {
     fn dispatch(&self, call: SelfCall) -> Result<SelfDispatchOutcome> {
-        match call {
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
-            SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
-            SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
-            SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
-            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::Speak(turn) => self.dispatch_message_witness(SelfEffect::Speak, turn),
-            SelfCall::Think(turn) => self.dispatch_message_witness(SelfEffect::Think, turn),
-            SelfCall::Express(turn) => self.dispatch_message_witness(SelfEffect::Express, turn),
-            SelfCall::AskHuman(call) => Ok(self.durable_wait(
-                SelfEffect::AskHuman,
-                SelfDurableWaitReason::HumanInput,
-                Some(call.prompt),
-            )),
-            SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
-                SelfEffect::DestructiveFixture,
-                SelfDurableWaitReason::DestructiveEffect,
-                Some(call.label),
-            )),
-            SelfCall::OutboundFixture(call) => Ok(self.durable_wait(
-                SelfEffect::OutboundFixture,
-                SelfDurableWaitReason::OutboundEffect,
-                Some(call.label),
-            )),
-        }
+        self.dispatch_with_off_record_session_ref(call, None)
     }
 }
 

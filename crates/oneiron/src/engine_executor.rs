@@ -23,8 +23,8 @@ use crate::{
     FinishReason, GatedActorWrite, LlmBackend, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
     LlmResponse, ModelId, ModelLocality, ModelTierRef, ResponseFormat, SandboxBoundaryContract,
     SandboxComponentBoundary, SandboxGuestLanguage, SandboxGuestTier, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDispatcher, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult, TierPrecedence, Vault,
+    SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
+    TierPrecedence, Vault,
 };
 use crate::{Result, code_sandbox::PLAIN_JS_HOST_VERB_DTS};
 use crate::{
@@ -428,6 +428,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 config.run_id,
                 bridge_start as u64,
                 config.determinism,
+                config.off_record_session_ref.as_deref(),
                 self.legibility,
             );
             let step = JsCodeModeStep {
@@ -792,6 +793,7 @@ struct RecordingJsHost<'a> {
     run_id: EntityId,
     next_seq: u64,
     determinism: CodeRunDeterminism,
+    off_record_session_ref: Option<String>,
     legibility: Option<ExecutorLegibility<'a>>,
     bridge_calls: Vec<CodeRunBridgeCall>,
     durable_wait: Option<SelfDurableWait>,
@@ -808,6 +810,7 @@ impl<'a> RecordingJsHost<'a> {
         run_id: EntityId,
         next_seq: u64,
         determinism: CodeRunDeterminism,
+        off_record_session_ref: Option<&str>,
         legibility: Option<ExecutorLegibility<'a>>,
     ) -> Self {
         Self {
@@ -815,6 +818,7 @@ impl<'a> RecordingJsHost<'a> {
             run_id,
             next_seq,
             determinism,
+            off_record_session_ref: off_record_session_ref.map(str::to_owned),
             legibility,
             bridge_calls: Vec::new(),
             durable_wait: None,
@@ -864,7 +868,10 @@ impl JsCodeModeHost for RecordingJsHost<'_> {
         }
         let mut dispatch_call = call.clone();
         stamp_self_message_ids_for_bridge_call(&mut dispatch_call, &self.run_id, seq)?;
-        let outcome = match self.gated_write.dispatch(dispatch_call) {
+        let outcome = match self.gated_write.dispatch_with_off_record_session_ref(
+            dispatch_call,
+            self.off_record_session_ref.as_deref(),
+        ) {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {

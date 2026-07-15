@@ -787,6 +787,7 @@ impl Vault {
         let key_in = Store::encode_edge_key(tgt, kind, src);
 
         self.with_write_txn(|wtxn| {
+            crate::batch::guard_off_record_edge_delete(&self.store, &*wtxn, src, kind, tgt, false)?;
             let existed_out = self.store.edges_out.delete(wtxn, &key_out)?;
             let deleted_in = self.store.edges_in.delete(wtxn, &key_in)?;
 
@@ -803,16 +804,47 @@ impl Vault {
         })
     }
 
-    /// Returns outbound edges for `src`.
+    /// Returns outbound edges whose source and target are both publicly
+    /// visible. A direct or inherited off-record fence on either endpoint
+    /// hides the whole edge.
     pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.visible_edges_in(&rtxn, &self.store.edges_out, src)
+    }
+
+    /// Raw outbound graph access for privacy machinery whose job is to close,
+    /// scrub, or release fenced graph state.
+    #[cfg(test)]
+    pub(crate) fn edges_out_unfiltered(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
         scan_edges(&self.store.edges_out, &rtxn, src.as_bytes())
     }
 
-    /// Returns inbound edges for `tgt`.
+    /// Returns inbound edges whose target and source are both publicly
+    /// visible. A direct or inherited off-record fence on either endpoint
+    /// hides the whole edge.
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
         let rtxn = self.store.env.read_txn()?;
-        scan_edges(&self.store.edges_in, &rtxn, tgt.as_bytes())
+        self.visible_edges_in(&rtxn, &self.store.edges_in, tgt)
+    }
+
+    fn visible_edges_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        db: &Database<Bytes, Bytes>,
+        anchor: &EntityId,
+    ) -> Result<Vec<EdgeInfo>> {
+        if crate::off_record::off_record_visibility_hidden(&self.store, rtxn, anchor)? {
+            return Ok(Vec::new());
+        }
+        let raw = scan_edges(db, rtxn, anchor.as_bytes())?;
+        let mut visible = Vec::with_capacity(raw.len());
+        for edge in raw {
+            if !crate::off_record::off_record_visibility_hidden(&self.store, rtxn, &edge.target)? {
+                visible.push(edge);
+            }
+        }
+        Ok(visible)
     }
 
     /// Bounded neighbor-edge scan for one direction with the kind and
@@ -1610,6 +1642,7 @@ impl Vault {
             kind,
             target_type,
             "targets",
+            true,
         )
     }
 
@@ -1631,6 +1664,26 @@ impl Vault {
             kind,
             source_type,
             "sources",
+            true,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sources_unfiltered(
+        &self,
+        tgt: &EntityId,
+        kind: EdgeKind,
+        source_type: Option<u8>,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.filtered_edge_peers(
+            &rtxn,
+            &self.store.edges_in,
+            tgt,
+            kind,
+            source_type,
+            "sources",
+            false,
         )
     }
 
@@ -1654,6 +1707,29 @@ impl Vault {
             source_type,
             after_source,
             limit,
+            true,
+        )
+    }
+
+    /// Raw paged reverse scan used by the close cascade. Public pagination
+    /// must hide either fenced endpoint, but close must still discover every
+    /// carrier whose body and edges it is responsible for deleting.
+    pub(crate) fn sources_page_unfiltered(
+        &self,
+        tgt: &EntityId,
+        kind: EdgeKind,
+        source_type: Option<u8>,
+        after_source: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<Vec<EntityId>> {
+        self.filtered_edge_peers_page(
+            &self.store.edges_in,
+            tgt,
+            kind,
+            source_type,
+            after_source,
+            limit,
+            false,
         )
     }
 
@@ -1662,6 +1738,10 @@ impl Vault {
     ///
     /// Capped at `MAX_EDGE_QUERY_RESULTS` scanned peer rows to prevent
     /// unbounded allocation and worst-case filtered scans.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "edge scan needs txn, database, prefix, kind/type filters, and fence visibility"
+    )]
     pub(crate) fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1670,7 +1750,13 @@ impl Vault {
         kind: EdgeKind,
         peer_type: Option<u8>,
         overflow_context: &'static str,
+        hide_fenced: bool,
     ) -> Result<Vec<EntityId>> {
+        if hide_fenced
+            && crate::off_record::off_record_visibility_hidden(&self.store, rtxn, prefix_id)?
+        {
+            return Ok(Vec::new());
+        }
         let prefix = edge_kind_prefix(prefix_id, kind);
         let mut ids = Vec::new();
         for (scanned, entry) in db.prefix_iter(rtxn, &prefix)?.enumerate() {
@@ -1685,12 +1771,21 @@ impl Vault {
             {
                 continue;
             }
+            if hide_fenced
+                && crate::off_record::off_record_visibility_hidden(&self.store, rtxn, &peer)?
+            {
+                continue;
+            }
 
             ids.push(peer);
         }
         Ok(ids)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "paged edge scan needs database, prefix, kind/type filters, cursor, and fence visibility"
+    )]
     fn filtered_edge_peers_page(
         &self,
         db: &Database<Bytes, Bytes>,
@@ -1699,6 +1794,7 @@ impl Vault {
         peer_type: Option<u8>,
         after_peer: Option<&EntityId>,
         limit: usize,
+        hide_fenced: bool,
     ) -> Result<Vec<EntityId>> {
         if limit == 0 {
             return Ok(Vec::new());
@@ -1706,6 +1802,11 @@ impl Vault {
 
         let limit = limit.min(MAX_EDGE_QUERY_RESULTS);
         let rtxn = self.store.env.read_txn()?;
+        if hide_fenced
+            && crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, prefix_id)?
+        {
+            return Ok(Vec::new());
+        }
         let prefix = edge_kind_prefix(prefix_id, kind);
         let start_key = match after_peer {
             Some(peer) => Store::encode_edge_key(prefix_id, kind, peer).to_vec(),
@@ -1727,6 +1828,11 @@ impl Vault {
 
             if let Some(req_type) = peer_type
                 && !self.entity_has_type(&rtxn, &peer, req_type)?
+            {
+                continue;
+            }
+            if hide_fenced
+                && crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &peer)?
             {
                 continue;
             }

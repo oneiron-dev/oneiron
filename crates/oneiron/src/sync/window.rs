@@ -837,26 +837,26 @@ fn off_record_window_fence_state(
     let mut resolved = HashSet::new();
     let mut direct = HashSet::new();
     for id in candidates {
-        if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? {
-            let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
-            // MESSAGE/SUMMARY rows are not positively on-record merely
-            // because their body exists locally: their inheritance edge may
-            // have been rejected in another window. The current-window fixed
-            // point resolves those carriers from their parents instead.
-            if !matches!(
-                header.entity_type,
-                ENTITY_TYPE_MESSAGE | ENTITY_TYPE_SUMMARY
-            ) {
-                resolved.insert(*id);
-            }
-        }
+        let entity_exists = if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())? {
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity metadata"))?;
+            true
+        } else {
+            false
+        };
         if crate::off_record::direct_off_record_fence_active(&vault.store, &rtxn, id)? {
             direct.insert(*id);
         }
         let id_roots = crate::off_record::off_record_fence_roots(&vault.store, &rtxn, id)?;
         if !id_roots.is_empty() {
             roots.insert(*id, id_roots);
+        } else if entity_exists
+            && !crate::off_record::off_record_visibility_hidden(&vault.store, &rtxn, id)?
+        {
+            // A MESSAGE/SUMMARY parent can live in another source window.
+            // Local LMDB existence plus the uniform direct-or-sidecar probe is
+            // positive on-record graph truth; only parents absent from LMDB
+            // and without a sidecar remain genuinely unresolved/fail-closed.
+            resolved.insert(*id);
         }
     }
     Ok(OffRecordWindowFenceState {

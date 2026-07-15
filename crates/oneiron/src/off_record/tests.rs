@@ -11,7 +11,8 @@ use crate::outbound::{
 };
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
 use crate::registry::{
-    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord};
 #[cfg(feature = "sync")]
@@ -826,6 +827,185 @@ fn off_record_promote_writes_exactly_one_turn() {
         .expect("receipt lookup")
         .expect("promote receipt persists");
     assert_eq!(persisted, receipt);
+}
+
+#[test]
+fn public_edge_readers_hide_direct_fenced_endpoint_until_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let ordinary = seed_turn(&vault, 999);
+    let fenced = seed_turn(&vault, 1000);
+    vault
+        .enter_off_record_session("sess-reader-promote", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-reader-promote", &fenced)
+        .expect("tag");
+    vault
+        .put_edge(&ordinary, EdgeKind::Mentions, &fenced, 0.75)
+        .expect("local deferred edge is legal");
+
+    assert_eq!(
+        vault
+            .edges_out_unfiltered(&ordinary)
+            .expect("raw outbound")
+            .len(),
+        1,
+        "the deferred edge remains durable"
+    );
+    assert_eq!(
+        vault.edges_out(&ordinary).expect("public outbound").len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .targets(&ordinary, EdgeKind::Mentions, None)
+            .expect("public targets")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .sources(&fenced, EdgeKind::Mentions, None)
+            .expect("public sources")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .sources_page(&fenced, EdgeKind::Mentions, None, None, 1)
+            .expect("public source page")
+            .len(),
+        0
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-reader-promote",
+            &fenced,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote");
+    let edges = vault.edges_out(&ordinary).expect("released outbound");
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].kind, EdgeKind::Mentions);
+    assert_eq!(edges[0].target, fenced);
+    assert_eq!(
+        vault
+            .targets(&ordinary, EdgeKind::Mentions, None)
+            .expect("released targets"),
+        vec![fenced]
+    );
+    assert_eq!(
+        vault
+            .sources(&fenced, EdgeKind::Mentions, None)
+            .expect("released sources"),
+        vec![ordinary]
+    );
+    assert_eq!(
+        vault
+            .sources_page(&fenced, EdgeKind::Mentions, None, None, 1)
+            .expect("released source page"),
+        vec![ordinary]
+    );
+}
+
+#[test]
+fn witness_edges_survive_fence_and_reappear_as_exact_set_on_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message = EntityId::now();
+    let conversation = EntityId::now();
+    let author = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .put_entity(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            occurred,
+            1000,
+            b"conversation",
+        )
+        .expect("conversation");
+    vault
+        .put_entity(&author, ENTITY_TYPE_PERSON, occurred, 1000, b"author")
+        .expect("author");
+    vault
+        .enter_off_record_session("sess-witness-links", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-witness-links", &turn)
+        .expect("tag");
+
+    vault
+        .memory_facade(author, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![crate::facade::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "private witness message".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1000,
+        })
+        .expect("witness to live-fenced turn");
+
+    let raw = vault
+        .edges_out_unfiltered(&message)
+        .expect("raw witness edges");
+    assert_eq!(raw.len(), 3, "no witness relationship is suppressed");
+    assert_eq!(
+        vault
+            .edges_out(&message)
+            .expect("hidden public edges")
+            .len(),
+        0
+    );
+    let rtxn = vault.store.env.read_txn().expect("sidecar read");
+    assert_eq!(
+        inherited_off_record_fence_roots_in_txn(&vault.store, &rtxn, &message)
+            .expect("message sidecar"),
+        std::collections::BTreeSet::from([turn])
+    );
+    drop(rtxn);
+
+    vault
+        .promote_off_record_turn(
+            "sess-witness-links",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote");
+    let released = vault.edges_out(&message).expect("released witness edges");
+    assert_eq!(released.len(), 3);
+    let exact = released
+        .into_iter()
+        .map(|edge| (edge.kind as u8, edge.target))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        exact,
+        std::collections::BTreeSet::from([
+            (EdgeKind::PartOf as u8, turn),
+            (EdgeKind::BelongsTo as u8, conversation),
+            (EdgeKind::AuthoredBy as u8, author),
+        ])
+    );
+    let rtxn = vault.store.env.read_txn().expect("released sidecar read");
+    assert_eq!(
+        inherited_off_record_fence_roots_in_txn(&vault.store, &rtxn, &message)
+            .expect("released message sidecar")
+            .len(),
+        0
+    );
 }
 
 /// Simulates close-in-flight by stamping the closing flag exactly as

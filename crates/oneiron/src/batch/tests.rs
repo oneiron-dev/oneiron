@@ -905,6 +905,171 @@ fn local_edge_from_inherited_fenced_message_is_rejected() -> Result<()> {
 }
 
 #[test]
+fn off_record_inheritance_edge_delete_is_rejected_but_close_still_cascades() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let occurred = test_time_range(10, 10);
+    vault.put_entity(&turn, ENTITY_TYPE_TURN, occurred, 10, b"private turn")?;
+    vault.enter_off_record_session("sess-delete-carrier", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-delete-carrier", &turn)?;
+    vault
+        .batch()
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            10,
+            b"private message",
+        )
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()?;
+    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+
+    let batch_error = vault
+        .batch()
+        .delete_edge(&message, EdgeKind::PartOf, &turn)
+        .commit()
+        .expect_err("local batch delete must not sever the only fence carrier");
+    assert_eq!(
+        batch_error.kind(),
+        ErrorKind::OffRecordFencedTurnWriteRejected
+    );
+    let direct_error = vault
+        .delete_edge(&message, EdgeKind::PartOf, &turn)
+        .expect_err("Vault::delete_edge must enforce the same fence guard");
+    assert_eq!(
+        direct_error.kind(),
+        ErrorKind::OffRecordFencedTurnWriteRejected
+    );
+    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+
+    let log = vault.off_record_receipt_log("sess-delete-carrier")?;
+    let outcome = vault.close_off_record_session("sess-delete-carrier", log)?;
+    assert_eq!(outcome.turns_deleted, 1);
+    assert_eq!(outcome.turns_missing, 0);
+    assert_eq!(
+        crate::off_record::inherited_off_record_fence_carriers(&vault.store)?.len(),
+        0,
+        "close removes the batch-written inherited sidecar"
+    );
+    assert_eq!(
+        [turn, message]
+            .into_iter()
+            .filter(|id| vault.entity_exists(id).expect("entity existence"))
+            .count(),
+        0,
+        "close uses its raw cascade and deletes both rows"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn replicated_inheritance_edge_tombstone_touching_fence_is_rejected() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let occurred = test_time_range(10, 10);
+    vault.put_entity(&turn, ENTITY_TYPE_TURN, occurred, 10, b"private turn")?;
+    vault.enter_off_record_session("sess-replay-delete", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-replay-delete", &turn)?;
+    vault
+        .batch()
+        .put(
+            &message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            10,
+            b"private message",
+        )
+        .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()?;
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    let error = apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        &mut wtxn,
+        vec![BatchOp::DeleteEdge {
+            src: message,
+            kind: EdgeKind::PartOf,
+            tgt: turn,
+        }],
+        true,
+        false,
+        false,
+    )
+    .expect_err("replicated tombstone must reject either fenced endpoint");
+    assert_eq!(error.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    drop(wtxn);
+    assert!(vault.edge_exists(&message, EdgeKind::PartOf, &turn)?);
+    Ok(())
+}
+
+#[test]
+fn off_record_part_of_allows_only_new_message_or_exact_retry() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let turn = EntityId::now();
+    let preexisting = EntityId::now();
+    let new_message = EntityId::now();
+    let occurred = test_time_range(10, 10);
+    vault.put_entity(&turn, ENTITY_TYPE_TURN, occurred, 10, b"private turn")?;
+    vault.put_entity(
+        &preexisting,
+        ENTITY_TYPE_MESSAGE,
+        occurred,
+        10,
+        b"ordinary pre-existing message",
+    )?;
+    vault.enter_off_record_session("sess-partof-capture", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-partof-capture", &turn)?;
+
+    let rejected = vault
+        .batch()
+        .edge(&preexisting, EdgeKind::PartOf, &turn, 1.0)
+        .commit()
+        .expect_err("a stray edge must not capture an existing message");
+    assert_eq!(rejected.kind(), ErrorKind::OffRecordFencedTurnWriteRejected);
+    assert!(!vault.edge_exists(&preexisting, EdgeKind::PartOf, &turn)?);
+    assert!(!vault.is_turn_off_record_fenced(&preexisting)?);
+
+    vault
+        .batch()
+        .put(
+            &new_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            10,
+            b"new private message",
+        )
+        .edge(&new_message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()?;
+    assert!(vault.is_turn_off_record_fenced(&new_message)?);
+
+    vault
+        .batch()
+        .edge(&new_message, EdgeKind::PartOf, &turn, 1.0)
+        .commit()?;
+    assert_eq!(
+        vault.sources_unfiltered(&turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?,
+        vec![new_message],
+        "the exact retry keeps one canonical edge and captures no old message"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::off_record::inherited_off_record_fence_roots_in_txn(
+            &vault.store,
+            &rtxn,
+            &new_message,
+        )?,
+        std::collections::BTreeSet::from([turn])
+    );
+    Ok(())
+}
+
+#[test]
 fn claim_candidate_write_stamps_approved_envelope() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = EntityId::now();

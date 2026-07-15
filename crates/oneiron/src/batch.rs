@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::str;
 
 pub mod export;
@@ -281,6 +281,16 @@ pub(crate) enum BatchOp {
     Delete {
         id: EntityId,
     },
+    /// Local/public edge deletion. Kept distinct from replay tombstones so
+    /// fence preflight can preserve legal local edits to deferred direct-root
+    /// edges while rejecting every remote tombstone touching hidden state.
+    LocalDeleteEdge {
+        src: EntityId,
+        kind: EdgeKind,
+        tgt: EntityId,
+    },
+    /// Replicated CRDT edge tombstone. Sync bridge materialization constructs
+    /// this variant directly; public builders never do.
     DeleteEdge {
         src: EntityId,
         kind: EdgeKind,
@@ -766,7 +776,7 @@ impl<'a> BatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
-        self.ops.push(BatchOp::DeleteEdge {
+        self.ops.push(BatchOp::LocalDeleteEdge {
             src: *src,
             kind,
             tgt: *tgt,
@@ -1258,7 +1268,7 @@ impl<'a> TxnBatchBuilder<'a> {
 
     /// Adds an edge delete operation to the batch.
     pub fn delete_edge(mut self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Self {
-        self.ops.push(BatchOp::DeleteEdge {
+        self.ops.push(BatchOp::LocalDeleteEdge {
             src: *src,
             kind,
             tgt: *tgt,
@@ -1609,7 +1619,13 @@ pub(crate) fn apply_ops_with_gate_mode(
     let include_source_in_gate_input = gate_mode.include_source_in_gate_input;
 
     secret_scan::scan_batch_ops(&ops)?;
-    let ops = validate_and_filter_off_record_edge_ops(store, &*wtxn, ops)?;
+    let edge_preflight = validate_and_filter_off_record_edge_ops(store, &*wtxn, ops)?;
+    let ops = edge_preflight.ops;
+    for (carrier, roots) in edge_preflight.inherited_fences {
+        crate::off_record::put_inherited_off_record_fence_roots_in_txn(
+            store, wtxn, &carrier, &roots,
+        )?;
+    }
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     validate_child_of_batch(store, &*wtxn, &child_of_overlay)?;
     let mut had_graph_mutation = false;
@@ -1960,7 +1976,8 @@ pub(crate) fn apply_ops_with_gate_mode(
                 had_graph_mutation |= deleted_graph_state;
                 had_vector_mutation |= had_vector;
             }
-            BatchOp::DeleteEdge { src, kind, tgt } => {
+            BatchOp::LocalDeleteEdge { src, kind, tgt }
+            | BatchOp::DeleteEdge { src, kind, tgt } => {
                 if apply_delete_edge(store, wtxn, src, kind, tgt)? {
                     ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
                     had_graph_mutation = true;
@@ -2003,6 +2020,39 @@ fn edge_op_fields(op: &BatchOp) -> Option<(EntityId, EdgeKind, EntityId, bool)> 
     }
 }
 
+fn delete_edge_op_fields(op: &BatchOp) -> Option<(EntityId, EdgeKind, EntityId, bool)> {
+    match op {
+        BatchOp::LocalDeleteEdge { src, kind, tgt } => Some((*src, *kind, *tgt, false)),
+        BatchOp::DeleteEdge { src, kind, tgt } => Some((*src, *kind, *tgt, true)),
+        _ => None,
+    }
+}
+
+/// An existing structural edge is an idempotent retry only when its canonical
+/// identity and stored weight match. Timestamped public writes additionally
+/// pin `created_at`; replicated writes never receive the local PartOf
+/// establishment allowance.
+fn edge_op_matches_existing(store: &Store, rtxn: &heed::RwTxn<'_>, op: &BatchOp) -> Result<bool> {
+    let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
+        return Ok(false);
+    };
+    if replicated {
+        return Ok(false);
+    }
+    let key = Store::encode_edge_key(&src, kind, &tgt);
+    let Some(value) = store.edges_out.get(rtxn, &key)? else {
+        return Ok(false);
+    };
+    let decoded = crate::edge::decode_edge_value_for_kind(kind, value)?;
+    Ok(match op {
+        BatchOp::Edge { weight, .. } => decoded.weight.to_bits() == weight.to_bits(),
+        BatchOp::PublicEdgeWithCreatedAt {
+            weight, created_at, ..
+        } => decoded.weight.to_bits() == weight.to_bits() && decoded.created_at == *created_at,
+        _ => false,
+    })
+}
+
 fn effective_batch_entity_type(
     store: &Store,
     rtxn: &heed::RwTxn<'_>,
@@ -2039,8 +2089,8 @@ fn guard_off_record_edge_op(
     crate::off_record::guard_off_record_entity_put(store, rtxn, src, replicated)?;
     crate::off_record::guard_off_record_entity_put(store, rtxn, tgt, replicated)?;
 
-    let src_fenced = crate::off_record::off_record_fence_active(store, rtxn, src)?;
-    let tgt_fenced = crate::off_record::off_record_fence_active(store, rtxn, tgt)?;
+    let src_fenced = crate::off_record::off_record_visibility_hidden(store, rtxn, src)?;
+    let tgt_fenced = crate::off_record::off_record_visibility_hidden(store, rtxn, tgt)?;
     if !src_fenced && !tgt_fenced {
         return Ok(false);
     }
@@ -2071,10 +2121,10 @@ fn guard_off_record_edge_op(
     }
 
     // A directly-fenced entity may be named by other local edges: canonical
-    // readers filter direct fences and the window scrub keeps those edges off
-    // the wire until promotion releases them. Inherited-fenced carriers get no
-    // such allowance — canonical edge readers do not apply the inherited
-    // filter, so any extra incident edge would expose the hidden id.
+    // readers filter either fenced endpoint and the window scrub keeps those
+    // edges off the wire until promotion releases them. An already inherited-
+    // fenced carrier gets no incremental write allowance; witness initializes
+    // all of a new carrier's edges atomically in the prospective pass below.
     let src_inherited = src_fenced && !src_direct;
     let tgt_inherited = tgt_fenced && !tgt_direct;
     if let Some(hidden) = src_inherited
@@ -2088,21 +2138,65 @@ fn guard_off_record_edge_op(
     Ok(false)
 }
 
+/// Fence preflight shared by batch deletes and [`Vault::delete_edge`].
+///
+/// Local callers may edit ordinary deferred edges, but may not sever a
+/// hidden carrier's PartOf/DerivedFrom inheritance link. Replicated CRDT
+/// tombstones are stricter: either hidden endpoint rejects, matching the
+/// replicated edge-put door.
+pub(crate) fn guard_off_record_edge_delete(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+    tgt: &EntityId,
+    replicated: bool,
+) -> Result<()> {
+    let src_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, src)?;
+    let tgt_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, tgt)?;
+    let rejected = |id: &EntityId| Error::OffRecordFencedTurnWriteRejected {
+        turn_ref: id.to_hex(),
+    };
+
+    if replicated {
+        if src_hidden {
+            return Err(rejected(src));
+        }
+        if tgt_hidden {
+            return Err(rejected(tgt));
+        }
+        return Ok(());
+    }
+
+    if matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom)
+        && src_hidden
+        && !crate::off_record::direct_off_record_fence_active(store, rtxn, src)?
+    {
+        return Err(rejected(src));
+    }
+    Ok(())
+}
+
+struct OffRecordEdgePreflight {
+    ops: Vec<BatchOp>,
+    inherited_fences: HashMap<EntityId, BTreeSet<EntityId>>,
+}
+
 /// Validates edge endpoints against the full direct + inherited fence before
 /// any operation stages bytes. This initial-snapshot pass deliberately avoids
 /// treating an earlier op in the same batch as pre-existing graph truth.
 ///
 /// Witness creates a MESSAGE and all of its structural edges atomically. If
-/// that batch establishes a `PartOf` fence, non-inheritance incident edges are
-/// privacy-suppressed so canonical edge readers cannot expose the hidden id,
-/// while the MESSAGE + `PartOf` pair still commits for close-cascade deletion.
-/// An already-existing carrier gets no initialization allowance: any other
-/// incident edge in the same batch rejects the entire transaction.
+/// that batch establishes a `PartOf` fence, its inherited sidecar is staged in
+/// the same LMDB transaction. Non-PartOf witness edges remain stored: public
+/// readers hide either fenced endpoint and promotion releases the complete
+/// conversation/authorship graph. An already-existing carrier gets no
+/// initialization allowance beyond an exact PartOf retry.
 fn validate_and_filter_off_record_edge_ops(
     store: &Store,
     rtxn: &heed::RwTxn<'_>,
-    mut ops: Vec<BatchOp>,
-) -> Result<Vec<BatchOp>> {
+    ops: Vec<BatchOp>,
+) -> Result<OffRecordEdgePreflight> {
     let mut put_types = HashMap::new();
     let mut new_puts = HashSet::new();
     for op in &ops {
@@ -2119,6 +2213,7 @@ fn validate_and_filter_off_record_edge_ops(
 
     let mut prospective_message_carriers = HashSet::new();
     let mut allowed_inheritance_edges = HashSet::new();
+    let mut inherited_fences = HashMap::<EntityId, BTreeSet<EntityId>>::new();
     for op in &ops {
         let Some((src, kind, tgt, replicated)) = edge_op_fields(op) else {
             continue;
@@ -2128,8 +2223,29 @@ fn validate_and_filter_off_record_edge_ops(
         if guard_off_record_edge_op(
             store, rtxn, &src, kind, &tgt, replicated, src_type, tgt_type,
         )? {
+            if !new_puts.contains(&src) && !edge_op_matches_existing(store, rtxn, op)? {
+                return Err(Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: src.to_hex(),
+                });
+            }
             prospective_message_carriers.insert(src);
             allowed_inheritance_edges.insert((src, kind, tgt));
+            inherited_fences.entry(src).or_default().insert(tgt);
+        }
+    }
+
+    for op in &ops {
+        let Some((src, kind, tgt, replicated)) = delete_edge_op_fields(op) else {
+            continue;
+        };
+        guard_off_record_edge_delete(store, rtxn, &src, kind, &tgt, replicated)?;
+        if !replicated
+            && matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom)
+            && prospective_message_carriers.contains(&src)
+        {
+            return Err(Error::OffRecordFencedTurnWriteRejected {
+                turn_ref: src.to_hex(),
+            });
         }
     }
 
@@ -2153,15 +2269,10 @@ fn validate_and_filter_off_record_edge_ops(
         }
     }
 
-    ops.retain(|op| {
-        let Some((src, kind, tgt, _)) = edge_op_fields(op) else {
-            return true;
-        };
-        allowed_inheritance_edges.contains(&(src, kind, tgt))
-            || (!prospective_message_carriers.contains(&src)
-                && !prospective_message_carriers.contains(&tgt))
-    });
-    Ok(ops)
+    Ok(OffRecordEdgePreflight {
+        ops,
+        inherited_fences,
+    })
 }
 
 fn contains_text_op(ops: &[BatchOp]) -> bool {
@@ -2311,7 +2422,10 @@ impl ChildOfBatchOverlay {
                         .or_default()
                         .insert(*tgt);
                 }
-                BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
+                BatchOp::LocalDeleteEdge { src, kind, tgt }
+                | BatchOp::DeleteEdge { src, kind, tgt }
+                    if *kind == EdgeKind::ChildOf =>
+                {
                     overlay.edge_ops.insert((*src, *tgt), (index, false));
                     overlay
                         .edge_candidates
