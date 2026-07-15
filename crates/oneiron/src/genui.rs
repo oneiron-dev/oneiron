@@ -527,6 +527,30 @@ impl ConsentAskCard {
             ConsentActionKind::Approve => (ConsentActionDecision::ApprovedOnce, None),
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),
             ConsentActionKind::Escalate(scope) => {
+                if scope != ConsentScopeEscalator::JustOnce
+                    && !widening_grant_surface_is_eligible(request.surface)
+                {
+                    return Ok(noop_policy_rejection(
+                        Of336ComponentKind::ConsentAsk,
+                        &self.card_id,
+                        &self.principal_ref,
+                        request,
+                        ConsentActionDecision::NoopSurfaceIneligible,
+                        "consent_surface:widening_ineligible",
+                    ));
+                }
+                if scope != ConsentScopeEscalator::JustOnce
+                    && self.counterparty_ref.as_deref() == Some(request.actor.actor_ref())
+                {
+                    return Ok(noop_policy_rejection(
+                        Of336ComponentKind::ConsentAsk,
+                        &self.card_id,
+                        &self.principal_ref,
+                        request,
+                        ConsentActionDecision::NoopBeneficiaryConfirm,
+                        "consent_beneficiary:self_grant",
+                    ));
+                }
                 let grant_scope = self.grant_scope(scope)?;
                 (
                     ConsentActionDecision::GrantMintIntent,
@@ -706,6 +730,33 @@ impl BundleApproveCard {
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),
             ConsentActionKind::BundleApprove(scope) => {
+                if scope == BundleApprovalScope::BriefVerbClass
+                    && !widening_grant_surface_is_eligible(request.surface)
+                {
+                    return Ok(noop_policy_rejection(
+                        Of336ComponentKind::BundleApprove,
+                        &self.card_id,
+                        &self.principal_ref,
+                        request,
+                        ConsentActionDecision::NoopSurfaceIneligible,
+                        "consent_surface:widening_ineligible",
+                    ));
+                }
+                if scope == BundleApprovalScope::BriefVerbClass
+                    && self
+                        .items
+                        .iter()
+                        .any(|item| item.counterparty_ref == request.actor.actor_ref())
+                {
+                    return Ok(noop_policy_rejection(
+                        Of336ComponentKind::BundleApprove,
+                        &self.card_id,
+                        &self.principal_ref,
+                        request,
+                        ConsentActionDecision::NoopBeneficiaryConfirm,
+                        "consent_beneficiary:self_grant",
+                    ));
+                }
                 let grant_scope = match scope {
                     BundleApprovalScope::ExactEnumeratedSends => {
                         GrantMintIntentScope::BundleExactSends {
@@ -988,6 +1039,8 @@ pub enum ConsentActionDecision {
     Declined,
     GrantMintIntent,
     NoopNonPrincipal,
+    NoopSurfaceIneligible,
+    NoopBeneficiaryConfirm,
 }
 
 impl ConsentActionDecision {
@@ -998,6 +1051,8 @@ impl ConsentActionDecision {
             Self::Declined => "declined",
             Self::GrantMintIntent => "grant_mint_intent",
             Self::NoopNonPrincipal => "no_op_non_principal",
+            Self::NoopSurfaceIneligible => "no_op_surface_ineligible",
+            Self::NoopBeneficiaryConfirm => "no_op_beneficiary_confirm",
         }
     }
 }
@@ -1136,6 +1191,35 @@ fn noop_non_principal(
         ),
         grant_mint_intent: None,
     }
+}
+
+fn noop_policy_rejection(
+    component_kind: Of336ComponentKind,
+    component_id: &str,
+    principal_ref: &str,
+    request: &ConsentActionRequest,
+    decision: ConsentActionDecision,
+    reason: &str,
+) -> ConsentActionEvaluation {
+    ConsentActionEvaluation {
+        decision,
+        receipt: consent_receipt(
+            component_kind,
+            component_id,
+            principal_ref,
+            request,
+            decision,
+            Some(reason),
+        ),
+        grant_mint_intent: None,
+    }
+}
+
+const fn widening_grant_surface_is_eligible(surface: ConsentSurface) -> bool {
+    matches!(
+        surface,
+        ConsentSurface::EiriConversation | ConsentSurface::Dashboard | ConsentSurface::McpUi
+    )
 }
 
 fn consent_receipt(
