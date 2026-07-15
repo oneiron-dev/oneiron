@@ -437,6 +437,7 @@ fn fold_entry_state_for_test(
             equivocation_groups: &equivocation_groups,
             unresolved_equivocation_groups: &unresolved_equivocation_groups,
             entry_ancestors: None,
+            chain_validated_fork_candidates: None,
         },
     )
 }
@@ -813,6 +814,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         equivocation_groups: &equivocation_groups,
         unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: None,
+        chain_validated_fork_candidates: None,
     };
     assert!(
         active_participant_keys(
@@ -3653,6 +3655,412 @@ fn all_invalid_same_seq_group_quarantines_later_entry() {
 }
 
 #[test]
+fn forged_candidate_ancestors_do_not_exempt_postfork_signer_entry() {
+    let owner = ed_key(176);
+    let second = ed_key(177);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(176, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enroll_second = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 177,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let postfork = cosign_ed(
+        enroll_device_entry(
+            vault_id,
+            &enroll_second,
+            &owner,
+            EnrollSpec {
+                seed: 182,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 3,
+                ts: 3,
+            },
+        ),
+        &owner,
+        &second,
+    );
+    let postfork_hash = authority_entry_hash(&postfork).unwrap();
+    let invalid_ceiling = cosign_ed(
+        set_ceiling_entry(vault_id, &postfork, &owner, 2, 4),
+        &owner,
+        &second,
+    );
+    let invalid_tier = cosign_ed(
+        set_tier_floor_entry_at(vault_id, &postfork, &owner, 2, AuthorityTier::Hardware, 5),
+        &owner,
+        &second,
+    );
+    let ceiling_hash = authority_entry_hash(&invalid_ceiling).unwrap();
+    let tier_hash = authority_entry_hash(&invalid_tier).unwrap();
+    let first_hash = ceiling_hash.min(tier_hash);
+    let second_hash = ceiling_hash.max(tier_hash);
+
+    // In isolation each forged child reaches the seq-3 parent and fails for
+    // the intended reason. Pairing them must not turn that unvalidated parent
+    // claim into a prefork proof for the seq-3 entry.
+    for (candidate, candidate_hash) in [
+        (invalid_ceiling.clone(), ceiling_hash),
+        (invalid_tier.clone(), tier_hash),
+    ] {
+        let probe = fold_authority_log_without_seen_time_delay(&[
+            candidate,
+            postfork.clone(),
+            enroll_second.clone(),
+            genesis.clone(),
+        ]);
+        assert_eq!(
+            probe
+                .issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::NonMonotonicSeq(hash) if *hash == candidate_hash
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(probe.issues.len(), 1);
+    }
+
+    let entries = vec![
+        invalid_tier,
+        invalid_ceiling,
+        postfork,
+        enroll_second,
+        genesis,
+    ];
+    let mut expected = None;
+    for entries in [entries.clone(), entries.iter().rev().cloned().collect()] {
+        let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+        assert_eq!(fold.valid_entries.len(), 2);
+        assert!(!fold.valid_entries.contains(&postfork_hash));
+        assert_eq!(fold.roster.len(), 2);
+        assert_eq!(
+            fold.authority_forks,
+            vec![AuthorityFork {
+                signer: owner_key.clone(),
+                seq: 2,
+                first_hash,
+                second_hash,
+                status: AuthorityForkStatus::Quarantined,
+            }]
+        );
+        assert_eq!(
+            fold.fork_alarms,
+            vec![AuthorityForkAlarm {
+                signer: owner_key.clone(),
+                seq: 2,
+                first_hash,
+                second_hash,
+            }]
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == postfork_hash
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::InvalidAncestry(hash)
+                        if *hash == ceiling_hash || *hash == tier_hash
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
+                .count(),
+            0
+        );
+        assert_eq!(fold.issues.len(), 3);
+        if let Some(expected) = &expected {
+            assert_eq!(&fold, expected);
+        } else {
+            expected = Some(fold);
+        }
+    }
+}
+
+#[test]
+fn validated_fork_candidates_preserve_genuine_prefork_ancestor() {
+    let owner = ed_key(178);
+    let second = ed_key(179);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(178, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let prefork = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 179,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let prefork_hash = authority_entry_hash(&prefork).unwrap();
+    let fork_ceiling = cosign_ed(
+        set_ceiling_entry(vault_id, &prefork, &owner, 2, 3),
+        &owner,
+        &second,
+    );
+    let fork_tier = cosign_ed(
+        set_tier_floor_entry_at(vault_id, &prefork, &owner, 2, AuthorityTier::Hardware, 4),
+        &owner,
+        &second,
+    );
+    let ceiling_hash = authority_entry_hash(&fork_ceiling).unwrap();
+    let tier_hash = authority_entry_hash(&fork_tier).unwrap();
+    let first_hash = ceiling_hash.min(tier_hash);
+    let second_hash = ceiling_hash.max(tier_hash);
+    let entries = vec![fork_tier, fork_ceiling, prefork, genesis];
+    let mut expected = None;
+
+    for entries in [entries.clone(), entries.iter().rev().cloned().collect()] {
+        let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+        assert_eq!(fold.valid_entries.len(), 3);
+        assert!(fold.valid_entries.contains(&prefork_hash));
+        assert_eq!(
+            [ceiling_hash, tier_hash]
+                .iter()
+                .filter(|hash| fold.valid_entries.contains(*hash))
+                .count(),
+            1
+        );
+        assert_eq!(fold.roster.len(), 2);
+        assert_eq!(
+            fold.authority_forks,
+            vec![AuthorityFork {
+                signer: owner_key.clone(),
+                seq: 2,
+                first_hash,
+                second_hash,
+                status: AuthorityForkStatus::Quarantined,
+            }]
+        );
+        assert_eq!(fold.fork_alarms.len(), 1);
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(issue, AuthorityFoldIssue::EquivocationLoser { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::SignerNotInAncestry(hash) if *hash == prefork_hash
+                ))
+                .count(),
+            0
+        );
+        assert_eq!(fold.issues.len(), 2);
+        if let Some(expected) = &expected {
+            assert_eq!(&fold, expected);
+        } else {
+            expected = Some(fold);
+        }
+    }
+}
+
+#[test]
+fn invalid_candidates_do_not_exempt_forked_cosigner_ancestor() {
+    let owner = ed_key(180);
+    let forked = ed_key(181);
+    let owner_key = authority_key_from_ed(&owner);
+    let forked_key = authority_key_from_ed(&forked);
+    let forged_enrolled_key = authority_key_from_ed(&ed_key(182));
+    let genesis = genesis_entry(180, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let enroll_forked = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 181,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    let postfork_signer_entry = cosign_ed(
+        set_ceiling_entry(vault_id, &enroll_forked, &forked, 3, 3),
+        &forked,
+        &owner,
+    );
+    let postfork_signer_hash = authority_entry_hash(&postfork_signer_entry).unwrap();
+    let forged_cosigner_ancestor = cosign_ed(
+        enroll_device_entry(
+            vault_id,
+            &enroll_forked,
+            &owner,
+            EnrollSpec {
+                seed: 182,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 2,
+                ts: 4,
+            },
+        ),
+        &owner,
+        &forked,
+    );
+    let forged_cosigner_hash = authority_entry_hash(&forged_cosigner_ancestor).unwrap();
+    let mut forged_parents = vec![postfork_signer_hash, forged_cosigner_hash];
+    forged_parents.sort_unstable();
+    let invalid_ceiling = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            forged_parents.clone(),
+            AuthorityOp::SetCeiling {
+                authority_key: forked_key.clone(),
+                actor_class: "agent".to_owned(),
+                ceiling: 1,
+            },
+            forked_key.clone(),
+            5,
+        ),
+        &forked,
+        &owner,
+    );
+    let invalid_tier = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            forged_parents,
+            AuthorityOp::SetTierFloor {
+                tier_floor: AuthorityTier::Hardware,
+            },
+            forked_key.clone(),
+            6,
+        ),
+        &forked,
+        &owner,
+    );
+    let ceiling_hash = authority_entry_hash(&invalid_ceiling).unwrap();
+    let tier_hash = authority_entry_hash(&invalid_tier).unwrap();
+    let first_hash = ceiling_hash.min(tier_hash);
+    let second_hash = ceiling_hash.max(tier_hash);
+    let entries = vec![
+        invalid_tier,
+        invalid_ceiling,
+        forged_cosigner_ancestor,
+        postfork_signer_entry,
+        enroll_forked,
+        genesis,
+    ];
+    let mut expected = None;
+
+    for entries in [entries.clone(), entries.iter().rev().cloned().collect()] {
+        let fold = fold_authority_log_without_seen_time_delay(&entries);
+
+        assert_eq!(fold.valid_entries.len(), 2);
+        assert!(!fold.valid_entries.contains(&forged_cosigner_hash));
+        assert!(!fold.valid_entries.contains(&postfork_signer_hash));
+        assert_eq!(fold.roster.len(), 2);
+        assert_eq!(
+            fold.roster.get(&owner_key).map(|device| device.revoked),
+            Some(false)
+        );
+        assert!(!fold.roster.contains_key(&forged_enrolled_key));
+        assert_eq!(
+            fold.authority_forks,
+            vec![AuthorityFork {
+                signer: forked_key.clone(),
+                seq: 2,
+                first_hash,
+                second_hash,
+                status: AuthorityForkStatus::Quarantined,
+            }]
+        );
+        assert_eq!(fold.fork_alarms.len(), 1);
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::SignerNotInAncestry(hash)
+                        if *hash == forged_cosigner_hash || *hash == postfork_signer_hash
+                ))
+                .count(),
+            2
+        );
+        for quarantined_hash in [forged_cosigner_hash, postfork_signer_hash] {
+            assert_eq!(
+                fold.issues
+                    .iter()
+                    .filter(|issue| matches!(
+                        issue,
+                        AuthorityFoldIssue::SignerNotInAncestry(hash)
+                            if *hash == quarantined_hash
+                    ))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(
+                    issue,
+                    AuthorityFoldIssue::InvalidAncestry(hash)
+                        if *hash == ceiling_hash || *hash == tier_hash
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            fold.issues
+                .iter()
+                .filter(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
+                .count(),
+            0
+        );
+        assert_eq!(fold.issues.len(), 4);
+        if let Some(expected) = &expected {
+            assert_eq!(&fold, expected);
+        } else {
+            expected = Some(fold);
+        }
+    }
+}
+
+#[test]
 fn all_invalid_same_seq_group_resolves_clean_prefix_revoke() {
     let owner = ed_key(103);
     let second = ed_key(104);
@@ -4460,6 +4868,7 @@ fn clean_prefix_entry_waits_when_unresolved_fork_key_is_cosigner() {
         equivocation_groups: &equivocation_groups,
         unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: Some(&entry_ancestors),
+        chain_validated_fork_candidates: None,
     };
 
     assert!(entry_waits_on_unresolved_equivocation(
@@ -4572,6 +4981,7 @@ fn equivocation_group_waits_on_other_unresolved_equivocation() {
         equivocation_groups: &equivocation_groups,
         unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: Some(&entry_ancestors),
+        chain_validated_fork_candidates: None,
     };
 
     assert!(matches!(
@@ -4626,6 +5036,7 @@ fn resolved_fork_does_not_mask_unresolved_later_fork_for_same_key() {
         equivocation_groups: &equivocation_groups,
         unresolved_equivocation_groups: &unresolved_equivocation_groups,
         entry_ancestors: None,
+        chain_validated_fork_candidates: None,
     };
 
     assert!(key_is_quarantined_for_entry(

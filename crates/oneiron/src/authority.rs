@@ -1138,6 +1138,7 @@ struct FoldContext<'a> {
     equivocation_groups: &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
     unresolved_equivocation_groups: &'a BTreeSet<(AuthorityKey, u64)>,
     entry_ancestors: Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
+    chain_validated_fork_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -1266,6 +1267,7 @@ fn fold_authority_log_inner(
             equivocation_groups: &empty_equivocation_groups,
             unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
             entry_ancestors: None,
+            chain_validated_fork_candidates: None,
         },
     );
     for _ in 0..=entries.len() {
@@ -1307,6 +1309,7 @@ fn fold_authority_log_inner(
                 equivocation_groups: &empty_equivocation_groups,
                 unresolved_equivocation_groups: &empty_unresolved_equivocation_groups,
                 entry_ancestors: None,
+                chain_validated_fork_candidates: None,
             },
         );
     }
@@ -1351,6 +1354,19 @@ fn fold_authority_log_once(
             equivocation_groups.insert((signer.clone(), seq), hashes);
         }
     }
+    // `entry_ancestors` is deliberately a raw graph index: fold scheduling
+    // needs claimed ancestry to avoid making a parent wait on the candidate
+    // that names it. It is not sufficient evidence that an entry predates a
+    // fork, because signature-valid but chain-invalid candidates also
+    // contribute arbitrary parent claims. Restrict that security-sensitive
+    // exemption to candidates that independently fold over their complete
+    // available ancestry.
+    let chain_validated_fork_candidates = equivocation_groups
+        .values()
+        .flatten()
+        .filter(|hash| entry_folds_on_available_ancestry(**hash, &by_hash, &entry_ancestors))
+        .copied()
+        .collect::<BTreeSet<_>>();
     let mut authority_forks = context.authority_forks.clone();
     let mut authority_fork_vault_ids = context.authority_fork_vault_ids.clone();
     let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
@@ -1376,6 +1392,7 @@ fn fold_authority_log_once(
                     equivocation_groups: &equivocation_groups,
                     unresolved_equivocation_groups: &unresolved_equivocation_groups,
                     entry_ancestors: Some(&entry_ancestors),
+                    chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
                     ..context
                 };
                 match resolve_equivocation_group(
@@ -1427,6 +1444,7 @@ fn fold_authority_log_once(
                 equivocation_groups: &equivocation_groups,
                 unresolved_equivocation_groups: &unresolved_equivocation_groups,
                 entry_ancestors: Some(&entry_ancestors),
+                chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
                 ..context
             };
             match fold_entry_state(entry, hash, &states, fold_context) {
@@ -2058,10 +2076,18 @@ fn fork_quarantines_key_for_entry(
     entry_hash: AuthorityEntryHash,
     prefork: Option<(&AuthorityKey, u64)>,
 ) -> bool {
+    let signer_at_or_after_fork =
+        prefork.is_some_and(|(signer, entry_seq)| signer == key && entry_seq >= fork.seq);
     fork.signer == *key
         && fork.status == AuthorityForkStatus::Quarantined
         && !fork_resolved_in_state(state, key, fork.seq)
-        && !entry_is_prefork_or_fork_candidate(context, key, fork.seq, entry_hash)
+        // A fork candidate itself must remain evaluable. For every other
+        // entry signed by the forked key, its own chain position is decisive:
+        // seq >= fork.seq is post-fork and may not use any ancestry claim as
+        // a prefork exemption.
+        && !entry_is_fork_candidate(context, key, fork.seq, entry_hash)
+        && (signer_at_or_after_fork
+            || !entry_is_validated_prefork_ancestor(context, key, fork.seq, entry_hash))
         // Only the entry signer's own seq orders the entry against the fork
         // point (seq continuity: a second entry at the same seq would form
         // its own equivocation group). A cosign carries no chain position —
@@ -2069,8 +2095,8 @@ fn fork_quarantines_key_for_entry(
         // SIGNING chain stalled prefork, not that the cosign happened
         // prefork, and a quarantined key could keep cosigning new entries
         // forever without ever advancing it. Cosigned entries are therefore
-        // exempt only via ancestry proof (entry_is_prefork_or_fork_candidate
-        // above); without one they fail closed.
+        // exempt only via chain-validated ancestry proof above; without one
+        // they fail closed.
         && !prefork.is_some_and(|(signer, seq)| signer == key && seq < fork.seq)
 }
 
@@ -2081,7 +2107,44 @@ fn fork_resolved_in_state(state: &FoldState, key: &AuthorityKey, seq: u64) -> bo
         .is_some_and(|fork| fork.status == AuthorityForkStatus::Resolved)
 }
 
-fn entry_is_prefork_or_fork_candidate(
+fn entry_is_fork_candidate(
+    context: FoldContext<'_>,
+    key: &AuthorityKey,
+    seq: u64,
+    entry_hash: AuthorityEntryHash,
+) -> bool {
+    let lookup = (key.clone(), seq);
+    context
+        .equivocation_groups
+        .get(&lookup)
+        .is_some_and(|group| group.contains(&entry_hash))
+}
+
+fn entry_is_validated_prefork_ancestor(
+    context: FoldContext<'_>,
+    key: &AuthorityKey,
+    seq: u64,
+    entry_hash: AuthorityEntryHash,
+) -> bool {
+    let lookup = (key.clone(), seq);
+    let Some(group) = context.equivocation_groups.get(&lookup) else {
+        return false;
+    };
+    let Some(ancestors) = context.entry_ancestors else {
+        return false;
+    };
+    let Some(chain_validated_candidates) = context.chain_validated_fork_candidates else {
+        return false;
+    };
+    group.iter().any(|fork_hash| {
+        chain_validated_candidates.contains(fork_hash)
+            && ancestors
+                .get(fork_hash)
+                .is_some_and(|fork_ancestors| fork_ancestors.contains(&entry_hash))
+    })
+}
+
+fn entry_is_claimed_prefork_or_fork_candidate(
     context: FoldContext<'_>,
     key: &AuthorityKey,
     seq: u64,
@@ -2114,7 +2177,10 @@ fn entry_waits_on_unresolved_equivocation(
         .unresolved_equivocation_groups
         .iter()
         .any(|(fork_key, fork_seq)| {
-            if entry_is_prefork_or_fork_candidate(context, fork_key, *fork_seq, hash) {
+            // Raw claimed ancestry is sufficient only for scheduling: a
+            // candidate must not make the parent it claims wait on that same
+            // candidate. Quarantine exemptions use chain-validated ancestry.
+            if entry_is_claimed_prefork_or_fork_candidate(context, fork_key, *fork_seq, hash) {
                 return false;
             }
             (fork_key == signer && *fork_seq < entry.seq)
@@ -2287,6 +2353,7 @@ fn entry_folds_on_available_ancestry(
                     equivocation_groups: &equivocation_groups,
                     unresolved_equivocation_groups: &unresolved_equivocation_groups,
                     entry_ancestors: Some(ancestors),
+                    chain_validated_fork_candidates: None,
                 },
             ) {
                 EntryFold::Ready(state) => {
