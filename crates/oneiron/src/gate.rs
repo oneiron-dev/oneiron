@@ -13,9 +13,12 @@ use rmpv::Value;
 use sha2::{Digest, Sha256};
 
 use crate::agent_def::{AgentCeiling, SystemAgentPreset, decode_agent_definition};
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::{
+    BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_session_bundle_claim_puts,
+};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, claim_sensitivity_band,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ScopedReadActorKey, SessionClaimBundle,
+    SessionClaimBundleClaim, claim_sensitivity_band, encode_claim_body,
     sensitivity_band_from_value,
 };
 use crate::connector_key::{
@@ -39,11 +42,12 @@ use crate::outbound_grant::{
 };
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
 };
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store};
-use crate::write_envelope::{WriteActor, WriteEnvelope};
+use crate::vault::Vault;
+use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 
 const POLICY_SCHEMA_VERSION_KEY: &str = "schema_version";
 pub(crate) const POLICY_SCHEMA_VERSION: &str = "1.1";
@@ -2558,6 +2562,200 @@ pub(crate) fn check_claim_policy_for_write_with_record(
     }
 
     check_claim_source_trust(body, policy)
+}
+
+impl Vault {
+    /// Returns the active proposed claims tagged to one agent session.
+    ///
+    /// This is a targeted consent-review door, so it intentionally returns
+    /// proposed claims that ordinary retrieval excludes. The returned bundle
+    /// is a projection over CLAIM data, not a separately persisted branch.
+    /// Membership is bound to `expected_producer`, and `actor` must be allowed
+    /// to approve every returned member under the live write policy.
+    pub fn review_session_bundle(
+        &self,
+        actor: &WriteActor,
+        expected_producer: &EntityId,
+        session_tag: &str,
+    ) -> Result<SessionClaimBundle> {
+        let rtxn = self.store.env.read_txn()?;
+        self.validate_session_bundle_actor_in_txn(&rtxn, actor)?;
+        let members =
+            self.session_claim_bundle_members_in_txn(&rtxn, expected_producer, session_tag)?;
+        let policy = resolve_policy_manifest(&self.store, &rtxn)?;
+        for member in &members {
+            let mut approved = member.body.clone();
+            approved.approval = ClaimApprovalStatus::Approved;
+            check_session_bundle_actor_policy(&self.store, &rtxn, actor, &approved, &policy)?;
+        }
+        Ok(session_claim_bundle(session_tag, members))
+    }
+
+    /// Replays every active proposed claim in a session bundle through the
+    /// ordinary gate and commits all resulting approvals atomically.
+    ///
+    /// Any gate denial or stale pending-consent binding aborts the enclosing
+    /// write transaction, leaving every member of the producer-bound session
+    /// bundle unchanged.
+    pub fn merge_session_bundle(
+        &self,
+        actor: &WriteActor,
+        expected_producer: &EntityId,
+        session_tag: &str,
+    ) -> Result<SessionClaimBundle> {
+        let (bundle, recorded_decisions) = self.with_write_txn(|wtxn| {
+            self.validate_session_bundle_actor_in_txn(&*wtxn, actor)?;
+            let members =
+                self.session_claim_bundle_members_in_txn(&*wtxn, expected_producer, session_tag)?;
+            if members.is_empty() {
+                return Ok((
+                    session_claim_bundle(session_tag, members),
+                    Vec::<RecordedClaimGateDecision>::new(),
+                ));
+            }
+
+            let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
+            let mut merged = Vec::with_capacity(members.len());
+            let mut ops = Vec::with_capacity(members.len());
+            let mut recorded_decisions = Vec::with_capacity(members.len());
+            for member in members {
+                let mut body = member.body;
+                body.approval = ClaimApprovalStatus::Approved;
+                let source = body.source.ok_or(Error::InvalidClaimBody(
+                    "session bundle member missing claim source",
+                ))?;
+                let envelope = WriteEnvelope::new(
+                    *actor,
+                    source,
+                    WriteProvenance::new(Value::from("session-claim-bundle-merge"))?,
+                    ClaimApprovalStatus::Approved,
+                );
+                let mut recorded_decision = None;
+                let gate_result = check_claim_policy_for_write_with_record(
+                    &self.store,
+                    wtxn,
+                    &member.id,
+                    ClaimGateWrite {
+                        body: &body,
+                        envelope: Some(&envelope),
+                        defer_metrics_until_commit: true,
+                    },
+                    &policy,
+                    GateWriteMode {
+                        record_decision: true,
+                        persist_pending_consent: false,
+                        resolve_pending: true,
+                        can_resolve_pending_consent: false,
+                        include_source_in_gate_input: true,
+                    },
+                    &mut recorded_decision,
+                );
+                if let Some(recorded_decision) = recorded_decision {
+                    recorded_decisions.push(recorded_decision);
+                }
+                gate_result?;
+                let data = encode_claim_body(&body)?;
+                merged.push(SessionClaimBundleClaim {
+                    id: member.id,
+                    body,
+                });
+                ops.push(BatchOp::Put {
+                    id: member.id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: member.occurred,
+                    learned_at: member.learned_at,
+                    data,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                });
+            }
+
+            apply_session_bundle_claim_puts(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+            )?;
+
+            Ok((
+                SessionClaimBundle {
+                    session_tag: session_tag.to_owned(),
+                    claims: merged,
+                },
+                recorded_decisions,
+            ))
+        })?;
+        for decision in recorded_decisions {
+            decision.record_metrics();
+        }
+        Ok(bundle)
+    }
+
+    fn validate_session_bundle_actor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        actor: &WriteActor,
+    ) -> Result<()> {
+        let actor_raw = self
+            .store
+            .entities
+            .get(rtxn, actor.entity_ref().as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let actor_header =
+            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())
+    }
+}
+
+/// Read-only authorization check for the proposed bodies exposed by review.
+/// It uses the same actor, source, sensitivity, and live agent-definition
+/// ceiling as merge, but does not persist a decision or consume consent.
+fn check_session_bundle_actor_policy(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    actor: &WriteActor,
+    body: &ClaimBody,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    if policy.enforces_write_gate() {
+        let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, rtxn, *actor);
+        let input = claim_gate_input(
+            body,
+            policy,
+            GateActor {
+                actor_class: edge_actor_class_str(actor.actor_class()).to_owned(),
+                actor_ref: Some(actor.entity_ref().to_hex()),
+            },
+            GateContentKind::Claim,
+            GateProvenanceHandles {
+                actor_entity_ref: Some(actor.entity_ref()),
+                ..GateProvenanceHandles::default()
+            },
+            true,
+            agent_definition_ceiling,
+        );
+        enforce_gate_decision(policy.evaluate_gate(&input))?;
+    }
+    check_claim_source_trust(body, policy)
+}
+
+fn session_claim_bundle(
+    session_tag: &str,
+    members: Vec<crate::claim::SessionClaimBundleMember>,
+) -> SessionClaimBundle {
+    SessionClaimBundle {
+        session_tag: session_tag.to_owned(),
+        claims: members
+            .into_iter()
+            .map(|member| SessionClaimBundleClaim {
+                id: member.id,
+                body: member.body,
+            })
+            .collect(),
+    }
 }
 
 /// `admit_for_execution` tells the connector-key budget stage whether an
