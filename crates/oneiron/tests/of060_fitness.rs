@@ -494,6 +494,12 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
+            // ONE-1686: message self-effects are named verbs like the memory
+            // trio — each routes through the host dispatcher into the witness
+            // envelope ceiling gate. Still no generic write surface.
+            "self.speak",
+            "self.think",
+            "self.express",
         ],
         "OF-060 P3: code-mode WIT writes must stay on named memory verbs only"
     );
@@ -510,6 +516,9 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
+            SelfEffect::Speak,
+            SelfEffect::Think,
+            SelfEffect::Express,
         ],
         "OF-060 P3: every linked code-mode write import must resolve to a named effect"
     );
