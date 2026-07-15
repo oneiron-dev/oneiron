@@ -710,6 +710,17 @@ pub enum AuthorityFoldIssue {
         /// Conflicting signer sequence number.
         seq: u64,
     },
+    /// Entry lost deterministic selection among ready candidates in an equivocation group.
+    EquivocationLoser {
+        /// Losing entry hash.
+        entry: AuthorityEntryHash,
+        /// Equivocating authority key.
+        signer: AuthorityKey,
+        /// Conflicting signer sequence number.
+        seq: u64,
+        /// Deterministically selected entry hash.
+        winner: AuthorityEntryHash,
+    },
     /// Federation lifecycle entry rejected by the pact state machine.
     FederationLifecycleRejected {
         /// Rejected entry hash.
@@ -1307,6 +1318,7 @@ fn fold_authority_log_once(
         }
     }
     let mut authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
+    let mut reported_authority_forks = BTreeMap::<(AuthorityKey, u64), AuthorityFork>::new();
     let mut unresolved_equivocation_groups =
         BTreeSet::<(AuthorityKey, u64)>::from_iter(equivocation_groups.keys().cloned());
 
@@ -1339,9 +1351,13 @@ fn fold_authority_log_once(
                     EquivocationResolution::Waiting => continue,
                     EquivocationResolution::Resolved {
                         winner,
+                        fork,
                         issues: group_issues,
                     } => {
                         unresolved_equivocation_groups.remove(&group_key);
+                        if let Some(fork) = fork {
+                            reported_authority_forks.insert(group_key.clone(), fork);
+                        }
                         if let Some((winner_hash, state)) = winner {
                             issues.push(AuthorityFoldIssue::EquivocationDetected {
                                 signer: group_key.0.clone(),
@@ -1405,8 +1421,16 @@ fn fold_authority_log_once(
             tier_floor: None,
             pending_widens: BTreeMap::new(),
             vetoed_widens: BTreeSet::new(),
-            authority_forks: Vec::new(),
-            fork_alarms: Vec::new(),
+            authority_forks: reported_authority_forks.values().cloned().collect(),
+            fork_alarms: reported_authority_forks
+                .values()
+                .map(|fork| AuthorityForkAlarm {
+                    signer: fork.signer.clone(),
+                    seq: fork.seq,
+                    first_hash: fork.first_hash,
+                    second_hash: fork.second_hash,
+                })
+                .collect(),
             federation_pacts: BTreeMap::new(),
             federation_grant_bindings: BTreeMap::new(),
             issues,
@@ -1423,9 +1447,19 @@ fn fold_authority_log_once(
         });
     }
 
-    let authority_forks: Vec<_> = merged.as_ref().map_or_else(Vec::new, |state| {
-        state.authority_forks.values().cloned().collect()
-    });
+    if let Some(state) = &merged {
+        for (key, fork) in &state.authority_forks {
+            reported_authority_forks
+                .entry(key.clone())
+                .and_modify(|existing| {
+                    if fork.status == AuthorityForkStatus::Resolved {
+                        existing.status = AuthorityForkStatus::Resolved;
+                    }
+                })
+                .or_insert_with(|| fork.clone());
+        }
+    }
+    let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = authority_forks
         .iter()
         .map(|fork| AuthorityForkAlarm {
@@ -1470,6 +1504,7 @@ enum EntryFold {
 enum EquivocationResolution {
     Resolved {
         winner: Option<(AuthorityEntryHash, Box<FoldState>)>,
+        fork: Option<AuthorityFork>,
         issues: Vec<AuthorityFoldIssue>,
     },
     Waiting,
@@ -1508,6 +1543,7 @@ fn resolve_equivocation_group(
     if ready.is_empty() {
         return EquivocationResolution::Resolved {
             winner: None,
+            fork: authority_fork_from_group(&group_key.0, group_key.1, group),
             issues,
         };
     }
@@ -1515,6 +1551,7 @@ fn resolve_equivocation_group(
     ready.sort_by(compare_fork_rank);
     let mut ready = ready.into_iter();
     let mut winner = None;
+    let mut rejected_candidates = Vec::new();
     for (candidate_hash, mut candidate_state, _) in ready.by_ref() {
         record_authority_fork(&mut candidate_state, &group_key.0, group_key.1, group);
         if matches!(
@@ -1531,15 +1568,34 @@ fn resolve_equivocation_group(
             &group_key.0,
         ) {
             issues.push(issue);
+            rejected_candidates.push(candidate_hash);
             continue;
         }
         winner = Some((candidate_hash, Box::new(candidate_state)));
         break;
     }
-    for (loser, _, _) in ready {
-        issues.push(AuthorityFoldIssue::InvalidEntry(loser));
+    if let Some((winner_hash, _)) = &winner {
+        for loser in rejected_candidates
+            .into_iter()
+            .chain(ready.map(|(loser, _, _)| loser))
+        {
+            issues.push(AuthorityFoldIssue::EquivocationLoser {
+                entry: loser,
+                signer: group_key.0.clone(),
+                seq: group_key.1,
+                winner: *winner_hash,
+            });
+        }
     }
-    EquivocationResolution::Resolved { winner, issues }
+    let fork = winner
+        .as_ref()
+        .and_then(|(_, state)| state.authority_forks.get(group_key).cloned())
+        .or_else(|| authority_fork_from_group(&group_key.0, group_key.1, group));
+    EquivocationResolution::Resolved {
+        winner,
+        fork,
+        issues,
+    }
 }
 
 fn record_authority_fork(

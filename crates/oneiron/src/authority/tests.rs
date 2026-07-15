@@ -1098,6 +1098,33 @@ fn fold_detects_equivocation_by_signer_and_seq() {
 }
 
 #[test]
+fn fold_records_equivocation_loser_denial_fact() {
+    let left = genesis_entry(124, 86_400, 1);
+    let right = genesis_entry(124, 86_400, 2);
+    let signer = authority_key_from_ed(&ed_key(124));
+    let left_hash = authority_entry_hash(&left).unwrap();
+    let right_hash = authority_entry_hash(&right).unwrap();
+    let winner_hash = left_hash.min(right_hash);
+    let loser_hash = left_hash.max(right_hash);
+
+    let fold = fold_authority_log(&[left, right]);
+
+    assert!(fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::EquivocationLoser {
+            entry,
+            signer: key,
+            seq: 0,
+            winner,
+        } if *entry == loser_hash && *key == signer && *winner == winner_hash
+    )));
+    assert!(!fold.issues.iter().any(|issue| matches!(
+        issue,
+        AuthorityFoldIssue::InvalidEntry(hash) if *hash == loser_hash
+    )));
+}
+
+#[test]
 fn multiway_equivocation_alarm_spans_min_and_max_hashes() {
     let owner = ed_key(64);
     let second = ed_key(65);
@@ -1764,6 +1791,7 @@ fn group_internal_parent_still_records_authority_fork() {
 fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
     let owner = ed_key(96);
     let second = ed_key(97);
+    let owner_key = authority_key_from_ed(&owner);
     let genesis = genesis_entry(96, 86_400, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
     let enroll_second = enroll_device_entry(
@@ -1781,6 +1809,8 @@ fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
     let invalid_ceiling = set_ceiling_entry(vault_id, &enroll_second, &owner, 2, 3);
     let invalid_tier =
         set_tier_floor_entry(vault_id, &enroll_second, &owner, 2, AuthorityTier::Hardware);
+    let invalid_ceiling_hash = authority_entry_hash(&invalid_ceiling).unwrap();
+    let invalid_tier_hash = authority_entry_hash(&invalid_tier).unwrap();
     let valid_later = cosign_ed(
         set_ceiling_entry(vault_id, &enroll_second, &owner, 3, 4),
         &owner,
@@ -1797,8 +1827,25 @@ fn all_invalid_same_seq_group_does_not_quarantine_later_valid_entry() {
     ]);
 
     assert!(fold.valid_entries.contains(&valid_later_hash));
-    assert!(fold.authority_forks.is_empty());
-    assert!(fold.fork_alarms.is_empty());
+    assert_eq!(
+        fold.authority_forks,
+        vec![AuthorityFork {
+            signer: owner_key.clone(),
+            seq: 2,
+            first_hash: invalid_ceiling_hash.min(invalid_tier_hash),
+            second_hash: invalid_ceiling_hash.max(invalid_tier_hash),
+            status: AuthorityForkStatus::Quarantined,
+        }]
+    );
+    assert_eq!(
+        fold.fork_alarms,
+        vec![AuthorityForkAlarm {
+            signer: owner_key,
+            seq: 2,
+            first_hash: invalid_ceiling_hash.min(invalid_tier_hash),
+            second_hash: invalid_ceiling_hash.max(invalid_tier_hash),
+        }]
+    );
     assert!(
         !fold
             .issues
@@ -1846,8 +1893,10 @@ fn all_invalid_same_seq_group_does_not_resolve_clean_prefix_revoke() {
     let invalid_ceiling = set_ceiling_entry(vault_id, &enroll_third, &owner, 3, 4);
     let invalid_tier =
         set_tier_floor_entry(vault_id, &enroll_third, &owner, 3, AuthorityTier::Hardware);
+    let invalid_ceiling_hash = authority_entry_hash(&invalid_ceiling).unwrap();
+    let invalid_tier_hash = authority_entry_hash(&invalid_tier).unwrap();
     let revoke_owner = cosign_ed(
-        revoke_entry(vault_id, &enroll_third, &second, owner_key, 0),
+        revoke_entry(vault_id, &enroll_third, &second, owner_key.clone(), 0),
         &second,
         &third,
     );
@@ -1863,8 +1912,25 @@ fn all_invalid_same_seq_group_does_not_resolve_clean_prefix_revoke() {
     ]);
 
     assert!(fold.valid_entries.contains(&revoke_hash));
-    assert!(fold.authority_forks.is_empty());
-    assert!(fold.fork_alarms.is_empty());
+    assert_eq!(
+        fold.authority_forks,
+        vec![AuthorityFork {
+            signer: owner_key.clone(),
+            seq: 3,
+            first_hash: invalid_ceiling_hash.min(invalid_tier_hash),
+            second_hash: invalid_ceiling_hash.max(invalid_tier_hash),
+            status: AuthorityForkStatus::Quarantined,
+        }]
+    );
+    assert_eq!(
+        fold.fork_alarms,
+        vec![AuthorityForkAlarm {
+            signer: owner_key,
+            seq: 3,
+            first_hash: invalid_ceiling_hash.min(invalid_tier_hash),
+            second_hash: invalid_ceiling_hash.max(invalid_tier_hash),
+        }]
+    );
     assert!(
         !fold
             .issues
