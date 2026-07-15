@@ -1,0 +1,31 @@
+[package]
+name = "oneiron-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "In-process tokio supervisor that pumps Dreamer wake passes (the starter motor)"
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+# Exactly ONE LlmBackend adapter, and it is the LOCAL one on purpose: the
+# supervisor's default backend construction must not imply network egress —
+# hosts that want a remote adapter inject their own Arc<dyn LlmBackend>.
+oneiron-llm-local = { version = "0.1.0", path = "../oneiron-llm-local" }
+# Mirrors the oneiron core feature set (rt/sync/time/macros), NOT tokio
+# "full": the driver is a plain event consumer, no net/io stack of its own.
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+tracing = { version = "0.1" }
+
+[dev-dependencies]
+rmpv = { workspace = true }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "sync", "time", "macros", "test-util"] }
+
+[lints]
+workspace = true
