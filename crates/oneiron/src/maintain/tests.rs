@@ -1,5 +1,4 @@
 use core::assert_matches;
-use heed::types::Bytes;
 
 use super::*;
 use crate::attempt_queue::{
@@ -47,11 +46,11 @@ fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
         .hnsw_meta
         .get(&rtxn, key)?
         .ok_or(Error::EntityNotFound)?;
-    let value = u64::from_le_bytes(raw.try_into().map_err(|_| Error::InvalidKey)?);
+    let value = u64::from_le_bytes(raw.as_ref().try_into().map_err(|_| Error::InvalidKey)?);
     Ok(value)
 }
 
-fn count_entries(db: &heed::Database<Bytes, Bytes>, vault: &Vault) -> Result<usize> {
+fn count_entries(db: &crate::overlay_db::OverlayDb, vault: &Vault) -> Result<usize> {
     let rtxn = vault.store.env.read_txn()?;
     let mut count = 0;
     for entry in db.iter(&rtxn)? {
@@ -188,7 +187,7 @@ fn rebuild_hnsw_preserves_unrelated_meta() -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         let stored = vault.store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)?;
         assert_eq!(
-            stored,
+            stored.as_deref(),
             Some(b"test-model-v1".as_slice()),
             "case model_id_when_config_matches: MODEL_ID_KEY changed"
         );
@@ -217,7 +216,7 @@ fn rebuild_hnsw_preserves_unrelated_meta() -> Result<()> {
         let rtxn = vault.store.env.read_txn()?;
         let custom_meta = vault.store.hnsw_meta.get(&rtxn, b"custom-meta")?;
         assert_eq!(
-            custom_meta,
+            custom_meta.as_deref(),
             Some(b"keep-me".as_slice()),
             "case unrelated_hnsw_meta: custom row scrubbed"
         );
@@ -489,7 +488,7 @@ fn recompute_short_id_hashes_updates_stale() -> Result<()> {
             .short_ids_reverse
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let (short_id, hash) = parse_short_id_value(value)?;
+        let (short_id, hash) = parse_short_id_value(&value)?;
         (short_id.to_owned(), hash)
     };
 
@@ -525,7 +524,7 @@ fn recompute_short_id_hashes_updates_stale() -> Result<()> {
         .short_ids_reverse
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
-    let (short_id_after, hash_after) = parse_short_id_value(updated_value)?;
+    let (short_id_after, hash_after) = parse_short_id_value(&updated_value)?;
     assert_eq!(short_id_after, short_id_before);
     assert_eq!(hash_after, new_hash);
 
@@ -542,7 +541,11 @@ fn recompute_short_id_hashes_updates_stale() -> Result<()> {
         "stale forward row must be reaped on hash refresh"
     );
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &fresh_forward_key)?
+            .as_deref(),
         Some(id.as_bytes().as_slice())
     );
     Ok(())
@@ -687,7 +690,11 @@ fn recompute_short_id_hashes_removes_orphans() -> Result<()> {
         );
         if !case.expect_reverse_gone {
             assert_eq!(
-                vault.store.short_ids.get(&rtxn, &legit_forward_key)?,
+                vault
+                    .store
+                    .short_ids
+                    .get(&rtxn, &legit_forward_key)?
+                    .as_deref(),
                 Some(id.as_bytes().as_slice()),
                 "case {case_name}: legit forward row must survive"
             );
@@ -729,7 +736,7 @@ fn recompute_short_id_hashes_repairs_missing_forward_mapping() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &forward_key)?,
+        vault.store.short_ids.get(&rtxn, &forward_key)?.as_deref(),
         Some(id.as_bytes().as_slice())
     );
     Ok(())
@@ -784,7 +791,7 @@ fn recompute_short_id_hashes_repairs_stale_forward_mapping() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &forward_key)?,
+        vault.store.short_ids.get(&rtxn, &forward_key)?.as_deref(),
         Some(id.as_bytes().as_slice())
     );
     Ok(())
@@ -810,7 +817,7 @@ fn recompute_short_id_hashes_processes_custom_ids_near_sentinel_pattern() -> Res
             .short_ids_reverse
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let (_, hash) = parse_short_id_value(value)?;
+        let (_, hash) = parse_short_id_value(&value)?;
         hash
     };
 
@@ -928,12 +935,17 @@ fn corrupt_reverse_row_never_reaps_healthy_forward_one_1114() -> Result<()> {
         vault
             .store
             .short_ids_reverse
-            .get(&rtxn, healthy.as_bytes())?,
+            .get(&rtxn, healthy.as_bytes())?
+            .as_deref(),
         Some(healthy_forward_key.as_slice()),
         "healthy reverse row must survive"
     );
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &healthy_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &healthy_forward_key)?
+            .as_deref(),
         Some(healthy.as_bytes().as_slice()),
         "healthy forward row must not be reaped by a corrupt reverse row"
     );
@@ -990,12 +1002,17 @@ fn valid_key_absent_entity_aliased_value_never_reaps_healthy_forward_one_1173() 
         vault
             .store
             .short_ids_reverse
-            .get(&rtxn, healthy.as_bytes())?,
+            .get(&rtxn, healthy.as_bytes())?
+            .as_deref(),
         Some(healthy_forward_key.as_slice()),
         "healthy reverse row must survive"
     );
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &healthy_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &healthy_forward_key)?
+            .as_deref(),
         Some(healthy.as_bytes().as_slice()),
         "healthy forward row must not be reaped by an aliased reverse value"
     );
@@ -1021,7 +1038,7 @@ fn valid_key_aliased_value_never_overwrites_healthy_forward_one_1173() -> Result
             .short_ids_reverse
             .get(&rtxn, healthy.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let (_, hash) = parse_short_id_value(value)?;
+        let (_, hash) = parse_short_id_value(&value)?;
         (value.to_vec(), hash)
     };
 
@@ -1073,7 +1090,11 @@ fn valid_key_aliased_value_never_overwrites_healthy_forward_one_1173() -> Result
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &healthy_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &healthy_forward_key)?
+            .as_deref(),
         Some(healthy.as_bytes().as_slice()),
         "healthy forward row must not be overwritten by an aliased reverse value"
     );
@@ -1081,7 +1102,8 @@ fn valid_key_aliased_value_never_overwrites_healthy_forward_one_1173() -> Result
         vault
             .store
             .short_ids_reverse
-            .get(&rtxn, healthy.as_bytes())?,
+            .get(&rtxn, healthy.as_bytes())?
+            .as_deref(),
         Some(healthy_forward_key.as_slice()),
         "healthy reverse row must survive"
     );
@@ -1122,7 +1144,7 @@ fn recompute_short_id_hashes_keeps_in_pass_reserved_refresh_one_1176() -> Result
             .short_ids_reverse
             .get(&rtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let (_, hash) = parse_short_id_value(value)?;
+        let (_, hash) = parse_short_id_value(&value)?;
         (value.to_vec(), hash)
     };
 
@@ -1168,12 +1190,20 @@ fn recompute_short_id_hashes_keeps_in_pass_reserved_refresh_one_1176() -> Result
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.short_ids_reverse.get(&rtxn, id.as_bytes())?,
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .as_deref(),
         Some(fresh_forward_key.as_slice()),
         "reverse row should be refreshed to the current content hash"
     );
     assert_eq!(
-        vault.store.short_ids.get(&rtxn, &fresh_forward_key)?,
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &fresh_forward_key)?
+            .as_deref(),
         Some(id.as_bytes().as_slice()),
         "fresh forward row written by this pass must survive pass 2"
     );
@@ -1290,7 +1320,7 @@ fn run_all_operations() -> Result<()> {
             .short_ids_reverse
             .get(&rtxn, a.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let (_, hash) = parse_short_id_value(value)?;
+        let (_, hash) = parse_short_id_value(&value)?;
         hash
     };
     let mut drifted_payload = b"hash-drifted".to_vec();

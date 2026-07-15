@@ -282,12 +282,12 @@ impl<'a> ScopedRead<'a> {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Ok(Some((header.entity_type, header.learned_at, body.to_vec())));
         }
-        if !self.is_claim_raw_readable_in(&rtxn, id, raw)? {
+        if !self.is_claim_raw_readable_in(&rtxn, id, &raw)? {
             return Ok(None);
         }
         Ok(Some((header.entity_type, header.learned_at, body.to_vec())))
@@ -446,9 +446,9 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_CLAIM {
-            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw)
+            self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, &raw)
         } else {
             Ok(true)
         }
@@ -579,7 +579,7 @@ impl<'a> ScopedRead<'a> {
             if edges.len() >= MAX_SCOPED_READ_EDGE_REACHABILITY_ROWS {
                 return Err(Error::IndexOverflow("scoped read edge reachability"));
             }
-            edges.push(crate::vault::parse_edge_record(key, value)?);
+            edges.push(crate::vault::parse_edge_record(&key, &value)?);
         }
         Ok(edges)
     }
@@ -2158,8 +2158,8 @@ impl Vault {
             .entities
             .get(wtxn, actor.entity_ref().as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header =
-            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let actor_header = EntityMetadataHeader::parse(&actor_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
         validate_actor_class(actor_header.entity_type, actor.actor_class())
     }
 
@@ -2220,7 +2220,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
@@ -2242,14 +2242,14 @@ impl Vault {
             .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
         {
             let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(key)?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
             let raw = self
                 .store
                 .entities
                 .get(rtxn, id.as_bytes())?
                 .ok_or(Error::CorruptedIndex("claim type index"))?;
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Err(Error::CorruptedIndex("claim type index"));
             }
@@ -2312,11 +2312,11 @@ impl Vault {
                     return Err(Error::IndexOverflow("claim_bodies_for_subjects"));
                 }
                 let (key, value) = entry?;
-                let claim_id = parse_edge_record(key, value)?.target;
+                let claim_id = parse_edge_record(&key, &value)?.target;
                 let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? else {
                     continue;
                 };
-                let Some(header) = EntityMetadataHeader::parse(raw) else {
+                let Some(header) = EntityMetadataHeader::parse(&raw) else {
                     continue;
                 };
                 if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -2352,7 +2352,7 @@ impl Vault {
             return Err(Error::EntityNotFound);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
@@ -2623,7 +2623,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("claim_facet_refs"));
             }
             let (key, _) = entry?;
-            require_key_len(key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
+            require_key_len(&key, ENTITY_ID_LEN + 1 + ENTITY_ID_LEN, "facet edge key")?;
             let target = EntityId::from_bytes(
                 key[ENTITY_ID_LEN + 1..]
                     .try_into()

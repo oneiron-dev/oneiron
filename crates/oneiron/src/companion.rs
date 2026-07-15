@@ -2058,12 +2058,12 @@ pub(crate) fn companion_record_id_for_key_in_txn(
         .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
     {
         let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(type_key)?;
+        let id = entity_id_from_type_index_key(&type_key)?;
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
             return Err(Error::CorruptedIndex("companion register type index"));
         }
@@ -2086,12 +2086,12 @@ pub(crate) fn companion_record_any_id_for_key_in_txn(
         .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
     {
         let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(type_key)?;
+        let id = entity_id_from_type_index_key(&type_key)?;
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
             return Err(Error::CorruptedIndex("companion register type index"));
         }
@@ -2123,12 +2123,12 @@ pub(crate) fn companion_record_key_lookup_in_txn(
         .prefix_iter(txn, &[ENTITY_TYPE_COMPANION_REGISTER])?
     {
         let (type_key, _) = index_entry?;
-        let id = entity_id_from_type_index_key(type_key)?;
+        let id = entity_id_from_type_index_key(&type_key)?;
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex("companion register type index"));
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
             return Err(Error::CorruptedIndex("companion register type index"));
         }
@@ -2268,7 +2268,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -2449,12 +2449,12 @@ impl Vault {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_COMPANION_REGISTER])?
         {
             let (type_key, _) = index_entry?;
-            let id = entity_id_from_type_index_key(type_key)?;
+            let id = entity_id_from_type_index_key(&type_key)?;
             let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("companion register type index"));
             };
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
                 return Err(Error::CorruptedIndex("companion register type index"));
             }
@@ -2527,7 +2527,7 @@ impl Vault {
             .get(txn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COMPANION_REGISTER {
             return Err(Error::InvalidEntityType(header.entity_type));
         }

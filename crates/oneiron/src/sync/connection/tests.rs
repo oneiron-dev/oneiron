@@ -606,12 +606,22 @@ fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
     assert_eq!(conn.queue().len().unwrap(), 0);
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_queue.get(&rtxn, &sweep_key).unwrap(),
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &sweep_key)
+            .unwrap()
+            .as_deref(),
         Some([7u8].as_slice()),
         "h:* sweep rows must survive re-bootstrap (ARCH-0038 Art.17 SLA)"
     );
     assert_eq!(
-        vault.store.sync_queue.get(&rtxn, &exemption_key).unwrap(),
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &exemption_key)
+            .unwrap()
+            .as_deref(),
         Some([9u8].as_slice()),
         "x:* rows must survive re-bootstrap"
     );
@@ -620,7 +630,8 @@ fn forgetful_server_blocks_clear_and_round_six_forces_re_bootstrap() {
             .store
             .sync_queue
             .get(&rtxn, b"m:last_update_seq".as_slice())
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(2u64.to_le_bytes().as_slice()),
         "m:* sequence cursor must survive re-bootstrap"
     );
@@ -683,7 +694,12 @@ fn queue_overflow_triggers_real_re_bootstrap() {
     );
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_queue.get(&rtxn, &exemption_key).unwrap(),
+        vault
+            .store
+            .sync_queue
+            .get(&rtxn, &exemption_key)
+            .unwrap()
+            .as_deref(),
         Some([9u8].as_slice()),
         "x:* rows must survive the overflow re-bootstrap"
     );

@@ -53,7 +53,7 @@ pub(crate) fn load_or_mint_client_id_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<u64> {
     match vault.store.sync_state.get(wtxn, KEY_CLIENT_ID)? {
-        Some(raw) if raw.len() == 8 => decode_client_id_row(raw),
+        Some(raw) if raw.len() == 8 => decode_client_id_row(&raw),
         Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
         None => {
             let minted = mint_client_id();
@@ -72,7 +72,7 @@ pub(crate) fn load_or_mint_client_id_in_txn(
 /// mint in a write transaction.
 pub(crate) fn read_client_id_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<Option<u64>> {
     match vault.store.sync_state.get(rtxn, KEY_CLIENT_ID)? {
-        Some(raw) if raw.len() == 8 => decode_client_id_row(raw).map(Some),
+        Some(raw) if raw.len() == 8 => decode_client_id_row(&raw).map(Some),
         Some(_) => Err(Error::CorruptedIndex("sync client_id row")),
         None => Ok(None),
     }
@@ -109,6 +109,7 @@ pub(crate) fn ensure_device_identity_in_txn(
     let signing_key = match vault.store.sync_state.get(wtxn, KEY_DEVICE_SK)? {
         Some(raw) => {
             let seed: [u8; 32] = raw
+                .as_ref()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("device signing key row"))?;
             SigningKey::from_bytes(&seed)
@@ -125,7 +126,7 @@ pub(crate) fn ensure_device_identity_in_txn(
 
     let derived_pk = signing_key.verifying_key().to_bytes();
     match vault.store.sync_state.get(wtxn, KEY_DEVICE_PK)? {
-        Some(raw) if raw == derived_pk => {}
+        Some(raw) if *raw == derived_pk => {}
         Some(_) => {
             // A pk row that disagrees with the seed is corruption, not a
             // healable cache miss: receipts signed under EITHER key would
@@ -212,7 +213,7 @@ mod tests {
             .unwrap()
             .expect("client id row");
         assert_eq!(id_row.len(), 8, "m:client_id is u64 LE (8 bytes)");
-        assert_eq!(u64::from_le_bytes(id_row.try_into().unwrap()), {
+        assert_eq!(u64::from_le_bytes(id_row.as_ref().try_into().unwrap()), {
             assert_ne!(first.client_id, 0);
             first.client_id
         });
@@ -222,7 +223,11 @@ mod tests {
             .get(&rtxn, KEY_DEVICE_SK)
             .unwrap()
             .expect("sk row");
-        assert_eq!(sk_row, first.signing_key.as_bytes(), "32 B seed row");
+        assert_eq!(
+            sk_row.as_ref(),
+            first.signing_key.as_bytes(),
+            "32 B seed row"
+        );
         let pk_row = vault
             .store
             .sync_state
@@ -230,7 +235,7 @@ mod tests {
             .unwrap()
             .expect("pk row");
         assert_eq!(
-            pk_row,
+            *pk_row,
             first.signing_key.verifying_key().to_bytes(),
             "pk row is the seed-derived verifying key"
         );
@@ -258,7 +263,10 @@ mod tests {
             .get(&rtxn, KEY_CLIENT_ID)
             .unwrap()
             .expect("client id row");
-        assert_eq!(u64::from_le_bytes(id_row.try_into().unwrap()), first);
+        assert_eq!(
+            u64::from_le_bytes(id_row.as_ref().try_into().unwrap()),
+            first
+        );
         assert!(
             vault
                 .store

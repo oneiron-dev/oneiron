@@ -381,7 +381,7 @@ pub(crate) fn verify_new_receipt_origin_for_vault_in_txn(
     let floor_prefix = lease_key_prefix(vault_id);
     for entry in vault.store.sync_state.prefix_iter(txn, &floor_prefix)? {
         let (_key, sibling_raw) = entry?;
-        let sibling = decode_scoped_lease_record(sibling_raw, vault_id)?;
+        let sibling = decode_scoped_lease_record(&sibling_raw, vault_id)?;
         if sibling.pubkey == parts.pubkey && sibling.status == LeaseStatus::Revoked {
             return Err(Error::ReceiptLeaseRevoked {
                 client_id: parts.client_id,
@@ -401,7 +401,7 @@ fn claimed_lease_record_in_txn(
     let Some(raw) = vault.store.sync_state.get(txn, &key)? else {
         return Ok(None);
     };
-    Ok(Some(decode_scoped_lease_record(raw, vault_id)?))
+    Ok(Some(decode_scoped_lease_record(&raw, vault_id)?))
 }
 
 fn decode_scoped_lease_record(raw: &[u8], vault_id: u64) -> Result<LeaseRecord> {
@@ -535,7 +535,7 @@ fn delete_stale_v2_lease_rows_for_client(
     for entry in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
         let (key, _raw) = entry?;
         if key != keep_key && key.ends_with(&client_suffix) {
-            stale_keys.push(key.to_owned());
+            stale_keys.push(key.into_owned());
         }
     }
     for key in stale_keys {

@@ -999,11 +999,11 @@ fn vad_annotation_claim_matches_subject(
     let Some(raw) = store.entities.get(rtxn, claim_id.as_bytes())? else {
         return Ok(false);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(false);
     }
-    let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+    let Some(body) = decode_vad_annotation_claim_body_if_present(&raw)? else {
         return Ok(false);
     };
     Ok(body.predicate == VAD_ANNOTATION_CLAIM_PREDICATE
@@ -1336,7 +1336,7 @@ impl Vault {
             .get(txn, claim_id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
@@ -1352,7 +1352,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_TURN {
             return Ok(None);
         }
@@ -1360,11 +1360,11 @@ impl Vault {
         let claim_id = vad_annotation_claim_id(ENTITY_TYPE_TURN, turn_id)?;
         if let Some(raw) = self.store.entities.get(txn, claim_id.as_bytes())? {
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Err(Error::CorruptedIndex("VAD annotation claim"));
             }
-            let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+            let Some(body) = decode_vad_annotation_claim_body_if_present(&raw)? else {
                 return Ok(None);
             };
             if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
@@ -1383,7 +1383,7 @@ impl Vault {
             return Ok(None);
         };
         let annotation: VadAnnotation =
-            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
         annotation.vad.validate()?;
         Ok(Some(annotation))
     }
@@ -1407,7 +1407,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("claim_vad_incident_edges"));
             }
             let (key, value) = entry?;
-            let info = parse_edge_record(key, value)?;
+            let info = parse_edge_record(&key, &value)?;
             Self::record_claim_vad_edge(
                 EdgeRef::new(*claim_id, info.kind, info.target),
                 &mut seen,
@@ -1426,7 +1426,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("claim_vad_incident_edges"));
             }
             let (key, value) = entry?;
-            let info = parse_edge_record(key, value)?;
+            let info = parse_edge_record(&key, &value)?;
             Self::record_claim_vad_edge(
                 EdgeRef::new(info.target, info.kind, *claim_id),
                 &mut seen,
@@ -1466,12 +1466,12 @@ impl Vault {
                 return Err(Error::IndexOverflow("claim_vad_states"));
             }
             let (key, value) = entry?;
-            let state_id = parse_edge_record(key, value)?.target;
+            let state_id = parse_edge_record(&key, &value)?.target;
             let Some(raw) = self.store.entities.get(txn, state_id.as_bytes())? else {
                 continue;
             };
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 continue;
             }
@@ -1561,7 +1561,7 @@ impl Vault {
             .get(&wtxn, prior_claim_id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvalidClaimBody("entity is not a type-0 CLAIM"));
         }
@@ -1706,7 +1706,7 @@ impl Vault {
             .get(&wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != expected_type {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -1759,13 +1759,13 @@ impl Vault {
             return Ok(());
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::InvariantViolation(
                 "VAD annotation claim id collision",
             ));
         }
-        let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+        let Some(body) = decode_vad_annotation_claim_body_if_present(&raw)? else {
             return Ok(());
         };
         if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
@@ -1788,18 +1788,18 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != expected_type {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let claim_id = vad_annotation_claim_id(expected_type, id)?;
         if let Some(raw) = self.store.entities.get(&rtxn, claim_id.as_bytes())? {
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Err(Error::CorruptedIndex("VAD annotation claim"));
             }
-            let Some(body) = decode_vad_annotation_claim_body_if_present(raw)? else {
+            let Some(body) = decode_vad_annotation_claim_body_if_present(&raw)? else {
                 return Ok(None);
             };
             if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
@@ -1818,7 +1818,7 @@ impl Vault {
             return Ok(None);
         };
         let annotation: VadAnnotation =
-            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
+            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("VAD annotation"))?;
         annotation.vad.validate()?;
         Ok(Some(annotation))
     }

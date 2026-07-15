@@ -275,7 +275,8 @@ fn retention_evicts_oldest_first_and_doctor_reports_state() {
             .store
             .sync_queue
             .get(&rtxn, QUARANTINE_EVICTIONS_KEY)
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some(5u64.to_le_bytes().as_slice()),
         "eviction counter must persist (doctor-visible)"
     );
@@ -321,7 +322,12 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &marker_key)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "purge failure must set the entity-scoped rm:w marker"
     );
@@ -530,7 +536,12 @@ fn rm_marker_round_trip_entity_batch_commit_failure_then_drain() {
     for id in [&a, &b] {
         let marker_key = format!("rm:w:2026-03:{}", id.to_hex());
         assert_eq!(
-            vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &marker_key)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "entity batch commit failure must set the entity-scoped rm:w marker"
         );
@@ -644,7 +655,12 @@ fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
     // Pinned literal grammar, SOURCE-scoped.
     let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &src_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "edge batch commit failure must set the SOURCE-scoped rm:w marker"
     );
@@ -667,7 +683,12 @@ fn rm_marker_round_trip_edge_batch_commit_failure_then_drain() {
     assert!(report.still_pending.is_empty());
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.edges_out.get(&rtxn, &lmdb_edge_key).unwrap(),
+        vault
+            .store
+            .edges_out
+            .get(&rtxn, &lmdb_edge_key)
+            .unwrap()
+            .as_deref(),
         Some(edge_val.as_slice()),
         "drain must re-materialize the lost edge bytes verbatim"
     );
@@ -784,7 +805,12 @@ fn edge_batch_in_txn_endpoint_hydration_rollback_marks_endpoint() {
     for id in [&src, &tgt] {
         let marker = format!("rm:w:2026-03:{}", id.to_hex());
         assert_eq!(
-            vault.store.sync_state.get(&rtxn, &marker).unwrap(),
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &marker)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "a hydrated-and-rolled-back edge endpoint must carry the rm:w marker"
         );
@@ -848,7 +874,12 @@ fn edge_batch_hydrated_target_only_rollback_marks_target() {
     // even though no edge was tracked (applied_edges was empty).
     let tgt_marker = format!("rm:w:2026-03:{}", tgt.to_hex());
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &tgt_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &tgt_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "hydrated-and-rolled-back TARGET must carry the rm:w marker with NO edge tracked"
     );
@@ -915,7 +946,12 @@ fn edge_batch_already_present_endpoint_not_overmarked() {
     // SRC: hydrated-and-rolled-back → marked.
     let src_marker = format!("rm:w:2026-03:{}", src.to_hex());
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &src_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &src_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "hydrated-and-rolled-back src is marked"
     );
@@ -1041,12 +1077,22 @@ fn x_only_entity_quarantine_batch_sets_replayable_rm_marker() {
         let marker_key = format!("rm:w:{WINDOW}:{}", id.to_hex());
         let provenance_key = replay_remat_marker_provenance_key(WINDOW, id);
         assert_eq!(
-            vault.store.sync_state.get(&rtxn, &marker_key).unwrap(),
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &marker_key)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "marker encoding must remain rm:w:{{window}}:{{entity_hex}}"
         );
         assert_eq!(
-            vault.store.sync_state.get(&rtxn, &provenance_key).unwrap(),
+            vault
+                .store
+                .sync_state
+                .get(&rtxn, &provenance_key)
+                .unwrap()
+                .as_deref(),
             Some([1u8].as_slice()),
             "x-only replay quarantine markers must prove non-delete provenance"
         );
@@ -1244,7 +1290,12 @@ fn terminal_quarantine_preserves_unproven_delete_safety_rm_marker() {
     let replay_marker = remat_marker_key(WINDOW, &replay);
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &delete_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &delete_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "unproven rm: marker must survive terminal quarantine"
     );
@@ -1492,7 +1543,12 @@ fn unrelated_tombstone_success_does_not_clear_entity_scoped_rm_marker() {
     let x_marker = format!("rm:w:{WINDOW}:{}", x.to_hex());
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &x_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &x_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "X's purge failure must set X's entity-scoped marker"
     );
@@ -1507,7 +1563,12 @@ fn unrelated_tombstone_success_does_not_clear_entity_scoped_rm_marker() {
     assert!(vault.get(&y).unwrap().is_none(), "Y's tombstone purges Y");
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, &x_marker).unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, &x_marker)
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice()),
         "unrelated Y success must NOT clear X's marker"
     );
@@ -1605,7 +1666,12 @@ fn malformed_rm_marker_rows_are_never_dropped_and_window_still_drains() {
     );
     // …but the unparsable rows are never dropped (fail closed).
     assert_eq!(
-        vault.store.sync_state.get(&rtxn, "rm:w:2026-03").unwrap(),
+        vault
+            .store
+            .sync_state
+            .get(&rtxn, "rm:w:2026-03")
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice())
     );
     assert_eq!(
@@ -1613,7 +1679,8 @@ fn malformed_rm_marker_rows_are_never_dropped_and_window_still_drains() {
             .store
             .sync_state
             .get(&rtxn, "rm:w:2026-03:zzz-not-hex")
-            .unwrap(),
+            .unwrap()
+            .as_deref(),
         Some([1u8].as_slice())
     );
     drop(rtxn);

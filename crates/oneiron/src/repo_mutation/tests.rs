@@ -894,7 +894,7 @@ fn repo_mutation_legacy_prepared_row_fails_once_without_reverting_repo() {
         .get(&wtxn, &key)
         .expect("read prepared row")
         .expect("prepared row exists");
-    let mut stored = decode_stored_oplog_entry(raw).expect("decode prepared row");
+    let mut stored = decode_stored_oplog_entry(&raw).expect("decode prepared row");
     stored.expected_post_action_fork_hash = None;
     stored.prepared_conflict_resolution = None;
     let encoded = encode_oplog_entry(&stored).expect("encode legacy row");

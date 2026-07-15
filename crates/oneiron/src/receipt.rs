@@ -2288,11 +2288,11 @@ fn scan_entities_by_type(
         if key.first().copied() != Some(entity_type) {
             return Err(Error::CorruptedIndex(context));
         }
-        let id = entity_id_from_type_index_key(key, context)?;
+        let id = entity_id_from_type_index_key(&key, context)?;
         let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
             return Err(Error::CorruptedIndex(context));
         };
-        let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex(context))?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex(context))?;
         if header.entity_type != entity_type {
             return Err(Error::CorruptedIndex(context));
         }

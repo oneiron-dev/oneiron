@@ -68,6 +68,7 @@ pub mod maintain;
 pub mod off_record;
 pub mod outbound;
 pub mod outbound_grant;
+pub(crate) mod overlay_db;
 pub mod persona_snapshot;
 pub mod pipeline;
 pub mod policy_model;
@@ -749,6 +750,9 @@ pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8]) -> Result<Vec<f32>> {
         .map(|bytes| f32::from_le_bytes(*bytes))
         .collect())
 }
+
+#[cfg(test)]
+mod branch_store_oracle;
 
 #[cfg(test)]
 mod tests;

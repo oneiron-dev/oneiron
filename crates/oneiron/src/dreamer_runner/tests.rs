@@ -135,7 +135,7 @@ fn attempt_dedupe_points_to(vault: &Vault, id: AttemptId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
     for row in vault.store.attempt_dedupe.iter(&rtxn)? {
         let (_key, value) = row?;
-        if value == id.as_bytes() {
+        if *value == *id.as_bytes() {
             return Ok(true);
         }
     }

@@ -894,7 +894,7 @@ impl Vault {
             .get(&wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -919,7 +919,7 @@ impl Vault {
             .get(&wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -941,7 +941,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -957,13 +957,13 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let index_key = counterparty_contact_index_key(identity_ref, counterparty)?;
         if let Some(raw_id) = self.store.vault_meta.get(&rtxn, &index_key)? {
-            let id = decode_counterparty_contact_index_value(raw_id)?;
+            let id = decode_counterparty_contact_index_value(&raw_id)?;
             let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex(
                     "counterparty contact lookup index entity row",
                 ));
             };
-            let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex(
+            let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex(
                 "counterparty contact lookup index entity header",
             ))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
@@ -986,11 +986,11 @@ impl Vault {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
         {
             let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(key)?;
+            let id = entity_id_from_type_index_key(&key)?;
             let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(raw)
+            let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
@@ -1016,11 +1016,11 @@ impl Vault {
             .prefix_iter(&rtxn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
         {
             let (key, _) = entry?;
-            let id = entity_id_from_type_index_key(key)?;
+            let id = entity_id_from_type_index_key(&key)?;
             let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(raw)
+            let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
@@ -1041,7 +1041,7 @@ impl Vault {
     ) -> Result<bool> {
         let index_key = counterparty_contact_index_key_for_record(record)?;
         if let Some(raw_id) = self.store.vault_meta.get(txn, &index_key)? {
-            let existing_id = decode_counterparty_contact_index_value(raw_id)?;
+            let existing_id = decode_counterparty_contact_index_value(&raw_id)?;
             if existing_id != *id {
                 return Ok(true);
             }
@@ -1053,14 +1053,14 @@ impl Vault {
             .prefix_iter(txn, &[ENTITY_TYPE_COUNTERPARTY_CONTACT])?
         {
             let (key, _) = entry?;
-            let existing_id = entity_id_from_type_index_key(key)?;
+            let existing_id = entity_id_from_type_index_key(&key)?;
             if existing_id == *id {
                 continue;
             }
             let Some(raw) = self.store.entities.get(txn, existing_id.as_bytes())? else {
                 return Err(Error::CorruptedIndex("counterparty contact entity row"));
             };
-            let header = EntityMetadataHeader::parse(raw)
+            let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::CorruptedIndex("counterparty contact entity header"))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::CorruptedIndex("counterparty contact entity type"));
@@ -1083,7 +1083,7 @@ impl Vault {
         let record = decode_counterparty_contact_body(&data)?;
         let new_index_key = counterparty_contact_index_key_for_record(&record)?;
         if let Some(raw_id) = self.store.vault_meta.get(&*wtxn, &new_index_key)? {
-            let existing_id = decode_counterparty_contact_index_value(raw_id)?;
+            let existing_id = decode_counterparty_contact_index_value(&raw_id)?;
             if existing_id != *id {
                 return Err(Error::CounterpartyContactAlreadyExists);
             }
@@ -1091,7 +1091,7 @@ impl Vault {
 
         let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }

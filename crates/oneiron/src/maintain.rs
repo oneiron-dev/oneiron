@@ -392,7 +392,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     for entry in vault.store.short_ids_reverse.iter(&wtxn)? {
         let (key, value) = entry?;
 
-        let id = match parse_entity_id(key, ERR_SHORT_IDS_REVERSE_KEY) {
+        let id = match parse_entity_id(&key, ERR_SHORT_IDS_REVERSE_KEY) {
             Ok(id) => id,
             // `parse_entity_id` returns `CorruptedIndex` on length mismatch
             // and `InvalidKey` for reserved sentinel patterns. Both are
@@ -409,7 +409,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             Err(other) => return Err(other),
         };
 
-        let (short_id, current_hash) = match parse_short_id_value(value) {
+        let (short_id, current_hash) = match parse_short_id_value(&value) {
             Ok(parsed) => parsed,
             Err(Error::CorruptedIndex(_)) => {
                 reverse_orphans.push((key.to_vec(), None));
@@ -448,7 +448,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             if let Some(forward_id) = vault.store.short_ids.get(&wtxn, &new_forward_key)?
                 && forward_id != key
             {
-                if forward_key_is_claimed_by_reverse(vault, &wtxn, forward_id, &new_forward_key)? {
+                if forward_key_is_claimed_by_reverse(vault, &wtxn, &forward_id, &new_forward_key)? {
                     tracing::warn!(
                         "short-id maintenance pruned backed reverse row with owned refreshed forward alias"
                     );
@@ -487,7 +487,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
                 if forward_key_is_claimed_by_reverse(
                     vault,
                     &wtxn,
-                    forward_id,
+                    &forward_id,
                     &current_forward_key,
                 )? {
                     tracing::warn!(
@@ -543,12 +543,12 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
         // The forward KEY shares the `(short_id ‖ content_hash)` shape with
         // the reverse VALUE; an unparsable key is a corrupt row to prune.
-        if parse_short_id_value(key).is_err() {
+        if parse_short_id_value(&key).is_err() {
             forward_orphans.push(key.to_vec());
             continue;
         }
 
-        let id = match parse_entity_id(value, ERR_SHORT_IDS_FORWARD_VALUE) {
+        let id = match parse_entity_id(&value, ERR_SHORT_IDS_FORWARD_VALUE) {
             Ok(id) => id,
             Err(Error::CorruptedIndex(_)) | Err(Error::InvalidKey) => {
                 forward_orphans.push(key.to_vec());
@@ -559,7 +559,7 @@ fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
 
         match vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())? {
             Some(reverse_value) if reverse_value == key => {}
-            _ if reserved_forward_keys.contains(key) => {
+            _ if reserved_forward_keys.contains(key.as_ref()) => {
                 tracing::warn!(
                     "short-id maintenance kept in-pass reserved forward row despite stale reverse view"
                 );
@@ -589,20 +589,21 @@ fn forward_key_is_claimed_by_reverse(
     };
     Ok(matches!(
         vault.store.short_ids_reverse.get(txn, owner.as_bytes())?,
-        Some(reverse_value) if reverse_value == forward_key
+        Some(reverse_value) if *reverse_value == *forward_key
     ))
 }
 
 fn prepare_rebuild_hnsw(vault: &Vault, heal_invalid_vectors: bool) -> Result<PreparedHnswRebuild> {
     let rtxn = vault.store.env.read_txn()?;
-    let old_count = decode_u64_opt(vault.store.hnsw_meta.get(&rtxn, COUNT_KEY)?)?.unwrap_or(0);
+    let old_count =
+        decode_u64_opt(vault.store.hnsw_meta.get(&rtxn, COUNT_KEY)?.as_deref())?.unwrap_or(0);
     let vector_version = read_vector_version(&vault.store, &rtxn)?;
     let mut vector_ids = Vec::<EntityId>::with_capacity(old_count.min(1_000_000) as usize);
     let mut invalid_vectors_skipped = 0_u64;
 
     for entry in vault.store.vectors.iter(&rtxn)? {
         let (id_bytes, vector_bytes) = entry?;
-        let validation = validate_rebuild_vector(vault, id_bytes, vector_bytes);
+        let validation = validate_rebuild_vector(vault, &id_bytes, &vector_bytes);
         match validation {
             Ok(id) => vector_ids.push(id),
             Err(error) if heal_invalid_vectors && is_healable_rebuild_error(&error) => {

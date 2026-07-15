@@ -943,7 +943,7 @@ pub(crate) fn restamp_edge_flags(
     let existing = store
         .edges_out
         .get(wtxn, &key_out)?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::EdgeNotFound)?;
     let mut value = match existing.len() {
         EDGE_VALUE_SEMANTIC_LEN | EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => {
@@ -990,7 +990,7 @@ pub(crate) fn downgrade_edge_to_bare(
     let existing = store
         .edges_out
         .get(wtxn, &key_out)?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::EdgeNotFound)?;
     let value = match existing.len() {
         EDGE_VALUE_SEMANTIC_PROVENANCED_LEN => {
@@ -1328,7 +1328,7 @@ impl Vault {
             .prefix_iter(&wtxn, &[ENTITY_TYPE_MODEL])?
         {
             let (key, _) = entry?;
-            require_key_len(key, 17, "type index key")?;
+            require_key_len(&key, 17, "type index key")?;
             let id = EntityId::from_bytes(
                 key[1..17]
                     .try_into()
@@ -1485,8 +1485,8 @@ impl Vault {
             .entities
             .get(&wtxn, body.actor_entity_ref.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        let actor_header =
-            EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let actor_header = EntityMetadataHeader::parse(&actor_raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
         validate_actor_class(actor_header.entity_type, actor_class)?;
 
         // Substrate gate (ONE-1138): a present substrate_ref must name a
@@ -1501,7 +1501,7 @@ impl Vault {
                 .ok_or(Error::InvalidModelSubstrate(
                     "substrate_ref does not name a stored entity",
                 ))?;
-            let substrate_header = EntityMetadataHeader::parse(substrate_raw)
+            let substrate_header = EntityMetadataHeader::parse(&substrate_raw)
                 .ok_or(Error::CorruptedIndex("entity header"))?;
             if substrate_header.entity_type != ENTITY_TYPE_MODEL {
                 return Err(Error::InvalidModelSubstrate(
@@ -1659,7 +1659,7 @@ impl Vault {
             .get(txn, claim_id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
             return Err(Error::NotAProvenanceClaim("entity is not a type-0 CLAIM"));
         }
@@ -1739,7 +1739,7 @@ impl Vault {
                 return Err(Error::IndexOverflow("live provenance claims"));
             }
             let (key, value) = entry?;
-            let claim_id = parse_edge_record(key, value)?.target;
+            let claim_id = parse_edge_record(&key, &value)?.target;
             if exclude == Some(&claim_id) {
                 continue;
             }
@@ -1747,7 +1747,7 @@ impl Vault {
                 return Err(Error::CorruptedIndex("claim_of edge without claim entity"));
             };
             let header =
-                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 continue;
             }

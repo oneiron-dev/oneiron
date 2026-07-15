@@ -402,7 +402,7 @@ fn allocate_next_quarantine_seq(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Re
         .store
         .sync_queue
         .get(&*wtxn, LAST_QUARANTINE_SEQ_KEY)?
-        .and_then(decode_u64_le_counter);
+        .and_then(|raw| decode_u64_le_counter(&raw));
     let max_existing = max_quarantine_seq(vault, wtxn)?;
     let current = match metadata {
         Some(seq) if seq >= max_existing => seq,
@@ -426,7 +426,7 @@ fn max_quarantine_seq(vault: &Vault, wtxn: &heed::RwTxn<'_>) -> Result<u64> {
         .prefix_iter(wtxn, QUARANTINE_PREFIX)?;
     for entry in iter {
         let (key, _) = entry?;
-        if let Some(seq) = decode_quarantine_seq(key) {
+        if let Some(seq) = decode_quarantine_seq(&key) {
             max_seq = max_seq.max(seq);
         }
     }
@@ -453,11 +453,11 @@ fn enforce_retention_in_txn(
             .prefix_iter(&*wtxn, QUARANTINE_PREFIX)?;
         for entry in iter {
             let (key, value) = entry?;
-            if decode_quarantine_seq(key).is_none() {
+            if decode_quarantine_seq(&key).is_none() {
                 evict.push(key.to_vec());
                 continue;
             }
-            match decode_record(value) {
+            match decode_record(&value) {
                 Ok(rec) if rec.quarantined_at.saturating_add(max_age_secs) < now => {
                     evict.push(key.to_vec());
                 }
@@ -486,7 +486,7 @@ fn enforce_retention_in_txn(
         .store
         .sync_queue
         .get(&*wtxn, QUARANTINE_EVICTIONS_KEY)?
-        .and_then(decode_u64_le_counter)
+        .and_then(|raw| decode_u64_le_counter(&raw))
         .unwrap_or(0);
     let total = prior.saturating_add(evicted);
     vault
@@ -528,10 +528,10 @@ pub fn quarantined_records(vault: &Vault) -> Result<Vec<(u64, QuarantineRecord)>
         .prefix_iter(&rtxn, QUARANTINE_PREFIX)?;
     for entry in iter {
         let (key, value) = entry?;
-        let Some(seq) = decode_quarantine_seq(key) else {
+        let Some(seq) = decode_quarantine_seq(&key) else {
             continue;
         };
-        match decode_record(value) {
+        match decode_record(&value) {
             Ok(rec) => records.push((seq, rec)),
             Err(_) => {
                 tracing::warn!(seq, "sync: skipping undecodable quarantine row");
@@ -578,7 +578,7 @@ pub fn sync_doctor(vault: &Vault) -> Result<SyncQuarantineReport> {
         .store
         .sync_queue
         .get(&rtxn, QUARANTINE_EVICTIONS_KEY)?
-        .and_then(decode_u64_le_counter)
+        .and_then(|raw| decode_u64_le_counter(&raw))
         .unwrap_or(0);
     drop(rtxn);
 

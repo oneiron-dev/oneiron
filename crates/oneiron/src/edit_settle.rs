@@ -354,7 +354,7 @@ impl Vault {
         let (version, reanchor, record) = self.with_write_txn(|wtxn| {
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
-                return Err(already_settled(&decode_settlement_record(raw)?));
+                return Err(already_settled(&decode_settlement_record(&raw)?));
             }
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
@@ -469,7 +469,7 @@ impl Vault {
                 "settle-discard target must be a BLOB_ARTIFACT entity",
             )?;
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
-                return Err(already_settled(&decode_settlement_record(raw)?));
+                return Err(already_settled(&decode_settlement_record(&raw)?));
             }
             self.store.vault_meta.put(wtxn, &key, &encoded)?;
             Ok(())
@@ -491,7 +491,7 @@ impl Vault {
         let Some(raw) = self.store.vault_meta.get(&rtxn, &key)? else {
             return Ok(None);
         };
-        decode_settlement_record(raw).map(Some)
+        decode_settlement_record(&raw).map(Some)
     }
 
     /// Resolves the tappable door of a *select* settle: the committed
@@ -603,8 +603,8 @@ pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec
             break;
         }
         let (key, raw) = entry?;
-        let artifact_id = settlement_key_artifact_id(key)?;
-        let record = decode_settlement_record(raw)?;
+        let artifact_id = settlement_key_artifact_id(&key)?;
+        let record = decode_settlement_record(&raw)?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
         if query.matches(&receipt) {
             out.push(receipt);

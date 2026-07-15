@@ -586,7 +586,7 @@ impl Vault {
             .get(txn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_SKILL {
             return Err(Error::InvalidSkillBody("entity is not a type-7 SKILL"));
         }

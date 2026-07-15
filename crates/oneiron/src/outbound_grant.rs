@@ -666,7 +666,7 @@ impl Vault {
             .get(&wtxn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -688,7 +688,7 @@ impl Vault {
             return Ok(None);
         };
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
@@ -706,7 +706,7 @@ impl Vault {
         let new_index_key =
             standing_outbound_grant_principal_index_key(&new_grant.principal_ref, id)?;
         let old_index_key = if let Some(raw) = self.store.entities.get(&*wtxn, id.as_bytes())? {
-            let Some(header) = EntityMetadataHeader::parse(raw) else {
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 return Err(Error::CorruptedIndex("outbound grant entity header"));
             };
             if header.entity_type != ENTITY_TYPE_OUTBOUND_GRANT {

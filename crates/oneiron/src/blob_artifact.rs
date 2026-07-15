@@ -437,7 +437,7 @@ impl Vault {
         let mut versions = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, raw) = entry?;
-            let record = decode_blob_artifact_version_record(raw)?;
+            let record = decode_blob_artifact_version_record(&raw)?;
             let expected = u64::try_from(versions.len())
                 .map_err(|_| Error::ArithmeticOverflow("blob artifact version overflow"))?
                 + 1;
@@ -472,7 +472,7 @@ impl Vault {
             else {
                 return Ok(None);
             };
-            decode_blob_artifact_version_record(raw)?
+            decode_blob_artifact_version_record(&raw)?
         };
         read_blob_asset(self, &record.content_hash).map(Some)
     }
@@ -509,7 +509,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
     for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
         let (key, raw) = entry?;
-        let record = decode_blob_artifact_version_record(raw)?;
+        let record = decode_blob_artifact_version_record(&raw)?;
         if !hashes.contains(&record.content_hash) {
             hashes.push(record.content_hash);
         }
@@ -557,7 +557,7 @@ pub(crate) fn read_blob_artifact_head_in_txn(
     else {
         return Ok(None);
     };
-    decode_blob_artifact_version_record(raw).map(Some)
+    decode_blob_artifact_version_record(&raw).map(Some)
 }
 
 fn read_blob_asset(
@@ -591,7 +591,7 @@ pub(crate) fn require_entity_type(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != expected_type {
         return Err(Error::InvalidBlobArtifactBody(context));
     }

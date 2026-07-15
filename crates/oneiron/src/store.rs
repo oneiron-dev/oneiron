@@ -101,7 +101,7 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, RwLock, Weak};
 
 use heed::types::{Bytes, Str};
 use heed::{Database, DatabaseFlags, Env, EnvOpenOptions, RoTxn, RwTxn};
@@ -117,6 +117,7 @@ use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, VaultRootEntry, VaultRootProblem};
+use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::pipeline::Signal;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, StructuralKindRegistration, TypeByteBand, band_of,
@@ -1095,48 +1096,26 @@ pub(crate) enum HnswCompatibilityState {
     Current(PersistedHnswCompatibility),
 }
 
-/// LMDB environment and database handles for a vault.
+/// Raw LMDB database handles for the 28 named databases (ARCH-0019 manifest).
 ///
-/// Dropping the last handle to a `Store` (normally via the owning
-/// [`crate::Vault`]) CLOSES the LMDB environment — see `OwnedEnv` for the
-/// close-path rationale (ONE-1142).
-pub struct Store {
-    pub(crate) env: OwnedEnv,
+/// These are the base handles a per-handle [`OverlayDb`] view wraps. They are
+/// reserved for open-time machinery and for constructing accessor views —
+/// runtime readers and writers MUST go through the [`OverlayDb`] accessors on
+/// [`Store`] so a session write-overlay (ARCH-0052) composes at one seam.
+pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
     pub(crate) edges_out: Database<Bytes, Bytes>,
     pub(crate) edges_in: Database<Bytes, Bytes>,
     pub(crate) vectors: Database<Bytes, Bytes>,
     pub(crate) hnsw_neighbors: Database<Bytes, Bytes>,
     pub(crate) hnsw_meta: Database<Bytes, Bytes>,
-    /// Fielded inverted index, opened with `DUP_SORT` (storage ABI v4 /
-    /// ONE-299). Key: term bytes. Each duplicate data item is ONE posting
-    /// entry `entity_id(16) | field_count(u8) | (field_id_u16_be |
-    /// tf_u32_le)*`; LMDB keeps duplicates bytewise sorted, so items order
-    /// by entity-id prefix and an index append never reads the list.
     pub(crate) text_postings: Database<Bytes, Bytes>,
     pub(crate) text_meta: Database<Bytes, Bytes>,
     pub(crate) text_forward: Database<Bytes, Bytes>,
-    /// BM25F per-field corpus stats.
-    /// Key: `field_id` big-endian u16.
-    /// Value: `[doc_count_u32_le | total_length_u64_le]`.
     pub(crate) text_bm25_field_stats: Database<Bytes, Bytes>,
-    /// Per-doc, per-field surface-token lengths used by the BM25F length
-    /// normalization term. Key: entity_id (16B). Value: a flat
-    /// `[(field_id_u16_be | length_u32_le)*]` list over present fields.
     pub(crate) text_doc_field_lengths: Database<Bytes, Bytes>,
-    /// Vault-level metadata (analyzer manifest, schema version, field
-    /// schema hash). Read on `Vault::open` to gate index compatibility.
     pub(crate) vault_meta: Database<Bytes, Bytes>,
-    /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
-    pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
-    /// Serializes reward-to-weight tuning so concurrent callers cannot lose
-    /// a gradient step between read, compute, and persist.
-    retrieval_blend_tuning_lock: Mutex<()>,
-    /// PPR cache rows. Values carry the final scores and, for current rows,
-    /// the residual/frontier state needed to resume a deeper Forward-Push run.
     pub(crate) ppr_cache: Database<Bytes, Bytes>,
-    /// Reverse dependency index for PPR cache invalidation:
-    /// `[entity_id | cache_key]`.
     pub(crate) ppr_cache_deps: Database<Bytes, Bytes>,
     pub(crate) type_index: Database<Bytes, Bytes>,
     pub(crate) temporal_occurred_start: Database<Bytes, Bytes>,
@@ -1147,12 +1126,7 @@ pub struct Store {
     pub(crate) phonetic_forward: Database<Bytes, Bytes>,
     pub(crate) short_ids: Database<Bytes, Bytes>,
     pub(crate) short_ids_reverse: Database<Bytes, Bytes>,
-    /// CRDT Doc states, state vectors, pending updates, metadata. Present in
-    /// EVERY build (ONE-1132): the delete path writes its CRDT-independent
-    /// `pt:` pending-tombstone marker here unconditionally, so deletion
-    /// durability never depends on the `sync` cargo feature.
     pub(crate) sync_state: Database<Str, Bytes>,
-    /// Offline update queue, embed job queue, and hard-delete sweep queue.
     pub(crate) sync_queue: Database<Bytes, Bytes>,
     /// Generic background attempt records keyed by attempt id.
     pub(crate) attempt_records: Database<Bytes, Bytes>,
@@ -1160,8 +1134,54 @@ pub struct Store {
     pub(crate) attempt_ready: Database<Bytes, Bytes>,
     /// Advisory dedupe index keys mapped to attempt ids.
     pub(crate) attempt_dedupe: Database<Bytes, Bytes>,
+}
+
+/// Arc-shared substrate of an open vault (ARCH-0052 store split).
+///
+/// Everything here is safe to share across handles: the environment handle
+/// (a plain [`Env`] clone), the raw database handles, and the process-shared
+/// registries. The Drop-sensitive singletons live in [`StoreOwner`] — a
+/// `StoreCore` clone deliberately carries none of them, so a session vault
+/// handle (ONE-1727) can hold `Arc<StoreCore>` without duplicating close,
+/// path-deregistration, or clock-domain-release responsibilities.
+///
+/// INVARIANT: no `Arc<StoreCore>` may outlive the owning [`StoreOwner`]. The
+/// owner's drop tripwire asserts this in debug builds; the session lifecycle
+/// (lease drain at close, ONE-1727) enforces it at runtime.
+pub struct StoreCore {
+    /// Shared environment handle used to open transactions. The close-on-
+    /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
+    pub(crate) env: Env,
+    /// Raw handles; runtime access goes through the [`Store`] accessors.
+    pub(crate) raw: RawDatabases,
+    /// Vault-scoped dynamic StructuralKind registry loaded from `vault_meta`.
+    pub(crate) kind_registry: RwLock<HashMap<u8, StructuralKindRegistration>>,
+    /// Serializes reward-to-weight tuning so concurrent callers cannot lose
+    /// a gradient step between read, compute, and persist.
+    retrieval_blend_tuning_lock: Mutex<()>,
     /// Process-local clock domain for monotonic authority first-seen windows.
+    /// Read-only mirror; release-on-drop responsibility is the owner's.
     pub(crate) authority_clock_domain: usize,
+}
+
+/// Drop-sensitive singletons of an open vault; exactly one per open path
+/// (ARCH-0052 store split). Deliberately NOT `Clone` and never Arc-shared:
+/// duplicating any of these would corrupt the base vault (double clock-domain
+/// release, premature path deregistration, early environment close).
+pub struct StoreOwner {
+    /// Debug tripwire for the "no `Arc<StoreCore>` outlives the owner"
+    /// invariant; see [`StoreCore`].
+    core: Weak<StoreCore>,
+    /// Sole owner of the environment's close-on-last-clone semantics
+    /// (ONE-1142).
+    #[expect(
+        dead_code,
+        reason = "held for Drop only: OwnedEnv's close-on-last-clone must fire \
+                  before _registered_path releases the vault root (ONE-1142)"
+    )]
+    env: OwnedEnv,
+    /// The clock domain this owner releases exactly once on drop.
+    authority_clock_domain: usize,
     /// True only for the open call that created a previously absent LMDB root.
     created_new_vault: bool,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
@@ -1171,10 +1191,97 @@ pub struct Store {
     _registered_path: RegisteredPath,
 }
 
+/// LMDB environment and database handles for a vault.
+///
+/// Dropping the last handle to a `Store` (normally via the owning
+/// [`crate::Vault`]) CLOSES the LMDB environment — see `OwnedEnv` for the
+/// close-path rationale (ONE-1142).
+///
+/// Split per ARCH-0052: `Store` is the canonical per-vault VIEW — 28
+/// [`OverlayDb`] accessors (pure passthrough; a session handle composes its
+/// overlay at the same seam) over the Arc-shared [`StoreCore`], plus the
+/// single-owner [`StoreOwner`]. `Store` derefs to [`StoreCore`] so
+/// `store.env`/`store.kind_registry` field access is preserved.
+pub struct Store {
+    // DROP-ORDER: `core` is declared before `owner` so this handle's Arc
+    // reference drops first; `owner` then closes the environment (its
+    // `OwnedEnv` holds the last remaining `Env` clone) and finally releases
+    // the registered path.
+    pub(crate) core: Arc<StoreCore>,
+    pub(crate) entities: OverlayDb,
+    pub(crate) edges_out: OverlayDb,
+    pub(crate) edges_in: OverlayDb,
+    pub(crate) vectors: OverlayDb,
+    pub(crate) hnsw_neighbors: OverlayDb,
+    pub(crate) hnsw_meta: OverlayDb,
+    /// Fielded inverted index, opened with `DUP_SORT` (storage ABI v4 /
+    /// ONE-299). Key: term bytes. Each duplicate data item is ONE posting
+    /// entry `entity_id(16) | field_count(u8) | (field_id_u16_be |
+    /// tf_u32_le)*`; LMDB keeps duplicates bytewise sorted, so items order
+    /// by entity-id prefix and an index append never reads the list.
+    pub(crate) text_postings: OverlayDb,
+    pub(crate) text_meta: OverlayDb,
+    pub(crate) text_forward: OverlayDb,
+    /// BM25F per-field corpus stats.
+    /// Key: `field_id` big-endian u16.
+    /// Value: `[doc_count_u32_le | total_length_u64_le]`.
+    pub(crate) text_bm25_field_stats: OverlayDb,
+    /// Per-doc, per-field surface-token lengths used by the BM25F length
+    /// normalization term. Key: entity_id (16B). Value: a flat
+    /// `[(field_id_u16_be | length_u32_le)*]` list over present fields.
+    pub(crate) text_doc_field_lengths: OverlayDb,
+    /// Vault-level metadata (analyzer manifest, schema version, field
+    /// schema hash). Read on `Vault::open` to gate index compatibility.
+    pub(crate) vault_meta: OverlayDb,
+    /// PPR cache rows. Values carry the final scores and, for current rows,
+    /// the residual/frontier state needed to resume a deeper Forward-Push run.
+    pub(crate) ppr_cache: OverlayDb,
+    /// Reverse dependency index for PPR cache invalidation:
+    /// `[entity_id | cache_key]`.
+    pub(crate) ppr_cache_deps: OverlayDb,
+    pub(crate) type_index: OverlayDb,
+    pub(crate) temporal_occurred_start: OverlayDb,
+    pub(crate) temporal_occurred_end: OverlayDb,
+    pub(crate) temporal_learned: OverlayDb,
+    pub(crate) temporal_long_intervals: OverlayDb,
+    pub(crate) phonetic_index: OverlayDb,
+    pub(crate) phonetic_forward: OverlayDb,
+    pub(crate) short_ids: OverlayDb,
+    pub(crate) short_ids_reverse: OverlayDb,
+    /// CRDT Doc states, state vectors, pending updates, metadata. Present in
+    /// EVERY build (ONE-1132): the delete path writes its CRDT-independent
+    /// `pt:` pending-tombstone marker here unconditionally, so deletion
+    /// durability never depends on the `sync` cargo feature.
+    pub(crate) sync_state: OverlayStrDb,
+    /// Offline update queue, embed job queue, and hard-delete sweep queue.
+    pub(crate) sync_queue: OverlayDb,
+    /// Generic background attempt records keyed by attempt id.
+    pub(crate) attempt_records: OverlayDb,
+    /// Ready-attempt ordering index keyed by ready-at time then attempt id.
+    pub(crate) attempt_ready: OverlayDb,
+    /// Advisory dedupe index keys mapped to attempt ids.
+    pub(crate) attempt_dedupe: OverlayDb,
+    pub(crate) owner: StoreOwner,
+}
+
+impl std::ops::Deref for Store {
+    type Target = StoreCore;
+
+    fn deref(&self) -> &StoreCore {
+        &self.core
+    }
+}
+
 static NEXT_AUTHORITY_CLOCK_DOMAIN: AtomicUsize = AtomicUsize::new(1);
 
-impl Drop for Store {
+impl Drop for StoreOwner {
     fn drop(&mut self) {
+        debug_assert!(
+            self.core.strong_count() == 0,
+            "an Arc<StoreCore> outlived its StoreOwner; the path registry \
+             would release the vault root while the environment is still \
+             live (ARCH-0052 store-split invariant)"
+        );
         crate::authority::release_authority_clock_domain(self.authority_clock_domain);
     }
 }
@@ -1245,7 +1352,13 @@ impl Store {
         let db_open_guard = lmdb_database_open_guard()?;
         let mut wtxn = env.write_txn()?;
         let vault_meta = create_manifest_db(&env, &mut wtxn, 4)?;
-        gate_storage_versions(&vault_meta, &mut wtxn, is_new_vault, storage_abi_version)?;
+        let vault_meta_view = OverlayDb::canonical(vault_meta);
+        gate_storage_versions(
+            &vault_meta_view,
+            &mut wtxn,
+            is_new_vault,
+            storage_abi_version,
+        )?;
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }
@@ -1283,7 +1396,86 @@ impl Store {
         wtxn.commit()?;
         drop(db_open_guard);
 
-        let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta)?);
+        let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
+
+        let authority_clock_domain =
+            NEXT_AUTHORITY_CLOCK_DOMAIN.fetch_add(1, AtomicOrdering::Relaxed);
+        let shared_env: Env = (*env).clone();
+        let core = Arc::new(StoreCore {
+            env: shared_env,
+            raw: RawDatabases {
+                entities,
+                edges_out,
+                edges_in,
+                vectors,
+                hnsw_neighbors,
+                hnsw_meta,
+                text_postings,
+                text_meta,
+                text_forward,
+                text_bm25_field_stats,
+                text_doc_field_lengths,
+                vault_meta,
+                ppr_cache,
+                ppr_cache_deps,
+                type_index,
+                temporal_occurred_start,
+                temporal_occurred_end,
+                temporal_learned,
+                temporal_long_intervals,
+                phonetic_index,
+                phonetic_forward,
+                short_ids,
+                short_ids_reverse,
+                sync_state,
+                sync_queue,
+                attempt_records,
+                attempt_ready,
+                attempt_dedupe,
+            },
+            kind_registry,
+            retrieval_blend_tuning_lock: Mutex::new(()),
+            authority_clock_domain,
+        });
+        let owner = StoreOwner {
+            core: Arc::downgrade(&core),
+            env,
+            authority_clock_domain,
+            created_new_vault: is_new_vault,
+            _registered_path: registered_path,
+        };
+        let store = Self {
+            entities: OverlayDb::canonical(core.raw.entities),
+            edges_out: OverlayDb::canonical(core.raw.edges_out),
+            edges_in: OverlayDb::canonical(core.raw.edges_in),
+            vectors: OverlayDb::canonical(core.raw.vectors),
+            hnsw_neighbors: OverlayDb::canonical(core.raw.hnsw_neighbors),
+            hnsw_meta: OverlayDb::canonical(core.raw.hnsw_meta),
+            text_postings: OverlayDb::canonical(core.raw.text_postings),
+            text_meta: OverlayDb::canonical(core.raw.text_meta),
+            text_forward: OverlayDb::canonical(core.raw.text_forward),
+            text_bm25_field_stats: OverlayDb::canonical(core.raw.text_bm25_field_stats),
+            text_doc_field_lengths: OverlayDb::canonical(core.raw.text_doc_field_lengths),
+            vault_meta: OverlayDb::canonical(core.raw.vault_meta),
+            ppr_cache: OverlayDb::canonical(core.raw.ppr_cache),
+            ppr_cache_deps: OverlayDb::canonical(core.raw.ppr_cache_deps),
+            type_index: OverlayDb::canonical(core.raw.type_index),
+            temporal_occurred_start: OverlayDb::canonical(core.raw.temporal_occurred_start),
+            temporal_occurred_end: OverlayDb::canonical(core.raw.temporal_occurred_end),
+            temporal_learned: OverlayDb::canonical(core.raw.temporal_learned),
+            temporal_long_intervals: OverlayDb::canonical(core.raw.temporal_long_intervals),
+            phonetic_index: OverlayDb::canonical(core.raw.phonetic_index),
+            phonetic_forward: OverlayDb::canonical(core.raw.phonetic_forward),
+            short_ids: OverlayDb::canonical(core.raw.short_ids),
+            short_ids_reverse: OverlayDb::canonical(core.raw.short_ids_reverse),
+            sync_state: OverlayStrDb::canonical(core.raw.sync_state),
+            sync_queue: OverlayDb::canonical(core.raw.sync_queue),
+            attempt_records: OverlayDb::canonical(core.raw.attempt_records),
+            attempt_ready: OverlayDb::canonical(core.raw.attempt_ready),
+            attempt_dedupe: OverlayDb::canonical(core.raw.attempt_dedupe),
+            core,
+            owner,
+        };
 
         // EMB-2 preflight: an out-of-range fast_dims is a caller bug and
         // fails closed before the HNSW compat check below can compare it.
@@ -1295,19 +1487,34 @@ impl Store {
             ));
         }
 
-        let should_persist_hnsw_config =
-            preflight_hnsw_config(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
+        let should_persist_hnsw_config = preflight_hnsw_config(
+            &store.env,
+            &store.hnsw_meta,
+            &store.vectors,
+            &store.hnsw_neighbors,
+            config,
+        )?;
         let should_persist_model_id = preflight_embedding_model(
-            &env,
-            &hnsw_meta,
-            &vectors,
-            &hnsw_neighbors,
+            &store.env,
+            &store.hnsw_meta,
+            &store.vectors,
+            &store.hnsw_neighbors,
             config.embedding_model.as_deref(),
         )?;
-        migrate_temporal_long_intervals_if_needed(&env, &hnsw_meta, &temporal_long_intervals)?;
+        migrate_temporal_long_intervals_if_needed(
+            &store.env,
+            &store.hnsw_meta,
+            &store.temporal_long_intervals,
+        )?;
 
         if should_persist_hnsw_config {
-            persist_hnsw_config_if_missing(&env, &hnsw_meta, &vectors, &hnsw_neighbors, config)?;
+            persist_hnsw_config_if_missing(
+                &store.env,
+                &store.hnsw_meta,
+                &store.vectors,
+                &store.hnsw_neighbors,
+                config,
+            )?;
         }
 
         if should_persist_model_id {
@@ -1315,52 +1522,21 @@ impl Store {
                 .embedding_model
                 .as_deref()
                 .ok_or_else(|| Error::InvalidConfig("missing embedding model".to_owned()))?;
-            persist_model_id_if_missing(&env, &hnsw_meta, &vectors, &hnsw_neighbors, requested)?;
+            persist_model_id_if_missing(
+                &store.env,
+                &store.hnsw_meta,
+                &store.vectors,
+                &store.hnsw_neighbors,
+                requested,
+            )?;
         }
 
-        let store = Self {
-            env,
-            entities,
-            edges_out,
-            edges_in,
-            vectors,
-            hnsw_neighbors,
-            hnsw_meta,
-            text_postings,
-            text_meta,
-            text_forward,
-            text_bm25_field_stats,
-            text_doc_field_lengths,
-            vault_meta,
-            kind_registry,
-            retrieval_blend_tuning_lock: Mutex::new(()),
-            ppr_cache,
-            ppr_cache_deps,
-            type_index,
-            temporal_occurred_start,
-            temporal_occurred_end,
-            temporal_learned,
-            temporal_long_intervals,
-            phonetic_index,
-            phonetic_forward,
-            short_ids,
-            short_ids_reverse,
-            sync_state,
-            sync_queue,
-            attempt_records,
-            attempt_ready,
-            attempt_dedupe,
-            authority_clock_domain: NEXT_AUTHORITY_CLOCK_DOMAIN
-                .fetch_add(1, AtomicOrdering::Relaxed),
-            created_new_vault: is_new_vault,
-            _registered_path: registered_path,
-        };
         store.ensure_receipt_family_indexes_on_open()?;
         Ok(store)
     }
 
     pub(crate) fn created_new_vault(&self) -> bool {
-        self.created_new_vault
+        self.owner.created_new_vault
     }
 
     /// Builds RCPT-1's additive `vault_meta` sidecars before an opened store
@@ -1373,7 +1549,7 @@ impl Store {
                 .vault_meta
                 .get(&rtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?
             {
-                Some(version) if version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
+                Some(version) if *version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
                 Some(_) => return Err(Error::CorruptedIndex("receipt family index version")),
                 None => {}
             }
@@ -1384,7 +1560,7 @@ impl Store {
             .vault_meta
             .get(&wtxn, RECEIPT_FAMILY_INDEX_VERSION_KEY)?
         {
-            Some(version) if version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
+            Some(version) if *version == [RECEIPT_FAMILY_INDEX_VERSION] => return Ok(()),
             Some(_) => return Err(Error::CorruptedIndex("receipt family index version")),
             None => {}
         }
@@ -1395,8 +1571,8 @@ impl Store {
         let mut attempts = Vec::new();
         for row in self.attempt_records.iter(&wtxn)? {
             let (key, raw) = row?;
-            let id = crate::attempt_queue::AttemptId::from_bytes(key)?;
-            attempts.push(crate::attempt_queue::decode_record(raw, id)?);
+            let id = crate::attempt_queue::AttemptId::from_bytes(&key)?;
+            attempts.push(crate::attempt_queue::decode_record(&raw, id)?);
         }
         for attempt in &attempts {
             self.put_attempt_run_index_in_txn(
@@ -1416,8 +1592,8 @@ impl Store {
             ),
         )? {
             let (key, value) = row?;
-            let decision_id = gate_decision_id_from_key(key)?;
-            let record = decode_gate_decision(value)?;
+            let decision_id = gate_decision_id_from_key(&key)?;
+            let record = decode_gate_decision(&value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -1437,8 +1613,8 @@ impl Store {
             ),
         )? {
             let (key, value) = row?;
-            let claim_id = pending_gate_consent_claim_id_from_key(key)?;
-            let record = decode_pending_gate_consent(value)?;
+            let claim_id = pending_gate_consent_claim_id_from_key(&key)?;
+            let record = decode_pending_gate_consent(&value)?;
             if record.claim_id != claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -1499,7 +1675,7 @@ impl Store {
         let mut ids = Vec::new();
         for row in self.vault_meta.prefix_iter(txn, &prefix)? {
             let (key, _) = row?;
-            ids.push(index_suffix_id(key, &prefix, "attempt run index")?);
+            ids.push(index_suffix_id(&key, &prefix, "attempt run index")?);
         }
         Ok(ids)
     }
@@ -1561,7 +1737,7 @@ impl Store {
         id: &EntityId,
     ) -> Result<bool> {
         let key = Self::pending_embedding_marker_key(id);
-        Ok(self.sync_state.delete(wtxn, key.as_str())?)
+        self.sync_state.delete(wtxn, key.as_str())
     }
 
     pub(crate) fn clear_pending_embedding_if_token_matches(
@@ -1588,7 +1764,7 @@ impl Store {
         let Some(current) = self.current_claim_embedding_token(rtxn, id)? else {
             return Ok(None);
         };
-        Ok((marker == current).then_some(marker.to_vec()))
+        Ok((*marker == current).then_some(marker.to_vec()))
     }
 
     #[cfg(feature = "sync")]
@@ -1604,7 +1780,7 @@ impl Store {
         let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
             return Ok(None);
         };
-        Ok((marker == current).then_some(marker.to_vec()))
+        Ok((*marker == current).then_some(marker.to_vec()))
     }
 
     pub(crate) fn has_current_pending_embedding_in_txn(
@@ -1619,7 +1795,7 @@ impl Store {
         let Some(current) = self.current_claim_embedding_token_in_txn(wtxn, id)? else {
             return Ok(false);
         };
-        Ok(marker == current)
+        Ok(*marker == current)
     }
 
     pub(crate) fn pending_embedding_matches_in_txn(
@@ -1632,7 +1808,7 @@ impl Store {
         let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
             return Ok(false);
         };
-        if marker != token {
+        if *marker != *token {
             return Ok(false);
         }
         Ok(self
@@ -1648,7 +1824,7 @@ impl Store {
         let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        Ok(current_claim_embedding_token_from_record(record))
+        Ok(current_claim_embedding_token_from_record(&record))
     }
 
     fn current_claim_embedding_token_in_txn(
@@ -1659,7 +1835,7 @@ impl Store {
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
             return Ok(None);
         };
-        Ok(current_claim_embedding_token_from_record(record))
+        Ok(current_claim_embedding_token_from_record(&record))
     }
 
     pub(crate) fn structural_kind_registration(
@@ -1820,7 +1996,7 @@ impl Store {
         vet_pending_deletion_gate_decision_record(&pending)?;
         let key = pending_deletion_gate_decision_key(record.decision_id);
         let sidecar_exists = if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
-            let existing = decode_pending_deletion_gate_decision(existing)?;
+            let existing = decode_pending_deletion_gate_decision(&existing)?;
             if existing != pending {
                 return Err(Error::InvariantViolation(
                     "pending deletion gate decision id collision",
@@ -1837,7 +2013,7 @@ impl Store {
         let required_key = deletion_gate_required_key(record.decision_id);
         let required_value = encode_deletion_gate_required(target, tombstone_reason);
         if let Some(existing) = self.vault_meta.get(&*wtxn, &required_key)? {
-            if existing != required_value {
+            if *existing != required_value {
                 return Err(Error::InvariantViolation(
                     "deletion gate required marker id collision",
                 ));
@@ -1859,7 +2035,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(txn, &key)? else {
             return Ok(None);
         };
-        let pending = decode_pending_deletion_gate_decision(value)?;
+        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
@@ -1880,7 +2056,7 @@ impl Store {
         let Some(required) = self.vault_meta.get(&*wtxn, &required_key)? else {
             return Ok(None);
         };
-        let (required_target, required_reason) = decode_deletion_gate_required(required)?;
+        let (required_target, required_reason) = decode_deletion_gate_required(&required)?;
         if required_target != *target || required_reason != tombstone_reason {
             return Ok(None);
         }
@@ -1888,7 +2064,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         };
-        let pending = decode_pending_deletion_gate_decision(value)?;
+        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
@@ -1916,7 +2092,7 @@ impl Store {
         let Some(required) = self.vault_meta.get(&*wtxn, &required_key)? else {
             return Ok(false);
         };
-        let (required_target, required_reason) = decode_deletion_gate_required(required)?;
+        let (required_target, required_reason) = decode_deletion_gate_required(&required)?;
         if required_target != *target || required_reason != tombstone_reason {
             return Ok(false);
         }
@@ -1924,7 +2100,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(&*wtxn, &key)? else {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         };
-        let pending = decode_pending_deletion_gate_decision(value)?;
+        let pending = decode_pending_deletion_gate_decision(&value)?;
         if pending.decision.decision_id != request_id {
             return Err(Error::CorruptedIndex("pending deletion gate decision"));
         }
@@ -1959,7 +2135,7 @@ impl Store {
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, _) = row?;
             let decision_id = GateDecisionId::from_bytes(index_suffix_id(
-                key,
+                &key,
                 &prefix,
                 "gate decision grant ref index",
             )?);
@@ -1997,8 +2173,8 @@ impl Store {
             if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
                 break;
             }
-            let decision_id = gate_decision_id_from_key(key)?;
-            let record = decode_gate_decision(value)?;
+            let decision_id = gate_decision_id_from_key(&key)?;
+            let record = decode_gate_decision(&value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -2031,8 +2207,8 @@ impl Store {
             if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
                 break;
             }
-            let decision_id = gate_decision_id_from_key(key)?;
-            let record = decode_gate_decision(value)?;
+            let decision_id = gate_decision_id_from_key(&key)?;
+            let record = decode_gate_decision(&value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -2064,7 +2240,10 @@ impl Store {
     pub(crate) fn outbound_gate_binding(&self, attempt_id: &[u8; 16]) -> Result<Option<Vec<u8>>> {
         let key = outbound_gate_binding_key(attempt_id);
         let rtxn = self.env.read_txn()?;
-        Ok(self.vault_meta.get(&rtxn, &key)?.map(<[u8]>::to_vec))
+        Ok(self
+            .vault_meta
+            .get(&rtxn, &key)?
+            .map(|value| value.to_vec()))
     }
 
     pub(crate) fn gate_decision_in_txn(
@@ -2075,7 +2254,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(txn, &gate_decision_key(decision_id))? else {
             return Ok(None);
         };
-        let record = decode_gate_decision(value)?;
+        let record = decode_gate_decision(&value)?;
         if record.decision_id != decision_id {
             return Err(Error::CorruptedIndex("gate decision ledger"));
         }
@@ -2107,7 +2286,7 @@ impl Store {
         vet_pending_gate_consent_record(record)?;
         let key = pending_gate_consent_key(&record.claim_id);
         if let Some(existing) = self.vault_meta.get(&*wtxn, &key)? {
-            let existing = decode_pending_gate_consent(existing)?;
+            let existing = decode_pending_gate_consent(&existing)?;
             if existing.claim_id != record.claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -2130,7 +2309,7 @@ impl Store {
         else {
             return Ok(None);
         };
-        let record = decode_pending_gate_consent(value)?;
+        let record = decode_pending_gate_consent(&value)?;
         if record.claim_id != *claim_id.as_bytes() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
@@ -2144,7 +2323,7 @@ impl Store {
     ) -> Result<()> {
         let key = pending_gate_consent_key(claim_id.as_bytes());
         if let Some(value) = self.vault_meta.get(&*wtxn, &key)? {
-            let record = decode_pending_gate_consent(value)?;
+            let record = decode_pending_gate_consent(&value)?;
             if record.claim_id != *claim_id.as_bytes() {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -2186,7 +2365,7 @@ impl Store {
         let semantic_claim_hash = match self.entities.get(wtxn, claim_id.as_bytes())? {
             None => None,
             Some(raw) => {
-                let Some(header) = EntityMetadataHeader::parse(raw) else {
+                let Some(header) = EntityMetadataHeader::parse(&raw) else {
                     return Err(Error::CorruptedIndex("entity header"));
                 };
                 if header.entity_type != ENTITY_TYPE_CLAIM {
@@ -2262,7 +2441,7 @@ impl Store {
         for row in self.vault_meta.prefix_iter(&*wtxn, &prefix)? {
             let (key, _) = row?;
             let claim_id = EntityId::from_bytes(index_suffix_id(
-                key,
+                &key,
                 &prefix,
                 "pending gate consent run index",
             )?)
@@ -2297,7 +2476,7 @@ impl Store {
         else {
             return Ok(None);
         };
-        let state = decode_pending_gate_consent_index_state(raw)?;
+        let state = decode_pending_gate_consent_index_state(&raw)?;
         if record.dreamer_run_id.as_deref() != Some(state.run_id.as_str()) {
             return Err(Error::CorruptedIndex("pending gate consent index state"));
         }
@@ -2375,7 +2554,7 @@ impl Store {
         else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-        let original = decode_gate_decision(value)?;
+        let original = decode_gate_decision(&value)?;
         if original.decision_id != pending.decision_id {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
@@ -2428,8 +2607,8 @@ impl Store {
             if !key.starts_with(PENDING_GATE_CONSENT_KEY_PREFIX) {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
-            let claim_id = pending_gate_consent_claim_id_from_key(key)?;
-            let record = decode_pending_gate_consent(value)?;
+            let claim_id = pending_gate_consent_claim_id_from_key(&key)?;
+            let record = decode_pending_gate_consent(&value)?;
             if record.claim_id != claim_id {
                 return Err(Error::CorruptedIndex("pending gate consent"));
             }
@@ -2514,7 +2693,7 @@ impl Store {
         let mut records = Vec::new();
         for row in self.vault_meta.prefix_iter(txn, prefix)? {
             let (key, _) = row?;
-            let claim_id = EntityId::from_bytes(index_suffix_id(key, prefix, index_name)?)
+            let claim_id = EntityId::from_bytes(index_suffix_id(&key, prefix, index_name)?)
                 .map_err(|_| Error::CorruptedIndex(index_name))?;
             let Some(record) = self.pending_gate_consent_in_txn(txn, &claim_id)? else {
                 return Err(Error::CorruptedIndex(index_name));
@@ -2580,8 +2759,8 @@ impl Store {
             if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
                 break;
             }
-            let decision_id = gate_decision_id_from_key(key)?;
-            let record = decode_gate_decision(value)?;
+            let decision_id = gate_decision_id_from_key(&key)?;
+            let record = decode_gate_decision(&value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -2614,8 +2793,8 @@ impl Store {
             if !key.starts_with(CHANNEL_IDENTITY_LIFECYCLE_KEY_PREFIX) {
                 break;
             }
-            let receipt_id = channel_identity_lifecycle_id_from_key(key)?;
-            let record = decode_channel_identity_lifecycle_receipt(value)?;
+            let receipt_id = channel_identity_lifecycle_id_from_key(&key)?;
+            let record = decode_channel_identity_lifecycle_receipt(&value)?;
             if record.receipt_id != receipt_id {
                 return Err(Error::CorruptedIndex(
                     "channel identity lifecycle ledger key mismatch",
@@ -2642,7 +2821,7 @@ impl Store {
         published: bool,
     ) -> Result<()> {
         #[cfg(test)]
-        if test_hooks::take_fail_next_retrieval_run_write(&self._registered_path.path) {
+        if test_hooks::take_fail_next_retrieval_run_write(&self.owner._registered_path.path) {
             return Err(Error::InvariantViolation(
                 "forced retrieval telemetry write failure",
             ));
@@ -2723,7 +2902,7 @@ impl Store {
             wtxn.commit()?;
             return Ok(());
         };
-        let mut record = decode_retrieval_run(raw)?;
+        let mut record = decode_retrieval_run(&raw)?;
         record.elapsed_us = elapsed_us;
         record.claims_suppressed = claims_suppressed;
         record.result_ids = surfaced_result_ids.to_vec();
@@ -2819,7 +2998,7 @@ impl Store {
             if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
                 break;
             }
-            let run_id = retrieval_run_id_from_key(key)?;
+            let run_id = retrieval_run_id_from_key(&key)?;
             if self
                 .vault_meta
                 .get(&rtxn, &retrieval_run_provisional_key(run_id))?
@@ -2827,7 +3006,7 @@ impl Store {
             {
                 continue;
             }
-            let record = decode_retrieval_run(value)?;
+            let record = decode_retrieval_run(&value)?;
             if record.run_id != run_id {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
             }
@@ -2854,7 +3033,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
             return Ok(None);
         };
-        let record = decode_retrieval_run(value)?;
+        let record = decode_retrieval_run(&value)?;
         if record.run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval run telemetry"));
         }
@@ -2873,7 +3052,7 @@ impl Store {
         let mut latest = None::<RetrievalRunRecord>;
         for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, _) = row?;
-            let run_id = retrieval_run_id_from_fork_key(key)?;
+            let run_id = retrieval_run_id_from_fork_key(&key)?;
             if self
                 .vault_meta
                 .get(&rtxn, &retrieval_run_provisional_key(run_id))?
@@ -2884,7 +3063,7 @@ impl Store {
             let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
                 return Err(Error::CorruptedIndex("retrieval trace fork index"));
             };
-            let record = decode_retrieval_run(value)?;
+            let record = decode_retrieval_run(&value)?;
             let Some(trace) = &record.trace else {
                 return Err(Error::CorruptedIndex("retrieval trace fork index"));
             };
@@ -2912,7 +3091,7 @@ impl Store {
         else {
             return Ok(RetrievalBlendWeightTableEntry::bootstrap());
         };
-        decode_retrieval_blend_weight_table(value)
+        decode_retrieval_blend_weight_table(&value)
     }
 
     pub fn retrieval_blend_weight_table(&self) -> Result<RetrievalBlendWeightTableEntry> {
@@ -2955,7 +3134,7 @@ impl Store {
             if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
                 break;
             }
-            let run_id = retrieval_run_id_from_key(key)?;
+            let run_id = retrieval_run_id_from_key(&key)?;
             if self
                 .vault_meta
                 .get(&rtxn, &retrieval_run_provisional_key(run_id))?
@@ -2963,7 +3142,7 @@ impl Store {
             {
                 continue;
             }
-            let record = decode_retrieval_run(value)?;
+            let record = decode_retrieval_run(&value)?;
             if record.run_id != run_id {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
             }
@@ -3135,7 +3314,7 @@ fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> b
 }
 
 fn put_retrieval_trace_fork_index(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     wtxn: &mut RwTxn<'_>,
     fork_hash: &RetrievalTraceForkHash,
     run_id: RetrievalRunId,
@@ -3147,13 +3326,13 @@ fn put_retrieval_trace_fork_index(
 }
 
 fn delete_retrieval_trace_fork_indexes_for_run(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     wtxn: &mut RwTxn<'_>,
     run_key: &[u8],
     run_id: RetrievalRunId,
 ) -> Result<()> {
     if let Some(raw) = vault_meta.get(wtxn, run_key)?
-        && let Ok(record) = decode_retrieval_run(raw)
+        && let Ok(record) = decode_retrieval_run(&raw)
         && record.run_id == run_id
         && let Some(trace) = record.trace
         && !is_unknown_retrieval_trace_fork_hash(&trace.fork_hash)
@@ -3272,7 +3451,7 @@ fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
 }
 
 fn retrieval_outcomes_for_run_in_txn(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     rtxn: &RoTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<Vec<RetrievalOutcomeRecord>> {
@@ -3280,11 +3459,11 @@ fn retrieval_outcomes_for_run_in_txn(
     let mut records = Vec::new();
     for row in vault_meta.prefix_iter(rtxn, &prefix)? {
         let (key, value) = row?;
-        let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(key)?;
+        let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(&key)?;
         if key_run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
         }
-        let record = decode_retrieval_outcome(value)?;
+        let record = decode_retrieval_outcome(&value)?;
         if record.run_id != key_run_id || record.key != key_outcome_key {
             return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
         }
@@ -3919,14 +4098,14 @@ fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
 
 fn load_structural_kind_registry(
     env: &Env,
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
 ) -> Result<HashMap<u8, StructuralKindRegistration>> {
     let rtxn = env.read_txn()?;
     let mut registry = HashMap::new();
     let mut prefixes = HashSet::new();
     for row in vault_meta.prefix_iter(&rtxn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
         let (key, value) = row?;
-        let registration = decode_structural_kind_registration(key, value)?;
+        let registration = decode_structural_kind_registration(&key, &value)?;
         vet_structural_kind_registration_shape(&registration)
             .map_err(|_| Error::CorruptedIndex("structural kind registry"))?;
         vet_structural_kind_registration_band(&registration)
@@ -3987,13 +4166,13 @@ fn is_compatible_legacy_companion_register_row(registration: &StructuralKindRegi
 }
 
 fn vault_meta_has_structural_kind_prefix(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     txn: &RwTxn<'_>,
     short_id_prefix: &str,
 ) -> Result<bool> {
     for row in vault_meta.prefix_iter(txn, STRUCTURAL_KIND_REGISTRY_KEY_PREFIX)? {
         let (key, value) = row?;
-        let registration = decode_structural_kind_registration(key, value)?;
+        let registration = decode_structural_kind_registration(&key, &value)?;
         if registration.short_id_prefix == short_id_prefix {
             return Ok(true);
         }
@@ -4560,7 +4739,7 @@ pub(crate) fn materialized_database_names(env: &Env, txn: &heed::RoTxn<'_>) -> R
 }
 
 fn gate_storage_versions(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     wtxn: &mut RwTxn<'_>,
     new_vault: bool,
     storage_abi_version: u16,
@@ -4625,7 +4804,7 @@ fn gate_storage_abi_value(stored: Option<u16>, current: u16, new_vault: bool) ->
 }
 
 pub(crate) fn read_vault_meta_u16(
-    vault_meta: &Database<Bytes, Bytes>,
+    vault_meta: &OverlayDb,
     txn: &heed::RoTxn<'_>,
     key: &[u8],
     context: &'static str,
@@ -4633,21 +4812,24 @@ pub(crate) fn read_vault_meta_u16(
     let Some(raw) = vault_meta.get(txn, key)? else {
         return Ok(None);
     };
-    let bytes: [u8; 2] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
+    let bytes: [u8; 2] = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex(context))?;
     Ok(Some(u16::from_le_bytes(bytes)))
 }
 
 fn preflight_embedding_model(
     env: &Env,
-    hnsw_meta: &Database<Bytes, Bytes>,
-    vectors: &Database<Bytes, Bytes>,
-    hnsw_neighbors: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    vectors: &OverlayDb,
+    hnsw_neighbors: &OverlayDb,
     requested: Option<&str>,
 ) -> Result<bool> {
     let rtxn = env.read_txn()?;
     match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
         Some(raw) => {
-            let stored = parse_utf8_bytes(raw)?;
+            let stored = parse_utf8_bytes(&raw)?;
             match requested {
                 Some(requested) if stored != requested => Err(Error::EmbeddingModelChanged {
                     stored,
@@ -4679,9 +4861,9 @@ fn preflight_embedding_model(
 
 fn preflight_hnsw_config(
     env: &Env,
-    hnsw_meta: &Database<Bytes, Bytes>,
-    vectors: &Database<Bytes, Bytes>,
-    hnsw_neighbors: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    vectors: &OverlayDb,
+    hnsw_neighbors: &OverlayDb,
     requested: &VaultConfig,
 ) -> Result<bool> {
     let rtxn = env.read_txn()?;
@@ -4719,9 +4901,9 @@ fn preflight_hnsw_config(
 
 fn persist_hnsw_config_if_missing(
     env: &Env,
-    hnsw_meta: &Database<Bytes, Bytes>,
-    vectors: &Database<Bytes, Bytes>,
-    hnsw_neighbors: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    vectors: &OverlayDb,
+    hnsw_neighbors: &OverlayDb,
     requested: &VaultConfig,
 ) -> Result<()> {
     let requested = PersistedHnswCompatibility::from_config(requested);
@@ -4761,15 +4943,15 @@ fn persist_hnsw_config_if_missing(
 
 fn persist_model_id_if_missing(
     env: &Env,
-    hnsw_meta: &Database<Bytes, Bytes>,
-    vectors: &Database<Bytes, Bytes>,
-    hnsw_neighbors: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    vectors: &OverlayDb,
+    hnsw_neighbors: &OverlayDb,
     requested: &str,
 ) -> Result<()> {
     let mut wtxn = env.write_txn()?;
     match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
-            let stored = parse_utf8_bytes(raw)?;
+            let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
                 return Err(Error::EmbeddingModelChanged {
                     stored,
@@ -4800,7 +4982,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
     })?;
     match store.hnsw_meta.get(&*wtxn, MODEL_ID_KEY)? {
         Some(raw) => {
-            let stored = parse_utf8_bytes(raw)?;
+            let stored = parse_utf8_bytes(&raw)?;
             if stored != requested {
                 return Err(Error::EmbeddingModelChanged {
                     stored,
@@ -4847,7 +5029,7 @@ fn encode_hnsw_config(config: &PersistedHnswCompatibility) -> Result<[u8; HNSW_C
 }
 
 pub(crate) fn read_hnsw_compatibility(
-    hnsw_meta: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
     txn: &heed::RoTxn<'_>,
 ) -> Result<HnswCompatibilityState> {
     let Some(raw) = hnsw_meta.get(txn, HNSW_CONFIG_KEY)? else {
@@ -4856,7 +5038,7 @@ pub(crate) fn read_hnsw_compatibility(
 
     match raw.len() {
         HNSW_COMPATIBILITY_LEN => {
-            decode_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
+            decode_hnsw_compatibility(&raw).map(HnswCompatibilityState::Current)
         }
         // v2 records decode as CURRENT with `fast_dims: None`, never Legacy:
         // `preflight_hnsw_config` hard-errors Legacy on populated vaults, so
@@ -4864,10 +5046,10 @@ pub(crate) fn read_hnsw_compatibility(
         // vault. A v2 vault opens under `fast_dims: None` (struct equality
         // holds) and correctly fails `HnswConfigChanged` under `Some(_)`.
         HNSW_COMPATIBILITY_V2_LEN => {
-            decode_v2_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
+            decode_v2_hnsw_compatibility(&raw).map(HnswCompatibilityState::Current)
         }
         HNSW_COMPATIBILITY_V1_LEN | HNSW_COMPATIBILITY_V0_LEN => {
-            decode_legacy_hnsw_compatibility(raw).map(HnswCompatibilityState::Legacy)
+            decode_legacy_hnsw_compatibility(&raw).map(HnswCompatibilityState::Legacy)
         }
         _ => Err(Error::InvalidKey),
     }
@@ -4996,9 +5178,9 @@ pub(crate) fn format_hnsw_index_structure(code: u8) -> String {
 }
 
 fn has_persisted_vector_or_hnsw_data(
-    hnsw_meta: &Database<Bytes, Bytes>,
-    vectors: &Database<Bytes, Bytes>,
-    hnsw_neighbors: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    vectors: &OverlayDb,
+    hnsw_neighbors: &OverlayDb,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool> {
     Ok(database_has_entries(vectors, txn)?
@@ -5006,14 +5188,14 @@ fn has_persisted_vector_or_hnsw_data(
         || crate::hnsw::has_population(hnsw_meta, txn)?)
 }
 
-fn database_has_entries(db: &Database<Bytes, Bytes>, txn: &heed::RoTxn<'_>) -> Result<bool> {
+fn database_has_entries(db: &OverlayDb, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(db.iter(txn)?.next().transpose()?.is_some())
 }
 
 fn migrate_temporal_long_intervals_if_needed(
     env: &Env,
-    hnsw_meta: &Database<Bytes, Bytes>,
-    temporal_long_intervals: &Database<Bytes, Bytes>,
+    hnsw_meta: &OverlayDb,
+    temporal_long_intervals: &OverlayDb,
 ) -> Result<()> {
     let rtxn = env.read_txn()?;
     let stored_version = match hnsw_meta.get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)? {
@@ -5037,8 +5219,8 @@ fn migrate_temporal_long_intervals_if_needed(
         match (key.len(), value.len()) {
             (24, 8) => {}
             (16, 16) => {
-                let old_key = key.try_into().map_err(|_| Error::InvalidKey)?;
-                let old_value = value.try_into().map_err(|_| Error::InvalidKey)?;
+                let old_key = key.as_ref().try_into().map_err(|_| Error::InvalidKey)?;
+                let old_value = value.as_ref().try_into().map_err(|_| Error::InvalidKey)?;
                 legacy_rows.push((old_key, old_value));
             }
             _ => return Err(Error::InvalidKey),

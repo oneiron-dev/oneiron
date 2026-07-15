@@ -335,7 +335,7 @@ pub fn load_window_from_state(vault: &Vault, _user_id: &str, key: &WindowKey) ->
         })?;
 
     // Load from snapshot
-    let doc = doc_from_snapshot(state)?;
+    let doc = doc_from_snapshot(&state)?;
     drop(rtxn);
 
     // Apply pending updates on top of the snapshot (startup step 2).
@@ -369,7 +369,7 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(doc, v)?;
+        import_doc(doc, &v)?;
         applied += 1;
     }
     Ok(applied)
@@ -613,7 +613,7 @@ pub fn rebuild_window_from_updates(
     let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
     for entry in iter {
         let (_k, v) = entry?;
-        import_doc(&doc, v)?;
+        import_doc(&doc, &v)?;
     }
     Ok(doc)
 }
@@ -1261,7 +1261,7 @@ pub fn forward_rematerialize(
                 }
                 vault.with_write_txn(|wtxn| {
                     if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())? {
-                        if local == blob {
+                        if *local == *blob {
                             return Ok(false);
                         }
                         // ONE-1087 designed exception: the sweep's receipt
@@ -1272,7 +1272,7 @@ pub fn forward_rematerialize(
                         // idempotent skip, never an x: row. All other
                         // divergence quarantines.
                         if crate::deletion::redaction_receipt_is_stale_finalization_echo(
-                            local, blob,
+                            &local, blob,
                         ) {
                             tracing::debug!(
                                 entity = %key,
@@ -1323,7 +1323,7 @@ pub fn forward_rematerialize(
             } else if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
                 vault.with_write_txn(|wtxn| {
                     if let Some(local) = vault.store.entities.get(&*wtxn, id.as_bytes())?
-                        && local == blob
+                        && *local == *blob
                     {
                         return Ok(false);
                     }
@@ -1533,7 +1533,7 @@ pub fn forward_rematerialize(
                     .store
                     .edges_out
                     .get(&rtxn, &Store::encode_edge_key(&src, kind, &tgt))?
-                    .map(<[u8]>::to_vec);
+                    .map(|value| value.to_vec());
                 Ok((true, stored))
             })();
             let (endpoints_exist, stored) = match edge_state {

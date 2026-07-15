@@ -778,14 +778,14 @@ fn build_symmetric_vault(
 fn assert_symmetric_links(store: &Store, txn: &RoTxn<'_>) -> Result<()> {
     for entry in store.hnsw_neighbors.iter(txn)? {
         let (key, raw) = entry?;
-        let node = parse_entity_id(key, ERR_NEIGHBOR_KEY_BYTES)?;
-        let list = decode_neighbors(raw, false)?;
+        let node = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES)?;
+        let list = decode_neighbors(&raw, false)?;
         for neighbor in &list {
             let back_raw = store.hnsw_neighbors.get(txn, neighbor.as_bytes())?;
             let back_raw = back_raw.unwrap_or_else(|| {
                 panic!("dangling link {node:?} -> {neighbor:?}: neighbor row missing")
             });
-            let back = decode_neighbors(back_raw, false)?;
+            let back = decode_neighbors(&back_raw, false)?;
             if back.contains(&node) {
                 continue;
             }
@@ -818,7 +818,11 @@ fn fresh_vault_sets_symmetric_marker_and_keeps_links_symmetric() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+        vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+            .as_deref(),
         Some([SYMMETRIC_LINKS_ENABLED].as_slice()),
         "fresh graphs must carry the symmetric-links marker"
     );
@@ -888,7 +892,7 @@ fn delete_purges_orphan_protected_one_way_backlink() -> Result<()> {
     for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
         let (k, raw) = entry?;
         assert!(
-            !neighbor_bytes_contain(raw, &from)?,
+            !neighbor_bytes_contain(&raw, &from)?,
             "stale backlink to deleted node left in row {k:?}"
         );
     }
@@ -1009,7 +1013,7 @@ fn hnsw_deindex_symmetric_op_count_is_local() -> Result<()> {
         for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
             let (key, raw) = entry?;
             assert!(
-                !neighbor_bytes_contain(raw, &victim)?,
+                !neighbor_bytes_contain(&raw, &victim)?,
                 "stale backlink to deleted node left in row {key:?}"
             );
         }
@@ -1126,7 +1130,7 @@ fn symmetric_refresh_repairs_orphaned_old_neighbors() -> Result<()> {
     // Every referenced neighbor still has a row (nothing dangles).
     for entry in vault.store.hnsw_neighbors.iter(&rtxn)? {
         let (_, raw) = entry?;
-        for neighbor in decode_neighbors(raw, false)? {
+        for neighbor in decode_neighbors(&raw, false)? {
             assert!(
                 vault
                     .store
@@ -1154,7 +1158,11 @@ fn symmetric_fallback_rebuild_is_measured_and_symmetric() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(read_refresh_fallback_rebuilds(&vault.store, &rtxn)?, 1);
     assert_eq!(
-        vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+        vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+            .as_deref(),
         Some([SYMMETRIC_LINKS_ENABLED].as_slice())
     );
     assert_eq!(read_count(&vault.store, &rtxn)?, 12);
@@ -1279,7 +1287,11 @@ fn maintain_rebuild_migrates_legacy_vault_to_symmetric() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault.store.hnsw_meta.get(&rtxn, SYMMETRIC_LINKS_KEY)?,
+        vault
+            .store
+            .hnsw_meta
+            .get(&rtxn, SYMMETRIC_LINKS_KEY)?
+            .as_deref(),
         Some([SYMMETRIC_LINKS_ENABLED].as_slice()),
         "maintenance rebuild must stamp the symmetric marker"
     );

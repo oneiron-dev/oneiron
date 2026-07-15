@@ -436,7 +436,7 @@ impl Vault {
         for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, _) = entry?;
             let fork_session_id =
-                id_from_index_key(key, prefix.len(), "code revision fork parent index key")?;
+                id_from_index_key(&key, prefix.len(), "code revision fork parent index key")?;
             if let Some(fork) = get_code_revision_fork_in_txn(&self.store, &rtxn, &fork_session_id)?
             {
                 forks.push(fork);
@@ -1083,7 +1083,7 @@ fn code_artifact_body_bytes(
     let Some(raw) = store.entities.get(rtxn, revision_id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_CODE_ARTIFACT {
         return Err(Error::InvalidCodeArtifactBody(
             "revision_id must be a CODE_ARTIFACT entity",
@@ -1150,7 +1150,7 @@ fn require_entity_type(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Err(Error::EntityNotFound);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != expected_type {
         return Err(Error::InvalidCodeArtifactBody(context));
     }
@@ -1180,7 +1180,7 @@ fn read_code_revision_record_in_txn(
     else {
         return Ok(None);
     };
-    decode_code_revision(raw).map(Some)
+    decode_code_revision(&raw).map(Some)
 }
 
 fn backfill_code_revision_integrity_for_revision_in_txn(
@@ -1728,7 +1728,7 @@ fn load_optional_code_revision_integrity_record(
     else {
         return Ok(None);
     };
-    decode_code_revision_integrity_record(raw).map(Some)
+    decode_code_revision_integrity_record(&raw).map(Some)
 }
 
 fn get_code_revision_frontier_in_txn(
@@ -1742,7 +1742,7 @@ fn get_code_revision_frontier_in_txn(
     else {
         return Ok(None);
     };
-    decode_code_revision_frontier_record(raw).map(Some)
+    decode_code_revision_frontier_record(&raw).map(Some)
 }
 
 fn compute_code_revision_fold(
@@ -1800,7 +1800,7 @@ fn get_code_revision_fork_in_txn(
     else {
         return Ok(None);
     };
-    decode_code_revision_fork(raw).map(Some)
+    decode_code_revision_fork(&raw).map(Some)
 }
 
 fn collect_code_revisions_by_index_prefix(
@@ -1811,7 +1811,7 @@ fn collect_code_revisions_by_index_prefix(
     let mut revisions = Vec::new();
     for entry in store.vault_meta.prefix_iter(rtxn, prefix)? {
         let (key, _) = entry?;
-        let revision_id = id_from_index_key(key, prefix.len(), "code revision index key")?;
+        let revision_id = id_from_index_key(&key, prefix.len(), "code revision index key")?;
         if let Some(revision) = get_code_revision_in_txn(store, rtxn, &revision_id)? {
             revisions.push(revision);
         }
@@ -1827,7 +1827,7 @@ fn collect_code_revision_records_by_index_prefix(
     let mut revisions = Vec::new();
     for entry in store.vault_meta.prefix_iter(rtxn, prefix)? {
         let (key, _) = entry?;
-        let revision_id = id_from_index_key(key, prefix.len(), "code revision index key")?;
+        let revision_id = id_from_index_key(&key, prefix.len(), "code revision index key")?;
         if let Some(revision) = read_code_revision_record_in_txn(store, rtxn, &revision_id)? {
             revisions.push(revision);
         }
@@ -1966,7 +1966,7 @@ fn child_of_parents(store: &Store, txn: &RwTxn<'_>, child: &EntityId) -> Result<
     let mut parents = Vec::new();
     for entry in store.edges_out.prefix_iter(txn, &prefix)? {
         let (key, value) = entry?;
-        let edge = parse_strict_edge_record(key, value)?;
+        let edge = parse_strict_edge_record(&key, &value)?;
         if edge.kind != EdgeKind::ChildOf {
             return Err(Error::CorruptedIndex("edge record"));
         }
@@ -1990,7 +1990,11 @@ fn delete_code_revision_record_in_txn(
     revision_id: &EntityId,
 ) -> Result<()> {
     let key = code_revision_record_key(revision_id);
-    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+    let Some(raw) = store
+        .vault_meta
+        .get(wtxn, &key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(());
     };
     match decode_code_revision(&raw) {
@@ -2046,7 +2050,7 @@ fn delete_code_revision_frontier_for_revision_in_txn(
         .prefix_iter(wtxn, CODE_REVISION_FRONTIER_KEY_PREFIX)?
     {
         let (key, value) = entry?;
-        match decode_code_revision_frontier_record(value) {
+        match decode_code_revision_frontier_record(&value) {
             Ok(frontier) if frontier.revision_id == *revision_id => {
                 keys.push(key.to_vec());
                 sessions.push(frontier.session_id);
@@ -2054,7 +2058,7 @@ fn delete_code_revision_frontier_for_revision_in_txn(
             Ok(_) => {}
             Err(_) => {
                 let session_id = id_from_index_key(
-                    key,
+                    &key,
                     CODE_REVISION_FRONTIER_KEY_PREFIX.len(),
                     "code revision frontier key",
                 )?;
@@ -2080,7 +2084,11 @@ fn delete_code_revision_fork_in_txn(
     fork_session_id: &EntityId,
 ) -> Result<()> {
     let key = code_revision_fork_key(fork_session_id);
-    let Some(raw) = store.vault_meta.get(wtxn, &key)?.map(<[u8]>::to_vec) else {
+    let Some(raw) = store
+        .vault_meta
+        .get(wtxn, &key)?
+        .map(|value| value.to_vec())
+    else {
         return Ok(());
     };
     match decode_code_revision_fork(&raw) {

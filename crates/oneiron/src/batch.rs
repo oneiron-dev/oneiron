@@ -161,7 +161,7 @@ fn authority_observation_secs_for_write(
     let previous_floor = store
         .sync_state
         .get(wtxn, floor_key)?
-        .and_then(crate::authority::decode_authority_first_seen_secs)
+        .and_then(|raw| crate::authority::decode_authority_first_seen_secs(&raw))
         .unwrap_or(0);
     let observed_secs = crate::authority::authority_observation_secs_for_domain(
         store.authority_clock_domain,
@@ -2236,7 +2236,7 @@ impl ChildOfBatchOverlay {
 
         for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            let parent = parse_strict_edge_record(key, value)?.target;
+            let parent = parse_strict_edge_record(&key, &value)?.target;
 
             if self.final_edge_override(child, &parent).unwrap_or(true) {
                 parents.insert(parent);
@@ -2263,7 +2263,7 @@ fn reject_engine_authored_delete(store: &Store, wtxn: &mut RwTxn<'_>, id: &Entit
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(());
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Ok(());
     };
     if matches!(
@@ -2360,7 +2360,7 @@ fn deindex_entity_without_lexical_query_hint_cascade(
     };
     had_graph_mutation = true;
 
-    let (entity_type, occurred, learned_at) = parse_entity_metadata(entity_record)?;
+    let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
     let mut cleanup = crate::affect::VadAnnotationCleanup::default();
     crate::affect::delete_vad_annotation_metadata_for_type_in_txn(
         store,
@@ -2452,7 +2452,7 @@ fn apply_claim_candidate(
         .get(wtxn, actor.entity_ref().as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     let actor_header =
-        EntityMetadataHeader::parse(actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        EntityMetadataHeader::parse(&actor_raw).ok_or(Error::CorruptedIndex("entity header"))?;
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
 
     let subject = candidate.subject();
@@ -2539,7 +2539,7 @@ fn reconcile_claim_of_edges(
     let mut stale_subjects = Vec::new();
     for entry in store.edges_out.prefix_iter(wtxn, &prefix)? {
         let (key, value) = entry?;
-        let subject = parse_strict_edge_record(key, value)?.target;
+        let subject = parse_strict_edge_record(&key, &value)?.target;
         if Some(subject) != new_subject {
             stale_subjects.push(subject);
         }
@@ -2657,7 +2657,7 @@ fn apply_put(
                 ));
             }
             if let Some(target_raw) = store.entities.get(wtxn, target.as_bytes())? {
-                let Some(target_header) = EntityMetadataHeader::parse(target_raw) else {
+                let Some(target_header) = EntityMetadataHeader::parse(&target_raw) else {
                     return Err(Error::CorruptedIndex("entity header"));
                 };
                 if target_header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -2812,7 +2812,7 @@ fn apply_put(
 
     let mut body_changed = true;
     if let Some(old_record) = store.entities.get(wtxn, id.as_bytes())? {
-        let (old_type, old_occurred, old_learned) = parse_entity_metadata(old_record)?;
+        let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.
@@ -2841,7 +2841,7 @@ fn apply_put(
         }
         if old_type == ENTITY_TYPE_TASK {
             validate_task_checkin_immutable(
-                old_record,
+                &old_record,
                 old_occurred,
                 old_learned,
                 occurred,
@@ -3055,13 +3055,13 @@ fn stored_authority_log_entries(
         .prefix_iter(wtxn, &[ENTITY_TYPE_AUTHORITY_LOG])?
     {
         let (key, _) = entry?;
-        let id = authority_type_index_entity_id(key)?;
+        let id = authority_type_index_entity_id(&key)?;
         let raw = store
             .entities
             .get(wtxn, id.as_bytes())?
             .ok_or(Error::CorruptedIndex("type index row without entity"))?;
         let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::CorruptedIndex("type index row kind mismatch"));
         }
@@ -3094,7 +3094,7 @@ fn validate_companion_register_put(
     let key = record.key();
 
     if let Some(existing_raw) = store.entities.get(&*wtxn, id.as_bytes())? {
-        let header = EntityMetadataHeader::parse(existing_raw)
+        let header = EntityMetadataHeader::parse(&existing_raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type == ENTITY_TYPE_COMPANION_REGISTER {
             let existing =
@@ -3332,7 +3332,7 @@ fn read_edge_value_for_setter(
     let existing = store
         .edges_out
         .get(wtxn, key_out)?
-        .map(<[u8]>::to_vec)
+        .map(|value| value.to_vec())
         .ok_or(Error::EdgeNotFound)?;
     match existing.len() {
         EDGE_VALUE_STRUCTURAL_LEN
@@ -3476,7 +3476,7 @@ fn stored_task_role(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
     if header.entity_type != ENTITY_TYPE_TASK {
@@ -3536,7 +3536,7 @@ fn validate_task_role_put_invariants(
         let prefix = child_of_prefix(id);
         for entry in store.edges_out.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            let parent = parse_strict_edge_record(key, value)?.target;
+            let parent = parse_strict_edge_record(&key, &value)?.target;
             validate_habit_checkin_parent_role(store, rtxn, &parent)?;
         }
     }
@@ -3545,7 +3545,7 @@ fn validate_task_role_put_invariants(
         let prefix = child_of_prefix(id);
         for entry in store.edges_in.prefix_iter(rtxn, &prefix)? {
             let (key, value) = entry?;
-            let child = parse_strict_edge_record(key, value)?.target;
+            let child = parse_strict_edge_record(&key, &value)?.target;
             if stored_task_role(store, rtxn, &child)? == Some(TaskRole::HabitCheckin) {
                 return Err(Error::InvalidTaskBody(
                     "Habit TASK with check-ins cannot change role",
@@ -3676,7 +3676,7 @@ fn lexical_query_hint_claim_ids_for_target(
     let mut hint_ids = Vec::new();
     for entry in store.edges_in.prefix_iter(wtxn, target.as_bytes())? {
         let (key, value) = entry?;
-        let edge = parse_strict_edge_record(key, value)?;
+        let edge = parse_strict_edge_record(&key, &value)?;
         if edge.kind != EdgeKind::ClaimOf {
             continue;
         }
@@ -3684,7 +3684,7 @@ fn lexical_query_hint_claim_ids_for_target(
         let Some(raw) = store.entities.get(wtxn, source.as_bytes())? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
+        let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Err(Error::CorruptedIndex("entity header"));
         };
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -3765,7 +3765,7 @@ fn stored_entity_is_claim_type(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityI
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(false);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
     Ok(header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
@@ -3779,7 +3779,7 @@ fn stored_claim_body(
     let Some(raw) = store.entities.get(wtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity header"));
     };
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -3812,7 +3812,7 @@ fn apply_phonetic(
     codes: &[String],
 ) -> Result<()> {
     let mut forward_codes = match store.phonetic_forward.get(wtxn, id.as_bytes())? {
-        Some(raw) => match decode_phonetic_forward_codes(raw) {
+        Some(raw) => match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => codes,
             Err(Error::CorruptedIndex(_)) => Vec::new(),
             Err(err) => return Err(err),
@@ -3890,7 +3890,7 @@ fn plan_short_id_update(
     let content_hash = (xxh32(data, 0) % 256) as u8;
 
     if let Some(existing) = store.short_ids_reverse.get(txn, id.as_bytes())? {
-        let (short_id, old_content_hash) = parse_short_id_value(existing)?;
+        let (short_id, old_content_hash) = parse_short_id_value(&existing)?;
         return Ok(ShortIdPlan::UpdateExisting {
             short_id: short_id.to_owned(),
             old_content_hash,
@@ -3906,6 +3906,7 @@ fn plan_short_id_update(
     let current = match store.vault_meta.get(txn, &counter_key)? {
         Some(raw) => {
             let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
+                .as_ref()
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("short id counter"))?;
             u64::from_le_bytes(buf)
@@ -3962,12 +3963,13 @@ fn apply_short_id_plan(
 }
 
 fn delete_short_id_rows_for_id(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
-    let forward_key = store
-        .short_ids_reverse
-        .get(wtxn, id.as_bytes())?
-        .map(parse_short_id_value)
-        .transpose()?
-        .map(|(short_id, content_hash)| encode_short_id_forward_key(short_id, content_hash));
+    let forward_key = match store.short_ids_reverse.get(wtxn, id.as_bytes())? {
+        Some(value) => {
+            let (short_id, content_hash) = parse_short_id_value(&value)?;
+            Some(encode_short_id_forward_key(short_id, content_hash))
+        }
+        None => None,
+    };
     if let Some(forward_key) = forward_key {
         store.short_ids.delete(wtxn, &forward_key)?;
         store.short_ids_reverse.delete(wtxn, id.as_bytes())?;
@@ -4040,7 +4042,7 @@ fn delete_related_edges(
     let mut outbound = Vec::new();
     for entry in store.edges_out.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        let edge = parse_strict_edge_record(key, value)?;
+        let edge = parse_strict_edge_record(&key, &value)?;
         outbound.push((edge.kind, edge.target));
     }
 
@@ -4054,7 +4056,7 @@ fn delete_related_edges(
     let mut inbound = Vec::new();
     for entry in store.edges_in.prefix_iter(wtxn, id.as_bytes())? {
         let (key, value) = entry?;
-        let edge = parse_strict_edge_record(key, value)?;
+        let edge = parse_strict_edge_record(&key, &value)?;
         inbound.push((edge.kind, edge.target));
     }
 
@@ -4081,7 +4083,7 @@ pub(crate) fn delete_from_phonetic_postings(
     id: &EntityId,
 ) -> Result<()> {
     if let Some(raw) = store.phonetic_forward.get(wtxn, id.as_bytes())? {
-        match decode_phonetic_forward_codes(raw) {
+        match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {
                 Ok(()) => {
                     if reconcile_phonetic_postings(store, wtxn, id)? {
@@ -4123,7 +4125,7 @@ fn scan_and_strip_phonetic_postings(
 
     for entry in store.phonetic_index.iter(wtxn)? {
         let (code, posting) = entry?;
-        let Some(updated) = posting_without_entity(posting, id)? else {
+        let Some(updated) = posting_without_entity(&posting, id)? else {
             continue;
         };
 
@@ -4165,7 +4167,7 @@ fn delete_from_known_phonetic_codes(
             .phonetic_index
             .get(wtxn, code.as_bytes())?
             .ok_or(Error::MissingPostingEntry)?;
-        let updated = posting_without_entity(posting, id)?.ok_or(Error::MissingPostingEntry)?;
+        let updated = posting_without_entity(&posting, id)?.ok_or(Error::MissingPostingEntry)?;
 
         if updated.is_empty() {
             store.phonetic_index.delete(wtxn, code.as_bytes())?;
