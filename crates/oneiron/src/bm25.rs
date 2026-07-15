@@ -531,6 +531,97 @@ pub(crate) fn index_text(
     Ok(())
 }
 
+/// Read-only equality probe for a text-index retry.
+///
+/// Off-record batch preflight uses this to discard a representation-identical
+/// retry without running the deindex/reindex writer. Every persisted per-doc
+/// row and posting duplicate must already match the analyzer output; missing
+/// or divergent state is not a retry.
+pub(crate) fn text_index_matches_fields(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    id: &EntityId,
+    fields: &[(String, String)],
+) -> Result<bool> {
+    validate_text_doc_id(id)?;
+
+    let mut tokens = Vec::new();
+    let ctx = AnalyzerContext::for_index();
+    for (_, value) in fields {
+        analyzer.analyze(value, &ctx, &mut tokens);
+    }
+    if tokens.is_empty() {
+        return Ok(store.text_forward.get(rtxn, id.as_bytes())?.is_none()
+            && store
+                .text_doc_field_lengths
+                .get(rtxn, id.as_bytes())?
+                .is_none()
+            && store.text_meta.get(rtxn, id.as_bytes())?.is_none());
+    }
+
+    let mut per_field: HashMap<u16, HashMap<String, u32>> = HashMap::new();
+    let mut per_field_len: HashMap<u16, u32> = HashMap::new();
+    let mut doc_len_total = 0_u32;
+    for token in &tokens {
+        let field_id = token.channel.field_id();
+        *per_field
+            .entry(field_id)
+            .or_default()
+            .entry(token.term.as_ref().to_owned())
+            .or_insert(0) += 1;
+        let increment = u32::from(token.length_increment);
+        let field_len = per_field_len.entry(field_id).or_insert(0);
+        *field_len = field_len
+            .checked_add(increment)
+            .ok_or(Error::ArithmeticOverflow("bm25 per-field length"))?;
+        doc_len_total = doc_len_total
+            .checked_add(increment)
+            .ok_or(Error::ArithmeticOverflow("bm25 doc length"))?;
+    }
+
+    let mut per_term: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
+    for (field_id, terms) in per_field {
+        for (term, term_frequency) in terms {
+            per_term
+                .entry(term)
+                .or_default()
+                .insert(field_id, term_frequency);
+        }
+    }
+    let expected_forward = encode_forward(&per_term)?;
+    if store.text_forward.get(rtxn, id.as_bytes())? != Some(expected_forward.as_slice()) {
+        return Ok(false);
+    }
+    let expected_field_lengths = encode_field_lengths(&per_field_len);
+    if store.text_doc_field_lengths.get(rtxn, id.as_bytes())?
+        != Some(expected_field_lengths.as_slice())
+    {
+        return Ok(false);
+    }
+    let field_count = u32::try_from(per_field_len.len())
+        .map_err(|_| Error::ArithmeticOverflow("bm25 field count"))?;
+    let mut expected_meta = [0_u8; DOC_META_LEN];
+    expected_meta[..4].copy_from_slice(&doc_len_total.to_le_bytes());
+    expected_meta[4..].copy_from_slice(&field_count.to_le_bytes());
+    if store.text_meta.get(rtxn, id.as_bytes())? != Some(expected_meta.as_slice()) {
+        return Ok(false);
+    }
+
+    let mut expected_posting = Vec::new();
+    for (term, fields_tf) in &per_term {
+        expected_posting.clear();
+        encode_posting_entry(id, fields_tf, &mut expected_posting)?;
+        match find_posting_dup(store, rtxn, term, id)? {
+            PostingLookup::Found(existing) if existing == expected_posting => {}
+            PostingLookup::RowMissing | PostingLookup::EntityMissing | PostingLookup::Found(_) => {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn deindex_text(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     validate_text_doc_id(id)?;
 

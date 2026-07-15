@@ -34,6 +34,15 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     (tmp, vault)
 }
 
+fn temp_vault_with_embeddings() -> (tempfile::TempDir, Vault) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let mut config = VaultConfig::default();
+    config.embedding_model = Some("test-model-v1".to_owned());
+    config.dimensions = 4;
+    let vault = Vault::open(tmp.path(), config).expect("open vault");
+    (tmp, vault)
+}
+
 fn seed_turn(vault: &Vault, at: u64) -> EntityId {
     let id = EntityId::now();
     vault
@@ -1183,6 +1192,127 @@ fn vault_search_and_short_id_hydration_hide_fenced_message_until_promotion() {
 }
 
 #[test]
+fn direct_search_limits_count_visible_hits_not_fenced_higher_ranked_hits() {
+    let (_tmp, vault) = temp_vault_with_embeddings();
+    let hidden = seed_turn(&vault, 1000);
+    let visible = seed_turn(&vault, 1001);
+    vault
+        .batch()
+        .text(
+            &hidden,
+            &[(
+                "body",
+                "overfetchr8 overfetchr8 overfetchr8 overfetchr8 overfetchr8 overfetchr8",
+            )],
+        )
+        .text(&visible, &[("body", "overfetchr8")])
+        .commit()
+        .expect("seed ranked text fixtures");
+    let mut hidden_vector = vec![0.0; vault.config.dimensions];
+    hidden_vector[0] = 1.0;
+    let mut visible_vector = vec![0.0; vault.config.dimensions];
+    visible_vector[0] = -1.0;
+    vault
+        .batch()
+        .vector(&hidden, &hidden_vector)
+        .vector(&visible, &visible_vector)
+        .commit()
+        .expect("seed ranked vector fixtures");
+
+    assert_eq!(
+        vault
+            .search_text("overfetchr8", 1)
+            .expect("pre-fence text rank")
+            .into_iter()
+            .filter(|hit| hit.id == hidden)
+            .count(),
+        1,
+        "fixture requires the soon-fenced text hit to rank first"
+    );
+    assert_eq!(
+        vault
+            .search_vector(&hidden_vector, 1)
+            .expect("pre-fence vector rank")
+            .into_iter()
+            .filter(|hit| hit.id == hidden)
+            .count(),
+        1,
+        "fixture requires the soon-fenced vector hit to rank first"
+    );
+
+    vault
+        .enter_off_record_session("sess-search-overfetch", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-search-overfetch", &hidden)
+        .expect("tag higher-ranked hit");
+
+    let text = vault
+        .search_text_with_telemetry("overfetchr8", 1)
+        .expect("fence-aware text search");
+    assert_eq!(text.value.len(), 1);
+    assert_eq!(
+        text.value.iter().filter(|hit| hit.id == visible).count(),
+        1,
+        "the visible second-ranked text hit fills the public limit"
+    );
+    let vector = vault
+        .search_vector_with_telemetry(&hidden_vector, 1)
+        .expect("fence-aware vector search");
+    assert_eq!(vector.value.len(), 1);
+    assert_eq!(
+        vector.value.iter().filter(|hit| hit.id == visible).count(),
+        1,
+        "the visible second-ranked vector hit fills the public limit"
+    );
+    let telemetry = [
+        vault
+            .retrieval_run(text.run_id.expect("text telemetry id"))
+            .expect("text telemetry read")
+            .expect("text telemetry row"),
+        vault
+            .retrieval_run(vector.run_id.expect("vector telemetry id"))
+            .expect("vector telemetry read")
+            .expect("vector telemetry row"),
+    ];
+    assert_eq!(
+        telemetry
+            .iter()
+            .filter(|record| record.empty_reason.is_none() && record.result_ids.len() == 1)
+            .count(),
+        2,
+        "neither channel records NoData when a visible hit exists"
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-search-overfetch",
+            &hidden,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote formerly hidden hit");
+    assert_eq!(
+        vault
+            .search_text("overfetchr8", 1)
+            .expect("promoted text search")
+            .into_iter()
+            .filter(|hit| hit.id == hidden)
+            .count(),
+        1
+    );
+    assert_eq!(
+        vault
+            .search_vector(&hidden_vector, 1)
+            .expect("promoted vector search")
+            .into_iter()
+            .filter(|hit| hit.id == hidden)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn public_edge_readers_hide_direct_fenced_endpoint_until_promotion() {
     let (_tmp, vault) = temp_vault();
     let ordinary = seed_turn(&vault, 999);
@@ -1400,6 +1530,34 @@ fn witness_edges_survive_fence_and_reappear_as_exact_set_on_promotion() {
     );
     drop(rtxn);
 
+    let delete_errors = [
+        vault
+            .delete_edge(&message, EdgeKind::BelongsTo, &conversation)
+            .expect_err("BelongsTo deletion on a hidden carrier must reject"),
+        vault
+            .batch()
+            .delete_edge(&message, EdgeKind::AuthoredBy, &author)
+            .commit()
+            .expect_err("AuthoredBy deletion on a hidden carrier must reject"),
+    ];
+    assert_eq!(
+        delete_errors
+            .iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        2
+    );
+    assert_eq!(
+        vault
+            .edges_out_unfiltered(&message)
+            .expect("raw witness edges after rejected deletes")
+            .into_iter()
+            .filter(|edge| { matches!(edge.kind, EdgeKind::BelongsTo | EdgeKind::AuthoredBy) })
+            .count(),
+        2,
+        "both attribution edges remain durable behind the fence"
+    );
+
     vault
         .promote_off_record_turn(
             "sess-witness-links",
@@ -1428,6 +1586,266 @@ fn witness_edges_survive_fence_and_reappear_as_exact_set_on_promotion() {
             .expect("released message sidecar")
             .len(),
         0
+    );
+}
+
+#[test]
+fn inherited_fenced_carrier_rejects_index_and_operational_edge_mutations() {
+    let (_tmp, vault) = temp_vault_with_embeddings();
+    let hidden_turn = seed_turn(&vault, 1000);
+    let hidden_message = EntityId::now();
+    let visible_message = EntityId::now();
+    let target = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .batch()
+        .put(
+            &visible_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"visible mutation control",
+        )
+        .put(&target, ENTITY_TYPE_PERSON, occurred, 1000, b"edge target")
+        .edge_with_vad(
+            &visible_message,
+            EdgeKind::Mentions,
+            &target,
+            0.8,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .commit()
+        .expect("seed visible controls");
+    vault
+        .enter_off_record_session("sess-mutation-fence", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-mutation-fence", &hidden_turn)
+        .expect("tag");
+    let mut baseline_vector = vec![0.0; vault.config.dimensions];
+    baseline_vector[0] = 0.25;
+    vault
+        .batch()
+        .put(
+            &hidden_message,
+            ENTITY_TYPE_MESSAGE,
+            occurred,
+            1000,
+            b"private mutation carrier",
+        )
+        .edge(&hidden_message, EdgeKind::PartOf, &hidden_turn, 1.0)
+        .edge_with_vad(
+            &hidden_message,
+            EdgeKind::Mentions,
+            &target,
+            0.8,
+            crate::affect::Vad::NEUTRAL,
+        )
+        .vector(&hidden_message, &baseline_vector)
+        .text(&hidden_message, &[("body", "hidden-r8-baseline")])
+        .phonetic(&hidden_message, &["HIDDENR8BASELINE"])
+        .commit()
+        .expect("materialize inherited-fenced carrier");
+    assert_eq!(
+        [hidden_message]
+            .into_iter()
+            .filter(|id| vault.is_turn_off_record_fenced(id).expect("fence probe"))
+            .count(),
+        1
+    );
+
+    let mut vector = vec![0.0; vault.config.dimensions];
+    vector[0] = 1.0;
+    let changed_vad = crate::affect::Vad {
+        valence: 0.25,
+        arousal: 0.5,
+        dominance: 0.75,
+    };
+    vault
+        .put_vector(&hidden_message, &baseline_vector)
+        .expect("byte-identical vector retry remains legal");
+    vault
+        .batch()
+        .text(&hidden_message, &[("body", "hidden-r8-baseline")])
+        .commit()
+        .expect("representation-identical text retry remains legal");
+    vault
+        .batch()
+        .phonetic(&hidden_message, &["HIDDENR8BASELINE"])
+        .commit()
+        .expect("representation-identical phonetic retry remains legal");
+    let errors = [
+        vault
+            .put_vector(&hidden_message, &vector)
+            .expect_err("vector mutation must reject"),
+        vault
+            .batch()
+            // Single token with no overlap against the baseline or the
+            // on-record control, so the post-promotion search below can
+            // only match a leaked write.
+            .text(&hidden_message, &[("body", "rejectedr8mutationbody")])
+            .commit()
+            .expect_err("text mutation must reject"),
+        vault
+            .batch()
+            .phonetic(&hidden_message, &["HIDDENR8"])
+            .commit()
+            .expect_err("phonetic mutation must reject"),
+        vault
+            .set_edge_weight(&hidden_message, EdgeKind::Mentions, &target, 0.4)
+            .expect_err("weight mutation must reject"),
+        vault
+            .set_edge_vad(&hidden_message, EdgeKind::Mentions, &target, changed_vad)
+            .expect_err("VAD mutation must reject"),
+    ];
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        5,
+        "every previously unguarded mutation arm rejects the inherited carrier"
+    );
+
+    vault
+        .put_vector(&visible_message, &vector)
+        .expect("on-record vector mutation");
+    vault
+        .batch()
+        .text(&visible_message, &[("body", "visible-r8-text")])
+        .commit()
+        .expect("on-record text mutation");
+    vault
+        .batch()
+        .phonetic(&visible_message, &["VISIBLER8"])
+        .commit()
+        .expect("on-record phonetic mutation");
+    vault
+        .set_edge_weight(&visible_message, EdgeKind::Mentions, &target, 0.4)
+        .expect("on-record weight mutation");
+    vault
+        .set_edge_vad(&visible_message, EdgeKind::Mentions, &target, changed_vad)
+        .expect("on-record VAD mutation");
+
+    let rtxn = vault.store.env.read_txn().expect("raw index audit");
+    assert_eq!(
+        [hidden_message, visible_message]
+            .into_iter()
+            .filter(|id| {
+                vault
+                    .store
+                    .vectors
+                    .get(&rtxn, id.as_bytes())
+                    .expect("raw vector lookup")
+                    .is_some()
+            })
+            .count(),
+        2,
+        "both the original hidden row and on-record control remain indexed"
+    );
+    assert_eq!(
+        [hidden_message, visible_message]
+            .into_iter()
+            .filter(|id| {
+                vault
+                    .store
+                    .text_forward
+                    .get(&rtxn, id.as_bytes())
+                    .expect("raw text-forward lookup")
+                    .is_some()
+            })
+            .count(),
+        2,
+        "the original hidden text row and on-record control remain indexed"
+    );
+    assert_eq!(
+        [hidden_message, visible_message]
+            .into_iter()
+            .filter(|id| {
+                vault
+                    .store
+                    .phonetic_forward
+                    .get(&rtxn, id.as_bytes())
+                    .expect("raw phonetic-forward lookup")
+                    .is_some()
+            })
+            .count(),
+        2,
+        "the original hidden phonetic row and on-record control remain indexed"
+    );
+    drop(rtxn);
+
+    let hidden_edge = vault
+        .edges_out_unfiltered(&hidden_message)
+        .expect("hidden raw edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == target)
+        .expect("hidden semantic edge");
+    let visible_edge = vault
+        .edges_out_unfiltered(&visible_message)
+        .expect("visible raw edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Mentions && edge.target == target)
+        .expect("visible semantic edge");
+    assert_eq!(
+        [
+            hidden_edge.weight.to_bits() == 0.8_f32.to_bits(),
+            hidden_edge.vad == Some(crate::affect::Vad::NEUTRAL),
+            visible_edge.weight.to_bits() == 0.4_f32.to_bits(),
+            visible_edge.vad == Some(changed_vad),
+        ]
+        .into_iter()
+        .filter(|matches| *matches)
+        .count(),
+        4,
+        "rejected hidden setters preserve bytes while on-record setters succeed"
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-mutation-fence",
+            &hidden_turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote");
+    let close_log = vault
+        .off_record_receipt_log("sess-mutation-fence")
+        .expect("close log");
+    vault
+        .close_off_record_session("sess-mutation-fence", close_log)
+        .expect("close after promotion");
+    assert_eq!(
+        [vault
+            .get_vector(&hidden_message)
+            .expect("released vector read")]
+        .into_iter()
+        .filter(|vector| vector.as_ref() == Some(&baseline_vector))
+        .count(),
+        1,
+        "promotion reveals only the original vector, never the rejected replacement"
+    );
+    assert_eq!(
+        vault
+            .search_text("rejectedr8mutationbody", 10)
+            .expect("released text search")
+            .len(),
+        0,
+        "promotion does not reveal a rejected text mutation"
+    );
+    assert_eq!(
+        vault
+            .query()
+            .search_phonetic(&["HIDDENR8"])
+            .limit(10)
+            .run()
+            .expect("released phonetic search")
+            .len(),
+        0,
+        "promotion does not reveal a rejected phonetic mutation"
     );
 }
 

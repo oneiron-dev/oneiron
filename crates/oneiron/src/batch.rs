@@ -806,10 +806,17 @@ impl<'a> BatchBuilder<'a> {
                 .load(std::sync::atomic::Ordering::Acquire)
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
+        secret_scan::scan_batch_ops(&self.ops)?;
+        let ops = validate_and_filter_off_record_non_edge_mutation_ops(
+            &self.vault.store,
+            &wtxn,
+            &self.vault.analyzer,
+            self.ops,
+        )?;
         let mut staged_gate_decisions = Vec::new();
         if let Err(err) = preflight_gate_decisions_in_txn(
             &self.vault.store,
-            &self.ops,
+            &ops,
             &mut wtxn,
             &mut staged_gate_decisions,
         ) {
@@ -828,7 +835,7 @@ impl<'a> BatchBuilder<'a> {
             &self.vault.config,
             &self.vault.analyzer,
             &mut wtxn,
-            self.ops,
+            ops,
             text_index_trusted,
             false,
             true,
@@ -1304,12 +1311,19 @@ impl<'a> TxnBatchBuilder<'a> {
                 .text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire)
         };
+        secret_scan::scan_batch_ops(&self.ops)?;
+        let ops = validate_and_filter_off_record_non_edge_mutation_ops(
+            &self.vault.store,
+            &*wtxn,
+            &self.vault.analyzer,
+            self.ops,
+        )?;
         apply_ops_with_gate_mode(
             &self.vault.store,
             &self.vault.config,
             &self.vault.analyzer,
             wtxn,
-            self.ops,
+            ops,
             text_index_trusted,
             gate_mode,
         )
@@ -1490,6 +1504,11 @@ fn materialize_lexical_query_hint_text_if_target_ready(
     if !lexical_query_hint_target_is_ready(store, wtxn, target)? {
         return Ok(false);
     }
+    // This edge is synthesized after the explicit BatchOp preflight. Keep it
+    // behind the same uniform direct+inherited endpoint policy as every
+    // caller-supplied edge mutation.
+    guard_off_record_mutation_endpoint(store, &*wtxn, &hint_id)?;
+    guard_off_record_mutation_endpoint(store, &*wtxn, target)?;
     let weight = EdgeKind::ClaimOf
         .default_weight()
         .ok_or(Error::InvariantViolation(
@@ -1579,7 +1598,11 @@ impl ApplyOpsGateMode {
     }
 }
 
-/// Applies a list of batch operations to an LMDB write transaction.
+/// Applies a list of already-preflighted batch operations to an LMDB write
+/// transaction. Public [`BatchBuilder`] / [`TxnBatchBuilder`] entry points run
+/// the off-record mutation guard before reaching this raw internal seam;
+/// witness/lifecycle internals deliberately call it directly for trusted
+/// initialization and cleanup work.
 #[expect(
     clippy::too_many_arguments,
     reason = "batch write plumbing keeps gate persistence modes explicit at call sites"
@@ -2034,6 +2057,102 @@ fn delete_edge_op_fields(op: &BatchOp) -> Option<(EntityId, EdgeKind, EntityId, 
     }
 }
 
+fn guard_off_record_mutation_endpoint(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if crate::off_record::off_record_visibility_hidden(store, rtxn, id)? {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: id.to_hex(),
+        });
+    }
+    Ok(())
+}
+
+/// Rejects public builder mutation operations whose current-snapshot target
+/// is hidden by either a direct fence row or an inherited carrier sidecar.
+///
+/// Entity puts/deletes and edge puts/deletes keep their specialized guards:
+/// those doors carry exact-retry, fence-establishment, replay, and close
+/// semantics that a blanket mutation check would erase. A new witness
+/// carrier may therefore still initialize its indexes in the same atomic
+/// batch that establishes its inherited fence; later batches see the
+/// committed sidecar and reject every out-of-band mutation below.
+fn validate_and_filter_off_record_non_edge_mutation_ops(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    ops: Vec<BatchOp>,
+) -> Result<Vec<BatchOp>> {
+    let mut filtered = Vec::with_capacity(ops.len());
+    for op in ops {
+        match &op {
+            BatchOp::Vector {
+                id,
+                vector,
+                pending_embedding_token,
+            } => {
+                if crate::off_record::off_record_visibility_hidden(store, rtxn, id)? {
+                    let mut encoded = Vec::with_capacity(vector.len() * 4);
+                    for component in vector {
+                        encoded.extend_from_slice(&component.to_le_bytes());
+                    }
+                    let exact_retry = pending_embedding_token.is_none()
+                        && store
+                            .vectors
+                            .get(rtxn, id.as_bytes())?
+                            .is_some_and(|existing| existing == encoded.as_slice());
+                    if exact_retry {
+                        continue;
+                    }
+                    guard_off_record_mutation_endpoint(store, rtxn, id)?;
+                }
+            }
+            BatchOp::Text { id, fields } => {
+                if crate::off_record::off_record_visibility_hidden(store, rtxn, id)? {
+                    if crate::bm25::text_index_matches_fields(store, rtxn, analyzer, id, fields)? {
+                        continue;
+                    }
+                    guard_off_record_mutation_endpoint(store, rtxn, id)?;
+                }
+            }
+            BatchOp::Phonetic { id, codes } => {
+                if crate::off_record::off_record_visibility_hidden(store, rtxn, id)? {
+                    let exact_retry = match store.phonetic_forward.get(rtxn, id.as_bytes())? {
+                        Some(raw) => {
+                            let existing = decode_phonetic_forward_codes(raw)?;
+                            codes.iter().all(|code| existing.contains(code))
+                        }
+                        None => codes.is_empty(),
+                    };
+                    if exact_retry {
+                        continue;
+                    }
+                    guard_off_record_mutation_endpoint(store, rtxn, id)?;
+                }
+            }
+            BatchOp::ReconcileLexicalQueryHints { source, .. } => {
+                guard_off_record_mutation_endpoint(store, rtxn, source)?;
+            }
+            BatchOp::SetEdgeWeight { src, tgt, .. } | BatchOp::SetEdgeVad { src, tgt, .. } => {
+                guard_off_record_mutation_endpoint(store, rtxn, src)?;
+                guard_off_record_mutation_endpoint(store, rtxn, tgt)?;
+            }
+            BatchOp::Put { .. }
+            | BatchOp::ClaimCandidate { .. }
+            | BatchOp::Edge { .. }
+            | BatchOp::PublicEdgeWithCreatedAt { .. }
+            | BatchOp::EdgeWithCreatedAt { .. }
+            | BatchOp::Delete { .. }
+            | BatchOp::LocalDeleteEdge { .. }
+            | BatchOp::DeleteEdge { .. } => {}
+        }
+        filtered.push(op);
+    }
+    Ok(filtered)
+}
+
 /// An existing local edge is an idempotent retry only when re-encoding every
 /// caller-controlled field yields the exact stored bytes. Plain writes reuse
 /// the stored `created_at` solely for this comparison; the preflight drops a
@@ -2173,17 +2292,16 @@ fn guard_off_record_edge_op(
 
 /// Fence preflight shared by batch deletes and [`Vault::delete_edge`].
 ///
-/// Local callers may edit ordinary deferred edges, but may not sever a
-/// hidden carrier's PartOf/DerivedFrom inheritance link. Replicated CRDT
-/// tombstones are stricter: either hidden endpoint rejects, matching the
-/// replicated edge-put door.
+/// Every ordinary local or replicated delete touching a hidden endpoint is
+/// rejected. Close, scrub, and promotion use their dedicated raw graph paths
+/// and therefore never pass through this public mutation guard.
 pub(crate) fn guard_off_record_edge_delete(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     src: &EntityId,
-    kind: EdgeKind,
+    _kind: EdgeKind,
     tgt: &EntityId,
-    replicated: bool,
+    _replicated: bool,
 ) -> Result<()> {
     let src_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, src)?;
     let tgt_hidden = crate::off_record::off_record_visibility_hidden(store, rtxn, tgt)?;
@@ -2191,21 +2309,11 @@ pub(crate) fn guard_off_record_edge_delete(
         turn_ref: id.to_hex(),
     };
 
-    if replicated {
-        if src_hidden {
-            return Err(rejected(src));
-        }
-        if tgt_hidden {
-            return Err(rejected(tgt));
-        }
-        return Ok(());
-    }
-
-    if matches!(kind, EdgeKind::PartOf | EdgeKind::DerivedFrom)
-        && src_hidden
-        && !crate::off_record::direct_off_record_fence_active(store, rtxn, src)?
-    {
+    if src_hidden {
         return Err(rejected(src));
+    }
+    if tgt_hidden {
+        return Err(rejected(tgt));
     }
     Ok(())
 }
@@ -2802,10 +2910,11 @@ fn apply_claim_candidate(
     crate::provenance::validate_actor_class(actor_header.entity_type, actor.actor_class())?;
 
     let subject = candidate.subject();
-    if let crate::claim::ClaimSubject::Entity(subject_id) = subject
-        && store.entities.get(wtxn, subject_id.as_bytes())?.is_none()
-    {
-        return Err(Error::EntityNotFound);
+    if let crate::claim::ClaimSubject::Entity(subject_id) = subject {
+        if store.entities.get(wtxn, subject_id.as_bytes())?.is_none() {
+            return Err(Error::EntityNotFound);
+        }
+        guard_off_record_mutation_endpoint(store, &*wtxn, &subject_id)?;
     }
 
     let body = candidate.into_claim_body(envelope);
@@ -2891,6 +3000,7 @@ fn reconcile_claim_of_edges(
     }
 
     for subject in &stale_subjects {
+        guard_off_record_edge_delete(store, &*wtxn, claim_id, EdgeKind::ClaimOf, subject, false)?;
         apply_delete_edge(store, wtxn, *claim_id, EdgeKind::ClaimOf, *subject)?;
     }
     Ok(stale_subjects)

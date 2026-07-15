@@ -636,15 +636,17 @@ impl Vault {
             // full-length queries; the skip-rescore hot lane is a pipeline
             // feature (a `fast_dims`-length query is inherently prefix-only
             // on every path — no full query exists to rescore).
-            let results = hnsw::hnsw_search(
-                &self.store,
-                &self.config,
-                &rtxn,
-                query,
-                limit,
-                /* skip_rescore = */ false,
-            )?;
-            self.filter_off_record_search_results(&rtxn, results)?
+            let corpus_cap = hnsw::hnsw_entity_count(&self.store, &rtxn)?;
+            self.search_with_off_record_overfetch(&rtxn, limit, corpus_cap, |fetch_limit| {
+                hnsw::hnsw_search(
+                    &self.store,
+                    &self.config,
+                    &rtxn,
+                    query,
+                    fetch_limit,
+                    /* skip_rescore = */ false,
+                )
+            })?
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,
@@ -994,8 +996,61 @@ impl Vault {
         let config = profile.to_bm25_config()?;
         self.ensure_text_index_trusted()?;
         let rtxn = self.store.env.read_txn()?;
-        let results = bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?;
-        self.filter_off_record_search_results(&rtxn, results)
+        let corpus_cap = usize::try_from(bm25::read_total_docs(&self.store, &rtxn)?)
+            .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+        self.search_with_off_record_overfetch(&rtxn, limit, corpus_cap, |fetch_limit| {
+            bm25::search_text(
+                &self.store,
+                &rtxn,
+                &self.analyzer,
+                &config,
+                query,
+                fetch_limit,
+            )
+        })
+    }
+
+    /// Preserves a caller's visible result budget while fences are present.
+    /// The fence-free path performs exactly one search at the requested
+    /// limit. With any direct/inherited fence row, candidate breadth doubles
+    /// from `limit` until enough visible hits are collected, the channel is
+    /// exhausted, or its exact indexed-corpus cardinality is reached.
+    fn search_with_off_record_overfetch(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        limit: usize,
+        corpus_cap: usize,
+        mut search: impl FnMut(usize) -> Result<Vec<ScoredEntity>>,
+    ) -> Result<Vec<ScoredEntity>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        if !crate::off_record::off_record_fences_present(&self.store, rtxn)? {
+            return search(limit);
+        }
+
+        let mut fetch_limit = limit.min(corpus_cap);
+        if fetch_limit == 0 {
+            return Ok(Vec::new());
+        }
+        loop {
+            let candidates = search(fetch_limit)?;
+            let channel_exhausted = candidates.len() < fetch_limit || fetch_limit == corpus_cap;
+            let mut visible = self.filter_off_record_search_results(rtxn, candidates)?;
+            visible.truncate(limit);
+            if visible.len() == limit || channel_exhausted {
+                return Ok(visible);
+            }
+
+            let next_limit = fetch_limit
+                .saturating_mul(2)
+                .max(fetch_limit.saturating_add(1))
+                .min(corpus_cap);
+            if next_limit == fetch_limit {
+                return Ok(visible);
+            }
+            fetch_limit = next_limit;
+        }
     }
 
     fn filter_off_record_search_results(

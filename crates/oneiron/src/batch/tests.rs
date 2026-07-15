@@ -766,6 +766,158 @@ fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision()
     Ok(())
 }
 
+#[test]
+fn claim_candidate_rejects_live_fenced_subject_until_promotion() -> Result<()> {
+    let occurred = test_time_range(1, 1);
+
+    let (_close_dir, close_vault) = open_test_vault();
+    let close_actor = EntityId::now();
+    let close_subject = EntityId::now();
+    let close_claim = EntityId::now();
+    close_vault.put_entity(
+        &close_actor,
+        ENTITY_TYPE_PERSON,
+        occurred,
+        1,
+        b"claim actor",
+    )?;
+    close_vault.put_entity(
+        &close_subject,
+        ENTITY_TYPE_TURN,
+        occurred,
+        1,
+        b"private claim subject",
+    )?;
+    close_vault
+        .enter_off_record_session("sess-claim-subject-close", OffRecordBackendClass::Local)?;
+    close_vault.tag_turn_off_record("sess-claim-subject-close", &close_subject)?;
+    let close_envelope = test_write_envelope(close_actor)?;
+    let close_candidate = ClaimCandidate::new(
+        "profile.name",
+        ClaimSubject::Entity(close_subject),
+        Value::from("must evaporate"),
+        0.9,
+    );
+
+    let close_error = close_vault
+        .batch()
+        .claim_candidate(
+            &close_claim,
+            close_candidate,
+            &close_envelope,
+            test_time_range(10, 10),
+            11,
+        )
+        .commit()
+        .expect_err("a claim over a live-fenced subject must reject atomically");
+    assert_eq!(
+        [close_error]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+    let close_log = close_vault.off_record_receipt_log("sess-claim-subject-close")?;
+    close_vault.close_off_record_session("sess-claim-subject-close", close_log)?;
+    assert_eq!(
+        close_vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
+        0,
+        "the rejected claim body must not survive close"
+    );
+    assert_eq!(
+        [close_vault.edge_exists(&close_claim, EdgeKind::ClaimOf, &close_subject)?]
+            .into_iter()
+            .filter(|exists| *exists)
+            .count(),
+        0,
+        "the rejected ClaimOf edge must not survive close"
+    );
+
+    let (_promote_dir, promote_vault) = open_test_vault();
+    let promote_actor = EntityId::now();
+    let promote_subject = EntityId::now();
+    let promote_claim = EntityId::now();
+    promote_vault.put_entity(
+        &promote_actor,
+        ENTITY_TYPE_PERSON,
+        occurred,
+        1,
+        b"claim actor",
+    )?;
+    promote_vault.put_entity(
+        &promote_subject,
+        ENTITY_TYPE_TURN,
+        occurred,
+        1,
+        b"promotable claim subject",
+    )?;
+    promote_vault
+        .enter_off_record_session("sess-claim-subject-promote", OffRecordBackendClass::Local)?;
+    promote_vault.tag_turn_off_record("sess-claim-subject-promote", &promote_subject)?;
+    let promote_envelope = test_write_envelope(promote_actor)?;
+    let promote_candidate = ClaimCandidate::new(
+        "profile.name",
+        ClaimSubject::Entity(promote_subject),
+        Value::from("explicitly retained"),
+        0.9,
+    );
+    let promote_error = promote_vault
+        .batch()
+        .claim_candidate(
+            &promote_claim,
+            promote_candidate.clone(),
+            &promote_envelope,
+            test_time_range(10, 10),
+            11,
+        )
+        .commit()
+        .expect_err("the same claim must reject before promotion");
+    assert_eq!(
+        [promote_error]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+
+    const OWNER_REF: &str = "principal:claim-subject-owner";
+    let owner = crate::genui::ConsentActorIdentity::SurfaceActor {
+        actor_ref: OWNER_REF.to_owned(),
+    };
+    promote_vault.promote_off_record_turn(
+        "sess-claim-subject-promote",
+        &promote_subject,
+        OWNER_REF,
+        &owner,
+    )?;
+    promote_vault
+        .batch()
+        .claim_candidate(
+            &promote_claim,
+            promote_candidate,
+            &promote_envelope,
+            test_time_range(10, 10),
+            11,
+        )
+        .commit()?;
+    let promote_log = promote_vault.off_record_receipt_log("sess-claim-subject-promote")?;
+    promote_vault.close_off_record_session("sess-claim-subject-promote", promote_log)?;
+    assert_eq!(
+        promote_vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
+        1,
+        "the identical claim succeeds exactly once after explicit promotion"
+    );
+    assert_eq!(
+        [promote_vault.edge_exists(&promote_claim, EdgeKind::ClaimOf, &promote_subject,)?]
+            .into_iter()
+            .filter(|exists| *exists)
+            .count(),
+        1,
+        "one ClaimOf edge survives close for the promoted subject"
+    );
+    Ok(())
+}
+
 /// A closed off-record fence rejects before standalone preflight can leave a
 /// decision receipt behind.
 #[test]
