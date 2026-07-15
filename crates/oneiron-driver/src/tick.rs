@@ -25,7 +25,8 @@ use std::time::Duration;
 use oneiron::job_queue::{JobQueue, JobState};
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_JOB_KIND, DREAMER_CONSOLIDATION_MESO_JOB_KIND,
-    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DreamerConsolidationScope, Vault, WakeTrigger,
+    DREAMER_CONSOLIDATION_MICRO_JOB_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
+    WakeTrigger,
 };
 use tokio::sync::Notify;
 
@@ -93,31 +94,53 @@ pub trait TickSource {
 
 /// Reads the NEXT commitment deadline from durable state. Called once per
 /// wakeup cycle right before the timer arms — never on a period.
+///
+/// Implementations must surface only deadlines the LOCAL node could
+/// actually admit: an un-admittable due deadline ticks immediately, drives
+/// a pass that refuses without mutating the row, and — deadlines having
+/// priority over pushes — re-surfaces on the very next read, spinning the
+/// supervisor and starving the push lanes.
 pub trait DeadlineSource {
-    /// The earliest upcoming commitment deadline, or `None` when no timed
-    /// work exists.
+    /// The earliest upcoming commitment deadline this node could admit, or
+    /// `None` when no such timed work exists.
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>>;
 }
 
 /// [`DeadlineSource`] over the vault's advisory job table: the earliest due
-/// queued Dreamer consolidation job. A queued job with no retry backoff is
-/// due at its enqueue stamp; a backoff-delayed job is due when the backoff
-/// clears. Job stamps are stored in seconds and surfaced here in
-/// milliseconds.
+/// queued Dreamer consolidation job THIS NODE could admit. A queued job
+/// with no retry backoff is due at its enqueue stamp; a backoff-delayed job
+/// is due when the backoff clears. Job stamps are stored in seconds and
+/// surfaced here in milliseconds.
+///
+/// MACRO jobs are home-node-gated at admission (`NoHomeNode` /
+/// `NotHomeNode` refusals that do not mutate the queued row), so the macro
+/// lane is surfaced only while `local_node_id` matches the elected home
+/// node — surfacing it elsewhere would busy-spin the supervisor on the same
+/// overdue deadline. The election is re-read on every cycle, so macro work
+/// re-surfaces the moment this node becomes home.
 pub struct JobQueueDeadlines<'v> {
     vault: &'v Vault,
+    local_node_id: u64,
 }
 
 impl<'v> JobQueueDeadlines<'v> {
+    /// `local_node_id` is the same node identity the host passes to
+    /// admission (`WakeSupervisorConfig::local_node_id`).
     #[must_use]
-    pub fn new(vault: &'v Vault) -> Self {
-        Self { vault }
+    pub fn new(vault: &'v Vault, local_node_id: u64) -> Self {
+        Self {
+            vault,
+            local_node_id,
+        }
     }
 }
 
 impl DeadlineSource for JobQueueDeadlines<'_> {
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
         let queue = JobQueue::new(self.vault);
+        let macro_admissible = DreamerRunnerStore::new(self.vault)
+            .home_node_designation()?
+            .is_some_and(|designation| designation.node_id == self.local_node_id);
         let mut next: Option<CommitmentDeadline> = None;
         for job in queue.list()? {
             if job.state != JobState::Queued {
@@ -126,6 +149,9 @@ impl DeadlineSource for JobQueueDeadlines<'_> {
             let Some(scope) = scope_for_job_kind(&job.kind) else {
                 continue;
             };
+            if scope == DreamerConsolidationScope::Macro && !macro_admissible {
+                continue;
+            }
             let due_secs = job.backoff_until.unwrap_or(job.created_at);
             let due_at_ms = due_secs.saturating_mul(1_000);
             if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
@@ -148,10 +174,19 @@ fn scope_for_job_kind(kind: &str) -> Option<DreamerConsolidationScope> {
     }
 }
 
-/// Wake-on-deadline tick source: reads the next commitment deadline from
+/// Wake-on-deadline timer LANE: reads the next commitment deadline from
 /// its [`DeadlineSource`] and sleeps until exactly that instant. There is
-/// no interval and no heartbeat — with no timed work the lane goes quiet
-/// (`None`) instead of polling.
+/// no interval and no heartbeat — with no timed work (or on a deadline
+/// read error) the lane goes quiet instead of polling.
+///
+/// Deliberately NOT a [`TickSource`]: a quiet timer lane is not source
+/// exhaustion — timed work can appear later, and under the no-poll
+/// architecture (ARCH-0026) the lane has no way to learn of it on its own.
+/// Wired bare into the supervisor it would either stop the loop permanently
+/// (`None` on an empty queue) or have to poll; both are wrong, so that
+/// wiring is unrepresentable. Compose it into a [`HybridTick`], whose push
+/// lane both carries the "new work arrived" notification and owns the one
+/// true exhaustion signal (every producer handle dropped).
 pub struct TimerTick<D> {
     source: D,
     now_ms: NowMillis,
@@ -185,14 +220,6 @@ impl<D: DeadlineSource> TimerTick<D> {
 
     fn now(&self) -> u64 {
         (self.now_ms)()
-    }
-}
-
-impl<D: DeadlineSource> TickSource for TimerTick<D> {
-    async fn next_tick(&mut self) -> Option<Tick> {
-        let deadline = self.read_deadline()?;
-        sleep_until_due(&self.now_ms, deadline.due_at_ms).await;
-        Some(Tick::Deadline(deadline))
     }
 }
 
@@ -502,6 +529,10 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::pin;
+
+    use oneiron::{DreamerHomeNodeCandidate, EnqueueDreamerConsolidationJob, VaultConfig};
+
     use super::*;
 
     struct ScriptedDeadlines {
@@ -613,17 +644,121 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn timer_fires_at_the_read_deadline_then_goes_quiet() {
+    async fn hybrid_timer_lane_fires_at_the_read_deadline_then_goes_quiet() {
         let deadline = CommitmentDeadline {
             due_at_ms: 5_000,
             scope: DreamerConsolidationScope::Micro,
         };
-        let mut timer = TimerTick::with_clock(
+        let timer = TimerTick::with_clock(
             ScriptedDeadlines::new(vec![Some(deadline), None]),
             frozen_clock(0),
         );
-        assert_eq!(timer.next_tick().await, Some(Tick::Deadline(deadline)));
-        assert_eq!(timer.next_tick().await, None, "no timed work = quiet lane");
+        let (push, wake, hint) = PushTick::channel();
+        drop(wake);
+        drop(hint);
+        let mut hybrid = HybridTick::new(timer, push);
+        assert_eq!(hybrid.next_tick().await, Some(Tick::Deadline(deadline)));
+        // Quiet timer lane AND no producers left: the one true exhaustion.
+        assert_eq!(hybrid.next_tick().await, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hybrid_with_no_timed_work_waits_for_push_instead_of_exhausting() {
+        // A quiet timer lane (no upcoming deadline) is NOT tick-source
+        // exhaustion while push producers remain: the supervisor must keep
+        // waiting for a push, not stop permanently. Bare TimerTick is no
+        // longer a TickSource precisely because it cannot express this.
+        let timer = TimerTick::with_clock(ScriptedDeadlines::new(vec![None]), frozen_clock(0));
+        let (push, wake, _hint) = PushTick::channel();
+        let mut hybrid = HybridTick::new(timer, push);
+
+        let mut next = pin!(hybrid.next_tick());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3_600), next.as_mut())
+                .await
+                .is_err(),
+            "no timed work + live producers must idle, not exhaust"
+        );
+        wake.push_wake(WakeTrigger::Event, DreamerConsolidationScope::Micro)
+            .expect("open channel");
+        assert!(matches!(next.await, Some(Tick::Wake(_))));
+    }
+
+    fn open_vault() -> (tempfile::TempDir, Vault) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+        (dir, vault)
+    }
+
+    fn enqueue(vault: &Vault, scope: DreamerConsolidationScope, tag: &str, now: u64) {
+        DreamerRunnerStore::new(vault)
+            .enqueue_consolidation(EnqueueDreamerConsolidationJob {
+                scope,
+                input: rmpv::Value::from(tag),
+                parent_job: None,
+                dedupe_key: Some(tag.to_owned()),
+                run_id: None,
+                now,
+            })
+            .expect("enqueue");
+    }
+
+    fn elect_home(vault: &Vault, node_id: u64, now: u64) {
+        DreamerRunnerStore::new(vault)
+            .elect_home_node(
+                &[DreamerHomeNodeCandidate {
+                    node_id,
+                    cloud: true,
+                    attached: true,
+                    always_on_local: false,
+                    primary_device: false,
+                }],
+                now,
+            )
+            .expect("elect home node");
+    }
+
+    #[test]
+    fn job_queue_deadlines_hide_macro_until_local_home_election() {
+        let (_dir, vault) = open_vault();
+        enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
+
+        // No home node elected: macro admission would refuse (NoHomeNode)
+        // without mutating the row, so the overdue deadline must not
+        // surface and re-tick forever.
+        let mut source = JobQueueDeadlines::new(&vault, 7);
+        assert_eq!(source.next_deadline().expect("read"), None);
+
+        // Local node elected home: the same row surfaces on the very next
+        // re-read.
+        elect_home(&vault, 7, 15);
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 10_000,
+                scope: DreamerConsolidationScope::Macro,
+            })
+        );
+    }
+
+    #[test]
+    fn job_queue_deadlines_on_foreign_home_skip_macro_but_keep_other_lanes() {
+        let (_dir, vault) = open_vault();
+        enqueue(&vault, DreamerConsolidationScope::Macro, "macro-job", 10);
+        enqueue(&vault, DreamerConsolidationScope::Micro, "micro-job", 20);
+        elect_home(&vault, 9, 25);
+
+        // Node 7 is not the elected home: the earlier macro deadline is
+        // filtered (admission would refuse NotHomeNode without progress)
+        // while the micro lane keeps flowing — no spin, no starvation.
+        let mut source = JobQueueDeadlines::new(&vault, 7);
+        assert_eq!(
+            source.next_deadline().expect("read"),
+            Some(CommitmentDeadline {
+                due_at_ms: 20_000,
+                scope: DreamerConsolidationScope::Micro,
+            })
+        );
     }
 
     #[tokio::test(start_paused = true)]

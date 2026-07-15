@@ -10,7 +10,11 @@
 //! RUN the pass — two separate host calls. Idle = nothing runs.
 
 use std::fmt;
+use std::future::poll_fn;
+use std::panic::AssertUnwindSafe;
+use std::pin::pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Instant;
 
 use rmpv::Value;
@@ -63,6 +67,60 @@ pub const DREAMER_CANCELLED_PARK_REASON: &str = "wake-pass cancelled";
 /// non-deadline error (ONE-1683 H-S5/R2): the error path parks the admitted
 /// job and refunds its reservation before the error propagates.
 pub const DREAMER_EXECUTOR_ERROR_PARK_REASON: &str = "executor error";
+/// Byte ceiling the runner store enforces on park reasons and progress
+/// messages (`MAX_DREAMER_PARK_REASON_LEN` / `MAX_DREAMER_PROGRESS_MESSAGE_LEN`
+/// in `dreamer_runner`, both 512 — private to that module, so mirrored here;
+/// `executor_error_with_oversized_display_still_parks` pins the mirror
+/// against the store's real validation).
+const MAX_WAKE_PARK_REASON_BYTES: usize = 512;
+
+/// Clamps a park/progress reason to the runner store's validation ceiling,
+/// cutting at a UTF-8 character boundary. An unbounded reason (typically an
+/// executor error `Display`) must never fail park validation — a failed park
+/// after admission would leave the job leased and is exactly the leak the
+/// executor-error arm exists to close (ONE-1683). Only the durable reason
+/// string is shortened; the full error still propagates to the caller.
+fn clamp_park_reason(mut reason: String) -> String {
+    if reason.len() <= MAX_WAKE_PARK_REASON_BYTES {
+        return reason;
+    }
+    let mut cut = MAX_WAKE_PARK_REASON_BYTES;
+    while !reason.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    reason.truncate(cut);
+    reason
+}
+
+/// Best-effort text of a caught panic payload, for tracing.
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = panic.downcast_ref::<&'static str>() {
+        message
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message
+    } else {
+        "non-string panic payload"
+    }
+}
+
+/// One `Pending` poll with an immediate self-wake — the runtime-agnostic
+/// equivalent of `tokio::task::yield_now` (the engine takes no runtime
+/// dependency). [`DreamerWakeDriver::run_wake_pass`] awaits this at every
+/// job boundary so an enclosing `select!` (the ONE-1683 supervisor's
+/// shutdown branch) gets a poll between jobs even when executors complete
+/// synchronously.
+fn yield_once() -> impl std::future::Future<Output = ()> {
+    let mut yielded = false;
+    poll_fn(move |task_cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            task_cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+}
 
 /// What woke the Dreamer (C9 wake model, design D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -429,6 +487,14 @@ impl<'a> DreamerWakeDriver<'a> {
     /// its budget reservation before the pass stops
     /// [`WakePassStop::Cancelled`]. Hosts that never cancel pass a fresh
     /// [`WakeCancellation`].
+    ///
+    /// The loop yields to the runtime once per job boundary, so a
+    /// supervisor selecting over this future and a shutdown signal gets a
+    /// poll between jobs — and can raise `cancel` in time — even when every
+    /// executor completes synchronously. A panic inside `exec.execute` is
+    /// contained at the same boundary: the admitted job is parked, its
+    /// reservation refunded, and the pass returns an error instead of
+    /// unwinding past the bookkeeping.
     pub async fn run_wake_pass<E: DreamerJobExecutor + ?Sized>(
         &mut self,
         input: RunWakePass,
@@ -451,6 +517,13 @@ impl<'a> DreamerWakeDriver<'a> {
         };
 
         loop {
+            // Job-boundary yield (ONE-1683): one Pending poll with a
+            // self-wake per iteration, so a supervisor selecting over this
+            // pass and its shutdown signal is re-polled between jobs even
+            // when the executor completes synchronously — otherwise a
+            // shutdown requested mid-pass could not raise the cancellation
+            // flag until the whole queue drained.
+            yield_once().await;
             if cancel.is_cancelled() {
                 // Cooperative-preemption boundary (H-S5/R2): between jobs
                 // the driver holds no admitted job and no in-flight gated
@@ -540,15 +613,51 @@ impl<'a> DreamerWakeDriver<'a> {
                 Ok(DreamerJobExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
                 })
+            } else if let Err(publish_error) =
+                self.publish(job_id, ProgressKind::Running, None, input.now)
+            {
+                // A Running-progress publish failure after admission flows
+                // through the same release arm as an executor error —
+                // propagating it directly would leave the admitted job
+                // leased and its reservation held.
+                Err(publish_error)
             } else {
-                self.publish(job_id, ProgressKind::Running, None, input.now)?;
                 let mut ctx = WakeJobContext {
                     vault: self.vault,
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
                 };
-                exec.execute(&admitted, &mut ctx).await
+                // Panic containment at the per-job boundary (ONE-1683): a
+                // panicking executor unwinding past the driver would skip
+                // the park/refund bookkeeping below, leaving the job leased
+                // and the reservation held until external lease cleanup.
+                // Catch it and route it through the executor-error arm; the
+                // executor is abandoned when the error propagates (a
+                // supervisor builds a fresh one per pass), so the
+                // AssertUnwindSafe is never observable.
+                let mut execute = pin!(exec.execute(&admitted, &mut ctx));
+                let caught = poll_fn(|task_cx| {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        execute.as_mut().poll(task_cx)
+                    })) {
+                        Ok(poll) => poll.map(Ok),
+                        Err(panic) => Poll::Ready(Err(panic)),
+                    }
+                })
+                .await;
+                match caught {
+                    Ok(result) => result,
+                    Err(panic) => {
+                        tracing::error!(
+                            panic = panic_message(panic.as_ref()),
+                            "dreamer job executor panicked; parking the admitted job"
+                        );
+                        Err(crate::Error::InvariantViolation(
+                            "dreamer job executor panicked",
+                        ))
+                    }
+                }
             };
             let execution = match executed {
                 Ok(execution) => execution,
@@ -576,12 +685,28 @@ impl<'a> DreamerWakeDriver<'a> {
                                 child_job: job_id,
                                 now: input.now,
                             })?;
-                        let reason = format!("{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}");
+                        // The durable reason is clamped to the store's
+                        // validation ceiling: an oversized error Display
+                        // failing park validation here would reintroduce
+                        // the leaked-lease bug this arm fixes. The full
+                        // error propagates below untouched.
+                        let reason = clamp_park_reason(format!(
+                            "{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {error}"
+                        ));
                         if self.store.parked_job(job_id)?.is_some() {
                             // One park-owner: the step layer already parked
                             // this job (under a non-hard-cut reason) inside
-                            // its own wtxn — publish only, never re-park.
-                            self.publish(job_id, ProgressKind::Parked, Some(reason), input.now)?;
+                            // its own wtxn — publish only, never re-park. A
+                            // publish failure must not mask the executor
+                            // error: the job is parked either way.
+                            if let Err(publish_error) =
+                                self.publish(job_id, ProgressKind::Parked, Some(reason), input.now)
+                            {
+                                tracing::warn!(
+                                    ?publish_error,
+                                    "parked-progress publish failed after executor error"
+                                );
+                            }
                         } else {
                             self.park_job(job_id, reason, input.lease_owner.clone(), input.now)?;
                         }
@@ -606,6 +731,11 @@ impl<'a> DreamerWakeDriver<'a> {
                     report.completed += 1;
                 }
                 DreamerJobExecution::Park { reason } => {
+                    // Executor-authored reasons get the same clamp as the
+                    // error arm's: park validation failing on length here
+                    // would propagate AFTER the refund but BEFORE the park,
+                    // leaving the job leased.
+                    let reason = clamp_park_reason(reason);
                     // The lease is not settled as spent — refund the
                     // reservation.
                     self.store

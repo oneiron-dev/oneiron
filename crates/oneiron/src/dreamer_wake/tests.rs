@@ -18,10 +18,15 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
     let mut cx = Context::from_waker(waker);
     let mut future = pin!(future);
-    match future.as_mut().poll(&mut cx) {
-        Poll::Ready(output) => output,
-        Poll::Pending => panic!("wake-pass future unexpectedly pending"),
+    // The pass self-wakes and pends once per job boundary (the ONE-1683
+    // shutdown-observability yield), so polling again immediately is
+    // correct; the bound catches a future pending on anything else.
+    for _ in 0..10_000 {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut cx) {
+            return output;
+        }
     }
+    panic!("wake-pass future pending on something other than a job-boundary yield");
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -189,8 +194,7 @@ fn wake_pass_stops_on_budget_exhausted() -> Result<()> {
     let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 20);
     input.budget_total_units = 150;
     input.reserve_units = 100;
-    let report =
-        block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
+    let report = block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
 
     // First job admits (reserve 100 of 150) and spends 100; the second
     // reservation (100 > remaining 50) is denied.
@@ -812,8 +816,7 @@ fn monotonic_clock_immune_to_wall_jump() -> Result<()> {
     };
     let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 20);
     input.now = 9_999_999_999; // wall clock jumped far forward
-    let report =
-        block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
+    let report = block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
     assert_eq!(report.completed, 1);
     assert_eq!(report.stop, WakePassStop::QueueEmpty);
     assert_eq!(
@@ -834,7 +837,9 @@ impl DreamerJobExecutor for FailingExecutor {
         _job: &DreamerAdmittedJob,
         _ctx: &mut WakeJobContext<'_>,
     ) -> Result<DreamerJobExecution> {
-        Err(crate::Error::InvariantViolation("executor exploded mid-job"))
+        Err(crate::Error::InvariantViolation(
+            "executor exploded mid-job",
+        ))
     }
 }
 
@@ -861,7 +866,9 @@ fn executor_error_parks_job_and_refunds_reservation() -> Result<()> {
     // The job row is parked under the error reason, not orphaned-leased.
     let parked = store.parked_job(queued.job.id)?.expect("parked row");
     assert!(
-        parked.reason.starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
+        parked
+            .reason
+            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
         "park reason carries the executor error class: {}",
         parked.reason
     );
@@ -905,7 +912,10 @@ fn cancel_before_pass_admits_nothing() -> Result<()> {
         &cancel,
     ))?;
     assert_eq!(report.stop, WakePassStop::Cancelled);
-    assert_eq!(report.admitted, 0, "an already-cancelled pass admits nothing");
+    assert_eq!(
+        report.admitted, 0,
+        "an already-cancelled pass admits nothing"
+    );
     assert_eq!(exec.executed, 0);
     let status = store.status(queued.job.id)?.expect("job status");
     assert_eq!(status.job.state, JobState::Queued, "never claimed");
@@ -970,5 +980,232 @@ fn cancel_mid_pass_finishes_in_flight_job_then_stops() -> Result<()> {
     // Job 2 untouched — ready for the next pass.
     let status = store.status(second.job.id)?.expect("second job status");
     assert_eq!(status.job.state, JobState::Queued, "never claimed");
+    Ok(())
+}
+
+#[test]
+fn clamp_park_reason_is_utf8_boundary_safe() {
+    // 1 ASCII byte then 3-byte chars: the 512 ceiling lands mid-character,
+    // so the cut must step back to the previous boundary (511) instead of
+    // panicking in `String::truncate`.
+    let clamped = clamp_park_reason(format!("x{}", "語".repeat(400)));
+    assert_eq!(clamped.len(), 511);
+    assert!(clamped.len() <= MAX_WAKE_PARK_REASON_BYTES);
+
+    // At or under the ceiling nothing changes.
+    assert_eq!(clamp_park_reason("short".to_owned()), "short");
+    let exact = "a".repeat(MAX_WAKE_PARK_REASON_BYTES);
+    assert_eq!(clamp_park_reason(exact.clone()), exact);
+}
+
+/// Fails every job with an error whose Display exceeds the store's park
+/// reason ceiling (the qodo ONE-1683 review finding: the unclamped reason
+/// used to fail park validation, leaving the admitted job leased).
+struct OversizedErrorExecutor;
+
+impl DreamerJobExecutor for OversizedErrorExecutor {
+    async fn execute(
+        &mut self,
+        _job: &DreamerAdmittedJob,
+        _ctx: &mut WakeJobContext<'_>,
+    ) -> Result<DreamerJobExecution> {
+        Err(crate::Error::AnalyzerError(format!(
+            "x{}",
+            "語".repeat(400)
+        )))
+    }
+}
+
+#[test]
+fn executor_error_with_oversized_display_still_parks() -> Result<()> {
+    // Also pins the MAX_WAKE_PARK_REASON_BYTES mirror against the store's
+    // real validation: if the store ceiling ever shrank below the mirror,
+    // the park here would fail and so would this test.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "oversized-error", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = OversizedErrorExecutor;
+    let result = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &WakeCancellation::new(),
+    ));
+    let error = result.expect_err("the executor error still propagates");
+    assert!(
+        error.to_string().len() > MAX_WAKE_PARK_REASON_BYTES,
+        "the propagated error keeps its full Display"
+    );
+
+    // The job is parked under the clamped reason, not orphaned-leased.
+    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    assert!(
+        parked
+            .reason
+            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
+        "clamping keeps the reason prefix: {}",
+        parked.reason
+    );
+    assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
+
+    // The budget reservation was refunded, not leaked.
+    assert!(
+        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        "the error path must abort the runner budget reservation"
+    );
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000);
+    Ok(())
+}
+
+#[test]
+fn oversized_executor_park_reason_is_clamped() -> Result<()> {
+    // The ordinary Park arm gets the same clamp: an over-limit
+    // executor-authored reason failing park validation would propagate
+    // after the refund but before the park, leaving the job leased.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "long-park", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut parker = ParkingExecutor {
+        reason: format!("x{}", "語".repeat(400)),
+        park_via_store_first: false,
+    };
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut parker,
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.parked, 1);
+    assert_eq!(report.stop, WakePassStop::QueueEmpty, "the pass continues");
+    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
+    assert!(parked.reason.starts_with('x'));
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    Ok(())
+}
+
+/// Panics on every job — the codex ONE-1683 P1 leak site: an unwind past
+/// the driver used to skip the park/refund bookkeeping entirely, leaving
+/// the job leased and the reservation held.
+struct PanickingExecutor;
+
+impl DreamerJobExecutor for PanickingExecutor {
+    async fn execute(
+        &mut self,
+        _job: &DreamerAdmittedJob,
+        _ctx: &mut WakeJobContext<'_>,
+    ) -> Result<DreamerJobExecution> {
+        panic!("executor exploded mid-job");
+    }
+}
+
+#[test]
+fn executor_panic_parks_job_and_refunds_reservation() -> Result<()> {
+    // A panic inside exec.execute is contained at the per-job boundary and
+    // routed through the executor-error arm: the admitted job is parked,
+    // its reservation refunded, and the pass returns Err instead of
+    // unwinding past the driver with the lease still held.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "panicking", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = PanickingExecutor;
+    let result = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &WakeCancellation::new(),
+    ));
+    assert!(
+        result.is_err(),
+        "the contained panic surfaces as a pass error"
+    );
+
+    let parked = store.parked_job(queued.job.id)?.expect("parked row");
+    assert!(
+        parked
+            .reason
+            .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
+        "the panic parks through the executor-error arm: {}",
+        parked.reason
+    );
+    assert!(
+        parked.reason.contains("panicked"),
+        "the reason names the panic: {}",
+        parked.reason
+    );
+    assert!(
+        store.budget_reservation("wake", queued.job.id)?.is_none(),
+        "the panic path must abort the runner budget reservation"
+    );
+    let budget = store.budget("wake")?.expect("budget row");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000);
+
+    // The parked job resumes through the normal path — nothing is stuck.
+    assert!(
+        store
+            .resume_parked(queued.job.id, "wake-worker", 30)?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn pass_yields_at_each_job_boundary_for_cancellation() -> Result<()> {
+    // ONE-1683: run_wake_pass must yield once per job boundary so a
+    // supervisor's biased select! is re-polled between jobs — and can raise
+    // the cancellation flag in time — even when every executor completes
+    // synchronously.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "boundary", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let cancel = WakeCancellation::new();
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let mut exec = CompletingExecutor {
+        completed_units: 10,
+        executed: 0,
+    };
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    let future = driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut exec,
+        &cancel,
+    );
+    let mut future = pin!(future);
+
+    // The first poll parks on the loop-top yield BEFORE any admission.
+    assert!(
+        future.as_mut().poll(&mut cx).is_pending(),
+        "job-boundary yield"
+    );
+    let status = store.status(queued.job.id)?.expect("job status");
+    assert_eq!(
+        status.job.state,
+        JobState::Queued,
+        "nothing admitted before the yield"
+    );
+
+    // A cancellation raised while parked at the yield is honored before
+    // the admission — the supervisor's shutdown window.
+    cancel.cancel();
+    match future.as_mut().poll(&mut cx) {
+        Poll::Ready(Ok(report)) => {
+            assert_eq!(report.stop, WakePassStop::Cancelled);
+            assert_eq!(report.admitted, 0);
+        }
+        other => panic!("expected the cancelled pass to finish: {other:?}"),
+    }
     Ok(())
 }

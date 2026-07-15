@@ -7,8 +7,10 @@
 //! crate is that something — a plain `tokio::select!` supervisor
 //! ([`WakeSupervisor`]) fed by a [`TickSource`]:
 //!
-//! * [`TimerTick`] — wake-on-next-commitment-deadline, read from the job
-//!   queue (never a poll, never a heartbeat),
+//! * [`TimerTick`] — the wake-on-next-commitment-deadline timer lane, read
+//!   from the job queue (never a poll, never a heartbeat). Deliberately
+//!   NOT a standalone [`TickSource`]: a quiet timer lane is not source
+//!   exhaustion, so it only ships composed into [`HybridTick`],
 //! * [`PushTick`] — one bounded coalescing push mailbox whose producer
 //!   handles are typed by role ([`WakePusher`] vs [`HintPusher`], H-S4),
 //! * [`HybridTick`] — a biased select over both, deadline priority, burst

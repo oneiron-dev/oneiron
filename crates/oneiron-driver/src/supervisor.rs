@@ -10,8 +10,11 @@
 //! * A `tokio::sync::Semaphore(1)` serializes passes: a second tick arriving
 //!   mid-pass can never start a second pass (share the gate across
 //!   supervisors over one vault via [`WakeSupervisor::with_pass_gate`]).
-//! * A panic inside a pass (or inside `exec.execute`) is caught and becomes
-//!   a restart-with-backoff, never a supervisor crash.
+//! * Panic containment is layered: the ENGINE contains an `exec.execute`
+//!   panic at the job boundary (the job is parked, its reservation
+//!   refunded, and the pass fails cleanly), and a panic anywhere else in a
+//!   pass is caught HERE as the backstop — either way the supervisor
+//!   restarts with backoff, never crashes.
 //! * Shutdown mid-pass is COOPERATIVE (H-S5/R2): the supervisor raises the
 //!   pass's [`WakeCancellation`] flag and KEEPS AWAITING the pass future —
 //!   it is never dropped mid-await, so an in-flight gated write or
@@ -84,7 +87,10 @@ impl RestartBackoff {
     }
 
     fn advance(&mut self) -> Duration {
-        let delay = self.next.unwrap_or(self.config.initial).min(self.config.max);
+        let delay = self
+            .next
+            .unwrap_or(self.config.initial)
+            .min(self.config.max);
         self.next = Some(delay.saturating_mul(2).min(self.config.max));
         delay
     }
@@ -237,7 +243,13 @@ impl ConsolidationExecutorFactory {
     where
         R: LocalLlmRuntime + 'static,
     {
-        Self::new(Arc::new(LocalLlmBackend::new(runtime)), strategy, actor, model, sink)
+        Self::new(
+            Arc::new(LocalLlmBackend::new(runtime)),
+            strategy,
+            actor,
+            model,
+            sink,
+        )
     }
 }
 
@@ -367,9 +379,15 @@ where
                     Err(_closed) => break,
                 },
             };
-            let outcome =
-                run_pass_supervised(vault, &config, &now_secs, &mut factory, &mut shutdown, &tick)
-                    .await;
+            let outcome = run_pass_supervised(
+                vault,
+                &config,
+                &now_secs,
+                &mut factory,
+                &mut shutdown,
+                &tick,
+            )
+            .await;
             drop(permit);
 
             match outcome {
@@ -417,7 +435,9 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
     tick: &Tick,
 ) -> PassOutcome {
     let cancel = WakeCancellation::new();
-    let mut pass = CatchUnwind::new(run_one_pass(vault, config, now_secs, factory, tick, &cancel));
+    let mut pass = CatchUnwind::new(run_one_pass(
+        vault, config, now_secs, factory, tick, &cancel,
+    ));
     loop {
         tokio::select! {
             biased;
@@ -531,11 +551,15 @@ impl<Fut: Future> Future for CatchUnwind<Fut> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
     use crate::tick::{PushTick, WakeSignal};
+    use oneiron::job_queue::{JobId, JobState};
     use oneiron::{
-        DreamerAdmittedJob, DreamerJobExecution, DreamerRunnerStore,
-        EnqueueDreamerConsolidationJob, VaultConfig, WakeJobContext,
+        DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedJob, DreamerJobExecution,
+        DreamerRunnerStore, EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, VaultConfig,
+        WakeJobContext,
     };
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -544,8 +568,8 @@ mod tests {
         (dir, vault)
     }
 
-    fn enqueue_micro(vault: &Vault, tag: &str, now: u64) {
-        DreamerRunnerStore::new(vault)
+    fn enqueue_micro(vault: &Vault, tag: &str, now: u64) -> JobId {
+        match DreamerRunnerStore::new(vault)
             .enqueue_consolidation(EnqueueDreamerConsolidationJob {
                 scope: DreamerConsolidationScope::Micro,
                 input: rmpv::Value::from(tag),
@@ -554,7 +578,12 @@ mod tests {
                 run_id: None,
                 now,
             })
-            .expect("enqueue");
+            .expect("enqueue")
+        {
+            EnqueueDreamerJobOutcome::Enqueued(status)
+            | EnqueueDreamerJobOutcome::Existing(status) => status.job.id,
+            other => panic!("unexpected enqueue outcome: {other:?}"),
+        }
     }
 
     fn test_config() -> WakeSupervisorConfig {
@@ -597,6 +626,7 @@ mod tests {
 
     struct TestExecFactory {
         panics_left: u32,
+        factory_panics_left: u32,
         completed_units: u64,
     }
 
@@ -604,6 +634,10 @@ mod tests {
         type Exec<'p> = TestExec;
 
         fn executor<'p>(&'p mut self, _guard: &'p BudgetGuard) -> Result<TestExec> {
+            if self.factory_panics_left > 0 {
+                self.factory_panics_left -= 1;
+                panic!("scripted factory panic");
+            }
             let panic_now = self.panics_left > 0;
             if panic_now {
                 self.panics_left -= 1;
@@ -635,6 +669,7 @@ mod tests {
 
         let factory = TestExecFactory {
             panics_left: 0,
+            factory_panics_left: 0,
             completed_units: 40,
         };
         let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
@@ -655,9 +690,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn panicked_pass_restarts_with_backoff_instead_of_crashing() {
+    async fn panicking_executor_parks_job_and_supervisor_continues() {
+        // ONE-1683: an executor panic after admission used to unwind past
+        // the driver's park/refund code — the supervisor's catch converted
+        // it to Panicked by resolving before that bookkeeping ran, leaving
+        // the job leased and the reservation held until external cleanup.
+        // The engine now contains the panic at the job boundary: the job is
+        // parked, the reservation refunded, and the pass surfaces as a
+        // FAILED pass the supervisor backs off from and outlives.
         let (_dir, vault) = open_vault();
-        enqueue_micro(&vault, "panics-once", 10);
+        let first = enqueue_micro(&vault, "panics", 10);
+        let second = enqueue_micro(&vault, "completes", 11);
 
         let wake = Tick::Wake(WakeSignal {
             trigger: WakeTrigger::Compaction,
@@ -668,16 +711,160 @@ mod tests {
         };
         let factory = TestExecFactory {
             panics_left: 1,
+            factory_panics_left: 0,
             completed_units: 40,
         };
         let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
         let report = supervisor.run().await;
 
-        assert_eq!(report.passes_panicked, 1, "the panic was caught");
+        assert_eq!(
+            report.passes_failed, 1,
+            "the contained panic surfaces as a failed pass"
+        );
+        assert_eq!(report.passes_panicked, 0, "nothing unwound past the driver");
         assert_eq!(
             report.passes_completed, 1,
             "the supervisor restarted after backoff and ran the next pass"
         );
+        assert_eq!(report.jobs_completed, 1);
+
+        // The panicked job is parked under the executor-error reason, its
+        // reservation refunded; the second job settled normally.
+        let store = DreamerRunnerStore::new(&vault);
+        let parked = store
+            .parked_job(first)
+            .expect("parked read")
+            .expect("parked row");
+        assert!(
+            parked
+                .reason
+                .starts_with(DREAMER_EXECUTOR_ERROR_PARK_REASON),
+            "park reason carries the executor-error class: {}",
+            parked.reason
+        );
+        assert!(
+            parked.reason.contains("panicked"),
+            "park reason names the panic: {}",
+            parked.reason
+        );
+        let budget = store
+            .budget("driver-budget")
+            .expect("budget read")
+            .expect("budget row");
+        assert_eq!(budget.reserved_units, 0, "no reservation leaked");
+        assert_eq!(budget.remaining_units, 10_000 - 40);
+        let status = store.status(second).expect("status read").expect("status");
+        assert_eq!(status.job.state, JobState::Completed);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pass_panic_outside_the_job_boundary_restarts_with_backoff() {
+        // The supervisor-level catch stays as the backstop for panics the
+        // engine cannot contain — anywhere outside exec.execute, here the
+        // executor factory. Nothing is leased at that point, so
+        // restart-with-backoff is leak-free.
+        let (_dir, vault) = open_vault();
+        enqueue_micro(&vault, "factory-panics-once", 10);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        let ticks = ScriptedTicks {
+            ticks: vec![wake, wake],
+        };
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 1,
+            completed_units: 40,
+        };
+        let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
+        let report = supervisor.run().await;
+
+        assert_eq!(report.passes_panicked, 1, "the backstop caught the panic");
+        assert_eq!(
+            report.passes_completed, 1,
+            "the supervisor restarted after backoff and ran the next pass"
+        );
+    }
+
+    /// Completes jobs synchronously and requests supervisor shutdown from
+    /// inside the first execution — without a job-boundary yield the whole
+    /// backlog would drain in a single poll before the biased select! ever
+    /// saw the request.
+    struct ShutdownRequestingExec {
+        handle: ShutdownHandle,
+    }
+
+    impl DreamerJobExecutor for ShutdownRequestingExec {
+        async fn execute(
+            &mut self,
+            _job: &DreamerAdmittedJob,
+            _ctx: &mut WakeJobContext<'_>,
+        ) -> Result<DreamerJobExecution> {
+            self.handle.shutdown();
+            Ok(DreamerJobExecution::Completed {
+                completed_units: 40,
+            })
+        }
+    }
+
+    struct ShutdownRequestingFactory {
+        handle: Arc<Mutex<Option<ShutdownHandle>>>,
+    }
+
+    impl PassExecutorFactory for ShutdownRequestingFactory {
+        type Exec<'p> = ShutdownRequestingExec;
+
+        fn executor<'p>(&'p mut self, _guard: &'p BudgetGuard) -> Result<ShutdownRequestingExec> {
+            let handle = self
+                .handle
+                .lock()
+                .expect("handle slot")
+                .clone()
+                .expect("handle wired before run");
+            Ok(ShutdownRequestingExec { handle })
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_during_synchronous_pass_stops_at_the_next_job_boundary() {
+        // ONE-1683: run_wake_pass yields once per job boundary, so a
+        // shutdown requested while a synchronously-completing pass is
+        // running raises the cancellation flag after the in-flight job —
+        // the pass stops cooperatively instead of draining the whole queue.
+        let (_dir, vault) = open_vault();
+        enqueue_micro(&vault, "first", 10);
+        let second = enqueue_micro(&vault, "second", 11);
+        let third = enqueue_micro(&vault, "third", 12);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        let ticks = ScriptedTicks {
+            ticks: vec![wake, wake],
+        };
+        let slot = Arc::new(Mutex::new(None));
+        let factory = ShutdownRequestingFactory {
+            handle: Arc::clone(&slot),
+        };
+        let supervisor = WakeSupervisor::new(&vault, ticks, factory, test_config());
+        *slot.lock().expect("handle slot") = Some(supervisor.shutdown_handle());
+        let report = supervisor.run().await;
+
+        assert_eq!(report.passes_completed, 1);
+        assert_eq!(
+            report.jobs_completed, 1,
+            "the pass stopped at the first job boundary after the request"
+        );
+
+        // The rest of the queue is untouched, ready for the next run.
+        let store = DreamerRunnerStore::new(&vault);
+        for id in [second, third] {
+            let status = store.status(id).expect("status read").expect("status");
+            assert_eq!(status.job.state, JobState::Queued, "never claimed");
+        }
     }
 
     #[tokio::test]
@@ -686,6 +873,7 @@ mod tests {
         let (push, _wake, _hint) = PushTick::channel();
         let factory = TestExecFactory {
             panics_left: 0,
+            factory_panics_left: 0,
             completed_units: 0,
         };
         let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
