@@ -888,6 +888,11 @@ struct FoldState {
     /// These keys are retained only to validate vetoes against widens that were
     /// concurrent with, or older than, the delayed rotation that revoked them.
     delayed_rotation_veto_revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
+    /// Keys revoked by operations allowed to resolve authority forks.
+    ///
+    /// Rotation revocations are deliberately excluded: a forked signer cannot
+    /// clear its own alarm by making a self-rotation the equivocation winner.
+    fork_resolution_revocations: BTreeSet<AuthorityKey>,
     authority_forks: BTreeMap<(AuthorityKey, u64), AuthorityFork>,
     federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
@@ -1129,7 +1134,7 @@ struct FoldContext<'a> {
     enforce_seen_time_delay: bool,
     vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
     authority_forks: &'a BTreeMap<(AuthorityKey, u64), AuthorityFork>,
-    authority_fork_vault_ids: &'a BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
+    authority_fork_vault_ids: &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
     equivocation_groups: &'a BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityEntryHash>>,
     unresolved_equivocation_groups: &'a BTreeSet<(AuthorityKey, u64)>,
     entry_ancestors: Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
@@ -1275,10 +1280,11 @@ fn fold_authority_log_inner(
             for fork in &fold.authority_forks {
                 let key = (fork.signer.clone(), fork.seq);
                 if fork.status == AuthorityForkStatus::Quarantined
-                    && folded_authority_fork_vault_ids.get(&key) == Some(&vault_id)
+                    && let Some(fork_vault_ids) = folded_authority_fork_vault_ids.get(&key)
+                    && fork_vault_ids.contains(&vault_id)
                 {
                     next_authority_forks.insert(key.clone(), fork.clone());
-                    next_authority_fork_vault_ids.insert(key, vault_id);
+                    next_authority_fork_vault_ids.insert(key, fork_vault_ids.clone());
                 }
             }
         }
@@ -1314,7 +1320,7 @@ fn fold_authority_log_once(
     context: FoldContext<'_>,
 ) -> (
     AuthorityFold,
-    BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
+    BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
 ) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
@@ -1384,7 +1390,7 @@ fn fold_authority_log_once(
                     EquivocationResolution::Resolved {
                         winner,
                         fork,
-                        fork_vault_id,
+                        fork_vault_ids,
                         issues: group_issues,
                     } => {
                         // The per-round hash snapshot can revisit a second
@@ -1397,10 +1403,10 @@ fn fold_authority_log_once(
                         if let Some(fork) = fork {
                             authority_forks.insert(group_key.clone(), fork.clone());
                             reported_authority_forks.insert(group_key.clone(), fork);
-                            if let Some(vault_id) = fork_vault_id {
-                                authority_fork_vault_ids.insert(group_key.clone(), vault_id);
-                            } else {
+                            if fork_vault_ids.is_empty() {
                                 authority_fork_vault_ids.remove(&group_key);
+                            } else {
+                                authority_fork_vault_ids.insert(group_key.clone(), fork_vault_ids);
                             }
                         }
                         if let Some((winner_hash, state)) = winner {
@@ -1534,21 +1540,23 @@ fn fold_authority_log_once(
 
 fn reconcile_reported_authority_forks(
     reported: &mut BTreeMap<(AuthorityKey, u64), AuthorityFork>,
-    authority_fork_vault_ids: &BTreeMap<(AuthorityKey, u64), AuthorityVaultId>,
+    authority_fork_vault_ids: &BTreeMap<(AuthorityKey, u64), BTreeSet<AuthorityVaultId>>,
     state: &FoldState,
 ) {
     for (key, fork) in reported.iter_mut() {
-        if authority_fork_vault_ids.get(key) == Some(&state.vault_id)
-            && state
-                .roster
-                .get(&fork.signer)
-                .is_some_and(|device| device.revoked)
+        if authority_fork_vault_ids
+            .get(key)
+            .is_some_and(|vault_ids| vault_ids.contains(&state.vault_id))
+            && state.fork_resolution_revocations.contains(&fork.signer)
         {
             fork.status = AuthorityForkStatus::Resolved;
         }
     }
     for (key, fork) in &state.authority_forks {
-        if authority_fork_vault_ids.get(key) != Some(&state.vault_id) {
+        if !authority_fork_vault_ids
+            .get(key)
+            .is_some_and(|vault_ids| vault_ids.contains(&state.vault_id))
+        {
             continue;
         }
         reported
@@ -1588,7 +1596,7 @@ enum EquivocationResolution {
     Resolved {
         winner: Option<(AuthorityEntryHash, Box<FoldState>)>,
         fork: Option<AuthorityFork>,
-        fork_vault_id: Option<AuthorityVaultId>,
+        fork_vault_ids: BTreeSet<AuthorityVaultId>,
         issues: Vec<AuthorityFoldIssue>,
     },
     Waiting,
@@ -1633,15 +1641,19 @@ fn resolve_equivocation_group(
 
     if ready.is_empty() {
         let mut fork = authority_fork_from_group(&group_key.0, group_key.1, group);
-        if fork_group_signer_is_revoked_in_folded_ancestry(&group_key.0, group, by_hash, states)
-            && let Some(fork) = &mut fork
+        if fork_group_signer_has_resolution_revocation_in_folded_ancestry(
+            &group_key.0,
+            group,
+            by_hash,
+            states,
+        ) && let Some(fork) = &mut fork
         {
             fork.status = AuthorityForkStatus::Resolved;
         }
         return EquivocationResolution::Resolved {
             winner: None,
             fork,
-            fork_vault_id: authority_fork_vault_id_from_group(group, by_hash, states, None),
+            fork_vault_ids: authority_fork_vault_ids_from_group(group, by_hash, states, None),
             issues,
         };
     }
@@ -1690,7 +1702,7 @@ fn resolve_equivocation_group(
         .as_ref()
         .and_then(|(_, state)| state.authority_forks.get(group_key).cloned())
         .or_else(|| authority_fork_from_group(&group_key.0, group_key.1, group));
-    let fork_vault_id = authority_fork_vault_id_from_group(
+    let fork_vault_ids = authority_fork_vault_ids_from_group(
         group,
         by_hash,
         states,
@@ -1699,42 +1711,38 @@ fn resolve_equivocation_group(
     EquivocationResolution::Resolved {
         winner,
         fork,
-        fork_vault_id,
+        fork_vault_ids,
         issues,
     }
 }
 
-fn authority_fork_vault_id_from_group(
+fn authority_fork_vault_ids_from_group(
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     winner: Option<&FoldState>,
-) -> Option<AuthorityVaultId> {
-    // The fork threatens the vault whose log the candidates tried to extend —
-    // the folded parent vault — not the vault id the entries claim. An
-    // all-invalid WrongVault group carries a bogus claimed id; scoping the
-    // quarantine there would leave the real vault's later entries unguarded.
-    let parent_vault_ids: BTreeSet<_> = group
+) -> BTreeSet<AuthorityVaultId> {
+    // Fail closed across every plausible attack scope. Folded parent vaults
+    // identify logs the candidates tried to extend, while claimed ids cover
+    // missing-parent groups; a winner's vault covers entries without a claim.
+    let mut vault_ids: BTreeSet<_> = group
         .iter()
         .filter_map(|hash| by_hash.get(hash))
         .flat_map(|entry| entry.parent_hashes.iter())
         .filter_map(|parent| states.get(parent).map(|state| state.vault_id))
         .collect();
-    if parent_vault_ids.len() == 1 {
-        return parent_vault_ids.into_iter().next();
+    vault_ids.extend(
+        group
+            .iter()
+            .filter_map(|hash| by_hash.get(hash).and_then(|entry| entry.vault_id)),
+    );
+    if let Some(winner) = winner {
+        vault_ids.insert(winner.vault_id);
     }
-    let vault_ids: BTreeSet<_> = group
-        .iter()
-        .filter_map(|hash| by_hash.get(hash).and_then(|entry| entry.vault_id))
-        .collect();
-    match vault_ids.len() {
-        0 => winner.map(|state| state.vault_id),
-        1 => vault_ids.into_iter().next(),
-        _ => None,
-    }
+    vault_ids
 }
 
-fn fork_group_signer_is_revoked_in_folded_ancestry(
+fn fork_group_signer_has_resolution_revocation_in_folded_ancestry(
     signer: &AuthorityKey,
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -1747,10 +1755,8 @@ fn fork_group_signer_is_revoked_in_folded_ancestry(
             return false;
         };
         let vault_id = first_parent.vault_id;
-        let mut signer_is_revoked = first_parent
-            .roster
-            .get(signer)
-            .is_some_and(|device| device.revoked);
+        let mut signer_has_resolution_revocation =
+            first_parent.fork_resolution_revocations.contains(signer);
         for parent_state in parent_states {
             let Some(parent_state) = parent_state else {
                 return false;
@@ -1758,12 +1764,10 @@ fn fork_group_signer_is_revoked_in_folded_ancestry(
             if parent_state.vault_id != vault_id {
                 return false;
             }
-            signer_is_revoked |= parent_state
-                .roster
-                .get(signer)
-                .is_some_and(|device| device.revoked);
+            signer_has_resolution_revocation |=
+                parent_state.fork_resolution_revocations.contains(signer);
         }
-        signer_is_revoked
+        signer_has_resolution_revocation
     })
 }
 
@@ -1817,7 +1821,7 @@ fn active_roster_count_after_fork_quarantine(
             *key != forked_key
                 && !device.revoked
                 && device.roles != 0
-                && !key_is_quarantined_for_entry(state, context, key, hash)
+                && !key_is_quarantined_for_entry(state, context, key, hash, None)
         })
         .count()
 }
@@ -1831,7 +1835,7 @@ fn state_has_authority_consent_after_fork_quarantine(
     state.roster.iter().any(|(key, device)| {
         key != forked_key
             && folded_device_can_authority_consent(device)
-            && !key_is_quarantined_for_entry(state, context, key, hash)
+            && !key_is_quarantined_for_entry(state, context, key, hash, None)
     })
 }
 
@@ -1865,7 +1869,10 @@ fn resolve_global_forks_for_revoke(
 ) {
     for (key, fork) in context.authority_forks {
         if &key.0 == revoked_key
-            && context.authority_fork_vault_ids.get(key) == Some(&state.vault_id)
+            && context
+                .authority_fork_vault_ids
+                .get(key)
+                .is_some_and(|vault_ids| vault_ids.contains(&state.vault_id))
         {
             state
                 .authority_forks
@@ -1881,11 +1888,11 @@ fn resolve_global_forks_for_revoke(
 
 fn resolve_global_forks_for_recovery_reboot(state: &mut FoldState, context: FoldContext<'_>) {
     for (key, fork) in context.authority_forks {
-        if context.authority_fork_vault_ids.get(key) == Some(&state.vault_id)
-            && state
-                .roster
-                .get(&fork.signer)
-                .is_some_and(|device| device.revoked)
+        if context
+            .authority_fork_vault_ids
+            .get(key)
+            .is_some_and(|vault_ids| vault_ids.contains(&state.vault_id))
+            && state.fork_resolution_revocations.contains(&fork.signer)
         {
             state
                 .authority_forks
@@ -1899,19 +1906,30 @@ fn resolve_global_forks_for_recovery_reboot(state: &mut FoldState, context: Fold
     }
 }
 
+/// `prefork` carries the validated entry's own `(signer, seq)` when the
+/// caller is judging that entry's participants. The forked signer's entries
+/// at a chain position strictly before the fork seq are pre-fork by
+/// construction (seq continuity is enforced against the folded parent
+/// state), which matters when the fork candidates' ancestry is unresolvable
+/// (missing parents) and the ancestor-based exemption cannot see them.
+/// Roster-wide scans pass `None` and stay fail-closed.
 fn key_is_quarantined_for_entry(
     state: &FoldState,
     context: FoldContext<'_>,
     key: &AuthorityKey,
     entry_hash: AuthorityEntryHash,
+    prefork: Option<(&AuthorityKey, u64)>,
 ) -> bool {
     state
         .authority_forks
         .values()
-        .any(|fork| fork_quarantines_key_for_entry(state, context, fork, key, entry_hash))
+        .any(|fork| fork_quarantines_key_for_entry(state, context, fork, key, entry_hash, prefork))
         || context.authority_forks.iter().any(|(fork_key, fork)| {
-            context.authority_fork_vault_ids.get(fork_key) == Some(&state.vault_id)
-                && fork_quarantines_key_for_entry(state, context, fork, key, entry_hash)
+            context
+                .authority_fork_vault_ids
+                .get(fork_key)
+                .is_some_and(|vault_ids| vault_ids.contains(&state.vault_id))
+                && fork_quarantines_key_for_entry(state, context, fork, key, entry_hash, prefork)
         })
 }
 
@@ -1921,11 +1939,13 @@ fn fork_quarantines_key_for_entry(
     fork: &AuthorityFork,
     key: &AuthorityKey,
     entry_hash: AuthorityEntryHash,
+    prefork: Option<(&AuthorityKey, u64)>,
 ) -> bool {
     fork.signer == *key
         && fork.status == AuthorityForkStatus::Quarantined
         && !fork_resolved_in_state(state, key, fork.seq)
         && !entry_is_prefork_or_fork_candidate(context, key, fork.seq, entry_hash)
+        && !prefork.is_some_and(|(signer, seq)| signer == key && seq < fork.seq)
 }
 
 fn fork_resolved_in_state(state: &FoldState, key: &AuthorityKey, seq: u64) -> bool {
@@ -2230,6 +2250,7 @@ fn fold_entry_state(
             pending_widens: BTreeMap::new(),
             vetoed_widens: context.vetoed_widens.clone(),
             delayed_rotation_veto_revocations: BTreeMap::new(),
+            fork_resolution_revocations: BTreeSet::new(),
             authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_grant_bindings: BTreeMap::new(),
@@ -2397,9 +2418,14 @@ fn veto_participant_keys(
             .roster
             .get(key)
             .is_some_and(|device| !device.revoked && device.roles != 0);
-        if key_is_quarantined_for_entry(state, context, key, hash)
-            || (!active_member
-                && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context))
+        if key_is_quarantined_for_entry(
+            state,
+            context,
+            key,
+            hash,
+            Some((entry.signer_key(), entry.seq)),
+        ) || (!active_member
+            && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context))
         {
             return Err(AuthorityFoldIssue::SignerNotInAncestry(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
@@ -2423,7 +2449,13 @@ fn active_participant_keys(
             .roster
             .get(key)
             .is_none_or(|device| device.revoked || device.roles == 0)
-            || key_is_quarantined_for_entry(state, context, key, hash)
+            || key_is_quarantined_for_entry(
+                state,
+                context,
+                key,
+                hash,
+                Some((entry.signer_key(), entry.seq)),
+            )
         {
             return Err(AuthorityFoldIssue::SignerNotInAncestry(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
@@ -2486,7 +2518,7 @@ fn state_has_authority_consent_for_entry(
 ) -> bool {
     state.roster.iter().any(|(key, device)| {
         folded_device_can_authority_consent(device)
-            && !key_is_quarantined_for_entry(state, context, key, hash)
+            && !key_is_quarantined_for_entry(state, context, key, hash, None)
     })
 }
 
@@ -2613,7 +2645,7 @@ fn revoke_would_break_quorum(
     let revoked_was_active = state.roster.get(revoked_key).is_some_and(|device| {
         !device.revoked
             && device.roles != 0
-            && !key_is_quarantined_for_entry(state, context, revoked_key, hash)
+            && !key_is_quarantined_for_entry(state, context, revoked_key, hash, None)
     });
     let active_after = active_before.saturating_sub(usize::from(revoked_was_active));
     participants.len() < 2 || active_after < 2
@@ -2630,7 +2662,7 @@ fn active_roster_count_for_entry(
         .filter(|(key, device)| {
             !device.revoked
                 && device.roles != 0
-                && !key_is_quarantined_for_entry(state, context, key, hash)
+                && !key_is_quarantined_for_entry(state, context, key, hash, None)
         })
         .count()
 }
@@ -2658,6 +2690,9 @@ fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_default()
             .extend(revocations.iter().copied());
     }
+    merged
+        .fork_resolution_revocations
+        .extend(right.fork_resolution_revocations.iter().cloned());
     for (key, fork) in &right.authority_forks {
         merged
             .authority_forks
@@ -2721,6 +2756,9 @@ fn apply_op(
         AuthorityOp::Genesis { .. } => {}
         AuthorityOp::EnrollDevice { device } => upsert_device(state, device),
         AuthorityOp::RevokeDevice { revoked_key } => {
+            state
+                .fork_resolution_revocations
+                .insert(revoked_key.clone());
             revoke_key(state, revoked_key);
             for fork in state.authority_forks.values_mut() {
                 if fork.signer == *revoked_key && fork.status == AuthorityForkStatus::Quarantined {
@@ -2760,6 +2798,9 @@ fn apply_op(
             ..
         } => {
             let revoked_keys: BTreeSet<_> = state.roster.keys().cloned().collect();
+            state
+                .fork_resolution_revocations
+                .extend(revoked_keys.iter().cloned());
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
