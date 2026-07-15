@@ -1731,9 +1731,18 @@ impl<'a> HostSelfDispatcher<'a> {
         ))
     }
 
-    fn dispatch_memory_search(&self, call: SelfMemorySearchCall) -> Result<SelfDispatchOutcome> {
+    fn dispatch_memory_search(
+        &self,
+        call: SelfMemorySearchCall,
+        persist_telemetry: bool,
+    ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = self.vault.search_text(&call.query, limit)?;
+        let results = if persist_telemetry {
+            self.vault.search_text(&call.query, limit)?
+        } else {
+            self.vault
+                .search_text_without_telemetry(&call.query, limit)?
+        };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
@@ -2000,7 +2009,12 @@ impl<'a> HostSelfDispatcher<'a> {
         off_record_session_ref: Option<&str>,
     ) -> Result<SelfDispatchOutcome> {
         match call {
-            SelfCall::MemorySearch(call) => self.dispatch_memory_search(call),
+            // Off-record search results are ephemeral run data. Avoid
+            // creating a RetrievalRunRecord whose result ids would otherwise
+            // outlive the session because it is not a replay dependency.
+            SelfCall::MemorySearch(call) => {
+                self.dispatch_memory_search(call, off_record_session_ref.is_none())
+            }
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => {
                 if off_record_session_ref.is_some() {

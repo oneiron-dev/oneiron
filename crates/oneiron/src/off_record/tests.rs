@@ -1080,6 +1080,109 @@ fn promotion_requires_materialized_turn_then_releases_witness_carriers() {
 }
 
 #[test]
+fn vault_search_and_short_id_hydration_hide_fenced_message_until_promotion() {
+    let (_tmp, vault) = temp_vault();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let conversation = EntityId::now();
+    let author = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    vault
+        .put_entity(&author, ENTITY_TYPE_PERSON, occurred, 1000, b"author")
+        .expect("author");
+    vault
+        .enter_off_record_session("sess-search-hydrate", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-search-hydrate", &turn)
+        .expect("tag before witness");
+    assert_eq!(
+        [vault
+            .register_off_record_conversation_shell("sess-search-hydrate", &conversation)
+            .expect("reserve conversation shell")]
+        .into_iter()
+        .filter(|owned| *owned)
+        .count(),
+        1
+    );
+    vault
+        .memory_facade(author, EdgeActorClass::Human)
+        .witness(&crate::facade::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            messages: vec![crate::facade::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::facade::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "fencedsearchhydrateunique".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 1000,
+        })
+        .expect("materialize fenced witness");
+    let (short_id, content_hash) = {
+        let rtxn = vault.store.env.read_txn().expect("short-ref read");
+        let encoded = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, message.as_bytes())
+            .expect("short-ref lookup")
+            .expect("message short ref");
+        let (short_id, content_hash) =
+            crate::batch::parse_short_id_value(encoded).expect("decode message short ref");
+        (short_id.to_owned(), content_hash)
+    };
+
+    assert_eq!(
+        vault
+            .search_text("fencedsearchhydrateunique", 10)
+            .expect("hidden search")
+            .len(),
+        0
+    );
+    assert_eq!(
+        vault
+            .hydrate_short_id(&short_id, content_hash)
+            .expect("hidden hydrate")
+            .iter()
+            .count(),
+        0
+    );
+
+    vault
+        .promote_off_record_turn(
+            "sess-search-hydrate",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote");
+    let released_hits = vault
+        .search_text("fencedsearchhydrateunique", 10)
+        .expect("released search");
+    assert_eq!(released_hits.len(), 1);
+    assert_eq!(
+        released_hits.iter().filter(|hit| hit.id == message).count(),
+        1
+    );
+    let hydrated = vault
+        .hydrate_short_id(&short_id, content_hash)
+        .expect("released hydrate");
+    assert_eq!(
+        hydrated
+            .iter()
+            .filter(|result| result.id == message && result.body.is_some())
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn public_edge_readers_hide_direct_fenced_endpoint_until_promotion() {
     let (_tmp, vault) = temp_vault();
     let ordinary = seed_turn(&vault, 999);
@@ -1386,6 +1489,59 @@ fn inherited_fenced_carrier_reput_is_rejected_and_promotion_releases_original() 
             .expect("released sidecars")
             .len(),
         0
+    );
+}
+
+#[test]
+fn materialized_direct_fenced_root_allows_only_byte_exact_reput() {
+    let (_tmp, vault) = temp_vault();
+    let turn = EntityId::now();
+    let occurred = TimeRange {
+        start: 1000,
+        end: 1000,
+    };
+    let original = b"original private root body";
+    vault
+        .put_entity(&turn, ENTITY_TYPE_TURN, occurred, 1000, original)
+        .expect("seed materialized root");
+    vault
+        .enter_off_record_session("sess-root-reput", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-root-reput", &turn)
+        .expect("tag materialized root");
+
+    let changed = vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            occurred,
+            1000,
+            b"attacker replacement body",
+        )
+        .expect_err("body-changing fenced-root put must reject");
+    assert_eq!(
+        [changed]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+
+    vault
+        .put_entity(&turn, ENTITY_TYPE_TURN, occurred, 1000, original)
+        .expect("byte-exact retry remains idempotent");
+    vault
+        .promote_off_record_turn(
+            "sess-root-reput",
+            &turn,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
+        .expect("promote original root");
+    assert_eq!(
+        vault.get(&turn).expect("released root body"),
+        Some(original.to_vec())
     );
 }
 

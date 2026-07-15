@@ -583,6 +583,9 @@ impl Vault {
     /// Retrieves a vector for an entity.
     pub fn get_vector(&self, id: &EntityId) -> Result<Option<Vec<f32>>> {
         let rtxn = self.store.env.read_txn()?;
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, id)? {
+            return Ok(None);
+        }
         let Some(bytes) = self.store.vectors.get(&rtxn, id.as_bytes())? else {
             return Ok(None);
         };
@@ -633,14 +636,15 @@ impl Vault {
             // full-length queries; the skip-rescore hot lane is a pipeline
             // feature (a `fast_dims`-length query is inherently prefix-only
             // on every path — no full query exists to rescore).
-            hnsw::hnsw_search(
+            let results = hnsw::hnsw_search(
                 &self.store,
                 &self.config,
                 &rtxn,
                 query,
                 limit,
                 /* skip_rescore = */ false,
-            )?
+            )?;
+            self.filter_off_record_search_results(&rtxn, results)?
         };
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Vector,
@@ -951,14 +955,9 @@ impl Vault {
         limit: usize,
         profile: &crate::config::Bm25RankProfile,
     ) -> Result<RetrievalWithTelemetry<Vec<ScoredEntity>>> {
-        let config = profile.to_bm25_config()?;
-        self.ensure_text_index_trusted()?;
         let started_at = unix_seconds_now();
         let started = Instant::now();
-        let results = {
-            let rtxn = self.store.env.read_txn()?;
-            bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?
-        };
+        let results = self.search_text_with_profile_without_telemetry(query, limit, profile)?;
         let run_id = self.record_vault_search_retrieval_run(
             RetrievalSignal::Text,
             started_at,
@@ -970,6 +969,47 @@ impl Vault {
             value: results,
             run_id,
         })
+    }
+
+    /// BM25 read path for callers whose lifetime forbids durable retrieval
+    /// telemetry (notably an off-record executor session).
+    pub(crate) fn search_text_without_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.search_text_with_profile_without_telemetry(
+            query,
+            limit,
+            &crate::config::Bm25RankProfile::default(),
+        )
+    }
+
+    fn search_text_with_profile_without_telemetry(
+        &self,
+        query: &str,
+        limit: usize,
+        profile: &crate::config::Bm25RankProfile,
+    ) -> Result<Vec<ScoredEntity>> {
+        let config = profile.to_bm25_config()?;
+        self.ensure_text_index_trusted()?;
+        let rtxn = self.store.env.read_txn()?;
+        let results = bm25::search_text(&self.store, &rtxn, &self.analyzer, &config, query, limit)?;
+        self.filter_off_record_search_results(&rtxn, results)
+    }
+
+    fn filter_off_record_search_results(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        results: Vec<ScoredEntity>,
+    ) -> Result<Vec<ScoredEntity>> {
+        let mut visible = Vec::with_capacity(results.len());
+        for result in results {
+            if !crate::off_record::off_record_visibility_hidden(&self.store, rtxn, &result.id)? {
+                visible.push(result);
+            }
+        }
+        Ok(visible)
     }
 
     fn record_vault_search_retrieval_run(
@@ -1404,6 +1444,10 @@ impl Vault {
                 .map_err(|_| Error::CorruptedIndex("short id entity id"))?,
         )
         .map_err(|_| Error::CorruptedIndex("short id entity id"))?;
+
+        if crate::off_record::off_record_visibility_hidden(&self.store, &rtxn, &id)? {
+            return Ok(None);
+        }
 
         let Some(raw) = self.store.entities.get(&rtxn, id.as_bytes())? else {
             return Ok(Some(HydratedShortId {

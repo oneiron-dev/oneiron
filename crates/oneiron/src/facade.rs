@@ -1357,10 +1357,11 @@ impl MemoryFacade<'_> {
                 }
             }
             // A reused TURN may be live-fenced for an off-record session.
-            // This shared door permits its ordinary tag-before-write flow but
-            // rejects a closing/closed fence, making MESSAGE attachment
-            // atomic with close's child cascade.
-            crate::off_record::guard_off_record_entity_put(
+            // Preflight validates fence liveness only (rejects closing/
+            // closed/replicated/mismatched) — a witness REPLAY reaches here
+            // with the turn already materialized, and whether any actual put
+            // is an exact retry is decided at the apply_put choke point.
+            crate::off_record::guard_off_record_entity_put_preflight(
                 &self.vault.store,
                 &*wtxn,
                 &turn_id,

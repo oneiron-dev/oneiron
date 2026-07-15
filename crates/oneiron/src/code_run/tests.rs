@@ -653,6 +653,80 @@ fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
 }
 
 #[test]
+fn off_record_code_run_search_leaves_no_telemetry_but_on_record_search_writes_one() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x64);
+    let memory = EntityId::from_bytes([0xB4; 16]).expect("memory id");
+    vault
+        .batch()
+        .put(
+            &memory,
+            ENTITY_TYPE_PERSON,
+            range(2),
+            2,
+            b"private search fixture",
+        )
+        .text(&memory, &[("body", "ephemeralsearchtelemetry")])
+        .commit()?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:off-record-search-telemetry",
+    )?;
+    vault.enter_off_record_session(
+        "sess-code-search-telemetry",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+
+    let off_record = dispatcher.dispatch_with_off_record_session_ref(
+        SelfCall::MemorySearch(SelfMemorySearchCall::new("ephemeralsearchtelemetry", 5)),
+        Some("sess-code-search-telemetry"),
+    )?;
+    let SelfDispatchOutcome::MemorySearch(off_record_result) = off_record else {
+        panic!("expected off-record memory search outcome");
+    };
+    assert_eq!(
+        off_record_result
+            .results
+            .iter()
+            .filter(|result| result.id == memory)
+            .count(),
+        1
+    );
+    let receipt_log = vault.off_record_receipt_log("sess-code-search-telemetry")?;
+    let close = vault.close_off_record_session("sess-code-search-telemetry", receipt_log)?;
+    assert_eq!(close.turns_deleted, 0);
+    assert_eq!(vault.retrieval_runs(10)?.len(), 0);
+
+    let on_record = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+        "ephemeralsearchtelemetry",
+        5,
+    )))?;
+    let SelfDispatchOutcome::MemorySearch(on_record_result) = on_record else {
+        panic!("expected on-record memory search outcome");
+    };
+    assert_eq!(
+        on_record_result
+            .results
+            .iter()
+            .filter(|result| result.id == memory)
+            .count(),
+        1
+    );
+    let telemetry = vault.retrieval_runs(10)?;
+    assert_eq!(telemetry.len(), 1);
+    assert_eq!(
+        telemetry[0]
+            .result_ids
+            .iter()
+            .filter(|result_id| *result_id == memory.as_bytes())
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn code_run_speak_think_express_emit_interleaved_gated_message_bubbles() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = seed_first_party_actor(&vault);

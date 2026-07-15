@@ -799,13 +799,37 @@ fn first_open_off_record_session_in_txn(store: &Store, rtxn: &RoTxn<'_>) -> Resu
 /// Fail-closed entity materialization door for off-record fences.
 ///
 /// Every ordinary, typed, claim-candidate, and replicated entity put reaches
-/// this probe through `batch::apply_put` before it can stage bytes, index
-/// rows, or gate receipts. A live fence permits only the local
-/// tag-before-write flow; a replicated write, or a closing, closed, malformed,
-/// or mismatched fence rejects with a typed error. The retained post-close
-/// marker is sessionless, so this guard never needs to surface or preserve an
-/// evaporated session ref.
+/// this probe through `batch::apply_put` before it can stage entity or index
+/// bytes. A live fence permits the first local tag-before-write materialization;
+/// a materialized root reaches this strict door only for a non-exact retry and
+/// is rejected. Replicated writes and closing, closed, malformed, or mismatched
+/// fences also reject with a typed error. The retained post-close marker is
+/// sessionless, so this guard never needs to surface or preserve an evaporated
+/// session ref.
 pub(crate) fn guard_off_record_entity_put(
+    store: &Store,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    replicated: bool,
+) -> Result<()> {
+    guard_off_record_entity_put_preflight(store, wtxn, id, replicated)?;
+    if direct_off_record_fence_active(store, wtxn, id)?
+        && store.entities.get(wtxn, id.as_bytes())?.is_some()
+    {
+        return Err(Error::OffRecordFencedTurnWriteRejected {
+            turn_ref: id.to_hex(),
+        });
+    }
+    Ok(())
+}
+
+/// Early gate-receipt preflight for entity puts.
+///
+/// The caller-controlled entity bytes are not encoded at this phase, so a
+/// live direct fence is validated without deciding whether a materialized
+/// root is an exact retry. `batch::apply_put` performs that byte comparison
+/// and calls the strict materialization door above for every non-retry.
+pub(crate) fn guard_off_record_entity_put_preflight(
     store: &Store,
     wtxn: &RwTxn<'_>,
     id: &EntityId,

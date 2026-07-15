@@ -864,7 +864,7 @@ fn preflight_gate_decisions_in_txn(
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => id,
             _ => continue,
         };
-        crate::off_record::guard_off_record_entity_put(store, &*wtxn, id, false)?;
+        crate::off_record::guard_off_record_entity_put_preflight(store, &*wtxn, id, false)?;
     }
     let policy = crate::gate::resolve_policy_manifest(store, &*wtxn)?;
     for op in ops {
@@ -2929,19 +2929,23 @@ fn apply_put(
 ) -> Result<AppliedPut> {
     // OFRC-2i: this is the shared entity materialization choke point for
     // public/typed puts, claim candidates, and replicated replay. A live
-    // fence admits only the local tag-before-write path; replicated writes
-    // and closed fences reject before any validation or side effect can mint
-    // an index row, gate receipt, or late entity body.
+    // fence admits its first local tag-before-write materialization plus exact
+    // retries; non-exact writes to materialized roots, replicated writes, and
+    // closed fences reject before entity or index bytes can change.
+    // Re-encode every caller-controlled field into the canonical stored
+    // representation. Only equality with the complete value is an
+    // idempotent retry of a materialized off-record root.
+    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
+    payload.push(entity_type);
+    payload.extend_from_slice(&occurred.start.to_be_bytes());
+    payload.extend_from_slice(&occurred.end.to_be_bytes());
+    payload.extend_from_slice(&learned_at.to_be_bytes());
+    payload.extend_from_slice(data);
     let exact_local_retry = !replicated
-        && store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(raw).is_some_and(|header| {
-                header.entity_type == entity_type
-                    && header.occurred_start == occurred.start
-                    && header.occurred_end == occurred.end
-                    && header.learned_at == learned_at
-                    && &raw[ENTITY_METADATA_HEADER_LEN..] == data
-            })
-        });
+        && store
+            .entities
+            .get(wtxn, id.as_bytes())?
+            .is_some_and(|raw| raw == payload.as_slice());
     if exact_local_retry {
         crate::off_record::guard_direct_off_record_entity_write(store, wtxn, &id, false)?;
     } else {
@@ -3265,13 +3269,6 @@ fn apply_put(
             store.temporal_learned.delete(wtxn, &old_learned_key)?;
         }
     }
-
-    let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
-    payload.push(entity_type);
-    payload.extend_from_slice(&occurred.start.to_be_bytes());
-    payload.extend_from_slice(&occurred.end.to_be_bytes());
-    payload.extend_from_slice(&learned_at.to_be_bytes());
-    payload.extend_from_slice(data);
 
     store.entities.put(wtxn, id.as_bytes(), &payload)?;
     if let Some(body) = decoded_claim_body.as_ref() {
