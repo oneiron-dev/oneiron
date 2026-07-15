@@ -10,9 +10,17 @@ use crate::companion::{
 use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::sync::WindowManager;
 use crate::temporal::TimeRange;
+
+const TEST_OWNER_REF: &str = "principal:sync-window-owner";
+
+fn test_owner_actor() -> crate::genui::ConsentActorIdentity {
+    crate::genui::ConsentActorIdentity::SurfaceActor {
+        actor_ref: TEST_OWNER_REF.to_owned(),
+    }
+}
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
@@ -155,7 +163,12 @@ fn off_record_fence_defers_window_packing_until_only_the_promoted_turn_releases(
     assert!(vault.sync_state_get(&promoted_marker)?.is_some());
     assert!(vault.sync_state_get(&fenced_marker)?.is_some());
 
-    vault.promote_off_record_turn("sess-defer-sync", &promoted)?;
+    vault.promote_off_record_turn(
+        "sess-defer-sync",
+        &promoted,
+        TEST_OWNER_REF,
+        &test_owner_actor(),
+    )?;
 
     // Promotion lifts exactly one fence. Its pending mirror can now flow;
     // the other fenced body remains device-local, and reverse packing only
@@ -235,7 +248,12 @@ fn off_record_promotion_catches_up_an_already_open_window() -> Result<()> {
     assert!(map_get_bytes(&edges, &promoted_edge).is_none());
     assert!(map_get_bytes(&edges, &fenced_edge).is_none());
 
-    vault.promote_off_record_turn("sess-live-promotion", &promoted)?;
+    vault.promote_off_record_turn(
+        "sess-live-promotion",
+        &promoted,
+        TEST_OWNER_REF,
+        &test_owner_actor(),
+    )?;
 
     // No unload/reopen is needed: the explicit promotion catches up the same
     // registry-owned doc, clears only its marker, and backfills only the edge
@@ -296,7 +314,12 @@ fn off_record_promotion_refreshes_cross_window_source_edges() -> Result<()> {
     assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_none());
     assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_none());
 
-    vault.promote_off_record_turn("sess-cross-window-promote", &target)?;
+    vault.promote_off_record_turn(
+        "sess-cross-window-promote",
+        &target,
+        TEST_OWNER_REF,
+        &test_owner_actor(),
+    )?;
 
     assert!(map_get_bytes(&source_window.doc.get_map("edges"), &edge_key).is_some());
     assert!(map_get_bytes(&target_window.doc.get_map("entities"), &target.to_hex()).is_some());
@@ -397,6 +420,49 @@ fn persist_state_scrubs_fenced_carriers_and_preserves_ordinary_content() -> Resu
         map_get_bytes(&persisted.get_map("entities"), &ordinary.to_hex()).as_deref(),
         Some(make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary persists").as_slice())
     );
+    Ok(())
+}
+
+#[test]
+fn window_scrub_inherits_turn_fence_from_remote_message_part_of_edge() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let fenced_turn = EntityId::from_bytes([0x58; 16])?;
+    let private_message = EntityId::from_bytes([0x59; 16])?;
+    let ordinary = EntityId::from_bytes([0x5C; 16])?;
+    vault.enter_off_record_session("sess-remote-message", OffRecordBackendClass::Local)?;
+    vault.tag_turn_off_record("sess-remote-message", &fenced_turn)?;
+
+    let doc = create_window_doc("remote", &window_key);
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(
+        &entities,
+        &private_message.to_hex(),
+        &make_entity_blob(
+            ENTITY_TYPE_MESSAGE,
+            learned_at,
+            b"remote private message",
+        ),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &ordinary.to_hex(),
+        &make_entity_blob(ENTITY_TYPE_MESSAGE, learned_at, b"ordinary message"),
+    )?;
+    let parent_edge = format_edge_key(&private_message, EdgeKind::PartOf, &fenced_turn);
+    map_insert_bytes(&edges, &parent_edge, b"remote PartOf carrier")?;
+    doc.commit();
+
+    assert!(scrub_off_record_fenced_carriers(&vault, &window_key, &doc)?);
+    assert!(map_get_bytes(&entities, &private_message.to_hex()).is_none());
+    assert!(map_get_bytes(&edges, &parent_edge).is_none());
+    assert!(
+        map_get_bytes(&entities, &ordinary.to_hex()).is_some(),
+        "unrelated MESSAGE control must remain"
+    );
+    assert!(history_free_window_required(&vault, &window_key)?);
     Ok(())
 }
 

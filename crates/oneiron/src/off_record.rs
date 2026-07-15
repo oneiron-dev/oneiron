@@ -76,10 +76,13 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::deletion::DeleteReason;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::SessionLocalReceiptLog;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
 use crate::store::{RetrievalRunId, Store};
 
 /// `vault_meta` key prefix for off-record session records.
@@ -103,6 +106,8 @@ const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 const OFF_RECORD_MAX_FENCED_TURNS: usize = 65_536;
 /// Hard cap on session-local context receipts tracked by one session record.
 const OFF_RECORD_MAX_CONTEXT_RECEIPTS: usize = 65_536;
+/// Hard cap on session-scoped code-run replay/raw-output rows.
+const OFF_RECORD_MAX_CODE_RUN_ARTIFACTS: usize = 65_536;
 
 /// The mode line injected into the agent context so both parties know the
 /// session is off-record (OF-326: no secret recording either way).
@@ -173,6 +178,10 @@ pub struct OffRecordSessionRecord {
     pub promoted_turns: Vec<[u8; 16]>,
     /// Session-local context receipts (retrieval runs) deleted at close.
     pub context_receipt_runs: Vec<RetrievalRunId>,
+    /// Exact `vault_meta` keys for session-scoped code-run replay and raw
+    /// output rows. Every key is removed atomically with the session row.
+    #[serde(default)]
+    pub code_run_artifact_keys: Vec<Vec<u8>>,
     /// Set by the first close transaction. While `true`, every mutator
     /// (tag, promote, note-context-receipt, mode flip) rejects with
     /// [`Error::OffRecordSessionClosing`] — close's multi-transaction
@@ -191,7 +200,7 @@ pub struct OffRecordPromoteReceipt {
     pub session_ref: String,
     pub turn: [u8; 16],
     pub promoted_at: u64,
-    /// Always `"user"`: promote exists only as an explicit user consent act.
+    /// Authenticated owner principal that explicitly approved the promotion.
     pub initiator: String,
 }
 
@@ -259,7 +268,7 @@ fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("off-record promote receipt"))
 }
 
-fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
+pub(crate) fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
     if session_ref.is_empty() || session_ref.len() > OFF_RECORD_SESSION_REF_MAX_LEN {
         return Err(Error::InvalidConfig(format!(
             "off-record session ref must be 1..={OFF_RECORD_SESSION_REF_MAX_LEN} bytes, got {}",
@@ -269,11 +278,7 @@ fn vet_off_record_session_ref(session_ref: &str) -> Result<()> {
     Ok(())
 }
 
-/// THE FENCE probe consulted by the retrieval/extraction candidate filter:
-/// `true` means the entity is tagged off-record and must never surface,
-/// regardless of the owning session's current mode. Hot path — the key is
-/// built on the stack (no per-candidate heap allocation).
-pub(crate) fn off_record_fence_active(
+fn direct_off_record_fence_active(
     store: &Store,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
@@ -283,6 +288,57 @@ pub(crate) fn off_record_fence_active(
     key[..PREFIX_LEN].copy_from_slice(OFF_RECORD_FENCE_KEY_PREFIX);
     key[PREFIX_LEN..].copy_from_slice(id.as_bytes());
     Ok(store.vault_meta.get(rtxn, &key)?.is_some())
+}
+
+/// THE FENCE probe consulted by every retrieval/extraction candidate filter.
+///
+/// In addition to an entity's own fence row, MESSAGE children inherit the
+/// fence of their `PartOf` TURN and SUMMARY rows inherit the fence of every
+/// `DerivedFrom` source. Inheritance is computed from existing graph truth;
+/// it does not mint a child fence row or another durable session marker.
+/// Corrupt entity/edge rows fail closed with a typed storage error.
+pub(crate) fn off_record_fence_active(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    off_record_fence_active_at_depth(store, rtxn, id, 0)
+}
+
+fn off_record_fence_active_at_depth(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    depth: u8,
+) -> Result<bool> {
+    if direct_off_record_fence_active(store, rtxn, id)? {
+        return Ok(true);
+    }
+
+    let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let inherited_edge = match header.entity_type {
+        ENTITY_TYPE_MESSAGE => EdgeKind::PartOf,
+        ENTITY_TYPE_SUMMARY => EdgeKind::DerivedFrom,
+        _ => return Ok(false),
+    };
+    let prefix = crate::vault::edge_kind_prefix(id, inherited_edge);
+    for row in store.edges_out.prefix_iter(rtxn, &prefix)? {
+        let (key, value) = row?;
+        let parent = crate::vault::parse_edge_record(key, value)?.target;
+        if depth >= 8 {
+            return Err(Error::CorruptedIndex(
+                "off-record fence inheritance depth exceeded",
+            ));
+        }
+        if off_record_fence_active_at_depth(store, rtxn, &parent, depth + 1)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Returns whether the vault has any fence rows at all. Retrieval channels use
@@ -400,6 +456,51 @@ fn mutable_session_record_in_txn(
     Ok(record)
 }
 
+/// Registers an exact code-run artifact key in the same transaction that
+/// writes it. Only the two pinned code-run key families are accepted, so a
+/// malformed internal caller cannot turn close into an arbitrary metadata
+/// deletion primitive.
+pub(crate) fn register_code_run_artifact_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    session_ref: &str,
+    artifact_key: &[u8],
+) -> Result<()> {
+    vet_off_record_session_ref(session_ref)?;
+    if !(artifact_key.starts_with(b"code_run:replay:v1:")
+        || artifact_key.starts_with(b"code_run:raw_output:v1:"))
+    {
+        return Err(Error::InvariantViolation(
+            "off-record code-run artifact key has unknown family",
+        ));
+    }
+    let mut record = mutable_session_record_in_txn(store, wtxn, session_ref)?;
+    if record.mode != OffRecordMode::OffRecord {
+        return Err(Error::InvariantViolation(
+            "off-record code-run artifact requires the session to be in off-record mode",
+        ));
+    }
+    if record
+        .code_run_artifact_keys
+        .iter()
+        .any(|key| key.as_slice() == artifact_key)
+    {
+        return Ok(());
+    }
+    if record.code_run_artifact_keys.len() >= OFF_RECORD_MAX_CODE_RUN_ARTIFACTS {
+        return Err(Error::InvariantViolation(
+            "off-record session code-run artifact capacity exceeded",
+        ));
+    }
+    record.code_run_artifact_keys.push(artifact_key.to_vec());
+    store.vault_meta.put(
+        wtxn,
+        &off_record_session_key(session_ref),
+        &encode_off_record_session(&record)?,
+    )?;
+    Ok(())
+}
+
 impl Vault {
     /// Refuses whole-vault export while any off-record session row remains
     /// live. The row is retained through the close `closing` phase, so an
@@ -431,6 +532,7 @@ impl Vault {
             fenced_turns: Vec::new(),
             promoted_turns: Vec::new(),
             context_receipt_runs: Vec::new(),
+            code_run_artifact_keys: Vec::new(),
             closing: false,
         };
         let key = off_record_session_key(session_ref);
@@ -579,6 +681,31 @@ impl Vault {
         off_record_fence_active(&self.store, &rtxn, id)
     }
 
+    /// Fail-closed creation gate for a SUMMARY derived from source entities.
+    ///
+    /// A compactor must call this before staging the SUMMARY put and its
+    /// `DerivedFrom` edges. An empty source set cannot establish that the
+    /// summary is on-record, and a direct or inherited fence on any source
+    /// suppresses creation. The resulting SUMMARY remains covered by
+    /// [`off_record_fence_active`] through its `DerivedFrom` edges if a source
+    /// is fenced after creation.
+    pub fn ensure_summary_sources_on_record(&self, source_ids: &[EntityId]) -> Result<()> {
+        if source_ids.is_empty() {
+            return Err(Error::InvariantViolation(
+                "summary creation requires at least one source entity",
+            ));
+        }
+        let rtxn = self.store.env.read_txn()?;
+        for source_id in source_ids {
+            if off_record_fence_active(&self.store, &rtxn, source_id)? {
+                return Err(Error::OffRecordFencedTurnWriteRejected {
+                    turn_ref: source_id.to_hex(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Registers one emit-adjacent context receipt (a retrieval-run record —
     /// its `result_ids` are the activated memory ids) as session-local:
     /// RECEIPTS-FOLLOW-TRANSCRIPT, so close deletes it with the transcript.
@@ -617,16 +744,27 @@ impl Vault {
         })
     }
 
-    /// Promotes exactly ONE fenced turn into witness on explicit user
-    /// consent: lifts its fence row (extraction may now see it), moves it
-    /// out of the delete-at-close set, and mints a durable user-initiated
-    /// [`OffRecordPromoteReceipt`] — all in one write transaction.
+    /// Promotes exactly ONE fenced turn into witness after authenticating the
+    /// explicit consent actor against the authority layer's vault-owner ref.
+    /// The owner ref is caller-supplied because `Vault` deliberately carries
+    /// no ad-hoc principal field; the server/runtime must resolve it from its
+    /// existing `VaultIdentity` authority source. Authentication happens
+    /// before the write transaction begins. Fence removal, session mutation,
+    /// and the durable receipt then commit atomically.
     pub fn promote_off_record_turn(
         &self,
         session_ref: &str,
         turn_id: &EntityId,
+        owner_ref: &str,
+        actor: &crate::genui::ConsentActorIdentity,
     ) -> Result<OffRecordPromoteReceipt> {
         vet_off_record_session_ref(session_ref)?;
+        if !actor.authenticates_principal(owner_ref) {
+            return Err(Error::InvariantViolation(
+                "off-record promotion actor does not authenticate the vault owner",
+            ));
+        }
+        let initiator = actor.actor_ref().to_owned();
         let receipt = self.with_write_txn(|wtxn| {
             let mut record = mutable_session_record_in_txn(&self.store, wtxn, session_ref)?;
             let position = record
@@ -644,7 +782,7 @@ impl Vault {
                 session_ref: session_ref.to_owned(),
                 turn: *turn_id.as_bytes(),
                 promoted_at: crate::unix_seconds_now(),
-                initiator: "user".to_owned(),
+                initiator: initiator.clone(),
             };
             self.store
                 .vault_meta
@@ -813,6 +951,20 @@ impl Vault {
         let mut redaction_receipt_ids = Vec::new();
         for bytes in &record.fenced_turns {
             let id = EntityId::from_bytes(*bytes)?;
+
+            // MESSAGE rows inherit the TURN fence through PartOf and must
+            // evaporate with the transcript. `closing` was committed before
+            // this snapshot, and the shared edge write door rejects a late
+            // PartOf attachment to a closing fence, so this child set cannot
+            // grow underneath the cascade.
+            for message_id in self.sources(&id, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))? {
+                let child_outcome =
+                    self.delete_entity_with_reason(&message_id, DeleteReason::PolicyDelete)?;
+                if let Some(receipt_id) = child_outcome.receipt_id {
+                    redaction_receipt_ids.push(receipt_id);
+                }
+            }
+
             let outcome = self.delete_entity_with_reason(&id, DeleteReason::PolicyDelete)?;
             if outcome.existed {
                 turns_deleted += 1;
@@ -860,6 +1012,7 @@ impl Vault {
                 || current.fenced_turns != record.fenced_turns
                 || current.promoted_turns != record.promoted_turns
                 || current.context_receipt_runs != record.context_receipt_runs
+                || current.code_run_artifact_keys != record.code_run_artifact_keys
             {
                 return Err(Error::InvariantViolation(
                     "off-record session record drifted during close",
@@ -888,6 +1041,9 @@ impl Vault {
                 self.store
                     .vault_meta
                     .delete(wtxn, &off_record_fence_key(&id))?;
+            }
+            for artifact_key in &record.code_run_artifact_keys {
+                self.store.vault_meta.delete(wtxn, artifact_key)?;
             }
             self.store
                 .vault_meta

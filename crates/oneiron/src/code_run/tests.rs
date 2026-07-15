@@ -55,6 +55,29 @@ fn seed_first_party_actor(vault: &Vault) -> EntityId {
     id
 }
 
+fn message_turn(
+    conversation_ref: &str,
+    turn_ref: &str,
+    content: &str,
+    order: u32,
+) -> crate::facade::WitnessTurn {
+    crate::facade::WitnessTurn {
+        conversation_ref: conversation_ref.to_owned(),
+        turn_ref: Some(turn_ref.to_owned()),
+        messages: vec![crate::facade::WitnessMessage {
+            id: None,
+            // The dispatcher overwrites all effect-owned envelope fields.
+            author: crate::facade::WitnessAuthor::User,
+            message_type: "guest-controlled".to_owned(),
+            content: content.to_owned(),
+            metadata: None,
+            is_visible: true,
+            order,
+        }],
+        occurred_at: 100,
+    }
+}
+
 fn clear_policy_manifests_for_test(vault: &Vault) -> Result<()> {
     vault.with_write_txn(|wtxn| {
         let mut ids = Vec::new();
@@ -507,6 +530,7 @@ fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
             "step_checkpoints",
             "outputs",
             "abi_layout_checks",
+            "off_record_session_ref",
         ]
     );
     assert_eq!(
@@ -522,7 +546,14 @@ fn code_run_replay_abi_layout_keys_are_pinned_and_hash_checked() {
     );
     assert_eq!(
         CODE_RUN_RAW_OUTPUT_KEYS,
-        ["handle", "path", "raw_sha256", "raw_len", "preview"]
+        [
+            "handle",
+            "path",
+            "raw_sha256",
+            "raw_len",
+            "preview",
+            "off_record_session_ref",
+        ]
     );
     assert_eq!(CODE_RUN_OUTPUT_PREVIEW_KEYS, ["codec", "text", "truncated"]);
 
@@ -569,6 +600,92 @@ fn code_run_memory_search_routes_through_dispatcher() -> Result<()> {
     };
     assert_eq!(result.query, "matcha");
     assert!(result.results.iter().any(|hit| hit.id == memory));
+    Ok(())
+}
+
+#[test]
+fn code_run_speak_think_express_emit_interleaved_gated_message_bubbles() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:message-effects",
+    )?;
+    let conversation = EntityId::from_bytes([0xC1; 16])?.to_hex();
+    let turn = EntityId::from_bytes([0xC2; 16])?.to_hex();
+    let calls = [
+        SelfCall::Speak(message_turn(&conversation, &turn, "visible speech", 0)),
+        SelfCall::Think(message_turn(&conversation, &turn, "private thought", 1)),
+        SelfCall::Express(message_turn(&conversation, &turn, "visible expression", 2)),
+    ];
+    let mut ids = Vec::new();
+    for call in calls {
+        let SelfDispatchOutcome::MessageWitness(result) = dispatcher.dispatch(call)? else {
+            panic!("message effect must return its witness receipt");
+        };
+        let message_ref = result
+            .message_short_ids
+            .first()
+            .ok_or(Error::InvariantViolation("message witness receipt is empty"))?;
+        let view = vault
+            .memory_facade(actor, EdgeActorClass::Agent)
+            .get_entity(message_ref)
+            .map_err(|_| Error::InvariantViolation("message receipt did not resolve"))?
+            .ok_or(Error::InvariantViolation("message receipt row missing"))?;
+        ids.push(EntityId::from_hex(&view.id_hex)?);
+    }
+
+    let facade = vault.memory_facade(actor, EdgeActorClass::Agent);
+    let expected = [
+        ("dialogue", true, 0_u64),
+        ("thought", false, 1_u64),
+        ("expression", true, 2_u64),
+    ];
+    for (id, (message_type, is_visible, order)) in ids.iter().zip(expected) {
+        let view = facade
+            .get_entity(&id.to_hex())
+            .map_err(|_| Error::InvariantViolation("message read-back failed"))?
+            .ok_or(Error::InvariantViolation("message effect row missing"))?;
+        let body = view
+            .body
+            .ok_or(Error::InvariantViolation("message body missing"))?;
+        assert_eq!(body.get("author").and_then(serde_json::Value::as_str), Some("companion"));
+        assert_eq!(body.get("type").and_then(serde_json::Value::as_str), Some(message_type));
+        assert_eq!(
+            body.get("is_visible").and_then(serde_json::Value::as_bool),
+            Some(is_visible)
+        );
+        assert_eq!(body.get("order").and_then(serde_json::Value::as_u64), Some(order));
+    }
+    Ok(())
+}
+
+#[test]
+fn code_run_hidden_message_above_actor_ceiling_is_rejected_without_witness() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xC3);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run:proposed-think",
+    )?;
+    let conversation = EntityId::from_bytes([0xC4; 16])?.to_hex();
+    let turn = EntityId::from_bytes([0xC5; 16])?.to_hex();
+    let error = dispatcher
+        .dispatch(SelfCall::Think(message_turn(
+            &conversation,
+            &turn,
+            "must not persist",
+            0,
+        )))
+        .expect_err("unlisted agent has Proposed ceiling");
+    assert_eq!(error.kind(), crate::error::ErrorKind::GateWriteRejected);
+    assert!(
+        vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+            .is_empty()
+    );
     Ok(())
 }
 

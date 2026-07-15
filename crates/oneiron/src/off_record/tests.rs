@@ -9,11 +9,22 @@ use crate::outbound::{
     OutboundIntentDraft, OutboundIntentTrigger,
 };
 use crate::pipeline::{DreamerWorkingSetBudget, DreamerWorkingSetCursor};
-use crate::registry::{ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_MESSAGE, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 #[cfg(feature = "sync")]
 use crate::sync::queue::SyncQueue;
 use crate::temporal::TimeRange;
+use crate::code_run::{CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord};
+
+const TEST_OWNER_REF: &str = "principal:test-owner";
+
+fn test_owner_actor() -> crate::genui::ConsentActorIdentity {
+    crate::genui::ConsentActorIdentity::SurfaceActor {
+        actor_ref: TEST_OWNER_REF.to_owned(),
+    }
+}
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -78,6 +89,19 @@ fn surfaced_turns(vault: &Vault) -> Vec<EntityId> {
         .query()
         .search_temporal(900, 1100, 16)
         .filter_types(&[ENTITY_TYPE_TURN])
+        .limit(16)
+        .run()
+        .expect("pipeline run")
+        .into_iter()
+        .map(|scored| scored.id)
+        .collect()
+}
+
+fn surfaced_messages(vault: &Vault) -> Vec<EntityId> {
+    vault
+        .query()
+        .search_temporal(900, 1100, 16)
+        .filter_types(&[ENTITY_TYPE_MESSAGE])
         .limit(16)
         .run()
         .expect("pipeline run")
@@ -221,6 +245,170 @@ fn off_record_fenced_turns_are_unextractable_including_post_flip() {
     vault
         .note_off_record_context_receipt("sess-fence", crate::store::RetrievalRunId::now())
         .expect_err("context receipt registration requires off-record mode");
+}
+
+#[test]
+fn off_record_turn_fence_hides_and_close_cascades_message_children() {
+    let (_tmp, vault) = temp_vault();
+    let turn = seed_turn(&vault, 1000);
+    let message_a = EntityId::now();
+    let message_b = EntityId::now();
+    for (message, body) in [
+        (message_a, b"private message a".as_slice()),
+        (message_b, b"private message b".as_slice()),
+    ] {
+        vault
+            .batch()
+            .put(
+                &message,
+                ENTITY_TYPE_MESSAGE,
+                TimeRange {
+                    start: 1000,
+                    end: 1000,
+                },
+                1000,
+                body,
+            )
+            .edge(&message, EdgeKind::PartOf, &turn, 1.0)
+            .commit()
+            .expect("seed message child");
+    }
+    assert_eq!(surfaced_messages(&vault).len(), 2);
+
+    vault
+        .enter_off_record_session("sess-message-cascade", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-message-cascade", &turn)
+        .expect("tag");
+    assert!(vault.is_turn_off_record_fenced(&message_a).expect("child fence"));
+    assert!(vault.is_turn_off_record_fenced(&message_b).expect("child fence"));
+    assert!(
+        surfaced_messages(&vault).is_empty(),
+        "MESSAGE children must inherit the TURN retrieval fence"
+    );
+
+    let log = vault
+        .off_record_receipt_log("sess-message-cascade")
+        .expect("receipt log");
+    let outcome = vault
+        .close_off_record_session("sess-message-cascade", log)
+        .expect("close");
+    assert_eq!(outcome.turns_deleted, 1);
+    let rtxn = vault.store.env.read_txn().expect("read entities");
+    for id in [turn, message_a, message_b] {
+        assert!(
+            vault
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())
+                .expect("entity row")
+                .is_none(),
+            "transcript entity must be absent from LMDB after close"
+        );
+    }
+}
+
+#[test]
+fn off_record_summary_gate_covers_fenced_sources_and_existing_derivations() {
+    let (_tmp, vault) = temp_vault();
+    let source = seed_turn(&vault, 1000);
+    let summary = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: 1000,
+                end: 1000,
+            },
+            1000,
+            b"private summary",
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()
+        .expect("seed summary");
+
+    vault
+        .enter_off_record_session("sess-summary", OffRecordBackendClass::Local)
+        .expect("enter");
+    vault
+        .tag_turn_off_record("sess-summary", &source)
+        .expect("tag");
+    let rejected = vault
+        .ensure_summary_sources_on_record(&[source])
+        .expect_err("fenced source must suppress summary creation");
+    assert_eq!(
+        rejected.kind(),
+        ErrorKind::OffRecordFencedTurnWriteRejected
+    );
+    assert!(
+        vault.is_turn_off_record_fenced(&summary).expect("summary fence"),
+        "an existing SUMMARY must inherit a later source fence"
+    );
+}
+
+#[test]
+fn off_record_close_sweeps_session_bound_code_run_replay_and_raw_output() {
+    let (_tmp, vault) = temp_vault();
+    let session_ref = "sess-code-run";
+    let run_id = EntityId::now();
+    let raw = b"private code-run output";
+    vault
+        .enter_off_record_session(session_ref, OffRecordBackendClass::Local)
+        .expect("enter");
+
+    let output = CodeRunRawOutput::for_off_record_session(
+        session_ref,
+        "/mnt/outputs/private.txt",
+        raw,
+    )
+    .expect("raw metadata");
+    vault
+        .put_code_run_raw_output(&output, raw)
+        .expect("put raw output");
+    let mut replay = CodeRunReplayRecord::for_off_record_session(
+        run_id,
+        CodeRunDeterminism::new(1000, [0xA5; 32]),
+        session_ref,
+    )
+    .expect("replay record");
+    replay.outputs.push(output.clone());
+    vault
+        .put_code_run_replay_record(&replay)
+        .expect("put replay record");
+    assert!(
+        vault
+            .get_off_record_code_run_replay_record(session_ref, &run_id)
+            .expect("get replay")
+            .is_some()
+    );
+    assert!(
+        vault
+            .get_code_run_raw_output(&output)
+            .expect("get raw")
+            .is_some()
+    );
+
+    let log = vault
+        .off_record_receipt_log(session_ref)
+        .expect("receipt log");
+    vault
+        .close_off_record_session(session_ref, log)
+        .expect("close");
+    assert!(
+        vault
+            .get_off_record_code_run_replay_record(session_ref, &run_id)
+            .expect("get swept replay")
+            .is_none()
+    );
+    assert!(
+        vault
+            .get_code_run_raw_output(&output)
+            .expect("get swept raw")
+            .is_none()
+    );
 }
 
 #[test]
@@ -383,12 +571,35 @@ fn off_record_promote_writes_exactly_one_turn() {
     }
     assert!(surfaced_turns(&vault).is_empty());
 
+    let impostor = crate::genui::ConsentActorIdentity::SurfaceActor {
+        actor_ref: "principal:impostor".to_owned(),
+    };
+    let rejected = vault
+        .promote_off_record_turn("sess-promote", &kept, TEST_OWNER_REF, &impostor)
+        .expect_err("non-owner promotion must fail before mutation");
+    assert_eq!(rejected.kind(), ErrorKind::InvariantViolation);
+    let unchanged = vault
+        .off_record_session("sess-promote")
+        .expect("session lookup")
+        .expect("session record");
+    assert!(unchanged.fenced_turns.contains(kept.as_bytes()));
+    assert!(unchanged.promoted_turns.is_empty());
+    assert!(vault.is_turn_off_record_fenced(&kept).expect("fence remains"));
+    assert!(
+        vault
+            .off_record_promote_receipt(&kept)
+            .expect("receipt lookup")
+            .is_none(),
+        "rejected actor must not mint a promote receipt"
+    );
+
+    let actor = test_owner_actor();
     let receipt = vault
-        .promote_off_record_turn("sess-promote", &kept)
+        .promote_off_record_turn("sess-promote", &kept, TEST_OWNER_REF, &actor)
         .expect("promote");
     assert_eq!(receipt.turn, *kept.as_bytes());
     assert_eq!(receipt.session_ref, "sess-promote");
-    assert_eq!(receipt.initiator, "user");
+    assert_eq!(receipt.initiator, actor.actor_ref());
 
     // Exactly one turn crossed the fence.
     let record = vault
@@ -401,7 +612,7 @@ fn off_record_promote_writes_exactly_one_turn() {
     assert_eq!(surfaced, vec![kept]);
 
     let repromote = vault
-        .promote_off_record_turn("sess-promote", &kept)
+        .promote_off_record_turn("sess-promote", &kept, TEST_OWNER_REF, &actor)
         .expect_err("promote lifts one live fence");
     assert_eq!(repromote.kind(), ErrorKind::OffRecordTurnNotFenced);
 
@@ -471,7 +682,12 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         .expect_err("tag during close");
     assert_eq!(tag.kind(), ErrorKind::OffRecordSessionClosing);
     let promote = vault
-        .promote_off_record_turn("sess-toctou", &fenced)
+        .promote_off_record_turn(
+            "sess-toctou",
+            &fenced,
+            TEST_OWNER_REF,
+            &test_owner_actor(),
+        )
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
     let note = vault
@@ -714,7 +930,7 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
         .expect_err("oversized note");
     assert_eq!(note.kind(), ErrorKind::InvalidConfig);
     let promote = vault
-        .promote_off_record_turn(&oversized, &turn)
+        .promote_off_record_turn(&oversized, &turn, TEST_OWNER_REF, &test_owner_actor())
         .expect_err("oversized promote");
     assert_eq!(promote.kind(), ErrorKind::InvalidConfig);
     let log = vault

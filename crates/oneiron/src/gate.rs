@@ -114,6 +114,9 @@ const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 const GATE_METRIC_OUTCOME_COUNT: usize = 3;
 const GATE_METRIC_REASON_CLASS_COUNT: usize = 13;
+const MESSAGE_ENVELOPE_BINDING_DOMAIN: &[u8] = b"oneiron:message-envelope-ceiling:v1";
+const MESSAGE_ENVELOPE_MAX_TEXT_BYTES: usize = 1_048_576;
+const MESSAGE_ENVELOPE_MAX_METADATA_BYTES: usize = 1_048_576;
 
 static GATE_METRIC_COUNTERS: [[AtomicU64; GATE_METRIC_REASON_CLASS_COUNT];
     GATE_METRIC_OUTCOME_COUNT] = [const { [const { AtomicU64::new(0) }; GATE_METRIC_REASON_CLASS_COUNT] };
@@ -1870,6 +1873,139 @@ pub(crate) fn agent_definition_ceiling_for_actor(
         // Live person-backed agent actors keep today's semantics.
         AgentBearing::NonAgent => None,
     }
+}
+
+/// Exact MESSAGE envelope presented to the approval-ceiling gate.
+///
+/// These are deliberately the fields written by the witness path, including
+/// metadata, visibility, and order. Keeping the input here prevents a binding
+/// from gating visible text while leaving hidden envelope side channels free.
+#[derive(Clone, Copy)]
+pub(crate) struct MessageEnvelopeCeilingInput<'a> {
+    pub(crate) actor: WriteActor,
+    pub(crate) message_id: EntityId,
+    pub(crate) author: &'a str,
+    pub(crate) message_type: &'a str,
+    pub(crate) content: &'a str,
+    pub(crate) metadata: Option<&'a Value>,
+    pub(crate) is_visible: bool,
+    pub(crate) order: u32,
+}
+
+/// Unforgeable-in-module approval token bound to one exact MESSAGE envelope.
+pub(crate) struct ApprovedMessageEnvelope {
+    binding: [u8; 32],
+}
+
+impl ApprovedMessageEnvelope {
+    /// Rechecks that the bytes about to be witnessed are the bytes the Gate
+    /// approved. The witness transaction invokes this immediately before it
+    /// stages the corresponding MESSAGE put and edges.
+    pub(crate) fn authorizes(&self, input: &MessageEnvelopeCeilingInput<'_>) -> Result<()> {
+        let binding = message_envelope_binding(input)?;
+        if binding != self.binding {
+            return Err(Error::GateWriteRejected {
+                outcome: "deny",
+                reason_codes: vec!["gate.deny.missing_actor_provenance"],
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Applies the manifest + AGENT_DEF approval ceiling to a complete MESSAGE
+/// envelope and returns an exact binding token for the witness write.
+///
+/// A witnessed MESSAGE is durable current state, so a Proposed ceiling never
+/// falls through to a direct put. Missing/malformed policy and unreadable
+/// agent definitions resolve to Proposed through the existing resolvers.
+/// SYSTEM authorship additionally requires a system actor; human owners may
+/// witness user/companion transcript rows, while agents may author only their
+/// companion rows.
+pub(crate) fn check_message_envelope_ceiling(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    policy: &PolicyManifestResolution,
+    input: &MessageEnvelopeCeilingInput<'_>,
+) -> Result<ApprovedMessageEnvelope> {
+    let author_allowed = match input.actor.actor_class() {
+        EdgeActorClass::Human => input.author != "system",
+        EdgeActorClass::Agent => input.author == "companion",
+        EdgeActorClass::System => input.author == "system",
+    };
+    if !author_allowed {
+        return Err(Error::GateWriteRejected {
+            outcome: "deny",
+            reason_codes: vec!["gate.deny.missing_actor_provenance"],
+        });
+    }
+
+    let actor_ref = input.actor.entity_ref().to_hex();
+    let manifest_ceiling = policy.actor_ceiling(
+        input.actor.actor_class().gate_actor_class(),
+        Some(&actor_ref),
+    );
+    let effective_ceiling = agent_definition_ceiling_for_actor(store, txn, input.actor)
+        .map_or(manifest_ceiling, |definition| {
+            definition.restrict(manifest_ceiling)
+        });
+    if effective_ceiling != PolicyApprovalCeiling::Auto {
+        return Err(Error::GateWriteRejected {
+            outcome: "pending",
+            reason_codes: vec!["gate.pending.actor_ceiling"],
+        });
+    }
+
+    Ok(ApprovedMessageEnvelope {
+        binding: message_envelope_binding(input)?,
+    })
+}
+
+fn message_envelope_binding(input: &MessageEnvelopeCeilingInput<'_>) -> Result<[u8; 32]> {
+    if input.author.is_empty() || input.message_type.trim().is_empty() {
+        return Err(Error::InvalidClaimBody(
+            "message envelope author and type must not be empty",
+        ));
+    }
+    for text in [input.author, input.message_type, input.content] {
+        if text.len() > MESSAGE_ENVELOPE_MAX_TEXT_BYTES {
+            return Err(Error::InvalidClaimBody(
+                "message envelope text field exceeds size cap",
+            ));
+        }
+    }
+
+    let mut metadata = Vec::new();
+    if let Some(value) = input.metadata {
+        rmpv::encode::write_value(&mut metadata, value)
+            .map_err(|_| Error::InvalidClaimBody("message metadata encode failed"))?;
+        if metadata.len() > MESSAGE_ENVELOPE_MAX_METADATA_BYTES {
+            return Err(Error::InvalidClaimBody(
+                "message envelope metadata exceeds size cap",
+            ));
+        }
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(MESSAGE_ENVELOPE_BINDING_DOMAIN);
+    hasher.update(input.actor.entity_ref().as_bytes());
+    hasher.update([input.actor.actor_class() as u8]);
+    hasher.update(input.message_id.as_bytes());
+    for field in [
+        input.author.as_bytes(),
+        input.message_type.as_bytes(),
+        input.content.as_bytes(),
+        metadata.as_slice(),
+    ] {
+        let field_len = u64::try_from(field.len())
+            .map_err(|_| Error::ArithmeticOverflow("message envelope field length"))?;
+        hasher.update(field_len.to_be_bytes());
+        hasher.update(field);
+    }
+    hasher.update([u8::from(input.metadata.is_some())]);
+    hasher.update([u8::from(input.is_visible)]);
+    hasher.update(input.order.to_be_bytes());
+    Ok(hasher.finalize().into())
 }
 
 /// How a governing entity id relates to the AGENT_DEF authority lattice.

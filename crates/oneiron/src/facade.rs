@@ -1079,7 +1079,7 @@ fn parse_claim_source(value: &str) -> FacadeResult<ClaimSource> {
     })
 }
 
-fn json_to_rmpv(value: &serde_json::Value) -> Value {
+pub(crate) fn json_to_rmpv(value: &serde_json::Value) -> Value {
     match value {
         serde_json::Value::Null => Value::Nil,
         serde_json::Value::Bool(b) => Value::Boolean(*b),
@@ -1312,9 +1312,11 @@ impl MemoryFacade<'_> {
         let container_body = encode_rmpv(&Value::Map(Vec::new()))?;
         let mut message_ids = Vec::with_capacity(turn.messages.len());
         let mut bodies = Vec::with_capacity(turn.messages.len());
+        let mut gate_metadata = Vec::with_capacity(turn.messages.len());
         for message in &turn.messages {
             message_ids.push(id_from_optional_hex(message.id.as_deref())?);
             bodies.push(encode_witness_message_body(message)?);
+            gate_metadata.push(message.metadata.as_ref().map(json_to_rmpv));
         }
         // Ids created by this call must be marker-free; checked INSIDE the
         // write transaction below so a concurrent hard delete cannot land
@@ -1354,6 +1356,42 @@ impl MemoryFacade<'_> {
                     return Ok(Some(*id));
                 }
             }
+            // A reused TURN may be live-fenced for an off-record session.
+            // This shared door permits its ordinary tag-before-write flow but
+            // rejects a closing/closed fence, making MESSAGE attachment
+            // atomic with close's child cascade.
+            crate::off_record::guard_off_record_entity_put(
+                &self.vault.store,
+                &*wtxn,
+                &turn_id,
+                false,
+            )?;
+
+            let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &*wtxn)?;
+            let write_actor = WriteActor::new(self.actor, self.actor_class);
+            let mut message_approvals = Vec::with_capacity(turn.messages.len());
+            for ((message, metadata), message_id) in turn
+                .messages
+                .iter()
+                .zip(&gate_metadata)
+                .zip(&message_ids)
+            {
+                message_approvals.push(crate::gate::check_message_envelope_ceiling(
+                    &self.vault.store,
+                    &*wtxn,
+                    &policy,
+                    &crate::gate::MessageEnvelopeCeilingInput {
+                        actor: write_actor,
+                        message_id: *message_id,
+                        author: message.author.as_str(),
+                        message_type: &message.message_type,
+                        content: &message.content,
+                        metadata: metadata.as_ref(),
+                        is_visible: message.is_visible,
+                        order: message.order,
+                    },
+                )?);
+            }
             let mut batch = self.vault.batch_in();
             if conversation_is_new {
                 batch = batch.put(
@@ -1373,7 +1411,22 @@ impl MemoryFacade<'_> {
                     &container_body,
                 );
             }
-            for (message, (id, body)) in turn.messages.iter().zip(message_ids.iter().zip(&bodies)) {
+            for ((message, metadata), (approval, (id, body))) in turn
+                .messages
+                .iter()
+                .zip(&gate_metadata)
+                .zip(message_approvals.iter().zip(message_ids.iter().zip(&bodies)))
+            {
+                approval.authorizes(&crate::gate::MessageEnvelopeCeilingInput {
+                    actor: write_actor,
+                    message_id: *id,
+                    author: message.author.as_str(),
+                    message_type: &message.message_type,
+                    content: &message.content,
+                    metadata: metadata.as_ref(),
+                    is_visible: message.is_visible,
+                    order: message.order,
+                })?;
                 batch = batch
                     .put(id, ENTITY_TYPE_MESSAGE, occurred, learned_at, body)
                     .edge(id, EdgeKind::PartOf, &turn_id, 1.0)
@@ -3024,7 +3077,19 @@ impl MemoryFacade<'_> {
     }
 
     fn entity_view(&self, id: &EntityId) -> FacadeResult<Option<EntityView>> {
-        let Some(raw) = self.vault.get_raw(id).map_err(FacadeError::from)? else {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if crate::off_record::off_record_fence_active(&self.vault.store, &rtxn, id)
+            .map_err(FacadeError::from)?
+        {
+            return Ok(None);
+        }
+        let Some(raw) = self
+            .vault
+            .store
+            .entities
+            .get(&rtxn, id.as_bytes())
+            .map_err(Error::from)?
+        else {
             return Ok(None);
         };
         let header = crate::batch::EntityMetadataHeader::parse(&raw)

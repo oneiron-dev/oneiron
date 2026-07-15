@@ -652,6 +652,7 @@ pub fn scrub_off_record_fenced_carriers(
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
     let mut candidates = HashSet::new();
+    let mut inheritance_edges = Vec::new();
 
     map_for_each_value_bytes(&entities_map, |key, _| {
         if let Ok(id) = EntityId::from_hex(key) {
@@ -659,13 +660,33 @@ pub fn scrub_off_record_fenced_carriers(
         }
     });
     map_for_each_value_bytes(&edges_map, |key, _| {
-        if let Some((source, _, target)) = bridge::parse_edge_key(key) {
+        if let Some((source, kind, target)) = bridge::parse_edge_key(key) {
             candidates.insert(source);
             candidates.insert(target);
+            if matches!(kind, crate::EdgeKind::PartOf | crate::EdgeKind::DerivedFrom) {
+                inheritance_edges.push((source, target));
+            }
         }
     });
 
-    let fenced = off_record_fenced_ids(vault, candidates)?;
+    let mut fenced = off_record_fenced_ids(vault, candidates)?;
+    // A remote/current window can contain a MESSAGE body and its PartOf edge
+    // even when LMDB rejected that edge because the target TURN is locally
+    // fenced. Derive child carriers from the CRDT relationship itself rather
+    // than relying only on the local graph. DerivedFrom gives compacted
+    // summaries the same creation/egress fence. Iterate to a fixed point so
+    // nested derived carriers cannot escape through ordering.
+    loop {
+        let inherited: Vec<EntityId> = inheritance_edges
+            .iter()
+            .filter_map(|(source, target)| fenced.contains(target).then_some(*source))
+            .filter(|source| !fenced.contains(source))
+            .collect();
+        if inherited.is_empty() {
+            break;
+        }
+        fenced.extend(inherited);
+    }
     let fences_present = {
         let rtxn = vault.store.env.read_txn()?;
         crate::off_record::off_record_fences_present(&vault.store, &rtxn)?

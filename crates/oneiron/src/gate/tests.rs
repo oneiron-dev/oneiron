@@ -40,6 +40,63 @@ fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     (tmp, vault)
 }
 
+#[test]
+fn message_ceiling_token_binds_author_type_metadata_visibility_and_order() -> Result<()> {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    let actor_id = test_id(0x4A);
+    vault.put_entity(
+        &actor_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"owner",
+    )?;
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Human);
+    let metadata = Value::Map(vec![(Value::from("tone"), Value::from("calm"))]);
+    let changed_metadata = Value::Map(vec![(Value::from("tone"), Value::from("urgent"))]);
+    let rtxn = vault.store.env.read_txn()?;
+    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
+    let input = MessageEnvelopeCeilingInput {
+        actor,
+        message_id: test_id(0x4B),
+        author: "user",
+        message_type: "dialogue",
+        content: "hello",
+        metadata: Some(&metadata),
+        is_visible: true,
+        order: 0,
+    };
+    let approval = check_message_envelope_ceiling(&vault.store, &rtxn, &policy, &input)?;
+    approval.authorizes(&input)?;
+
+    for changed in [
+        MessageEnvelopeCeilingInput {
+            author: "companion",
+            ..input
+        },
+        MessageEnvelopeCeilingInput {
+            message_type: "thought",
+            ..input
+        },
+        MessageEnvelopeCeilingInput {
+            metadata: Some(&changed_metadata),
+            ..input
+        },
+        MessageEnvelopeCeilingInput {
+            is_visible: false,
+            ..input
+        },
+        MessageEnvelopeCeilingInput { order: 1, ..input },
+    ] {
+        let error = approval
+            .authorizes(&changed)
+            .expect_err("changed envelope must not reuse approval token");
+        assert_eq!(error.kind(), ErrorKind::GateWriteRejected);
+    }
+    Ok(())
+}
+
 fn clear_policy_manifests_for_test(vault: &crate::Vault) {
     vault
         .with_write_txn(|wtxn| {

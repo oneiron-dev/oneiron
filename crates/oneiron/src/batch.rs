@@ -3353,6 +3353,12 @@ fn apply_edge_with_created_at(
     vad: Vad,
     provenance: Option<EdgeProvenanceFlags>,
 ) -> Result<()> {
+    // A local live fence permits the tag-before-write path, but a closing or
+    // closed fence rejects here. In particular, this makes a MESSAGE PartOf
+    // edge atomic with close's child snapshot: once close stamps `closing`,
+    // no late child can attach to the fenced TURN and escape the cascade.
+    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &src, false)?;
+    crate::off_record::guard_off_record_entity_put(store, &*wtxn, &tgt, false)?;
     validate_edge_weight(weight)?;
     if let Some((component, value)) = vad.invalid_component() {
         return Err(Error::InvalidVad { component, value });

@@ -91,7 +91,8 @@ fn narrow_to_f32(value: f64) -> BoundaryResult<f32> {
 pub struct NapiWitnessMessage {
     /// Deterministic 32-hex entity id; omitted ⇒ generated.
     pub id: Option<String>,
-    /// `user` | `companion` | `system` (system rows get no AuthoredBy edge).
+    /// `user` | `companion` | `system`; the engine gates this exact value
+    /// against the bound actor (a host cannot escalate to `system`).
     pub author: String,
     /// Message type string.
     pub message_type: String,
@@ -112,7 +113,7 @@ pub struct NapiWitnessTurn {
     pub conversation_ref: String,
     /// TURN ref (create-or-get); omitted ⇒ a fresh TURN.
     pub turn_ref: Option<String>,
-    /// Messages, attributed to the bound actor unless `system`.
+    /// Messages, with every full envelope gated against the bound actor.
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds (occurred + learned_at).
     pub occurred_at: i64,
@@ -1591,6 +1592,54 @@ mod tests {
         };
         let err = reason(witness_turn_to_engine(&turn));
         assert!(err.contains("user, companion, system"), "got: {err}");
+    }
+
+    #[test]
+    fn napi_witness_dto_cannot_escalate_human_actor_to_system_envelope() {
+        use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+
+        let dir = unique_vault_dir("witness-system-ceiling");
+        let path = dir.to_str().expect("utf8 path").to_owned();
+        {
+            let vault = Vault::open(&path, VaultConfig::device()).expect("open vault");
+            let actor = EntityId::from_bytes([0x51; 16]).expect("actor id");
+            vault
+                .put_entity(
+                    &actor,
+                    ENTITY_TYPE_PERSON,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )
+                .expect("put actor");
+            let dto = NapiWitnessTurn {
+                conversation_ref: "52".repeat(16),
+                turn_ref: Some("53".repeat(16)),
+                messages: vec![NapiWitnessMessage {
+                    id: Some("54".repeat(16)),
+                    author: "system".to_owned(),
+                    message_type: "internal".to_owned(),
+                    content: "hidden host escalation".to_owned(),
+                    metadata: Some(serde_json::json!({"side_channel": true})),
+                    is_visible: Some(false),
+                    order: 7,
+                }],
+                occurred_at: 100,
+            };
+            let engine = witness_turn_to_engine(&dto).expect("DTO conversion");
+            let error = vault
+                .memory_facade(actor, oneiron::EdgeActorClass::Human)
+                .witness(&engine)
+                .expect_err("SYSTEM envelope must be rejected by engine Gate");
+            assert_eq!(error.code, oneiron::FACADE_CODE_FORBIDDEN);
+            assert!(
+                vault
+                    .entities_by_type(ENTITY_TYPE_MESSAGE)
+                    .expect("message rows")
+                    .is_empty()
+            );
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// #482c: a non-finite `minWeight` is rejected at the boundary. NaN would

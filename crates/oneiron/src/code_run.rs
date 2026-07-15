@@ -33,10 +33,11 @@ const CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES: usize = 1024;
 
 /// Maximum results a first-party `self.memory.search` call can request.
 pub const SELF_MEMORY_SEARCH_MAX_RESULTS: usize = 16;
-pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 1;
+pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 2;
+const CODE_RUN_REPLAY_SCHEMA_VERSION_V1: u64 = 1;
 pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
 pub const CODE_RUN_REPLAY_HASH_LEN: usize = 32;
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 7] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 8] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -44,6 +45,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 7] = [
     "step_checkpoints",
     "outputs",
     "abi_layout_checks",
+    "off_record_session_ref",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
 pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
@@ -56,8 +58,14 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 6] = [
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 5] =
-    ["handle", "path", "raw_sha256", "raw_len", "preview"];
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 6] = [
+    "handle",
+    "path",
+    "raw_sha256",
+    "raw_len",
+    "preview",
+    "off_record_session_ref",
+];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
     ["name", "schema_version", "fields", "layout_hash"];
@@ -69,6 +77,7 @@ const KEY_BRIDGE_CALLS: &str = CODE_RUN_REPLAY_RECORD_KEYS[3];
 const KEY_STEP_CHECKPOINTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[4];
 const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
 const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
+const KEY_OFF_RECORD_SESSION_REF: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -203,10 +212,33 @@ pub struct CodeRunRawOutput {
     pub raw_sha256: [u8; CODE_RUN_REPLAY_HASH_LEN],
     pub raw_len: u64,
     pub preview: CodeRunOutputPreview,
+    /// Session binding for output created in an off-record run. The storage
+    /// key is session-scoped as well, so close cannot delete an on-record
+    /// output with identical bytes.
+    pub off_record_session_ref: Option<String>,
 }
 
 impl CodeRunRawOutput {
     pub fn from_bytes(path: impl Into<String>, raw: &[u8]) -> Result<Self> {
+        Self::from_bytes_with_session(None, path, raw)
+    }
+
+    /// Constructs raw-output metadata bound to one live off-record session.
+    pub fn for_off_record_session(
+        session_ref: impl Into<String>,
+        path: impl Into<String>,
+        raw: &[u8],
+    ) -> Result<Self> {
+        let session_ref = session_ref.into();
+        crate::off_record::vet_off_record_session_ref(&session_ref)?;
+        Self::from_bytes_with_session(Some(session_ref), path, raw)
+    }
+
+    fn from_bytes_with_session(
+        off_record_session_ref: Option<String>,
+        path: impl Into<String>,
+        raw: &[u8],
+    ) -> Result<Self> {
         let path = path.into();
         validate_text(
             &path,
@@ -236,6 +268,7 @@ impl CodeRunRawOutput {
                 text,
                 truncated,
             },
+            off_record_session_ref,
         })
     }
 }
@@ -273,6 +306,8 @@ pub struct CodeRunReplayRecord {
     pub step_checkpoints: Vec<CodeRunStepCheckpoint>,
     pub outputs: Vec<CodeRunRawOutput>,
     pub abi_layout_checks: Vec<CodeRunAbiLayoutCheck>,
+    /// Session binding for a run whose replay trace must evaporate at close.
+    pub off_record_session_ref: Option<String>,
 }
 
 /// Stable replay-row generation used for guarded executor appends.
@@ -313,7 +348,21 @@ impl CodeRunReplayRecord {
             step_checkpoints: Vec::new(),
             outputs: Vec::new(),
             abi_layout_checks: code_run_replay_abi_layout_checks(),
+            off_record_session_ref: None,
         }
+    }
+
+    /// Constructs a replay record bound to one off-record session.
+    pub fn for_off_record_session(
+        run_id: EntityId,
+        determinism: CodeRunDeterminism,
+        session_ref: impl Into<String>,
+    ) -> Result<Self> {
+        let session_ref = session_ref.into();
+        crate::off_record::vet_off_record_session_ref(&session_ref)?;
+        let mut record = Self::new(run_id, determinism);
+        record.off_record_session_ref = Some(session_ref);
+        Ok(record)
     }
 
     #[must_use]
@@ -327,7 +376,7 @@ impl CodeRunReplayRecord {
     }
 }
 
-/// Returns the default ABI/layout checks recorded with v1 replay records.
+/// Returns the default ABI/layout checks recorded with v2 replay records.
 #[must_use]
 pub fn code_run_replay_abi_layout_checks() -> Vec<CodeRunAbiLayoutCheck> {
     vec![
@@ -408,6 +457,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
                     .collect(),
             ),
         ),
+        (
+            Value::from(KEY_OFF_RECORD_SESSION_REF),
+            record.off_record_session_ref.as_deref().map_or(Value::Nil, Value::from),
+        ),
     ]);
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
@@ -421,7 +474,10 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         "code-run replay record",
     )?;
     let schema_version = u64_value(required(fields[0], "missing replay schema_version")?)?;
-    if schema_version != CODE_RUN_REPLAY_SCHEMA_VERSION {
+    if !matches!(
+        schema_version,
+        CODE_RUN_REPLAY_SCHEMA_VERSION_V1 | CODE_RUN_REPLAY_SCHEMA_VERSION
+    ) {
         return Err(invalid_code_run_replay(
             "unsupported code-run replay schema_version",
         ));
@@ -445,6 +501,10 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
         abi_layout_checks: decode_array(
             required(fields[6], "missing replay abi_layout_checks")?,
             decode_abi_layout_check,
+        )?,
+        off_record_session_ref: decode_optional_session_ref(
+            fields[7],
+            schema_version == CODE_RUN_REPLAY_SCHEMA_VERSION,
         )?,
     };
     validate_code_run_replay_record(&record)?;
@@ -513,12 +573,20 @@ impl Vault {
     /// Persists the replay record for `record.run_id`.
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let encoded = encode_code_run_replay_record(record)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(
-            &mut wtxn,
-            &code_run_replay_record_key(&record.run_id),
-            &encoded,
+        let key = code_run_replay_record_key(
+            &record.run_id,
+            record.off_record_session_ref.as_deref(),
         )?;
+        let mut wtxn = self.store.env.write_txn()?;
+        if let Some(session_ref) = record.off_record_session_ref.as_deref() {
+            crate::off_record::register_code_run_artifact_in_txn(
+                &self.store,
+                &mut wtxn,
+                session_ref,
+                &key,
+            )?;
+        }
+        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
         wtxn.commit().map_err(Error::from)
     }
 
@@ -530,7 +598,10 @@ impl Vault {
     ) -> Result<CodeRunReplayGeneration> {
         let encoded = encode_code_run_replay_record(record)?;
         let next_generation = record.generation()?;
-        let key = code_run_replay_record_key(&record.run_id);
+        let key = code_run_replay_record_key(
+            &record.run_id,
+            record.off_record_session_ref.as_deref(),
+        )?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self
             .store
@@ -538,6 +609,13 @@ impl Vault {
             .get(&wtxn, &key)?
             .map(decode_code_run_replay_record)
             .transpose()?;
+        if current.as_ref().is_some_and(|stored| {
+            stored.off_record_session_ref != record.off_record_session_ref
+        }) {
+            return Err(invalid_code_run_replay(
+                "stored replay session binding does not match its key",
+            ));
+        }
         let current_generation = current
             .as_ref()
             .map(CodeRunReplayRecord::generation)
@@ -546,6 +624,14 @@ impl Vault {
             return Err(Error::ConcurrentWrite(
                 "code-run replay record changed; retry executor",
             ));
+        }
+        if let Some(session_ref) = record.off_record_session_ref.as_deref() {
+            crate::off_record::register_code_run_artifact_in_txn(
+                &self.store,
+                &mut wtxn,
+                session_ref,
+                &key,
+            )?;
         }
         self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
         wtxn.commit().map_err(Error::from)?;
@@ -558,26 +644,71 @@ impl Vault {
         run_id: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        self.store
+        let key = code_run_replay_record_key(run_id, None)?;
+        let record = self.store
             .vault_meta
-            .get(&rtxn, &code_run_replay_record_key(run_id))?
+            .get(&rtxn, &key)?
             .map(decode_code_run_replay_record)
-            .transpose()
+            .transpose()?;
+        if record
+            .as_ref()
+            .is_some_and(|stored| stored.off_record_session_ref.is_some())
+        {
+            return Err(invalid_code_run_replay(
+                "on-record replay key contains off-record binding",
+            ));
+        }
+        Ok(record)
+    }
+
+    /// Loads a replay record from one off-record session namespace.
+    pub fn get_off_record_code_run_replay_record(
+        &self,
+        session_ref: &str,
+        run_id: &EntityId,
+    ) -> Result<Option<CodeRunReplayRecord>> {
+        crate::off_record::vet_off_record_session_ref(session_ref)?;
+        let rtxn = self.store.env.read_txn()?;
+        let key = code_run_replay_record_key(run_id, Some(session_ref))?;
+        let record = self.store
+            .vault_meta
+            .get(&rtxn, &key)?
+            .map(decode_code_run_replay_record)
+            .transpose()?;
+        if record.as_ref().is_some_and(|stored| {
+            stored.off_record_session_ref.as_deref() != Some(session_ref)
+        }) {
+            return Err(invalid_code_run_replay(
+                "off-record replay key contains mismatched session binding",
+            ));
+        }
+        Ok(record)
     }
 
     /// Stores raw output bytes under a deterministic content handle.
     pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), raw)?;
+        let expected = CodeRunRawOutput::from_bytes_with_session(
+            output.off_record_session_ref.clone(),
+            output.path.clone(),
+            raw,
+        )?;
         if expected != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
 
+        let key = code_run_raw_output_key(output)?;
         let mut wtxn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        if let Some(session_ref) = output.off_record_session_ref.as_deref() {
+            crate::off_record::register_code_run_artifact_in_txn(
+                &self.store,
+                &mut wtxn,
+                session_ref,
+                &key,
+            )?;
+        }
+        self.store.vault_meta.put(&mut wtxn, &key, raw)?;
         wtxn.commit().map_err(Error::from)
     }
 
@@ -585,15 +716,20 @@ impl Vault {
     pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let rtxn = self.store.env.read_txn()?;
+        let key = code_run_raw_output_key(output)?;
         let Some(raw) = self
             .store
             .vault_meta
-            .get(&rtxn, &code_run_raw_output_key(output))?
+            .get(&rtxn, &key)?
             .map(<[u8]>::to_vec)
         else {
             return Ok(None);
         };
-        let expected = CodeRunRawOutput::from_bytes(output.path.clone(), &raw)?;
+        let expected = CodeRunRawOutput::from_bytes_with_session(
+            output.off_record_session_ref.clone(),
+            output.path.clone(),
+            &raw,
+        )?;
         if expected != *output {
             return Err(invalid_code_run_replay(
                 "stored raw output bytes drifted from metadata",
@@ -703,6 +839,13 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
             Value::from(KEY_PREVIEW),
             encode_output_preview(&output.preview),
         ),
+        (
+            Value::from(KEY_OFF_RECORD_SESSION_REF),
+            output
+                .off_record_session_ref
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -717,6 +860,7 @@ fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
         )?,
         raw_len: u64_value(required(fields[3], "missing output raw_len")?)?,
         preview: decode_output_preview(required(fields[4], "missing output preview")?)?,
+        off_record_session_ref: decode_optional_session_ref(fields[5], false)?,
     };
     validate_raw_output(&output)?;
     Ok(output)
@@ -790,6 +934,9 @@ fn decode_abi_layout_check(value: &Value) -> Result<CodeRunAbiLayoutCheck> {
 }
 
 fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
+    if let Some(session_ref) = &record.off_record_session_ref {
+        crate::off_record::vet_off_record_session_ref(session_ref)?;
+    }
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
         if call.seq != expected_seq {
@@ -812,6 +959,11 @@ fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
     let mut output_paths = HashSet::new();
     for output in &record.outputs {
         validate_raw_output(output)?;
+        if output.off_record_session_ref != record.off_record_session_ref {
+            return Err(invalid_code_run_replay(
+                "raw output off-record session binding mismatch",
+            ));
+        }
         if !output_paths.insert(output.path.as_str()) {
             return Err(invalid_code_run_replay("duplicate raw output path"));
         }
@@ -837,6 +989,9 @@ fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
 }
 
 fn validate_raw_output(output: &CodeRunRawOutput) -> Result<()> {
+    if let Some(session_ref) = &output.off_record_session_ref {
+        crate::off_record::vet_off_record_session_ref(session_ref)?;
+    }
     validate_text(
         &output.path,
         CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES,
@@ -858,6 +1013,24 @@ fn validate_raw_output(output: &CodeRunRawOutput) -> Result<()> {
         return Err(invalid_code_run_replay("output preview exceeds cap"));
     }
     Ok(())
+}
+
+fn decode_optional_session_ref(
+    value: Option<&Value>,
+    required_in_schema: bool,
+) -> Result<Option<String>> {
+    match value {
+        Some(Value::Nil) => Ok(None),
+        Some(value) => {
+            let session_ref = str_value(value)?.to_owned();
+            crate::off_record::vet_off_record_session_ref(&session_ref)?;
+            Ok(Some(session_ref))
+        }
+        None if !required_in_schema => Ok(None),
+        None => Err(invalid_code_run_replay(
+            "missing replay off_record_session_ref",
+        )),
+    }
 }
 
 fn validate_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Result<()> {
@@ -912,6 +1085,9 @@ fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("tgt", entity_id_value(call.tgt)),
             ("weight", Value::F32(call.weight)),
         ]),
+        SelfCall::Speak(turn) | SelfCall::Think(turn) | SelfCall::Express(turn) => {
+            witness_turn_request_value(turn)
+        }
         SelfCall::AskHuman(call) => {
             request_map(vec![("prompt", Value::from(call.prompt.as_str()))])
         }
@@ -919,6 +1095,50 @@ fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             request_map(vec![("label", Value::from(call.label.as_str()))])
         }
     })
+}
+
+fn witness_turn_request_value(turn: &crate::facade::WitnessTurn) -> Value {
+    request_map(vec![
+        (
+            "conversation_ref",
+            Value::from(turn.conversation_ref.as_str()),
+        ),
+        (
+            "turn_ref",
+            turn.turn_ref
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
+        (
+            "messages",
+            Value::Array(
+                turn.messages
+                    .iter()
+                    .map(|message| {
+                        request_map(vec![
+                            (
+                                "id",
+                                message.id.as_deref().map_or(Value::Nil, Value::from),
+                            ),
+                            ("author", Value::from(message.author.as_str())),
+                            ("message_type", Value::from(message.message_type.as_str())),
+                            ("content", Value::from(message.content.as_str())),
+                            (
+                                "metadata",
+                                message
+                                    .metadata
+                                    .as_ref()
+                                    .map_or(Value::Nil, crate::facade::json_to_rmpv),
+                            ),
+                            ("is_visible", Value::Boolean(message.is_visible)),
+                            ("order", Value::from(u64::from(message.order))),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("occurred_at", Value::from(turn.occurred_at)),
+    ])
 }
 
 fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {
@@ -993,6 +1213,21 @@ fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Value {
             ("edge_kind", Value::from(result.kind as u8)),
             ("tgt", entity_id_value(result.tgt)),
         ]),
+        SelfDispatchOutcome::MessageWitness(result) => request_map(vec![
+            ("kind", Value::from("message_witness")),
+            ("turn_short_id", Value::from(result.turn_short_id.as_str())),
+            (
+                "message_short_ids",
+                Value::Array(
+                    result
+                        .message_short_ids
+                        .iter()
+                        .map(|value| Value::from(value.as_str()))
+                        .collect(),
+                ),
+            ),
+            ("receipt_ref", Value::from(result.receipt_ref.as_str())),
+        ]),
         SelfDispatchOutcome::DurableWait(wait) => request_map(vec![
             ("kind", Value::from("durable_wait")),
             ("wait_id", entity_id_value(wait.wait_id)),
@@ -1047,6 +1282,13 @@ fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatchOutcome> {
                 src: entity_value(map_get(entries, "src")?)?,
                 kind: edge_kind_value(map_get(entries, "edge_kind")?)?,
                 tgt: entity_value(map_get(entries, "tgt")?)?,
+            },
+        )),
+        "message_witness" => Ok(SelfDispatchOutcome::MessageWitness(
+            crate::facade::WitnessReceipt {
+                turn_short_id: str_value(map_get(entries, "turn_short_id")?)?.to_owned(),
+                message_short_ids: str_array(map_get(entries, "message_short_ids")?)?,
+                receipt_ref: str_value(map_get(entries, "receipt_ref")?)?.to_owned(),
             },
         )),
         "durable_wait" => {
@@ -1138,6 +1380,9 @@ fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),
         "self.memory.supersede_claim" => Ok(SelfEffect::MemorySupersedeClaim),
         "self.memory.put_edge" => Ok(SelfEffect::MemoryPutEdge),
+        "self.speak" => Ok(SelfEffect::Speak),
+        "self.think" => Ok(SelfEffect::Think),
+        "self.express" => Ok(SelfEffect::Express),
         "self.ask_human" => Ok(SelfEffect::AskHuman),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
@@ -1340,18 +1585,47 @@ where
     hasher.finalize().into()
 }
 
-fn code_run_replay_record_key(run_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODE_RUN_REPLAY_RECORD_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(CODE_RUN_REPLAY_RECORD_KEY_PREFIX);
-    key.extend_from_slice(run_id.as_bytes());
-    key
+fn append_off_record_key_scope(key: &mut Vec<u8>, session_ref: Option<&str>) -> Result<()> {
+    if let Some(session_ref) = session_ref {
+        crate::off_record::vet_off_record_session_ref(session_ref)?;
+        let session_ref_len = u16::try_from(session_ref.len())
+            .map_err(|_| invalid_code_run_replay("off-record session ref length overflow"))?;
+        key.extend_from_slice(b"offrecord:");
+        key.extend_from_slice(&session_ref_len.to_be_bytes());
+        key.extend_from_slice(session_ref.as_bytes());
+        key.push(b':');
+    }
+    Ok(())
 }
 
-fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODE_RUN_RAW_OUTPUT_KEY_PREFIX.len() + output.handle.len());
+fn code_run_replay_record_key(
+    run_id: &EntityId,
+    session_ref: Option<&str>,
+) -> Result<Vec<u8>> {
+    let mut key = Vec::with_capacity(
+        CODE_RUN_REPLAY_RECORD_KEY_PREFIX.len()
+            + session_ref.map_or(0, |value| value.len() + 12)
+            + 16,
+    );
+    key.extend_from_slice(CODE_RUN_REPLAY_RECORD_KEY_PREFIX);
+    append_off_record_key_scope(&mut key, session_ref)?;
+    key.extend_from_slice(run_id.as_bytes());
+    Ok(key)
+}
+
+fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Result<Vec<u8>> {
+    let mut key = Vec::with_capacity(
+        CODE_RUN_RAW_OUTPUT_KEY_PREFIX.len()
+            + output
+                .off_record_session_ref
+                .as_ref()
+                .map_or(0, |value| value.len() + 12)
+            + output.handle.len(),
+    );
     key.extend_from_slice(CODE_RUN_RAW_OUTPUT_KEY_PREFIX);
+    append_off_record_key_scope(&mut key, output.off_record_session_ref.as_deref())?;
     key.extend_from_slice(output.handle.as_bytes());
-    key
+    Ok(key)
 }
 
 fn invalid_code_run_replay(message: &'static str) -> Error {
@@ -1576,6 +1850,95 @@ impl<'a> HostSelfDispatcher<'a> {
         ))
     }
 
+    fn dispatch_message_witness(
+        &self,
+        effect: SelfEffect,
+        mut turn: crate::facade::WitnessTurn,
+    ) -> Result<SelfDispatchOutcome> {
+        if turn.messages.len() != 1 {
+            return Err(Error::InvalidClaimBody(
+                "self.speak/think/express requires exactly one message bubble",
+            ));
+        }
+        let message = turn.messages.first_mut().ok_or(Error::InvalidClaimBody(
+            "self message effect missing bubble",
+        ))?;
+        let message_id = match message.id.as_deref() {
+            Some(id) => EntityId::from_hex(id)
+                .map_err(|_| Error::InvalidClaimBody("self message id must be 32-hex"))?,
+            None => {
+                let id = EntityId::now();
+                message.id = Some(id.to_hex());
+                id
+            }
+        };
+        message.author = match self.actor.actor_class() {
+            EdgeActorClass::Human => crate::facade::WitnessAuthor::User,
+            EdgeActorClass::Agent => crate::facade::WitnessAuthor::Companion,
+            EdgeActorClass::System => crate::facade::WitnessAuthor::System,
+        };
+        let (message_type, is_visible) = match effect {
+            SelfEffect::Speak => ("dialogue", true),
+            SelfEffect::Think => ("thought", false),
+            SelfEffect::Express => ("expression", true),
+            _ => {
+                return Err(Error::InvariantViolation(
+                    "non-message effect reached message dispatcher",
+                ));
+            }
+        };
+        message.message_type = message_type.to_owned();
+        message.is_visible = is_visible;
+
+        // Preserve the typed Gate denial before crossing the public facade's
+        // transport-shaped error boundary. The facade performs the same
+        // shared check again in its write transaction; this read-only pass is
+        // not authoritative and cannot open a TOCTOU gap.
+        let envelope = self.write_envelope(effect)?;
+        self.validate_write_actor_binding(&envelope)?;
+        let metadata = message
+            .metadata
+            .as_ref()
+            .map(crate::facade::json_to_rmpv);
+        let rtxn = self.vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
+        let gate_input = crate::gate::MessageEnvelopeCeilingInput {
+            actor: self.actor,
+            message_id,
+            author: message.author.as_str(),
+            message_type: &message.message_type,
+            content: &message.content,
+            metadata: metadata.as_ref(),
+            is_visible: message.is_visible,
+            order: message.order,
+        };
+        let approval = crate::gate::check_message_envelope_ceiling(
+            &self.vault.store,
+            &rtxn,
+            &policy,
+            &gate_input,
+        )?;
+        approval.authorizes(&gate_input)?;
+        drop(rtxn);
+
+        let receipt = self
+            .vault
+            .memory_facade(self.actor.entity_ref(), self.actor.actor_class())
+            .witness(&turn)
+            .map_err(|error| {
+                if error.code == crate::facade::FACADE_CODE_FORBIDDEN {
+                    Error::GateWriteRejected {
+                        outcome: "pending",
+                        reason_codes: vec!["gate.pending.actor_ceiling"],
+                    }
+                } else {
+                    Error::InvariantViolation("self message witness failed")
+                }
+            })?;
+
+        Ok(SelfDispatchOutcome::MessageWitness(receipt))
+    }
+
     fn operation_gate_body(
         &self,
         effect: SelfEffect,
@@ -1665,6 +2028,9 @@ impl SelfDispatcher for HostSelfDispatcher<'_> {
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::Speak(turn) => self.dispatch_message_witness(SelfEffect::Speak, turn),
+            SelfCall::Think(turn) => self.dispatch_message_witness(SelfEffect::Think, turn),
+            SelfCall::Express(turn) => self.dispatch_message_witness(SelfEffect::Express, turn),
             SelfCall::AskHuman(call) => Ok(self.durable_wait(
                 SelfEffect::AskHuman,
                 SelfDurableWaitReason::HumanInput,
@@ -1758,6 +2124,12 @@ pub enum SelfCall {
     MemorySupersedeClaim(SelfMemorySupersedeClaimCall),
     /// Public first-party `self.memory.put_edge(...)` trap.
     MemoryPutEdge(SelfMemoryPutEdgeCall),
+    /// Emits one visible dialogue MESSAGE through the gated witness path.
+    Speak(crate::facade::WitnessTurn),
+    /// Emits one hidden thought MESSAGE through the gated witness path.
+    Think(crate::facade::WitnessTurn),
+    /// Emits one visible expression MESSAGE through the gated witness path.
+    Express(crate::facade::WitnessTurn),
     /// Fixture for `self.ask_human(...)`.
     AskHuman(SelfAskHumanCall),
     /// Fixture for destructive effects, which must park as durable waits.
@@ -1776,6 +2148,9 @@ impl SelfCall {
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
             Self::MemorySupersedeClaim(_) => SelfEffect::MemorySupersedeClaim,
             Self::MemoryPutEdge(_) => SelfEffect::MemoryPutEdge,
+            Self::Speak(_) => SelfEffect::Speak,
+            Self::Think(_) => SelfEffect::Think,
+            Self::Express(_) => SelfEffect::Express,
             Self::AskHuman(_) => SelfEffect::AskHuman,
             Self::DestructiveFixture(_) => SelfEffect::DestructiveFixture,
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
@@ -1791,6 +2166,9 @@ pub enum SelfEffect {
     MemoryPutClaim,
     MemorySupersedeClaim,
     MemoryPutEdge,
+    Speak,
+    Think,
+    Express,
     AskHuman,
     DestructiveFixture,
     OutboundFixture,
@@ -1806,6 +2184,9 @@ impl SelfEffect {
             Self::MemoryPutClaim => "self.memory.put_claim",
             Self::MemorySupersedeClaim => "self.memory.supersede_claim",
             Self::MemoryPutEdge => "self.memory.put_edge",
+            Self::Speak => "self.speak",
+            Self::Think => "self.think",
+            Self::Express => "self.express",
             Self::AskHuman => "self.ask_human",
             Self::DestructiveFixture => "self.fixture.destructive",
             Self::OutboundFixture => "self.fixture.outbound",
@@ -1958,6 +2339,7 @@ pub enum SelfDispatchOutcome {
     MemorySearch(SelfMemorySearchResult),
     MemoryWrite(SelfMemoryWriteResult),
     MemoryEdgeWrite(SelfMemoryEdgeWriteResult),
+    MessageWitness(crate::facade::WitnessReceipt),
     DurableWait(SelfDurableWait),
     Denied(SelfDeniedResult),
     Failed(SelfFailedResult),

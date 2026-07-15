@@ -186,7 +186,7 @@ fn witness_writes_turn_messages_edges_and_text() {
 }
 
 #[test]
-fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
+fn witness_create_or_get_reuses_containers_and_rejects_system_author_escalation() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x31);
     let facade = facade_for(&vault, actor);
@@ -213,13 +213,27 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
     // turns as multiple witness calls sharing the same turn id).
     let second = facade
         .witness(&WitnessTurn {
-            conversation_ref: conversation_hex,
+            conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
-            messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
+            messages: vec![witness_message(
+                1,
+                WitnessAuthor::Companion,
+                "companion row",
+            )],
             occurred_at: 601,
         })
         .expect("second witness");
     assert_eq!(first.turn_short_id, second.turn_short_id);
+
+    let system_error = facade
+        .witness(&WitnessTurn {
+            conversation_ref: conversation_hex,
+            turn_ref: Some(turn_hex.clone()),
+            messages: vec![witness_message(2, WitnessAuthor::System, "system row")],
+            occurred_at: 602,
+        })
+        .expect_err("human actor must not witness a SYSTEM envelope");
+    assert_eq!(system_error.code, FACADE_CODE_FORBIDDEN);
 
     let turns = vault.entities_by_type(ENTITY_TYPE_TURN).expect("turns");
     assert_eq!(turns.len(), 1, "turn must not be duplicated");
@@ -249,20 +263,25 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
         "reused CONVERSATION must be byte-identical"
     );
 
-    // System-authored rows get no AuthoredBy edge (design §2.1).
-    let system_view = facade
+    // The permitted companion transcript row remains actor-attributed; the
+    // rejected SYSTEM envelope did not create a third MESSAGE.
+    let companion_view = facade
         .get_entity(&second.message_short_ids[0])
         .unwrap()
-        .expect("system message");
-    let system_id = EntityId::from_hex(&system_view.id_hex).unwrap();
+        .expect("companion message");
+    let companion_id = EntityId::from_hex(&companion_view.id_hex).unwrap();
     let kinds: Vec<EdgeKind> = vault
-        .edges_out(&system_id)
+        .edges_out(&companion_id)
         .expect("edges")
         .iter()
         .map(|edge| edge.kind)
         .collect();
-    assert!(!kinds.contains(&EdgeKind::AuthoredBy));
+    assert!(kinds.contains(&EdgeKind::AuthoredBy));
     assert!(kinds.contains(&EdgeKind::PartOf));
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_MESSAGE).expect("messages").len(),
+        2
+    );
 
     // Type mismatch on a container ref fails closed.
     let err = facade
