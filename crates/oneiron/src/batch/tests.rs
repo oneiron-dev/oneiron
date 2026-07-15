@@ -1012,6 +1012,7 @@ fn replicated_inheritance_edge_tombstone_touching_fence_is_rejected() -> Result<
 fn off_record_part_of_allows_only_new_message_or_exact_retry() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let turn = EntityId::now();
+    let edge_first = EntityId::now();
     let preexisting = EntityId::now();
     let new_message = EntityId::now();
     let occurred = test_time_range(10, 10);
@@ -1025,6 +1026,43 @@ fn off_record_part_of_allows_only_new_message_or_exact_retry() -> Result<()> {
     )?;
     vault.enter_off_record_session("sess-partof-capture", OffRecordBackendClass::Local)?;
     vault.tag_turn_off_record("sess-partof-capture", &turn)?;
+
+    let edge_first_error = vault
+        .batch()
+        .edge(&edge_first, EdgeKind::PartOf, &turn, 1.0)
+        .commit()
+        .expect_err("an edge-first unknown source must fail closed");
+    assert_eq!(
+        [edge_first_error]
+            .into_iter()
+            .filter(|error| error.kind() == ErrorKind::OffRecordFencedTurnWriteRejected)
+            .count(),
+        1
+    );
+    vault.put_entity(
+        &edge_first,
+        ENTITY_TYPE_MESSAGE,
+        occurred,
+        10,
+        b"later ordinary message",
+    )?;
+    assert_eq!(
+        vault
+            .sources_unfiltered(&turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))?
+            .into_iter()
+            .filter(|id| *id == edge_first)
+            .count(),
+        0,
+        "the rejected edge cannot leave an inheritance path for the later put"
+    );
+    assert_eq!(
+        [edge_first]
+            .into_iter()
+            .filter(|id| vault.get(id).expect("later source read").is_some())
+            .count(),
+        1,
+        "the later body remains an ordinary visible message"
+    );
 
     let rejected = vault
         .batch()
@@ -1046,7 +1084,15 @@ fn off_record_part_of_allows_only_new_message_or_exact_retry() -> Result<()> {
         )
         .edge(&new_message, EdgeKind::PartOf, &turn, 1.0)
         .commit()?;
-    assert!(vault.is_turn_off_record_fenced(&new_message)?);
+    assert_eq!(
+        [new_message]
+            .into_iter()
+            .filter(|id| vault
+                .is_turn_off_record_fenced(id)
+                .expect("new carrier fence"))
+            .count(),
+        1
+    );
 
     vault
         .batch()
