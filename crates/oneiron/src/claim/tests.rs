@@ -817,9 +817,9 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
         CLAIM_BODY_KEYS,
         [
             "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-            "appr", "life", "stale",
+            "appr", "life", "stale", "sess",
         ],
-        "PsychProfile snapshots must not extend the pinned Claim body ABI"
+        "PsychProfile snapshots must preserve the pinned Claim body ABI"
     );
 }
 
@@ -925,6 +925,85 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
         !claim_consolidatable(&body),
         "consolidation preserves surfaceability's stale exclusion"
     );
+}
+
+#[test]
+fn self_unconfirmed_not_consolidatable() -> Result<()> {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x18; 16]).expect("valid id"));
+    let mut body = ClaimBody::new(
+        "profile.preference",
+        subject,
+        Value::from("night owl"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.source = Some(ClaimSource::Generated);
+    body.session_tag = Some("agent:alpha/session:42".to_owned());
+
+    let encoded = encode_claim_body(&body)?;
+    let decoded = decode_claim_body(&encoded, false)?;
+
+    assert_eq!(
+        decoded.session_tag.as_deref(),
+        Some("agent:alpha/session:42")
+    );
+    assert!(
+        !claim_consolidatable(&decoded),
+        "an agent's own unconfirmed session proposal must stay outside consolidation"
+    );
+    Ok(())
+}
+
+#[test]
+fn session_claim_producer_uses_envelope_actor_evidence_fail_closed() -> Result<()> {
+    let producer = EntityId::from_bytes([0x19; 16]).expect("valid producer id");
+    let envelope = WriteEnvelope::new(
+        crate::write_envelope::WriteActor::new(producer, crate::edge::EdgeActorClass::Human),
+        ClaimSource::Generated,
+        crate::write_envelope::WriteProvenance::new(Value::from("session-producer-test"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let mut body = ClaimBody::new(
+        "profile.preference",
+        ClaimSubject::Entity(EntityId::from_bytes([0x1A; 16]).expect("valid subject id")),
+        Value::from("concise"),
+        0.8,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    );
+    body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+        &envelope, None,
+    ));
+
+    assert_eq!(session_claim_producer(&body), Some(producer));
+
+    body.evidence = Some(Value::Map(vec![
+        (
+            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+            Value::Binary(producer.as_bytes().to_vec()),
+        ),
+        (
+            Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+            Value::Binary(producer.as_bytes().to_vec()),
+        ),
+    ]));
+    assert_eq!(
+        session_claim_producer(&body),
+        None,
+        "duplicate producer stamps must not match a session bundle"
+    );
+
+    body.evidence = Some(Value::Map(vec![(
+        Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+        Value::Binary(vec![0x19; 15]),
+    )]));
+    assert_eq!(
+        session_claim_producer(&body),
+        None,
+        "malformed producer stamps must not match a session bundle"
+    );
+    Ok(())
 }
 
 /// GATE-11 (ONE-1391): generated origin is evidence-inadmissible regardless

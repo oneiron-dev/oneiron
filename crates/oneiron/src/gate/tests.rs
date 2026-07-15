@@ -3675,6 +3675,354 @@ fn approved_gate_consent_followup_succeeds_and_clears_pending() -> Result<()> {
 }
 
 #[test]
+fn session_bundle_review_merge() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let reviewer_id = test_id(0xC8);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC2, &policy)?;
+    vault.put_entity(
+        &reviewer_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"session bundle reviewer",
+    )?;
+    let reviewer = WriteActor::new(reviewer_id, EdgeActorClass::Human);
+    let producer = test_id(0x20);
+
+    let session_tag = "agent:alpha/session:42";
+    let first = test_id(0xC3);
+    let second = test_id(0xC4);
+    for (id, learned_at) in [(first, 3), (second, 4)] {
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope.with_session_tag(session_tag),
+                test_time(learned_at),
+                learned_at,
+            )
+            .commit()?;
+    }
+
+    let review = vault.review_session_bundle(&reviewer, &producer, session_tag)?;
+    assert_eq!(review.session_tag, session_tag);
+    assert_eq!(
+        review
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>(),
+        vec![first, second]
+    );
+    assert!(
+        review
+            .claims
+            .iter()
+            .all(|claim| claim.body.approval == ClaimApprovalStatus::Proposed)
+    );
+
+    let metric_emissions_before = gate_metric_emission_count_for_test();
+    let merged = vault.merge_session_bundle(&reviewer, &producer, session_tag)?;
+    assert_eq!(
+        gate_metric_emission_count_for_test(),
+        metric_emissions_before + 2,
+        "committed bundle decisions must emit metrics exactly once per member"
+    );
+    assert!(
+        merged
+            .claims
+            .iter()
+            .all(|claim| claim.body.approval == ClaimApprovalStatus::Approved)
+    );
+    assert!(
+        merged
+            .claims
+            .iter()
+            .all(|claim| claim.body.session_tag.as_deref() == Some(session_tag))
+    );
+    assert!(
+        merged
+            .claims
+            .iter()
+            .all(|claim| crate::claim::session_claim_producer(&claim.body) == Some(producer))
+    );
+    assert_eq!(
+        vault
+            .get_claim(&first)?
+            .expect("first merged claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(
+        vault
+            .get_claim(&second)?
+            .expect("second merged claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert!(!has_pending_gate_consent(&vault, &first)?);
+    assert!(!has_pending_gate_consent(&vault, &second)?);
+    assert!(
+        vault
+            .review_session_bundle(&reviewer, &producer, session_tag)?
+            .claims
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn session_bundle_review_and_merge_reject_unauthorized_caller_with_fresh_consent() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let authorized_id = test_id(0xCC);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &authorized_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC9, &policy)?;
+
+    let session_tag = "agent:alpha/session:unauthorized";
+    let id = test_id(0xCA);
+    let mut proposed = source_trust_claim(ClaimSource::UserStated);
+    proposed.approval = ClaimApprovalStatus::Proposed;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+    let producer = envelope.actor().entity_ref();
+    let unauthorized_id = test_id(0xCB);
+    vault.put_entity(
+        &unauthorized_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"unrelated valid session bundle caller",
+    )?;
+    let unauthorized = WriteActor::new(unauthorized_id, EdgeActorClass::Human);
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate,
+            &envelope.with_session_tag(session_tag),
+            test_time(3),
+            3,
+        )
+        .commit()?;
+    assert!(has_pending_gate_consent(&vault, &id)?);
+
+    let err = vault
+        .review_session_bundle(&unauthorized, &producer, session_tag)
+        .expect_err("proposed claim bodies must not be disclosed to an unauthorized caller");
+    assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+
+    let err = vault
+        .merge_session_bundle(&unauthorized, &producer, session_tag)
+        .expect_err("fresh consent must not elevate an unauthorized caller");
+    assert_gate_rejected(err, "pending", &["gate.pending.actor_ceiling"]);
+    assert_eq!(
+        vault.get_claim(&id)?.expect("proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(has_pending_gate_consent(&vault, &id)?);
+    Ok(())
+}
+
+// A forged top-level actor_entity_ref cannot survive any local write path: envelope
+// writes rebuild evidence from the envelope (write_envelope_evidence), and raw claim
+// puts are rejected before the producer-binding check even runs. The producer==envelope
+// check in batch.rs stays as defense-in-depth for future paths that preserve caller
+// evidence; the reachable rejection is the raw-put guard asserted here.
+#[test]
+fn session_tagged_raw_claim_rejects_a_spoofed_producer_stamp() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xD6);
+    let spoofed_producer = test_id(0xD7);
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.approval = ClaimApprovalStatus::Proposed;
+    body.session_tag = Some("agent:spoofed/session:tag".to_owned());
+    body.evidence = Some(Value::Map(vec![(
+        Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
+        Value::Binary(spoofed_producer.as_bytes().to_vec()),
+    )]));
+    let data = crate::claim::encode_claim_body(&body)?;
+
+    let err = vault
+        .put_entity(&id, ENTITY_TYPE_CLAIM, test_time(3), 3, &data)
+        .expect_err("raw claim writes must not self-assert a session producer");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidClaimBody("raw claim put requires WriteEnvelope")
+        ),
+        "unexpected error: {err:?}"
+    );
+    assert!(vault.get_raw(&id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn session_bundle_excludes_same_tag_claims_from_another_producer() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let reviewer_id = test_id(0xD0);
+    let producer_a = test_id(0xD1);
+    let producer_b = test_id(0xD2);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xD3, &policy)?;
+    vault.put_entity(
+        &reviewer_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"session bundle reviewer",
+    )?;
+    let reviewer = WriteActor::new(reviewer_id, EdgeActorClass::Human);
+
+    let session_tag = "agent:shared/session:collision";
+    let first = test_id(0xD4);
+    let injected = test_id(0xD5);
+    for (id, producer, learned_at) in [(first, producer_a, 3), (injected, producer_b, 4)] {
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts_for_actor(
+            &vault,
+            &proposed,
+            producer,
+            EdgeActorClass::Human,
+        )?;
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope.with_session_tag(session_tag),
+                test_time(learned_at),
+                learned_at,
+            )
+            .commit()?;
+    }
+
+    let review = vault.review_session_bundle(&reviewer, &producer_a, session_tag)?;
+    assert_eq!(
+        review
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>(),
+        vec![first],
+        "a raw session-tag collision must not inject another actor's claim"
+    );
+
+    let merged = vault.merge_session_bundle(&reviewer, &producer_a, session_tag)?;
+    assert_eq!(
+        merged
+            .claims
+            .iter()
+            .map(|claim| claim.id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
+    assert_eq!(
+        vault
+            .get_claim(&first)?
+            .expect("first producer claim")
+            .approval,
+        ClaimApprovalStatus::Approved
+    );
+    assert_eq!(
+        vault
+            .get_claim(&injected)?
+            .expect("second producer claim")
+            .approval,
+        ClaimApprovalStatus::Proposed,
+        "the colliding second-producer claim must not be approved"
+    );
+    Ok(())
+}
+
+#[test]
+fn atomic_bundle_commit() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let reviewer_id = test_id(0xC9);
+    let mut policy = encode_policy_manifest(vec![]);
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("human", &reviewer_id.to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, 0xC5, &policy)?;
+    vault.put_entity(
+        &reviewer_id,
+        ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"session bundle reviewer",
+    )?;
+    let reviewer = WriteActor::new(reviewer_id, EdgeActorClass::Human);
+    let producer = test_id(0x20);
+
+    let session_tag = "agent:alpha/session:atomic";
+    let first = test_id(0xC6);
+    let second = test_id(0xC7);
+    for (id, learned_at) in [(first, 3), (second, 4)] {
+        let mut proposed = source_trust_claim(ClaimSource::UserStated);
+        proposed.approval = ClaimApprovalStatus::Proposed;
+        let (candidate, envelope) = claim_candidate_write_parts(&vault, &proposed)?;
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope.with_session_tag(session_tag),
+                test_time(learned_at),
+                learned_at,
+            )
+            .commit()?;
+    }
+
+    vault.with_write_txn(|wtxn| {
+        let mut pending = vault
+            .store
+            .pending_gate_consent_in_txn(wtxn, &second)?
+            .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+        pending.diff_handle = vec![0xFF];
+        vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    })?;
+
+    let metric_emissions_before = gate_metric_emission_count_for_test();
+    let err = vault
+        .merge_session_bundle(&reviewer, &producer, session_tag)
+        .expect_err("a stale member must abort the whole session bundle");
+    assert!(matches!(err, Error::GateConsentStale { claim_id } if claim_id == second));
+    assert_eq!(
+        vault.get_claim(&first)?.expect("first proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(
+        vault.get_claim(&second)?.expect("second proposal").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(has_pending_gate_consent(&vault, &first)?);
+    assert!(has_pending_gate_consent(&vault, &second)?);
+    assert_eq!(
+        gate_metric_emission_count_for_test(),
+        metric_emissions_before,
+        "rolled-back bundle decisions must not emit gate metrics"
+    );
+    Ok(())
+}
+
+#[test]
 fn same_batch_proposed_then_approved_rejects_without_pending_consent() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, 0x98, &encode_policy_manifest(vec![]))?;

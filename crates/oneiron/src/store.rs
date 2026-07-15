@@ -127,6 +127,10 @@ use crate::registry::{
 
 // Contract-pinned at 32 by ARCH-0019/ARCH-0031: 28 named DBs plus headroom.
 pub const MAX_DBS: u32 = 32;
+/// v13 (ONE-1387): type-0 CLAIM bodies gained the optional `sess` key for
+/// actor-bound session review bundles. v12 readers reject these bodies, so
+/// vaults carrying session-tagged claims must fail closed at the ABI gate.
+///
 /// v11 (ONE-1576): off-record fence state became a supported vault contract.
 /// v10 readers do not know the fence semantics, so v10 vaults fail closed at
 /// the ABI gate — there is no silent downgrade that could expose fenced rows.
@@ -167,7 +171,7 @@ pub const MAX_DBS: u32 = 32;
 /// `GATE_DECISION_LEDGER_VERSION`, `JOB_RECORD_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 12;
+pub const STORAGE_ABI_VERSION: u16 = 13;
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 pub(crate) const STORAGE_SCHEMA_VERSION_KEY: &[u8] = b"schema_version";
