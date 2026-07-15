@@ -1893,6 +1893,107 @@ fn conflicting_root_foreign_revoke_does_not_resolve_authority_fork() {
 }
 
 #[test]
+fn all_invalid_wrong_vault_fork_quarantines_signer_on_parent_vault() {
+    let owner = ed_key(240);
+    let second = ed_key(241);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(240, 86_400, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let foreign_vault_id = genesis_vault_id(&genesis_entry(242, 86_400, 1)).unwrap();
+    let enroll_second = enroll_device_entry(
+        vault_id,
+        &genesis,
+        &owner,
+        EnrollSpec {
+            seed: 241,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+            tier: AuthorityTier::Software,
+            seq: 1,
+            ts: 2,
+        },
+    );
+    // Same-(signer, seq) pair extending the local log while claiming a
+    // foreign vault id: both fold as WrongVault, so the group resolves
+    // all-invalid. The quarantine must scope to the parent vault the pair
+    // tried to extend, not the bogus claimed id.
+    let bogus_ceiling = set_ceiling_entry(foreign_vault_id, &enroll_second, &owner, 2, 3);
+    let bogus_tier = set_tier_floor_entry_at(
+        foreign_vault_id,
+        &enroll_second,
+        &owner,
+        2,
+        AuthorityTier::Hardware,
+        4,
+    );
+    let ceiling_hash = authority_entry_hash(&bogus_ceiling).unwrap();
+    let tier_hash = authority_entry_hash(&bogus_tier).unwrap();
+    let first_hash = ceiling_hash.min(tier_hash);
+    let second_hash = ceiling_hash.max(tier_hash);
+    // Later same-signer authorization on the real vault: the quarantined
+    // owner cosigns a third-device enrollment signed by the second device.
+    let enroll_third = cosign_ed(
+        enroll_device_entry(
+            vault_id,
+            &enroll_second,
+            &second,
+            EnrollSpec {
+                seed: 243,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 0,
+                ts: 5,
+            },
+        ),
+        &second,
+        &owner,
+    );
+
+    let fold = fold_authority_log_without_seen_time_delay(&[
+        enroll_third,
+        bogus_tier,
+        bogus_ceiling,
+        enroll_second,
+        genesis,
+    ]);
+
+    assert_eq!(fold.roster.len(), 2);
+    assert_eq!(
+        fold.authority_forks,
+        vec![AuthorityFork {
+            signer: owner_key.clone(),
+            seq: 2,
+            first_hash,
+            second_hash,
+            status: AuthorityForkStatus::Quarantined,
+        }]
+    );
+    assert_eq!(
+        fold.fork_alarms,
+        vec![AuthorityForkAlarm {
+            signer: owner_key,
+            seq: 2,
+            first_hash,
+            second_hash,
+        }]
+    );
+    assert_eq!(
+        fold.issues
+            .iter()
+            .filter(|issue| matches!(issue, AuthorityFoldIssue::WrongVault(_)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        fold.issues
+            .iter()
+            .filter(|issue| matches!(issue, AuthorityFoldIssue::SignerNotInAncestry(_)))
+            .count(),
+        1
+    );
+    assert_eq!(fold.issues.len(), 3);
+}
+
+#[test]
 fn restore_prefix_divergence_suppresses_authority_fork_alarm() {
     let owner = ed_key(73);
     let second = ed_key(74);

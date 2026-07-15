@@ -1641,7 +1641,7 @@ fn resolve_equivocation_group(
         return EquivocationResolution::Resolved {
             winner: None,
             fork,
-            fork_vault_id: authority_fork_vault_id_from_group(group, by_hash, None),
+            fork_vault_id: authority_fork_vault_id_from_group(group, by_hash, states, None),
             issues,
         };
     }
@@ -1693,6 +1693,7 @@ fn resolve_equivocation_group(
     let fork_vault_id = authority_fork_vault_id_from_group(
         group,
         by_hash,
+        states,
         winner.as_ref().map(|(_, state)| state.as_ref()),
     );
     EquivocationResolution::Resolved {
@@ -1706,8 +1707,22 @@ fn resolve_equivocation_group(
 fn authority_fork_vault_id_from_group(
     group: &BTreeSet<AuthorityEntryHash>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
     winner: Option<&FoldState>,
 ) -> Option<AuthorityVaultId> {
+    // The fork threatens the vault whose log the candidates tried to extend —
+    // the folded parent vault — not the vault id the entries claim. An
+    // all-invalid WrongVault group carries a bogus claimed id; scoping the
+    // quarantine there would leave the real vault's later entries unguarded.
+    let parent_vault_ids: BTreeSet<_> = group
+        .iter()
+        .filter_map(|hash| by_hash.get(hash))
+        .flat_map(|entry| entry.parent_hashes.iter())
+        .filter_map(|parent| states.get(parent).map(|state| state.vault_id))
+        .collect();
+    if parent_vault_ids.len() == 1 {
+        return parent_vault_ids.into_iter().next();
+    }
     let vault_ids: BTreeSet<_> = group
         .iter()
         .filter_map(|hash| by_hash.get(hash).and_then(|entry| entry.vault_id))
