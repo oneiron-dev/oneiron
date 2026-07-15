@@ -40,8 +40,9 @@ use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationExecutor, ConsolidationSink,
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
     DreamerClaimAuthoringStrategy, DreamerConsolidationScope, DreamerJobExecutor,
-    DreamerWakeDriver, LlmBackend, ModelId, Result, RunWakePass, Vault, WakeCancellation,
-    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger, WriteActor,
+    DreamerRunnerStore, DreamerWakeDriver, LlmBackend, ModelId, Result, RunWakePass, Vault,
+    WakeCancellation, WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop,
+    WakeTrigger, WriteActor,
 };
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 use tokio::sync::{Semaphore, watch};
@@ -100,18 +101,31 @@ impl RestartBackoff {
     }
 }
 
+/// Upper bound on the one-shot startup scan for an unused per-pass budget
+/// index (see [`next_pass_budget_index`]). After this many occupied rows
+/// the scan stops and returns the bound itself as the start index —
+/// finite work, no rescan, no hot-loop.
+const PASS_BUDGET_INDEX_SCAN_BOUND: u64 = 65_536;
+
 /// Static supervisor configuration. One base wake budget id + lease owner
 /// per supervisor; every pass gets a fresh wall-clock deadline, a fresh
 /// in-memory wake-budget counter, and a **per-pass durable runner-store
 /// budget row** derived from [`Self::budget_id`] (see
 /// [`durable_pass_budget_id`]).
+///
+/// On each [`WakeSupervisor::run`] the supervisor probes the runner store
+/// once for existing `{budget_id}:p{n}` rows and resumes at the first
+/// absent index so process restarts do not re-mint spent rows. Concurrent
+/// supervisors sharing one base id remain out of scope (single-supervisor
+/// model; share the pass gate when co-located).
 #[derive(Clone)]
 pub struct WakeSupervisorConfig {
     /// Base durable runner-store budget id. Each pass appends a monotonic
     /// pass index (`{budget_id}:p{n}`) so a long-lived supervisor never
     /// reuses a spent budget row across passes. Note: each pass therefore
     /// leaves one budget row in the runner store; this crate does not GC
-    /// them.
+    /// them. Restart-safe: [`WakeSupervisor::run`] skip-scans existing
+    /// `:p{n}` rows before minting.
     pub budget_id: String,
     /// Lease owner stamped on admissions and parks.
     pub lease_owner: String,
@@ -365,10 +379,11 @@ where
 
         let mut report = WakeSupervisorReport::default();
         let mut backoff = RestartBackoff::new(config.backoff);
-        // Monotonic pass index used only to mint a fresh durable budget id
-        // per pass. Deterministic (no clock/random) so restart bookkeeping
-        // stays inspectable.
-        let mut pass_index: u64 = 0;
+        // Resume the per-pass durable budget sequence from the first
+        // absent `{base}:p{n}` row. One probe scan at run start only —
+        // not progress, not a rescan per pass — so a process restart
+        // does not re-mint spent p0/p1/… rows under the same base.
+        let mut pass_index = next_pass_budget_index(vault, &config.budget_id);
 
         loop {
             // ONE biased select: shutdown always beats a ready tick.
@@ -511,14 +526,58 @@ async fn run_pass_supervised<F: PassExecutorFactory>(
 /// vault (no GC here). That is intentional and cheaper than a shared-row
 /// spin; hosts that care about row growth can GC by base-prefix if needed.
 ///
-/// Single-supervisor assumption: concurrent supervisors over one vault
-/// already share the pass gate when configured via
-/// [`WakeSupervisor::with_pass_gate`]; independent supervisors minting
-/// distinct pass sequences under the same base id would each get their own
-/// rows and would not clobber each other (unlike an in-place renew).
+/// Restart: [`next_pass_budget_index`] skip-scans existing `:p{n}` rows at
+/// `run` start so a new process under the same base does not re-enter
+/// spent rows. Single-supervisor model only — two supervisors concurrently
+/// sharing one base are out of scope (use [`WakeSupervisor::with_pass_gate`]
+/// when co-located; do not run independent sequences on the same base).
 #[must_use]
 fn durable_pass_budget_id(base: &str, pass_index: u64) -> String {
     format!("{base}:p{pass_index}")
+}
+
+/// First free per-pass budget index under `base` for this vault.
+///
+/// Probes `{base}:p{n}` ascending from `n = 0` via
+/// [`DreamerRunnerStore::budget`] (the same existence read tests/guards
+/// already use). Stops at the first absent row. Bound:
+/// [`PASS_BUDGET_INDEX_SCAN_BOUND`] — if every index in
+/// `[0, bound)` exists, returns `bound` and never rescans. That fallback
+/// cannot spin: the scan is finite and runs once per `run`, after which
+/// the in-memory counter advances; even if `{base}:p{bound}` already
+/// exists the next pass may land on a spent row, but the loop still
+/// makes progress (or takes the zero-progress BudgetExhausted backoff)
+/// rather than walking occupied ids forever.
+///
+/// Not progress for restart-backoff purposes: this is pure read bookkeeping
+/// before any pass runs.
+#[must_use]
+fn next_pass_budget_index(vault: &Vault, base: &str) -> u64 {
+    next_pass_budget_index_with_bound(vault, base, PASS_BUDGET_INDEX_SCAN_BOUND)
+}
+
+/// Same as [`next_pass_budget_index`] with an injectable scan bound (tests
+/// pin a small bound; production uses [`PASS_BUDGET_INDEX_SCAN_BOUND`]).
+#[must_use]
+fn next_pass_budget_index_with_bound(vault: &Vault, base: &str, bound: u64) -> u64 {
+    let store = DreamerRunnerStore::new(vault);
+    for n in 0..bound {
+        let id = durable_pass_budget_id(base, n);
+        match store.budget(&id) {
+            Ok(None) => return n,
+            Ok(Some(_)) => {}
+            // Unreadable: treat as occupied so we do not re-mint a row
+            // we failed to confirm is free. The bound still caps the walk.
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    budget_id = %id,
+                    "pass-budget index probe failed; treating as occupied"
+                );
+            }
+        }
+    }
+    bound
 }
 
 /// One wake pass: fresh deadline, fresh wake-budget counter, per-pass
@@ -624,10 +683,34 @@ mod tests {
     use crate::tick::{PushTick, WakeSignal};
     use oneiron::job_queue::{JobId, JobState};
     use oneiron::{
-        DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedJob, DreamerJobExecution,
-        DreamerRunnerStore, EnqueueDreamerConsolidationJob, EnqueueDreamerJobOutcome, VaultConfig,
-        WakeJobContext,
+        DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedJob, DreamerBudgetReserveOutcome,
+        DreamerJobExecution, DreamerRunnerStore, EnqueueDreamerConsolidationJob,
+        EnqueueDreamerJobOutcome, ReserveDreamerBudget, VaultConfig, WakeJobContext,
     };
+
+    /// Seeds a durable budget row at `budget_id` (init-if-absent via reserve).
+    fn seed_budget_row(vault: &Vault, budget_id: &str) {
+        let store = DreamerRunnerStore::new(vault);
+        match store
+            .reserve_budget(ReserveDreamerBudget {
+                budget_id: budget_id.to_owned(),
+                child_job: JobId::now(),
+                budget_total_units: 1,
+                reserve_units: 1,
+                now: 1,
+            })
+            .expect("seed reserve")
+        {
+            // Only Reserved persists a new counter row; Exhausted on a
+            // missing id is in-memory only and must not be treated as seed.
+            DreamerBudgetReserveOutcome::Reserved(_) => {}
+            other => panic!("expected Reserved seed outcome, got {other:?}"),
+        }
+        assert!(
+            store.budget(budget_id).expect("budget read").is_some(),
+            "seeded budget row must exist at {budget_id}"
+        );
+    }
 
     fn open_vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1148,5 +1231,137 @@ mod tests {
             durable_pass_budget_id("driver-budget", 42),
             "driver-budget:p42"
         );
+    }
+
+    #[tokio::test]
+    async fn restart_resumes_pass_budget_index_after_existing_rows() {
+        // P1 (codex r3): pass_index was in-memory only and reset to 0 on
+        // every WakeSupervisor::run, so a process restart re-minted :p0
+        // against a spent row (DreamerRunnerStore reuses existing budgets).
+        // Startup skip-scan must resume at the first absent :p{n}.
+        let (_dir, vault) = open_vault();
+        let first = enqueue_micro(&vault, "restart-p0", 10);
+        let second = enqueue_micro(&vault, "restart-p1", 11);
+
+        let wake = Tick::Wake(WakeSignal {
+            trigger: WakeTrigger::Compaction,
+            scope: DreamerConsolidationScope::Micro,
+        });
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            completed_units: 100,
+        };
+        let mut config = test_config();
+        config.budget_total_units = 150;
+        config.reserve_units = 100;
+
+        // First supervisor "run" (pre-restart): exhausts :p0 and :p1.
+        let ticks = ScriptedTicks {
+            ticks: vec![wake, wake],
+        };
+        let report = WakeSupervisor::new(&vault, ticks, factory, config.clone())
+            .run()
+            .await;
+        assert_eq!(report.passes_completed, 2);
+        assert_eq!(report.jobs_completed, 2);
+
+        let store = DreamerRunnerStore::new(&vault);
+        assert!(
+            store.budget("driver-budget:p0").expect("p0").is_some(),
+            "first run wrote :p0"
+        );
+        assert!(
+            store.budget("driver-budget:p1").expect("p1").is_some(),
+            "first run wrote :p1"
+        );
+        assert!(
+            store.budget("driver-budget:p2").expect("p2").is_none(),
+            "first run must not have touched :p2"
+        );
+        for id in [first, second] {
+            let status = store.status(id).expect("status").expect("row");
+            assert_eq!(status.job.state, JobState::Completed);
+        }
+
+        // Simulated restart: new supervisor instance, same base budget_id,
+        // one queued job — must mint :p2 (not walk :p0/:p1 spent rows).
+        let third = enqueue_micro(&vault, "restart-p2", 12);
+        let ticks = ScriptedTicks { ticks: vec![wake] };
+        let factory = TestExecFactory {
+            panics_left: 0,
+            factory_panics_left: 0,
+            completed_units: 40,
+        };
+        // Fresh grant large enough for one job under the restarted pass.
+        let mut restart_config = config;
+        restart_config.budget_total_units = 10_000;
+        let report = WakeSupervisor::new(&vault, ticks, factory, restart_config)
+            .run()
+            .await;
+
+        assert_eq!(report.passes_completed, 1);
+        assert_eq!(
+            report.jobs_completed, 1,
+            "restarted supervisor must drain under a fresh :p2 row"
+        );
+        assert_eq!(report.passes_failed, 0);
+        assert_eq!(report.passes_panicked, 0);
+
+        let status = store.status(third).expect("status").expect("row");
+        assert_eq!(status.job.state, JobState::Completed);
+        let budget = store
+            .budget("driver-budget:p2")
+            .expect("p2 read")
+            .expect("restart must write driver-budget:p2");
+        assert_eq!(budget.reserved_units, 0);
+        assert_eq!(budget.remaining_units, 10_000 - 40);
+        assert_eq!(budget.total_units, 10_000);
+        // Spent pre-restart rows must not have been rewritten as the
+        // restart pass's working counter (still the 150-unit grant).
+        let p0 = store
+            .budget("driver-budget:p0")
+            .expect("p0")
+            .expect("p0 still present");
+        assert_eq!(p0.total_units, 150);
+        assert_eq!(p0.remaining_units, 50);
+    }
+
+    #[test]
+    fn pass_budget_index_scan_is_bounded_and_falls_back() {
+        // When every index in [0, bound) already has a durable row, the
+        // scan must stop at `bound` — not walk forever. Production uses
+        // PASS_BUDGET_INDEX_SCAN_BOUND (65536); tests pin a tiny bound.
+        let (_dir, vault) = open_vault();
+        const BOUND: u64 = 4;
+        let base = "scan-bound-budget";
+
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault, base, BOUND),
+            0,
+            "empty vault starts at p0"
+        );
+
+        for n in 0..BOUND {
+            seed_budget_row(&vault, &durable_pass_budget_id(base, n));
+        }
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault, base, BOUND),
+            BOUND,
+            "full [0, bound) must fall back to bound (no spin)"
+        );
+
+        // Hole at p1 while p0 and p2 exist: first absent wins.
+        let (_dir2, vault2) = open_vault();
+        seed_budget_row(&vault2, &durable_pass_budget_id(base, 0));
+        seed_budget_row(&vault2, &durable_pass_budget_id(base, 2));
+        assert_eq!(
+            next_pass_budget_index_with_bound(&vault2, base, BOUND),
+            1,
+            "first absent index, not highest+1"
+        );
+
+        // Production bound is the large fixed constant (inspectable).
+        assert_eq!(PASS_BUDGET_INDEX_SCAN_BOUND, 65_536);
     }
 }
