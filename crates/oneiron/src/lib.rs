@@ -394,11 +394,12 @@ pub use crate::dreamer_tournament::{
 #[cfg(feature = "sync")]
 pub use crate::dreamer_wake::WakeProgressLane;
 pub use crate::dreamer_wake::{
-    BudgetLegibilityEnvelope, DREAMER_GRACEFUL_WRAP_WINDOW_MS, DREAMER_HARD_CUT_PARK_OWNER,
-    DREAMER_HARD_CUT_PARK_REASON, DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS,
-    DREAMER_WRAP_UP_NOTICE_PERCENT, DreamerJobExecution, DreamerJobExecutor, DreamerWakeDriver,
-    RunWakePass, WakeJobContext, WakeMilestoneAuthor, WakePassDeadline, WakePassReport,
-    WakePassStop, WakeTrigger, current_legibility, legibility_envelope, request_wake,
+    BudgetLegibilityEnvelope, DREAMER_CANCELLED_PARK_REASON, DREAMER_EXECUTOR_ERROR_PARK_REASON,
+    DREAMER_GRACEFUL_WRAP_WINDOW_MS, DREAMER_HARD_CUT_PARK_OWNER, DREAMER_HARD_CUT_PARK_REASON,
+    DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS, DREAMER_WRAP_UP_NOTICE_PERCENT, DreamerJobExecution,
+    DreamerJobExecutor, DreamerWakeDriver, RunWakePass, WakeCancellation, WakeJobContext,
+    WakeMilestoneAuthor, WakePassDeadline, WakePassReport, WakePassStop, WakeTrigger,
+    current_legibility, legibility_envelope, request_wake,
 };
 pub use crate::edge::{
     DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind,
